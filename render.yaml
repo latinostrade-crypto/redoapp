@@ -1,0 +1,27 @@
+services:
+  # Static Site: React Vite Frontend
+  - type: web
+    name: uno-cartoon-frontend
+    env: static
+    buildCommand: npm run build
+    publishPath: dist
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+
+  # Web Service: Express Node Backend
+  - type: web
+    name: uno-cartoon-backend
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm run start
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: PORT
+        value: 10000
