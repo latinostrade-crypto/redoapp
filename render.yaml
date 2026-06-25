@@ -15,7 +15,7 @@ services:
   - type: web
     name: yoapp-backend
     env: node
-    plan: starter
+    plan: free
     buildCommand: npm install
     startCommand: npm run start
     envVars:
