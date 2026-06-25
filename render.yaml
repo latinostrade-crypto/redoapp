@@ -4,7 +4,7 @@ services:
     name: yoapp-frontend
     env: static
     buildCommand: npm run build
-    publishPath: dist
+    staticPublishPath: dist
     envVars:
       - key: VITE_SUPABASE_URL
         sync: false
