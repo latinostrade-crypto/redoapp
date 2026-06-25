@@ -1,7 +1,7 @@
 services:
   # Static Site: React Vite Frontend
   - type: web
-    name: uno-cartoon-frontend
+    name: yoapp-frontend
     env: static
     buildCommand: npm run build
     publishPath: dist
@@ -13,7 +13,7 @@ services:
 
   # Web Service: Express Node Backend
   - type: web
-    name: uno-cartoon-backend
+    name: yoapp-backend
     env: node
     plan: starter
     buildCommand: npm install
