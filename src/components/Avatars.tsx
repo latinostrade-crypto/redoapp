@@ -8,75 +8,203 @@ interface AvatarProps {
   size?: number;
 }
 
+const COLOR_PALETTE: Record<string, string> = {
+  '.': 'transparent',
+  'b': '#111116', // Black/Outline
+  'w': '#ffffff', // White
+  'p': '#ff9eb5', // Pink
+  'r': '#ff4b4b', // Red
+  'u': '#00d2ff', // Blue
+  'y': '#ffcc00', // Yellow
+  'o': '#ff823b', // Orange
+  'g': '#94a3b8', // Gray
+  'd': '#926239', // Brown
+  't': '#00f0ff', // Teal
+  'k': '#475569', // Dark Gray
+  'm': '#ec4899', // Magenta
+  'e': '#5c3e26', // Dark Brown
+};
+
+const AVATAR_PIXELS: Record<AvatarId, string[]> = {
+  rabbit: [
+    "....m......m....",
+    "....m......m....",
+    "...mwm....mwm...",
+    "...mwm....mwm...",
+    "..wwww....wwww..",
+    "..wwww....wwww..",
+    ".wwwwwwwwwwwwww.",
+    ".wwwwwwwwwwwwww.",
+    "wwwbbwwwwwwbbwww",
+    "wwwbbwwwwwwbbwww",
+    "wwwwwwwwwwwwwwww",
+    "wwwwwmpppmwwwww",
+    ".wwwwmpppmwwww.",
+    "..wwwwmwmwwww..",
+    "...wwwwwwwww...",
+    "....wwwww......."
+  ],
+  bear: [
+    "....e......e....",
+    "...eee....eee...",
+    "..dddddddddddd..",
+    ".dddddddddddddd.",
+    "dddddddddddddddd",
+    "ddyybbddddbbyydd",
+    "ddyyyyddddyyyydd",
+    "dddddddddddddddd",
+    "ddddddppppdddddd",
+    "ddddddpbbpdddddd",
+    ".ddddddppdddddd.",
+    "..dddddddddddd..",
+    "...dddddddddd...",
+    "....dddddddd....",
+    ".....dddddd.....",
+    "......dddd......"
+  ],
+  fox: [
+    "o..............o",
+    "oo............oo",
+    "ooo..........ooo",
+    ".oooo......oooo.",
+    ".ooooo....ooooo.",
+    "oooooooooooooooo",
+    "oouubboooooouubb",
+    "oouuuuoooooouuuu",
+    "oooooooooooooooo",
+    "oowwwwwwwwwwwwoo",
+    ".owwwwwwwwwwww.",
+    "..owwwwwwwwww..",
+    "...owwbbwwo...",
+    "....owwwwo....",
+    ".....owwo.....",
+    "......oo......"
+  ],
+  panda: [
+    "....b......b....",
+    "...bbb....bbb...",
+    "..wwwwwwwwwwww..",
+    ".wwwwwwwwwwwwww.",
+    "wwwwwwwwwwwwwwww",
+    "wwbbbbwwwwbbbbww",
+    "wwbbbbwwwwbbbbww",
+    "wwwwwwwwwwwwwwww",
+    "wwwwwwbbbbwwwwww",
+    "wwwwwwwbbwwwwwww",
+    ".wwwwwwwwwwwwww.",
+    "..wwwwwwwwwwww..",
+    "...wwwwwwwwww...",
+    "....bbbbbbbb....",
+    ".....bbbbbb.....",
+    "......bbbb......"
+  ],
+  cat: [
+    "m..............m",
+    "mm............mm",
+    "mmm..........mmm",
+    "mmmm........mmmm",
+    "mmmmmmmmmmmmmmmm",
+    "mmmbbmmmmmmbbmmm",
+    "mmmbbmmmmmmbbmmm",
+    "mmmmmmmmmmmmmmmm",
+    "mmmmmmppppmmmmmm",
+    "mmmmmmmppmmmmmmm",
+    "mmmwbwwwwwwbwmmm",
+    ".mmmwbwwwwbwmmm.",
+    "..mmmmmmmmmmmm..",
+    "...mmmmmmmmmm...",
+    "....mmmmmmmm....",
+    ".....mmmmmm....."
+  ],
+  koala: [
+    "...gg......gg...",
+    "..gggg....gggg..",
+    ".gggggggggggggg.",
+    "gggggggggggggggg",
+    "gggggggggggggggg",
+    "ggyybbggggbbyygg",
+    "ggyyyyggggyyyygg",
+    "gggggggggggggggg",
+    "gggggbbbbbbggggg",
+    "gggggbbbbbbggggg",
+    ".gggggbbbbggggg.",
+    "..gggggggggggg..",
+    "...gggggggggg...",
+    "....gggggggg....",
+    ".....gggggg.....",
+    "......gggg......"
+  ]
+};
+
 export const Avatar: React.FC<AvatarProps> = ({ id, emotion, isActive, size = 64 }) => {
   const getAvatarStyle = () => {
-    let animClass = 'rounded-full overflow-hidden ';
+    let animClass = 'pixel-box-sm relative flex items-center justify-center overflow-hidden ';
+    
     if (isActive) {
-      animClass += ' ring-4 ring-cyan-400 animate-pulse ';
+      animClass += ' border-[#00d2ff] bg-slate-900 ring-4 ring-[#00d2ff]/40 animate-pulse ';
     } else {
-      animClass += ' border border-slate-800 ';
+      animClass += ' border-black bg-slate-950 ';
     }
 
     if (emotion === 'thinking') {
-      animClass += ' translate-y-[-2px] ';
+      animClass += ' -translate-y-1 ';
     } else if (emotion === 'worried') {
       animClass += ' scale-95 opacity-80 ';
     } else if (emotion === 'angry') {
-      animClass += ' scale-90 border-red-500 ';
+      animClass += ' border-[#ff4b4b] ';
     } else if (emotion === 'celebrating') {
-      animClass += ' scale-105 rotate-[3deg] ';
+      animClass += ' rotate-[2deg] scale-105 ';
     }
 
     return animClass;
   };
 
-  const renderSvg = () => {
-    const emotionColor = {
-      happy: '#00E676',
-      thinking: '#29B6F6',
-      worried: '#FFA726',
-      angry: '#EF5350',
-      celebrating: '#EC407A',
-    }[emotion];
-
-    // Colors mapping for surfers
-    const themes = {
-      bear: { bg: '#0D47A1', primary: '#29B6F6', secondary: '#00E676' }, // Ocean Deep
-      fox: { bg: '#E65100', primary: '#FFB74D', secondary: '#FF5722' },  // Sunset Glide
-      rabbit: { bg: '#4A148C', primary: '#BA68C8', secondary: '#EA80FC' }, // Twilight Wave
-      panda: { bg: '#004D40', primary: '#4DB6AC', secondary: '#80CBC4' }, // Lagoon Teal
-      cat: { bg: '#880E4F', primary: '#F06292', secondary: '#FF80AB' }, // Coral Surf
-      koala: { bg: '#37474F', primary: '#90A4AE', secondary: '#CFD8DC' } // Storm Rider
-    }[id];
-
-    return (
-      <svg viewBox="0 0 100 100" className="w-full h-full">
-        <rect x="0" y="0" width="100" height="100" fill={themes.bg} />
-        <circle cx="50" cy="40" r="28" fill={themes.primary} opacity="0.3" />
-        <circle cx="50" cy="40" r="20" fill={themes.secondary} opacity="0.4" />
-        <path d="M 0 75 Q 25 65 50 75 T 100 75 L 100 100 L 0 100 Z" fill="#0091EA" opacity="0.5" />
-        <path d="M 0 83 Q 25 78 50 83 T 100 83 L 100 100 L 0 100 Z" fill="#00B0FF" opacity="0.7" />
-        <g transform="translate(15, 10)">
-          <path d="M 10 70 L 25 35 Q 30 50 35 70 Z" fill="#FF9100" stroke="#FFFFFF" strokeWidth="1.5" />
-          <line x1="22" y1="40" x2="22" y2="70" stroke="#FFFFFF" strokeWidth="1" />
-          <circle cx="50" cy="45" r="16" fill="#ECEFF1" stroke="#37474F" strokeWidth="2" />
-          <path d="M 36 43 Q 50 35 64 43 L 60 52 Q 50 48 40 52 Z" fill="#263238" />
-          <path d="M 40 45 Q 50 41 60 45" fill="none" stroke={emotionColor} strokeWidth="2.5" strokeLinecap="round" />
-        </g>
-        <circle cx="50" cy="50" r="48" fill="none" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.2" />
-      </svg>
-    );
-  };
+  const rows = AVATAR_PIXELS[id] || AVATAR_PIXELS.rabbit;
 
   return (
     <div
       role="img"
-      aria-label={`Surfer identity ${id} displaying ${emotion} status`}
-      className={`relative flex items-center justify-center transition-all duration-300 ${getAvatarStyle()}`}
-      style={{ width: size, height: size }}
+      aria-label={`Pixel avatar ${id} showing ${emotion}`}
+      className={`transition-all duration-200 ${getAvatarStyle()}`}
+      style={{ width: size, height: size, padding: '4px' }}
     >
-      {renderSvg()}
+      <svg viewBox="0 0 16 16" className="w-full h-full" style={{ shapeRendering: 'crispEdges' }}>
+        {rows.map((row, rIdx) => 
+          row.split('').map((char, cIdx) => {
+            const fill = COLOR_PALETTE[char] || 'transparent';
+            if (fill === 'transparent') return null;
+            return (
+              <rect
+                key={`${rIdx}-${cIdx}`}
+                x={cIdx}
+                y={rIdx}
+                width="1"
+                height="1"
+                fill={fill}
+              />
+            );
+          })
+        )}
+      </svg>
+
+      {/* Floating Status Pixel Icons */}
+      {emotion === 'thinking' && (
+        <span className="absolute top-0.5 right-0.5 text-[8px] bg-blue-600 text-white font-black px-1 rounded-sm border border-black leading-none font-mono">
+          ?
+        </span>
+      )}
+      {emotion === 'angry' && (
+        <span className="absolute top-0.5 right-0.5 text-[8px] bg-red-600 text-white font-black px-1 rounded-sm border border-black leading-none font-mono">
+          !
+        </span>
+      )}
+      {emotion === 'celebrating' && (
+        <span className="absolute -top-1 -left-1 text-[12px] animate-bounce">
+          🎉
+        </span>
+      )}
     </div>
   );
 };
+
 

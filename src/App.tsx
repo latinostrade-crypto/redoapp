@@ -51,19 +51,17 @@ export default function App() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [muted, setMuted] = useState(() => sound.getMuted());
   const [userName, setUserName] = useState('Surf Rider');
-
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
 
   // Available avatars to select in lobby
   const AVATAR_LIST: { id: AvatarId; emoji: string; bg: string; description: string }[] = [
-    { id: 'rabbit', emoji: 'R', bg: 'bg-pink-950 border-pink-700 text-pink-300', description: 'Twilight Wave rider.' },
-    { id: 'bear', emoji: 'B', bg: 'bg-blue-950 border-blue-700 text-blue-300', description: 'Ocean Deep rider.' },
-    { id: 'fox', emoji: 'F', bg: 'bg-orange-950 border-orange-700 text-orange-300', description: 'Sunset Glide rider.' },
-    { id: 'panda', emoji: 'P', bg: 'bg-teal-950 border-teal-700 text-teal-300', description: 'Lagoon Teal rider.' },
-    { id: 'cat', emoji: 'C', bg: 'bg-rose-950 border-rose-700 text-rose-300', description: 'Coral Surf rider.' },
-    { id: 'koala', emoji: 'K', bg: 'bg-slate-900 border-slate-700 text-slate-300', description: 'Storm Rider.' },
+    { id: 'rabbit', emoji: 'R', bg: 'bg-slate-900 border-black text-[#ff9eb5]', description: 'Twilight Wave rider.' },
+    { id: 'bear', emoji: 'B', bg: 'bg-slate-900 border-black text-[#926239]', description: 'Ocean Deep rider.' },
+    { id: 'fox', emoji: 'F', bg: 'bg-slate-900 border-black text-[#ff823b]', description: 'Sunset Glide rider.' },
+    { id: 'panda', emoji: 'P', bg: 'bg-slate-900 border-black text-white', description: 'Lagoon Teal rider.' },
+    { id: 'cat', emoji: 'C', bg: 'bg-slate-900 border-black text-[#ec4899]', description: 'Coral Surf rider.' },
+    { id: 'koala', emoji: 'K', bg: 'bg-slate-900 border-black text-[#94a3b8]', description: 'Storm Rider.' },
   ];
-
 
   const toggleMute = () => {
     const isNowMuted = sound.toggleMute();
@@ -79,7 +77,6 @@ export default function App() {
     if (!isHumanTurn) return false;
     if (gameState.phase !== 'playing') return false;
     
-    // Wilds can always card play
     if (card.color === 'wild') return true;
     if (card.color === gameState.activeColor) return true;
     if (card.value === gameState.activeValue) return true;
@@ -88,19 +85,19 @@ export default function App() {
 
   const playableCount = gameState.players.find((p) => p.id === 'player')?.hand.filter(checkPlayable).length || 0;
 
-  // Render Play table segment colors inside center
+  // Render Play table suit color details
   const getActiveColorBorder = (color: CardColor) => {
     switch (color) {
       case 'red':
-        return 'border-white bg-[#EF233C] text-white shadow-[#EF233C]/20';
+        return 'border-black bg-[#ff4b4b] text-black';
       case 'blue':
-        return 'border-white bg-[#0077B6] text-white shadow-[#0077B6]/20';
+        return 'border-black bg-[#00d2ff] text-black';
       case 'green':
-        return 'border-white bg-[#38B000] text-white shadow-[#38B000]/20';
+        return 'border-black bg-[#00ff66] text-black';
       case 'yellow':
-        return 'border-white bg-[#FFD60A] text-zinc-950 font-black shadow-[#FFD60A]/20';
+        return 'border-black bg-[#ffcc00] text-black';
       default:
-        return 'border-white bg-zinc-800 text-white shadow-zinc-800/20';
+        return 'border-black bg-[#1e293b] text-white';
     }
   };
 
@@ -137,7 +134,6 @@ export default function App() {
 
     const prev = prevGameStateRef.current;
 
-    // If discard pile grew, hold the visual card to previous card, then update after animation lands
     if (gameState.discardPile.length > (prev.discardPile?.length || 0)) {
       const prevTop = prev.discardPile[prev.discardPile.length - 1];
       if (prevTop) {
@@ -146,7 +142,7 @@ export default function App() {
       
       const timer = setTimeout(() => {
         setVisualTopCard(currentTop);
-      }, 550); // matches throw animation duration
+      }, 550);
 
       return () => clearTimeout(timer);
     } else {
@@ -164,7 +160,7 @@ export default function App() {
     const prev = prevGameStateRef.current;
     const current = gameState;
 
-    // 1. Detect Played Card (Discard Pile grew or changed)
+    // Detect Played Card
     if (current.discardPile && prev.discardPile && current.discardPile.length > prev.discardPile.length) {
       const playedCard = current.discardPile[current.discardPile.length - 1];
       const activePlayerIndex = prev.currentPlayerIndex;
@@ -202,21 +198,20 @@ export default function App() {
             isBack: false,
             startX,
             startY,
-            endX: 62, // Discard pile position
+            endX: 62,
             endY: 50,
             rotateStart,
-            rotateEnd: Math.random() * 30 - 15,
+            rotateEnd: Math.random() * 20 - 10,
           }
         ]);
 
-        // Cleanup
         setTimeout(() => {
           setFlyingCards((prevAnims) => prevAnims.filter((f) => f.id !== animId));
         }, 700);
       }
     }
 
-    // 2. Detect Drawn Card (Hand size increased)
+    // Detect Drawn Card
     if (current.players && prev.players) {
       current.players.forEach((currPlayer: any) => {
         const prevPlayer = prev.players.find((p: any) => p.id === currPlayer.id);
@@ -252,7 +247,7 @@ export default function App() {
               id: animId,
               card: newlyDrawnCard || { id: 'back', color: 'wild', value: 'wild', score: 0 },
               isBack: true,
-              startX: 38, // Draw pile position
+              startX: 38,
               startY: 50,
               endX,
               endY,
@@ -261,7 +256,6 @@ export default function App() {
             }
           ]);
 
-          // Cleanup
           setTimeout(() => {
             setFlyingCards((prevAnims) => prevAnims.filter((f) => f.id !== animId));
           }, 700);
@@ -273,59 +267,49 @@ export default function App() {
   }, [gameState]);
 
   return (
-    <div className={`w-full bg-[#1B4332] flex flex-col items-center justify-start font-sans relative select-none transition-colors duration-500 ${
-      gameState.phase === 'setup' ? 'min-h-screen bg-[#070A0E] overflow-y-auto' : 'h-screen max-h-screen overflow-hidden'
+    <div className={`w-full bg-[#0c0f12] text-[#f8fafc] flex flex-col items-center justify-start relative select-none overflow-hidden ${
+      gameState.phase === 'setup' ? 'min-h-screen bg-[#0c0f12]' : 'h-screen max-h-screen'
     }`}>
       
-      {/* Cyber/Web3 ambient neon matrix background when in Setup phase */}
+      {/* Pixelated grid background in setup mode */}
       {gameState.phase === 'setup' && (
-        <div className="absolute inset-0 bg-[#0A0D14] overflow-hidden pointer-events-none z-0">
-          {/* Glowing background meshes */}
-          <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-indigo-500/10 blur-[120px]"></div>
-          <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-emerald-500/10 blur-[120px]"></div>
-          
-          {/* Interactive grid mesh lines */}
-          <div className="absolute inset-0 opacity-[0.03]" style={{
-            backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)',
-            backgroundSize: '24px 24px'
+        <div className="absolute inset-0 bg-[#0c0f12] overflow-hidden pointer-events-none z-0">
+          <div className="absolute inset-0 opacity-[0.05]" style={{
+            backgroundImage: 'radial-gradient(circle, #f8fafc 1.5px, transparent 1.5px)',
+            backgroundSize: '20px 20px'
           }}></div>
 
-          <div className="absolute top-[8%] left-[8%] text-indigo-500/5 text-8xl font-black font-mono select-none">WEB3</div>
-          <div className="absolute bottom-[8%] right-[8%] text-emerald-500/5 text-8xl font-black font-mono select-none">CADET</div>
-          
-          {/* Floating animated ambient circles */}
-          <div className="absolute top-[20%] right-[10%] w-32 h-32 bg-yellow-500/5 rounded-full filter blur-xl animate-pulse"></div>
-          <div className="absolute bottom-[30%] left-[10%] w-44 h-44 bg-pink-500/5 rounded-full filter blur-2xl animate-pulse" style={{ animationDuration: '6s' }}></div>
+          <div className="absolute top-[8%] left-[8%] text-slate-800/10 text-7xl font-black font-mono select-none">WEB3</div>
+          <div className="absolute bottom-[8%] right-[8%] text-slate-800/10 text-7xl font-black font-mono select-none">PIXEL</div>
         </div>
       )}
 
-      {/* HEADER UTILITY PANEL */}
-      <header className="w-full max-w-4xl px-2 py-1.5 sm:px-4 sm:py-3 flex justify-between items-center z-30 bg-black/30 backdrop-blur-md border-b-4 border-[#40916C]">
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <span className="px-2 py-0.5 sm:px-3 sm:py-1 rounded-[8px] sm:rounded-[10px] bg-[#EF233C] text-white font-extrabold text-sm sm:text-lg select-none shadow-[1px_1px_0_rgba(0,0,0,0.25)] sm:shadow-[2px_2px_0_rgba(0,0,0,0.25)] border sm:border-2 border-white transform rotate-[-3deg]">
+      {/* HEADER PANELS */}
+      <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
             YO
           </span>
-          <h1 className="text-sm min-[370px]:text-base sm:text-xl font-bold text-white tracking-tight drop-shadow whitespace-nowrap">
-            Geometric <span className="text-[#FFD60A] hidden min-[400px]:inline">Balance</span>
+          <h1 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
+            PIXEL <span className="text-[#ffcc00]">UNO</span>
           </h1>
         </div>
 
         {/* Global Controls */}
-        <div className="flex items-center gap-1 sm:gap-2">
+        <div className="flex items-center gap-2">
           {gameState.phase !== 'setup' && (
             <button
               onClick={() => {
                 sound.playPop();
                 if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
                   startGame(selectedAvatar, userName);
-                  // Trigger direct hard reset by forcing setup phase or clean startGame lobby reset
                   window.location.reload();
                 }
               }}
-              className="p-1.5 sm:p-2 bg-slate-800 text-slate-200 hover:text-white rounded-lg sm:rounded-xl border-b-2 border-slate-950 active:scale-95 transition-transform"
+              className="p-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive"
               title="Lobby Setup"
             >
-              <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5" />
+              <RotateCcw className="w-4 h-4" />
             </button>
           )}
 
@@ -334,34 +318,34 @@ export default function App() {
               sound.playPop();
               setRulesOpen(true);
             }}
-            className="p-1.5 sm:p-2 bg-slate-800 text-yellow-400 hover:text-yellow-300 rounded-lg sm:rounded-xl border-b-2 border-slate-950 active:scale-95 transition-transform"
+            className="p-1 bg-slate-950 border-2 border-black text-[#ffcc00] pixel-btn-interactive"
             title="Schedules / Rules"
           >
-            <HelpCircle className="w-4 h-4 sm:w-5 sm:h-5 stroke-[2.5]" />
+            <HelpCircle className="w-4 h-4 stroke-[3]" />
           </button>
 
           <button
             onClick={toggleMute}
-            className={`p-1.5 sm:p-2 rounded-lg sm:rounded-xl border-b-2 border-slate-950 active:scale-95 transition-transform ${
-              muted ? 'bg-red-950/40 text-red-400' : 'bg-slate-800 text-emerald-400'
+            className={`p-1 border-2 border-black pixel-btn-interactive ${
+              muted ? 'bg-red-950/40 text-[#ff4b4b]' : 'bg-slate-950 text-[#00ff66]'
             }`}
             title={muted ? 'Unmute Sound' : 'Mute Sound'}
           >
-            {muted ? <VolumeX className="w-4 h-4 sm:w-5 sm:h-5" /> : <Volume2 className="w-4 h-4 sm:w-5 sm:h-5" />}
+            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
         </div>
       </header>
 
       {/* GAME EVENT TICKER LOG */}
       {gameState.phase === 'playing' && gameState.logs.length > 0 && (
-        <div className="w-full max-w-4xl px-4 py-2 bg-slate-950/40 text-xs text-slate-300 flex items-center gap-2 border-b border-white/[0.02] overflow-hidden z-20">
-          <div className="shrink-0 font-bold text-yellow-400 uppercase tracking-widest text-[9px] bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/50">
-            Feed 📢
+        <div className="w-full max-w-4xl px-3 py-1 bg-black text-[#00ff66] font-mono text-[9px] min-[370px]:text-[10px] flex items-center gap-2 border-b-2 border-black z-20">
+          <div className="shrink-0 font-black text-[#ffcc00] uppercase tracking-wider bg-slate-900 px-1.5 py-0.5 border border-black">
+            FEED ::
           </div>
-          <div className="flex-1 truncate italic text-slate-200">
+          <div className="flex-1 truncate italic">
             {gameState.logs[0].message}
           </div>
-          <div className="shrink-0 text-[10px] text-slate-400 font-mono">
+          <div className="shrink-0 text-[8px] text-slate-500 font-mono">
             {gameState.logs[0].timestamp}
           </div>
         </div>
@@ -369,24 +353,24 @@ export default function App() {
 
       {/* LOBBY / SETUP SCREEN */}
       {gameState.phase === 'setup' && (
-        <main className="flex-1 w-full max-w-lg px-4 py-3 sm:py-6 flex flex-col justify-center items-center gap-3 sm:gap-6 z-10 animate-fade-in">
+        <main className="flex-1 w-full max-w-lg px-4 py-6 flex flex-col justify-center items-center gap-6 z-10 animate-fade-in">
           
           {/* Main Title Badge */}
-          <div className="text-center space-y-1 sm:space-y-2 mt-1">
-            <div className="inline-block transform rotate-[-3deg] hover:rotate-3 transition-transform duration-300">
-              <div className="bg-slate-900 text-white border-2 sm:border-4 border-slate-950 rounded-[20px] sm:rounded-[30px] px-5 py-2 sm:px-8 sm:py-4 shadow-xl sm:shadow-2xl relative">
-                <span className="absolute -top-2 -right-2 text-2xl sm:text-3xl animate-bounce">🎈</span>
-                <span className="absolute -bottom-1 -left-2 text-xl sm:text-2xl">✨</span>
-                <h2 className="text-3xl sm:text-5xl font-black tracking-tight leading-none text-yellow-400 drop-shadow-[0_2px_1px_rgba(0,0,0,0.5)] sm:drop-shadow-[0_4px_1px_rgba(0,0,0,0.5)]">
-                  YO!
+          <div className="text-center space-y-2 mt-1">
+            <div className="inline-block transform rotate-[-2deg] hover:rotate-2 transition-transform duration-300">
+              <div className="bg-[#0c0f12] text-white border-4 border-black p-4 shadow-[6px_6px_0_#000] relative">
+                <span className="absolute -top-3 -right-2 text-2xl animate-bounce">🍌</span>
+                <span className="absolute -bottom-2 -left-2 text-xl">🎮</span>
+                <h2 className="text-3xl sm:text-5xl font-black font-mono tracking-tight leading-none text-[#ffcc00]">
+                  YO_UNO!
                 </h2>
-                <span className="text-[9px] sm:text-xs uppercase font-extrabold text-white tracking-widest">
-                  Cartoon Party Web3 Game
+                <span className="text-[8px] sm:text-[10px] uppercase font-black font-mono text-[#00d2ff] tracking-widest mt-1 block">
+                  Web3 Arcade Card Game
                 </span>
               </div>
             </div>
-            <p className="text-slate-700 font-bold text-xs sm:text-sm bg-white/50 backdrop-blur-md px-3 py-0.5 sm:px-4 sm:py-1 rounded-full border border-white/40 shadow-sm max-w-[280px] mx-auto">
-              Play against fluffy AI animal friends! 🐾
+            <p className="text-slate-400 font-mono text-[10px] bg-black border border-black px-3 py-1 inline-block">
+              [ PLAY AGAINST FLUFFY AI FRIENDS! ]
             </p>
           </div>
 
@@ -404,6 +388,8 @@ export default function App() {
               playerXp={playerXp}
               resetStats={resetStats}
               onStartGame={() => startGame(selectedAvatar, userName)}
+              onNameChange={setUserName}
+              onAvatarSelect={setSelectedAvatar}
             />
           </div>
         </main>
@@ -411,7 +397,7 @@ export default function App() {
 
       {/* ACTIVE GAMEPLAY CONTAINER: THEMED GEOMETRIC BALANCE FELT PLAY TABLE */}
       {gameState.phase !== 'setup' && (
-        <main className="flex-1 w-full max-w-4xl my-1 sm:my-2 p-1.5 sm:p-3 md:p-6 flex flex-col justify-between gap-1.5 sm:gap-3 overflow-hidden z-10 relative bg-[#2D6A4F] border-[4px] sm:border-[8px] md:border-[12px] border-[#40916C] rounded-[24px] sm:rounded-[48px] md:rounded-[80px] shadow-[inset_0_0_80px_rgba(0,0,0,0.55),0_15px_30px_rgba(0,0,0,0.5)]">
+        <main className="flex-1 w-full max-w-4xl my-1 p-2.5 flex flex-col justify-between gap-2 overflow-hidden z-10 relative bg-[#0c0f12] border-4 border-black shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
           
           {/* FLYING CARDS ANIMATION OVERLAY */}
           <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden">
@@ -449,19 +435,19 @@ export default function App() {
             </AnimatePresence>
           </div>
           
-          {/* TOP ZONE: AI PLAYER 2 (Sleepy Panda) */}
-          <section className="w-full flex justify-center items-center py-0.5 sm:py-1">
+          {/* TOP ZONE: AI PLAYER 2 */}
+          <section className="w-full flex justify-center items-center py-1">
             {(() => {
               const pandaPlayer = gameState.players[2];
               if (!pandaPlayer) return null;
               const isActive = gameState.currentPlayerIndex === 2;
               return (
-                <div className="flex flex-col items-center relative gap-0.5 sm:gap-1">
-                  <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 42 : 54} />
+                <div className="flex flex-col items-center relative gap-1">
+                  <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={38} />
                   
-                  <div className="bg-black/60 text-white px-2.5 py-0.5 sm:px-4 sm:py-1 rounded-[20px] text-[10px] sm:text-xs font-bold uppercase tracking-wider flex items-center gap-1 sm:gap-2 border-2 border-white/20 shadow-lg max-w-[150px] sm:max-w-xs truncate">
+                  <div className="bg-black text-white px-2 py-0.5 border border-black text-[9px] font-mono flex items-center gap-1.5 shadow-[2px_2px_0_#000] max-w-[150px] truncate">
                     <span className="truncate">{pandaPlayer.name}</span>
-                    <span className="text-[8px] sm:text-[10px] bg-[#EF233C] text-white px-1.5 py-0.5 rounded-full font-mono font-black flex items-center gap-0.5 shadow-sm border border-white/20">
+                    <span className="bg-[#ff4b4b] text-black px-1 border border-black text-[8px] font-black">
                       🎴 {pandaPlayer.hand.length}
                     </span>
                   </div>
@@ -480,12 +466,12 @@ export default function App() {
                 if (!leftPlayer) return null;
                 const isActive = gameState.currentPlayerIndex === 1;
                 return (
-                  <div className="flex flex-col items-center relative gap-0.5 sm:gap-1 text-center">
-                    <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 36 : 50} />
+                  <div className="flex flex-col items-center relative gap-1 text-center">
+                    <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={36} />
                     
-                    <div className="bg-black/60 text-white px-1.5 py-1 sm:px-3 sm:py-1.5 rounded-xl sm:rounded-[16px] text-[8px] sm:text-[10px] font-bold uppercase tracking-wider flex flex-col items-center leading-none sm:leading-tight border-2 border-white/20 shadow-md">
-                      <span className="max-w-[50px] min-[370px]:max-w-[65px] sm:max-w-[70px] truncate text-center">{leftPlayer.name}</span>
-                      <span className="text-[7px] sm:text-[9px] text-[#FFD60A] font-extrabold mt-0.5 whitespace-nowrap">🎴 {leftPlayer.hand.length} Cards</span>
+                    <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000]">
+                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{leftPlayer.name}</span>
+                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {leftPlayer.hand.length} CARDS</span>
                     </div>
                   </div>
                 );
@@ -493,35 +479,29 @@ export default function App() {
             </div>
 
             {/* CENTRAL PLAY MAT FELT TABLE BOARD */}
-            <div className="col-span-6 h-full flex items-center justify-center relative min-h-[110px] min-[370px]:min-h-[135px] sm:min-h-[170px] md:min-h-[220px]">
+            <div className="col-span-6 h-full flex items-center justify-center relative min-h-[110px] min-[370px]:min-h-[135px] sm:min-h-[170px]">
               
-              {/* Play Mat Felt Graphic Background */}
-              <div className="absolute inset-0 bg-gradient-to-b from-sky-300/10 to-sky-500/10 rounded-[24px] sm:rounded-[40px] border-2 sm:border-3 border-dashed border-slate-650/40 opacity-70"></div>
+              {/* Play Mat Felt Grid Background */}
+              <div className="absolute inset-0 border border-dashed border-[#2e3846] opacity-60"></div>
 
               {/* ROTATING DIRECTION RING ANIMATION */}
-              <div className="absolute w-[100px] h-[100px] min-[370px]:w-[120px] min-[370px]:h-[120px] sm:w-[150px] sm:h-[150px] md:w-[200px] md:h-[200px] flex items-center justify-center opacity-60 pointer-events-none">
+              <div className="absolute w-[80px] h-[80px] min-[370px]:w-[100px] min-[370px]:h-[100px] sm:w-[130px] sm:h-[130px] flex items-center justify-center opacity-40 pointer-events-none">
                 <div
-                  className={`w-full h-full border-2 sm:border-4 border-dashed border-yellow-300/30 rounded-full flex items-center justify-center relative ${
-                    gameState.direction === 1 ? 'animate-[spin_24s_linear_infinite]' : 'animate-[spin_24s_linear_infinite_reverse]'
+                  className={`w-full h-full border border-dashed border-[#ffcc00] flex items-center justify-center font-mono text-[8px] min-[370px]:text-[10px] ${
+                    gameState.direction === 1 ? 'animate-[spin_40s_linear_infinite]' : 'animate-[spin_40s_linear_infinite_reverse]'
                   }`}
                 >
-                  {/* Tiny arrows */}
-                  <span className="absolute top-1 text-slate-100 font-bold text-xs">➔</span>
-                  <span className="absolute bottom-1 text-slate-100 font-bold text-xs rotate-180">➔</span>
-                  <span className="absolute left-1 text-slate-100 font-bold text-xs -rotate-90">➔</span>
-                  <span className="absolute right-1 text-slate-105 font-bold text-xs rotate-90">➔</span>
+                  ➔ ➔ ➔
                 </div>
               </div>
 
               {/* CENTRAL PILES CONTAINER */}
-              <div className="grid grid-cols-2 gap-4 items-center justify-center z-10 w-full px-2">
+              <div className="grid grid-cols-2 gap-3 items-center justify-center z-10 w-full px-1">
                 
                 {/* DRAW DECK PILE (Clickable button) */}
                 <div className="flex flex-col items-center gap-1 justify-self-center">
                   <div className="relative">
-                    {/* Multi card stacking back offset lines */}
-                    <div className="absolute top-1 left-1 w-[54px] h-[80px] min-[370px]:w-[68px] min-[370px]:h-[100px] sm:w-[82px] sm:h-[122px] bg-slate-950 border-2 min-[370px]:border-3 border-slate-900 rounded-xl sm:rounded-2xl opacity-60 z-0"></div>
-                    <div className="absolute top-0.5 left-0.5 w-[54px] h-[80px] min-[370px]:w-[68px] min-[370px]:h-[100px] sm:w-[82px] sm:h-[122px] bg-red-850 border-2 min-[370px]:border-3 border-red-950 rounded-xl sm:rounded-2xl opacity-80 z-1"></div>
+                    <div className="absolute top-1 left-1 w-[54px] h-[80px] min-[370px]:w-[68px] min-[370px]:h-[100px] sm:w-[82px] sm:h-[122px] bg-black border-2 border-black opacity-60 z-0"></div>
                     
                     <button
                       onClick={() => {
@@ -532,8 +512,8 @@ export default function App() {
                         }
                       }}
                       disabled={!isHumanTurn}
-                      className={`relative z-10 transition-transform active:scale-95 border-none bg-none outline-none ${
-                        isHumanTurn ? 'cursor-pointer hover:scale-102 hover:-translate-y-1' : 'opacity-85'
+                      className={`relative z-10 transition-transform active:translate-y-1 border-none bg-none outline-none ${
+                        isHumanTurn ? 'cursor-pointer hover:-translate-y-1' : 'opacity-85'
                       }`}
                       aria-label="Draw a card"
                     >
@@ -541,32 +521,23 @@ export default function App() {
                       
                       {/* Interactive Tap-glowing Ring for Human turn */}
                       {isHumanTurn && playableCount === 0 && (
-                        <span className="absolute inset-x-0 -bottom-1 text-center bg-yellow-405 text-slate-950 font-black text-[9px] uppercase px-1 rounded-full outline shadow animate-pulse tracking-tight select-none">
-                          TAP DRAW! 👈
+                        <span className="absolute inset-x-0 -bottom-1 text-center bg-[#ffcc00] text-black font-black text-[7px] min-[370px]:text-[9px] uppercase px-1 border border-black shadow animate-pulse tracking-tight select-none font-mono">
+                          TAP DRAW!
                         </span>
                       )}
                     </button>
                   </div>
-                  <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-950/40 px-2 rounded-full">
-                    {gameState.deck.length} remaining
+                  <span className="text-[8px] min-[370px]:text-[9px] font-mono font-bold text-slate-450 bg-black px-1.5 border border-black/40">
+                    {gameState.deck.length} REM
                   </span>
                 </div>
 
-                {/* DISCARD PILE (Displays active playable top state) */}
+                {/* DISCARD PILE */}
                 <div className="flex flex-col items-center gap-1 justify-self-center">
                   <div className="relative">
-                    {/* Shadow cards under top card */}
-                    {gameState.discardPile.length > 2 && (
-                      <div className="absolute top-1 left-2 w-[54px] h-[80px] min-[370px]:w-[68px] min-[370px]:h-[100px] sm:w-[82px] sm:h-[122px] bg-slate-950/20 border border-black/10 rounded-xl sm:rounded-2xl rotate-[-12deg] z-0"></div>
-                    )}
-                    {gameState.discardPile.length > 1 && (
-                      <div className="absolute bottom-1 right-1 w-[54px] h-[80px] min-[370px]:w-[68px] min-[370px]:h-[100px] sm:w-[82px] sm:h-[122px] bg-slate-950/30 border border-black/10 rounded-xl sm:rounded-2xl rotate-[8deg] z-1"></div>
-                    )}
-
                     <div className="relative z-10">
                       {(() => {
                         const topCard = visualTopCard || gameState.discardPile[gameState.discardPile.length - 1] || { id: 'fallback', color: 'red', value: '0', score: 0 };
-                        // If it's a wild card, display its outer color as the active suit color selected
                         const displayCard = topCard.color === 'wild'
                           ? { ...topCard, color: gameState.activeColor }
                           : topCard;
@@ -574,9 +545,9 @@ export default function App() {
                           <AnimatePresence mode="popLayout">
                             <motion.div
                               key={`discard-top-${displayCard.id}-${displayCard.color}`}
-                              initial={{ scale: 0.7, rotate: -12, opacity: 0.7 }}
-                              animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                              transition={{ type: 'spring', stiffness: 380, damping: 15 }}
+                              initial={{ scale: 0.75, opacity: 0.7 }}
+                              animate={{ scale: 1, opacity: 1 }}
+                              transition={{ type: 'spring', stiffness: 450, damping: 18 }}
                             >
                               <UnoCard
                                 card={displayCard}
@@ -590,17 +561,17 @@ export default function App() {
                   </div>
                   
                   {/* Current Table Target Color Badge */}
-                  <span className={`text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full text-white shadow-sm border-2 ${getActiveColorBorder(gameState.activeColor)}`}>
-                    Suit: {gameState.activeColor}
+                  <span className={`text-[8px] min-[370px]:text-[9px] font-black uppercase font-mono px-2 py-0.5 border border-black shadow-[1px_1px_0_#000] ${getActiveColorBorder(gameState.activeColor)}`}>
+                    {gameState.activeColor}
                   </span>
                 </div>
 
               </div>
 
               {/* Play Direction Action Alert Text Overlay */}
-              <div className="absolute bottom-1 bg-slate-950/80 rounded-full px-2 py-0.5 border border-white/10 flex items-center gap-1 text-[8px] sm:text-[10px] font-bold text-slate-250 select-none max-w-[115px] sm:max-w-none truncate">
-                <ArrowRightLeft className="w-2.5 h-2.5 text-yellow-450" />
-                <span>Play Direction: {gameState.direction === 1 ? 'Clockwise 🔄' : 'Counter 🔄'}</span>
+              <div className="absolute bottom-1 bg-black border border-black px-2 py-0.5 flex items-center gap-1 text-[8px] font-mono text-slate-300 select-none max-w-[115px] sm:max-w-none truncate">
+                <ArrowRightLeft className="w-2.5 h-2.5 text-[#ffcc00]" />
+                <span>DIR: {gameState.direction === 1 ? 'CW 🔄' : 'CCW 🔄'}</span>
               </div>
             </div>
 
@@ -611,12 +582,12 @@ export default function App() {
                 if (!rightPlayer) return null;
                 const isActive = gameState.currentPlayerIndex === 3;
                 return (
-                  <div className="flex flex-col items-center relative gap-0.5 sm:gap-1 text-center">
-                    <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={typeof window !== 'undefined' && window.innerWidth < 640 ? 36 : 50} />
+                  <div className="flex flex-col items-center relative gap-1 text-center">
+                    <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={36} />
                     
-                    <div className="bg-black/60 text-white px-1.5 py-1 sm:px-3 sm:py-1.5 rounded-xl sm:rounded-[16px] text-[8px] sm:text-[10px] font-bold uppercase tracking-wider flex flex-col items-center leading-none sm:leading-tight border-2 border-white/20 shadow-md">
-                      <span className="max-w-[50px] min-[370px]:max-w-[65px] sm:max-w-[70px] truncate text-center">{rightPlayer.name}</span>
-                      <span className="text-[7px] sm:text-[9px] text-[#FFD60A] font-extrabold mt-0.5 whitespace-nowrap">🎴 {rightPlayer.hand.length} Cards</span>
+                    <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000]">
+                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{rightPlayer.name}</span>
+                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {rightPlayer.hand.length} CARDS</span>
                     </div>
                   </div>
                 );
@@ -627,42 +598,41 @@ export default function App() {
 
           {/* EVENT BAR */}
           <section className="w-full max-w-lg mx-auto flex gap-2 justify-center py-1">
-            {/* Draw Playable pass-through prompt button */}
             {isHumanTurn && gameState.consecutiveDraws > 0 && playableCount > 0 && (
               <button
                 onClick={passTurn}
-                className="py-2.5 px-5 bg-[#0077B6] hover:bg-[#0096C7] text-white font-bold text-xs uppercase tracking-wider rounded-xl border-2 border-white shadow-[2px_2px_0_rgba(0,0,0,0.2)] animate-pulse active:scale-95 transition-transform"
+                className="py-2 px-4 bg-[#00d2ff] text-black font-black text-xs uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000]"
               >
-                Keep Card & PASS 🐾
+                PASS TURN ➔
               </button>
             )}
           </section>
 
           {/* BOTTOM ZONE: HUMAN PLAYER ZONE */}
-          <section className="w-full bg-black/35 rounded-2xl sm:rounded-3xl p-2 sm:p-4 border border-[#40916C]/40 shadow-inner backdrop-blur-md space-y-1.5 sm:space-y-3">
+          <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2">
             
             {/* Turn status indicator */}
-            <div className="flex justify-between items-center px-1">
-              <span className="text-[10px] sm:text-xs font-bold text-slate-200 flex items-center gap-1 sm:gap-1.5 uppercase tracking-wide">
-                <Users className="w-3 h-3 sm:w-4 sm:h-4 text-[#FFD60A]" />
-                Your Hand Panel:
+            <div className="flex justify-between items-center px-1 font-mono text-[9px] min-[370px]:text-[10px]">
+              <span className="text-slate-300 flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-[#ffcc00]" />
+                [ YOUR HAND ]
               </span>
               
-              <span className={`text-[9px] sm:text-[11px] font-black px-2 py-0.5 sm:px-3 sm:py-1 rounded-full border sm:border-2 tracking-wide ${
+              <span className={`px-2 py-0.5 border font-black tracking-wide ${
                 isHumanTurn
-                  ? 'bg-[#FFD60A] text-zinc-950 border-white shadow-md animate-pulse'
-                  : 'bg-black/40 text-slate-400 border-white/10'
+                  ? 'bg-[#ffcc00] text-black border-black animate-pulse'
+                  : 'bg-black text-slate-500 border-black'
               }`}>
-                {isHumanTurn ? '🌟 YOUR PLAY!' : '💤 COMPUTER IS THINKING...'}
+                {isHumanTurn ? '★ YOUR PLAY! ★' : 'AI THINKING...'}
               </span>
             </div>
 
             {/* NO-SCROLL DYNAMIC OVERLAPPING CARDS ZONE */}
-            <div className="cards-hand-container w-full overflow-x-visible py-2 px-1 flex flex-row items-center justify-center min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative">
+            <div className="cards-hand-container w-full overflow-x-auto py-2 px-1 flex flex-row items-center justify-start min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative bg-black/40 border border-black">
               {(() => {
                 const human = gameState.players.find((p) => p.id === 'player');
-                if (!human) return <div className="text-slate-400 text-xs italic">Loading hand...</div>;
-                if (human.hand.length === 0) return <div className="text-slate-400 text-xs italic">Empty hand.</div>;
+                if (!human) return <div className="text-slate-500 text-xs italic font-mono">Loading...</div>;
+                if (human.hand.length === 0) return <div className="text-slate-500 text-xs italic font-mono">Empty hand.</div>;
 
                 const handLength = human.hand.length;
                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
@@ -675,7 +645,6 @@ export default function App() {
                 let overlapPx = 0;
                 if (totalNeeded > containerWidth && handLength > 1) {
                   overlapPx = (totalNeeded - containerWidth) / (handLength - 1);
-                  // Ensure at least 16px of the card's left side/number remains visible
                   overlapPx = Math.min(overlapPx, cardWidth - 16);
                 }
 
@@ -684,7 +653,7 @@ export default function App() {
                   return (
                     <div
                       key={card.id || `my-card-${idx}`}
-                      className="shrink-0 transition-all duration-200 hover:-translate-y-4 hover:scale-115 relative cursor-pointer"
+                      className="shrink-0 transition-all duration-100 hover:-translate-y-4 relative cursor-pointer"
                       style={{
                         marginLeft: idx > 0 ? `-${overlapPx}px` : '0px',
                         zIndex: idx,
@@ -706,14 +675,14 @@ export default function App() {
             </div>
 
             {/* ACTION TRIGGERS IN HAND */}
-            <div className="w-full flex items-center justify-between gap-2 px-1 pt-0.5">
-              <div className="flex items-center gap-1 text-[9px] sm:text-[11px] text-slate-200 bg-black/40 px-2 py-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl border border-white/10">
-                <Star className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400 fill-yellow-400" />
-                <span>Level {playerLevel}</span>
+            <div className="w-full flex items-center justify-between gap-2 px-1 pt-0.5 font-mono text-[9px] min-[370px]:text-[10px]">
+              <div className="flex items-center gap-1.5 text-white bg-black px-2 py-1.5 border border-black">
+                <Star className="w-3 h-3 text-[#ffcc00] fill-[#ffcc00]" />
+                <span>LEVEL {playerLevel}</span>
               </div>
               
-              <div className="text-[9px] sm:text-[11px] font-mono text-white bg-black/40 px-2 py-1 sm:px-3 sm:py-2 rounded-lg sm:rounded-xl border border-white/15">
-                Total: <strong>{gameState.players.find((p) => p.id === 'player')?.hand.length || 0}</strong> Cards
+              <div className="text-white bg-black px-2 py-1.5 border border-black">
+                CARDS: <strong>{gameState.players.find((p) => p.id === 'player')?.hand.length || 0}</strong>
               </div>
             </div>
 
@@ -724,37 +693,37 @@ export default function App() {
 
       {/* WILD COLOR PICKER MODAL SELECTOR OVERLAY */}
       {wildSelectOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl animate-pop text-slate-200">
-            <h3 className="text-xl font-black text-slate-100 mb-2 flex items-center justify-center gap-1.5">
-              Select Next Suit Color
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0c0f12] text-white border-4 border-black p-5 w-full max-w-sm text-center shadow-[6px_6px_0_#000000] font-mono">
+            <h3 className="text-xs font-black text-white mb-1 uppercase tracking-wider">
+              :: SELECT SUIT ::
             </h3>
-            <p className="text-xs text-slate-400 mb-5">
-              Choose which surfer deck color to swap the active suit to
+            <p className="text-[10px] text-slate-400 mb-4 font-sans leading-relaxed">
+              Choose the next active color suit for the table pile
             </p>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => selectWildColor('red')}
-                className="py-4 rounded-2xl bg-[#EF233C] text-white font-black text-sm border-b-4 border-[#D90429] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-3 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
               >
                 Red Suit
               </button>
               <button
                 onClick={() => selectWildColor('blue')}
-                className="py-4 rounded-2xl bg-[#0077B6] text-white font-black text-sm border-b-4 border-[#03045E] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-3 bg-[#00d2ff] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
               >
                 Blue Suit
               </button>
               <button
                 onClick={() => selectWildColor('yellow')}
-                className="py-4 rounded-2xl bg-[#FFD60A] text-zinc-950 font-black text-sm border-b-4 border-[#FFB703] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-3 bg-[#ffcc00] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
               >
                 Gold Suit
               </button>
               <button
                 onClick={() => selectWildColor('green')}
-                className="py-4 rounded-2xl bg-[#38B000] text-white font-black text-sm border-b-4 border-[#007200] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-3 bg-[#00ff66] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
               >
                 Purple Suit
               </button>
@@ -763,90 +732,64 @@ export default function App() {
         </div>
       )}
 
-
       {/* GAME OVER SCREEN OVERLAY (LEADERBOARD & REWARDS) */}
       {gameState.phase === 'game_over' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-fade-in">
-          
-          {/* Confetti container effect */}
-          <div className="absolute inset-0 overflow-hidden pointer-events-none">
-            {gameState.winnerId === 'player' && [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-              <div
-                key={n}
-                className="absolute text-2xl animate-confetti z-0"
-                style={{
-                  left: `${n * 10}%`,
-                  color: ['#FCA5A5', '#FCD34D', '#86EFAC', '#93C5FD', '#F472B6'][n % 5],
-                  animationDelay: `${n * 0.2}s`,
-                  animationDuration: `${3 + (n % 3)}s`
-                }}
-              >
-                🎉✨🏆🌈
-              </div>
-            ))}
-          </div>
-
-          <div className="bg-[#1A1C23] text-white rounded-3xl border-4 border-slate-900 p-3 sm:p-5 w-full max-w-sm sm:max-w-md text-center shadow-3xl animate-pop relative z-10 max-h-[92vh] flex flex-col overflow-y-auto custom-scroll">
-            <div className="absolute -top-12 -left-12 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl"></div>
-            <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
-            <h2 className="text-lg sm:text-2xl font-black tracking-tight leading-none mb-0.5 text-white flex justify-center items-center gap-1">
-
-              {gameState.winnerId === 'player' ? (
-                <>VICTORY MATCH</>
-              ) : (
-                <>GAME OVER</>
-              )}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0c0f12] text-white border-4 border-black p-4 w-full max-w-md text-center shadow-[6px_6px_0_#000] font-mono max-h-[92vh] flex flex-col overflow-y-auto custom-scroll">
+            
+            <h2 className="text-sm sm:text-base font-black tracking-tight leading-none mb-2 text-[#ffcc00] uppercase">
+              {gameState.winnerId === 'player' ? '🏆 VICTORY MATCH 🏆' : '💀 GAME OVER 💀'}
             </h2>
-            <p className="text-slate-400 text-[9px] sm:text-xs mb-2">
+            <p className="text-slate-450 text-[9px] sm:text-[10px] mb-3 leading-normal font-sans">
               {gameState.winnerId === 'player' ? 'Outstanding game! You cleared your hand first!' : 'The AI bots cleared their hand first!'}
             </p>
 
             {/* Leaderboard entries */}
-            <div className="space-y-1 mb-2.5">
+            <div className="space-y-1.5 mb-3">
               {(leaderboard || []).map((entry: any, index: number) => {
                 const isUser = entry.playerId === 'player';
                 const rankLabels = ['1st', '2nd', '3rd', '4th'];
                 const rankBadgeColors = [
-                  'bg-yellow-500/10 border-yellow-500/30 text-yellow-400',
-                  'bg-slate-300/10 border-slate-300/30 text-slate-300',
-                  'bg-amber-600/10 border-amber-600/30 text-amber-500',
-                  'bg-slate-700/10 border-slate-700/30 text-slate-400',
+                  'bg-[#ffcc00]/20 border-[#ffcc00] text-[#ffcc00]',
+                  'bg-slate-300/20 border-slate-300 text-slate-300',
+                  'bg-amber-600/20 border-amber-600 text-amber-500',
+                  'bg-slate-800 border-black text-slate-500',
                 ];
 
                 return (
                   <div
                     key={entry.playerId}
-                    className={`flex items-center justify-between p-1 sm:p-1.5 rounded-xl border transition-all ${
+                    className={`flex items-center justify-between p-1.5 border ${
                       isUser
-                        ? 'bg-indigo-600/20 border-indigo-500/60 shadow-[inset_0_0_8px_rgba(99,102,241,0.15)]'
-                        : 'bg-slate-900/40 border-slate-800/60'
+                        ? 'bg-[#00d2ff]/20 border-[#00d2ff] shadow-[inset_2px_2px_rgba(0,210,255,0.1)]'
+                        : 'bg-black/50 border-black'
                     }`}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 text-left">
                       {/* Rank Indicator */}
-                      <span className={`w-6 h-5 rounded-lg flex items-center justify-center font-bold text-[9px] border ${rankBadgeColors[index] || 'bg-slate-800'}`}>
+                      <span className={`w-6 h-5 flex items-center justify-center font-bold text-[8px] border font-mono ${rankBadgeColors[index] || 'bg-slate-900 border-black'}`}>
                         {rankLabels[index] || entry.rank}
                       </span>
                       
                       {/* Avatar */}
                       <Avatar id={entry.avatar} emotion={entry.isWinner ? 'celebrating' : 'happy'} size={24} />
                       
-                      <div className="text-left leading-tight">
-                        <span className={`block font-black text-[11px] ${isUser ? 'text-indigo-200' : 'text-slate-200'}`}>
+                      <div className="leading-tight">
+                        <span className={`block font-bold text-[10px] ${isUser ? 'text-[#00d2ff]' : 'text-slate-200'}`}>
                           {entry.name} {isUser && ' (You)'}
                         </span>
-                        <span className="text-[8px] text-slate-400 font-mono">
-                          {entry.points} hand points left
+                        <span className="text-[8px] text-slate-550 font-mono">
+                          {entry.points} PTS LEFT
                         </span>
                       </div>
                     </div>
 
                     <div className="text-right leading-none">
-                      <span className="text-[10px] font-black text-yellow-400 block">
+                      <span className="text-[9px] font-black text-[#ffcc00] block">
                         +{entry.xpGained} XP
                       </span>
                       {entry.isWinner && (
-                        <span className="text-[6px] bg-emerald-500/20 text-emerald-400 px-1 py-0.1 rounded-full font-black uppercase tracking-wider mt-0.5 inline-block">
+                        <span className="text-[6px] bg-[#00ff66]/20 text-[#00ff66] px-1 border border-[#00ff66] font-black uppercase tracking-wider mt-0.5 inline-block">
                           Winner
                         </span>
                       )}
@@ -867,30 +810,30 @@ export default function App() {
               const prevLevel = Math.floor(previousXp / xpNeeded) + 1;
 
               return (
-                <div className="bg-slate-900/60 rounded-xl border border-slate-800/80 p-1.5 sm:p-2.5 mb-2.5 text-left space-y-1">
-                  <div className="flex justify-between items-center text-[9px] sm:text-xs">
-                    <span className="font-extrabold text-indigo-300">
-                      Rewards: <span className="text-yellow-400">+{myEntry.xpGained} XP</span>
+                <div className="bg-black p-2.5 border border-black mb-3 text-left space-y-1.5 font-mono text-[9px]">
+                  <div className="flex justify-between items-center">
+                    <span className="font-black text-[#00d2ff]">
+                      REWARDS: <span className="text-[#ffcc00]">+{myEntry.xpGained} XP</span>
                     </span>
-                    <span className="text-slate-450 font-mono text-[8px]">
+                    <span className="text-slate-500 text-[8px]">
                       ({placementXp} Rank + {cardsXp} Cards)
                     </span>
                   </div>
 
-                  <div className="flex justify-between items-center text-[8px] sm:text-[10px] font-bold text-slate-300">
+                  <div className="flex justify-between items-center text-[8px] font-bold text-slate-400">
                     <span>Level {playerLevel}</span>
                     <span>{currentLevelXp}/{xpNeeded} XP</span>
                   </div>
 
-                  <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden relative border border-slate-850">
+                  <div className="w-full bg-slate-900 h-2 border border-black overflow-hidden relative">
                     <div
-                      className="bg-gradient-to-r from-blue-500 to-cyan-500 h-full rounded-full transition-all duration-1000 ease-out"
+                      className="bg-[#00d2ff] h-full transition-all duration-1000 ease-out"
                       style={{ width: `${xpProgressPercentage}%` }}
                     ></div>
                   </div>
 
                   {playerLevel > prevLevel && (
-                    <div className="text-center text-[8px] text-emerald-400 font-black animate-pulse mt-0.5 uppercase tracking-wider">
+                    <div className="text-center text-[8px] text-[#00ff66] font-black animate-pulse mt-0.5 uppercase">
                       Level Up! Reached Level {playerLevel}
                     </div>
                   )}
@@ -903,14 +846,13 @@ export default function App() {
                 sound.playShuffle();
                 startGame(selectedAvatar, userName);
               }}
-              className="w-full py-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-black text-xs sm:text-sm rounded-xl border-b-4 border-blue-800 hover:brightness-110 active:scale-[0.98] transition-transform select-none shadow-lg uppercase tracking-wider cursor-pointer"
+              className="w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
             >
               PLAY AGAIN
             </button>
           </div>
         </div>
       )}
-
 
       {/* INJECT RULES MODAL DIALOG */}
       <RuleModal isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />

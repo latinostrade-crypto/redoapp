@@ -16,6 +16,7 @@ import {
   Ticket,
 } from 'lucide-react';
 import { sound } from '../utils/sound';
+import { Avatar } from './Avatars';
 import { AvatarId, GameStats } from '../types';
 
 interface Web3DashboardProps {
@@ -30,6 +31,8 @@ interface Web3DashboardProps {
   playerXp: number;
   resetStats: () => void;
   onStartGame: () => void;
+  onNameChange?: (name: string) => void;
+  onAvatarSelect?: (id: AvatarId) => void;
 }
 
 export function Web3Dashboard({
@@ -44,6 +47,8 @@ export function Web3Dashboard({
   playerXp,
   resetStats,
   onStartGame,
+  onNameChange,
+  onAvatarSelect,
 }: Web3DashboardProps) {
   const [currentTab, setCurrentTab] = useState<'lobby' | 'profile' | 'tournaments' | 'pvp' | 'rooms'>('lobby');
 
@@ -217,23 +222,21 @@ export function Web3Dashboard({
     : 0;
 
   return (
-    <div className="w-full bg-[#0B0E14] text-slate-100 rounded-3xl border border-slate-800 p-3 sm:p-5 shadow-2xl relative overflow-hidden flex flex-col gap-3 sm:gap-4 select-none">
+    <div className="w-full bg-[#0c0f12] text-[#f8fafc] pixel-box-lg p-3 sm:p-5 relative overflow-hidden flex flex-col gap-4 select-none pixel-scanlines">
       
-      <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/5 rounded-full blur-3xl pointer-events-none"></div>
-      <div className="absolute bottom-0 left-0 w-40 h-40 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none"></div>
-
-      <div className="flex justify-between items-center bg-slate-900/40 p-2 sm:p-3 rounded-2xl border border-slate-800/80 backdrop-blur-sm">
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
+      {/* Network Connectivity bar */}
+      <div className="flex justify-between items-center bg-[#18181c] p-2.5 pixel-box-sm border-black">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00ff66] opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00ff66]"></span>
           </span>
           <div className="leading-none text-left">
-            <span className="block text-[8px] sm:text-[9px] uppercase font-black tracking-widest text-cyan-400">
-              TON Network
+            <span className="block text-[8px] uppercase font-black tracking-widest text-[#00ff66] font-mono">
+              TON NETWORK
             </span>
-            <span className="text-[10px] sm:text-xs font-mono text-slate-400">
-              Surf Arena
+            <span className="text-[9px] font-mono text-slate-400">
+              SURF_ARENA_NODE_1
             </span>
           </div>
         </div>
@@ -241,89 +244,76 @@ export function Web3Dashboard({
         <button
           onClick={connectWallet}
           disabled={isConnecting}
-          className={`px-2.5 py-1.5 rounded-xl border text-[10px] sm:text-xs font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer ${
+          className={`px-3 py-1.5 pixel-btn-interactive text-[10px] font-black uppercase font-mono tracking-wider flex items-center gap-1.5 ${
             isConnecting
-              ? 'bg-slate-850 border-slate-700 text-slate-450 cursor-not-allowed'
+              ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
               : walletConnected
-              ? 'bg-blue-950/40 border-blue-500/40 text-blue-300 hover:bg-rose-950/40 hover:border-rose-500/40 hover:text-rose-350'
-              : 'bg-gradient-to-r from-blue-500 to-cyan-500 border-blue-400 text-white hover:brightness-110 shadow-lg shadow-blue-500/10'
+              ? 'bg-[#ff4b4b] text-black border-2 border-black shadow-[2px_2px_0_#000]'
+              : 'bg-[#00d2ff] text-black border-2 border-black shadow-[2px_2px_0_#000]'
           }`}
         >
           {isConnecting ? (
             <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Syncing...
+              <Loader2 className="w-3 h-3 animate-spin" />
+              SYNCING...
             </>
           ) : walletConnected ? (
             <>
-              <Check className="w-3.5 h-3.5 text-cyan-450" />
+              <Check className="w-3 h-3 text-black" />
               {walletAddress}
             </>
           ) : (
             <>
-              <Wallet className="w-3.5 h-3.5 text-white" />
-              Connect Wallet
+              <Wallet className="w-3 h-3 text-black" />
+              CONNECT
             </>
           )}
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-1.5">
-        <div className="bg-slate-900/40 border border-slate-800/80 p-1.5 sm:p-2 rounded-xl flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <div className="p-1 bg-cyan-400/10 rounded-lg border border-cyan-400/20 shrink-0">
-              <Coins className="w-3.5 h-3.5 text-cyan-400" />
-            </div>
-            <div className="leading-none text-left">
-              <span className="text-[7px] uppercase font-bold text-slate-400">
-                TON Points
-              </span>
-              <span className="block text-[11px] font-black text-cyan-455">
-                {yoTokenBalance}
-              </span>
-            </div>
-          </div>
-          {walletConnected && !faucetClaimedToday && (
-            <button
-              onClick={claimFaucet}
-              className="p-0.5 bg-cyan-500 text-slate-950 hover:bg-cyan-400 rounded transition-transform hover:scale-105 active:scale-95 cursor-pointer shrink-0"
-              title="Claim daily 50 TON"
-            >
-              <Gift className="w-3 h-3 text-slate-950" />
-            </button>
-          )}
-        </div>
-
-        <div className="bg-slate-900/40 border border-slate-800/80 p-1.5 sm:p-2 rounded-xl flex items-center gap-1">
-          <div className="p-1 bg-sky-400/10 rounded-lg border border-sky-400/20 shrink-0">
-            <Ticket className="w-3.5 h-3.5 text-sky-400" />
-          </div>
-          <div className="leading-none text-left">
-            <span className="text-[7px] uppercase font-bold text-slate-400">
-              Tickets
+      {/* Grid statistics (Neon-bordered boxes) */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            TON POINTS
+          </span>
+          <div className="flex items-center justify-between mt-1">
+            <span className="text-xs font-black text-[#00d2ff]">
+              {yoTokenBalance}
             </span>
-            <span className="block text-[11px] font-black text-sky-400">
-              {goldenTickets} TKT
-            </span>
+            {walletConnected && !faucetClaimedToday && (
+              <button
+                onClick={claimFaucet}
+                className="p-0.5 bg-[#00ff66] text-black border border-black hover:scale-105 active:scale-95 shrink-0"
+                title="Claim daily 50 TON"
+              >
+                <Gift className="w-3 h-3" />
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="bg-slate-900/40 border border-slate-800/80 p-1.5 sm:p-2 rounded-xl flex items-center gap-1">
-          <div className="p-1 bg-indigo-500/10 rounded-lg border border-indigo-500/20 shrink-0">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-          </div>
-          <div className="leading-none text-left">
-            <span className="text-[7px] uppercase font-bold text-slate-400">
-              Rank
-            </span>
-            <span className="block text-[11px] font-black text-indigo-300">
-              Lvl {playerLevel}
-            </span>
-          </div>
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            TICKETS
+          </span>
+          <span className="block text-xs font-black text-[#ffcc00] mt-1">
+            {goldenTickets} TKT
+          </span>
+        </div>
+
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            RANK
+          </span>
+          <span className="block text-xs font-black text-[#ec4899] mt-1">
+            LVL {playerLevel}
+          </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-5 border-b border-slate-800 bg-slate-950/40 p-1 rounded-xl gap-1">
+      {/* Tabs */}
+      <div className="grid grid-cols-5 border-2 border-black bg-slate-950 p-0.5 gap-0.5">
         {[
           { id: 'lobby', label: 'PLAY' },
           { id: 'profile', label: 'ME' },
@@ -339,10 +329,10 @@ export function Web3Dashboard({
                 sound.playPop();
                 setCurrentTab(tab.id as any);
               }}
-              className={`text-center py-2 text-[8px] sm:text-[10px] font-black uppercase tracking-tight rounded-lg transition-all cursor-pointer ${
+              className={`text-center py-2 text-[8px] sm:text-[9px] font-black uppercase font-mono transition-all cursor-pointer border ${
                 active
-                  ? 'bg-slate-900 text-slate-100 shadow-md border-b-2 border-slate-500'
-                  : 'text-slate-450 hover:text-slate-200'
+                  ? 'bg-[#00d2ff] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                  : 'text-slate-400 border-transparent hover:text-slate-200'
               }`}
             >
               {tab.label}
@@ -351,24 +341,24 @@ export function Web3Dashboard({
         })}
       </div>
 
-      <div className="flex-1 min-h-[290px] sm:min-h-[320px]">
+      <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-between">
         <AnimatePresence mode="wait">
           {currentTab === 'lobby' && (
             <motion.div
               key="lobby"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="space-y-4"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="space-y-4 flex-1 flex flex-col justify-between"
             >
-              <div className="bg-slate-900/30 p-4 rounded-2xl border border-slate-800/80 text-center space-y-2">
-                <h3 className="font-extrabold text-sm text-cyan-400 uppercase tracking-wider">
-                  Ready for Matchmaking
+              <div className="bg-[#18181c] p-4 pixel-box-sm border-black text-center space-y-2 flex-1 flex flex-col justify-center">
+                <h3 className="font-black text-xs text-[#00ff66] uppercase tracking-wider font-mono">
+                  [ READY FOR MATCHMAKING ]
                 </h3>
-                <p className="text-[10px] text-slate-400 leading-relaxed max-w-xs mx-auto">
-                  Challenge our smart contract AI nodes. Level up your rank, prove your skills, and earn cryptographic TON points.
+                <p className="text-[10px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
+                  Challenge smart contract nodes. Level up your rank, prove your skills, and earn cryptographic TON points.
                 </p>
-                <div className="pt-2 text-[9px] font-mono text-slate-400 bg-slate-950/60 p-1.5 rounded-lg inline-block border border-slate-850">
+                <div className="pt-2 text-[9px] font-mono text-[#ffcc00] bg-black p-1.5 border border-black inline-block max-w-[200px] mx-auto">
                   Rider: {userName}
                 </div>
               </div>
@@ -378,10 +368,10 @@ export function Web3Dashboard({
                   sound.playShuffle();
                   onStartGame();
                 }}
-                className="w-full py-3.5 bg-gradient-to-r from-blue-600 via-cyan-500 to-teal-500 text-white font-black text-xs sm:text-sm uppercase tracking-wider rounded-2xl border-b-4 border-blue-800 flex items-center justify-center gap-1.5 hover:brightness-115 active:scale-[0.98] transition-all shadow-lg cursor-pointer"
+                className="w-full py-4 bg-[#00ff66] text-black font-black text-xs sm:text-sm uppercase font-mono tracking-wider pixel-btn-interactive border-4 border-black flex items-center justify-center gap-2 shadow-[4px_4px_0_#000]"
               >
-                <Play className="w-4 h-4 fill-white text-white" />
-                DEAL CARDS & ENTER GAME
+                <Play className="w-4 h-4 fill-black text-black" />
+                DEAL CARDS & PLAY
               </button>
             </motion.div>
           )}
@@ -389,80 +379,103 @@ export function Web3Dashboard({
           {currentTab === 'profile' && (
             <motion.div
               key="profile"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               className="space-y-3"
             >
-              <div className="bg-slate-900/40 border border-slate-800/80 p-3 rounded-2xl space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className="text-left">
-                    <div className="text-sm font-black text-white flex items-center gap-1.5">
-                      {userName}
-                      {walletConnected && (
-                        <span className="text-[8px] uppercase tracking-wider font-extrabold bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/30">
-                          PRO VERIFIED
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-mono">
-                      {walletConnected ? `Address: ${walletAddress}` : 'No Web3 Wallet Connected'}
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                
+                {/* Profile Edit Card */}
+                <div className="grid grid-cols-1 gap-2.5 border-b border-black pb-3">
+                  <div className="space-y-1 text-left">
+                    <span className="text-[7px] text-slate-400 uppercase font-mono">Edit Surf Name</span>
+                    <input 
+                      type="text" 
+                      maxLength={12}
+                      value={userName} 
+                      onChange={(e) => onNameChange?.(e.target.value)} 
+                      className="pixel-box-sm bg-black border-black text-[#00ff66] text-xs font-mono px-2 py-1 w-full focus:outline-none focus:border-[#00d2ff]"
+                    />
+                  </div>
+
+                  <div className="space-y-1 text-left">
+                    <span className="text-[7px] text-slate-400 uppercase font-mono">Select Avatar Rider</span>
+                    <div className="grid grid-cols-6 gap-1">
+                      {AVATAR_LIST.map((av) => {
+                        const isSelected = selectedAvatar === av.id;
+                        return (
+                          <button
+                            key={av.id}
+                            type="button"
+                            onClick={() => onAvatarSelect?.(av.id)}
+                            className={`p-0.5 border transition-all cursor-pointer flex items-center justify-center ${
+                              isSelected 
+                                ? 'bg-[#00d2ff] border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]' 
+                                : 'bg-black border-black hover:bg-slate-900'
+                            }`}
+                            title={av.description}
+                          >
+                            <Avatar id={av.id} emotion="happy" isActive={isSelected} size={24} />
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-850/80">
-                  <div className="flex justify-between items-center text-[10px] font-bold">
-                    <span className="text-slate-400">XP PROGRESS</span>
-                    <span className="text-cyan-400 font-mono">{currentLevelXp} / {xpNeeded} XP</span>
+                <div className="space-y-1 bg-black p-2 border border-black">
+                  <div className="flex justify-between items-center text-[8px] font-bold">
+                    <span className="text-slate-450">XP PROGRESS</span>
+                    <span className="text-[#00d2ff]">{currentLevelXp} / {xpNeeded} XP</span>
                   </div>
-                  <div className="w-full bg-slate-900 h-2.5 rounded-full overflow-hidden relative border border-slate-800">
+                  <div className="w-full bg-slate-900 h-3 border border-black overflow-hidden relative">
                     <div
-                      className="bg-gradient-to-r from-blue-500 to-cyan-500 h-full rounded-full transition-all duration-1000 ease-out"
+                      className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
                       style={{ width: `${xpProgressPercentage}%` }}
                     ></div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-1 text-left">
-                  <div className="bg-slate-950/40 p-2 rounded-xl border border-slate-850/80">
-                    <span className="block text-slate-400 text-[9px] uppercase font-bold">GAMES PLAYED</span>
-                    <span className="text-sm font-black text-white">{stats.gamesPlayed} MATCHES</span>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-left text-[9px]">
+                  <div className="bg-black p-2 border border-black">
+                    <span className="block text-slate-500 text-[7px] uppercase font-bold">MATCHES</span>
+                    <span className="text-xs font-black text-white">{stats.gamesPlayed}</span>
                   </div>
-                  <div className="bg-slate-950/40 p-2 rounded-xl border border-slate-850/80">
-                    <span className="block text-slate-400 text-[9px] uppercase font-bold">WIN RATE (%)</span>
-                    <span className="text-sm font-black text-cyan-400">{winRate}% SUCCESS</span>
+                  <div className="bg-black p-2 border border-black">
+                    <span className="block text-slate-500 text-[7px] uppercase font-bold">WIN RATE</span>
+                    <span className="text-xs font-black text-[#00d2ff]">{winRate}%</span>
                   </div>
-                  <div className="bg-slate-950/40 p-2 rounded-xl border border-slate-850/80">
-                    <span className="block text-slate-400 text-[9px] uppercase font-bold">WINS</span>
-                    <span className="text-sm font-black text-cyan-455">{stats.gamesWon} VICTORIES</span>
+                  <div className="bg-black p-2 border border-black">
+                    <span className="block text-slate-500 text-[7px] uppercase font-bold">WINS</span>
+                    <span className="text-xs font-black text-[#00ff66]">{stats.gamesWon}</span>
                   </div>
-                  <div className="bg-slate-950/40 p-2 rounded-xl border border-slate-850/80">
-                    <span className="block text-slate-400 text-[9px] uppercase font-bold">TOTAL ACCUMULATED XP</span>
-                    <span className="text-sm font-black text-cyan-300">{playerXp} XP</span>
+                  <div className="bg-black p-2 border border-black">
+                    <span className="block text-slate-500 text-[7px] uppercase font-bold">TOTAL XP</span>
+                    <span className="text-xs font-black text-[#ec4899]">{playerXp} XP</span>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-slate-900/40 border border-slate-800/80 p-3 rounded-2xl space-y-1.5">
-                <div className="flex justify-between items-center text-[10px] uppercase font-bold text-slate-400 pb-1 border-b border-slate-800">
-                  <span className="flex items-center gap-1">
-                    <History className="w-3.5 h-3.5 text-cyan-400" />
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-1.5 font-mono text-[9px]">
+                <div className="flex justify-between items-center uppercase font-bold text-slate-400 pb-1 border-b border-black">
+                  <span className="flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-[#00d2ff]" />
                     Transaction Log
                   </span>
-                  <Globe className="w-3 h-3 animate-spin text-slate-600" style={{ animationDuration: '8s' }} />
+                  <Globe className="w-3 h-3 text-slate-600" />
                 </div>
 
-                <div className="space-y-1.5 max-h-24 overflow-y-auto pr-0.5 custom-scroll">
+                <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5 custom-scroll">
                   {transactions.map((tx: any) => (
-                    <div key={tx.id} className="flex justify-between items-center p-1.5 bg-slate-950/50 rounded-lg border border-slate-900 text-[9px] font-mono leading-tight">
-                      <div className="flex items-center gap-1.5 text-left">
-                        <span className={`w-1.5 h-1.5 rounded-full ${
-                          tx.type === 'claim' ? 'bg-cyan-450' : tx.type === 'mint' ? 'bg-teal-450' : 'bg-blue-450'
+                    <div key={tx.id} className="flex justify-between items-center p-1 bg-black border border-black leading-tight text-[8px]">
+                      <div className="flex items-center gap-1 text-left">
+                        <span className={`w-1.5 h-1.5 ${
+                          tx.type === 'claim' ? 'bg-[#00d2ff]' : tx.type === 'mint' ? 'bg-[#00ff66]' : 'bg-[#ff4b4b]'
                         }`}></span>
                         <div>
-                          <span className="text-slate-300 block">{tx.event}</span>
-                          <span className="text-slate-500 text-[8px]">{tx.time}</span>
+                          <span className="text-slate-350 block">{tx.event}</span>
+                          <span className="text-slate-500 text-[7px]">{tx.time}</span>
                         </div>
                       </div>
                       <span className="font-extrabold text-slate-200">{tx.value}</span>
@@ -479,7 +492,7 @@ export function Web3Dashboard({
                       resetStats();
                     }
                   }}
-                  className="w-full py-2 bg-rose-950/40 text-rose-300 hover:bg-rose-950/80 border border-rose-900/60 text-[10px] font-bold uppercase tracking-wider rounded-xl transition-colors cursor-pointer"
+                  className="w-full py-2 bg-[#ff4b4b]/20 text-[#ff4b4b] border-2 border-black pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono"
                 >
                   Hard Reset Progress
                 </button>
@@ -490,41 +503,41 @@ export function Web3Dashboard({
           {currentTab === 'tournaments' && (
             <motion.div
               key="tournaments"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               className="space-y-4 h-full flex flex-col justify-center py-4"
             >
-              <div className="bg-slate-900/40 border border-slate-800/80 p-5 rounded-2xl text-center space-y-4 relative">
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-cyan-500/10 border border-cyan-500/20 px-2 py-0.5 rounded-full text-cyan-400 text-[8px] font-mono">
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-5 text-center space-y-4 relative">
+                <div className="absolute top-2 right-2 flex items-center gap-1 bg-slate-950 border border-black px-2 py-0.5 text-[#ffcc00] text-[8px] font-mono">
                   <Lock className="w-2.5 h-2.5" /> COMING SOON
                 </div>
 
-                <div className="mx-auto w-12 h-12 bg-cyan-500/10 border border-cyan-500/20 rounded-full flex items-center justify-center text-cyan-400 shadow-md">
-                  <Trophy className="w-6 h-6" />
+                <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#ffcc00]">
+                  <Trophy className="w-5 h-5" />
                 </div>
 
-                <div className="space-y-1">
-                  <h3 className="font-black text-sm text-slate-100 uppercase tracking-widest">
-                    Championship Brackets
+                <div className="space-y-1 font-mono">
+                  <h3 className="font-black text-xs text-slate-100 uppercase">
+                    CHAMPIONSHIPS
                   </h3>
-                  <p className="text-[10px] text-slate-400 leading-relaxed max-w-xs mx-auto">
-                    Compete in structured tournament leagues against fellow card players to share massive prize pools of <strong className="text-cyan-400">TON</strong> tokens and badges.
+                  <p className="text-[9px] text-slate-450 leading-relaxed font-sans max-w-xs mx-auto">
+                    Compete in structured tournament leagues against fellow card players to share massive prize pools of TON tokens.
                   </p>
                 </div>
 
-                <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850/80 text-left text-[9px] font-mono space-y-2 text-slate-400">
+                <div className="bg-black p-3 border border-black text-left text-[8px] font-mono space-y-1 text-slate-400">
                   <div className="flex justify-between">
-                    <span>Target Pool:</span>
-                    <span className="text-cyan-405 font-bold">100,000 TON</span>
+                    <span>Pool:</span>
+                    <span className="text-[#00ff66] font-bold">100,000 TON</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Entry Tier:</span>
-                    <span>Level 3 minimum</span>
+                    <span>Min Tier:</span>
+                    <span>Level 3</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Status:</span>
-                    <span className="text-blue-450 font-bold">Deploying Contracts</span>
+                    <span className="text-[#00d2ff] font-bold">Deploying Contracts</span>
                   </div>
                 </div>
               </div>
@@ -534,42 +547,41 @@ export function Web3Dashboard({
           {currentTab === 'pvp' && (
             <motion.div
               key="pvp"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               className="space-y-3 h-full flex flex-col justify-center py-2 text-left"
             >
               {!walletConnected ? (
-                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl text-center space-y-3">
-                  <div className="mx-auto w-12 h-12 bg-blue-500/10 border border-blue-500/20 rounded-full flex items-center justify-center text-blue-400 shadow-md">
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-6 text-center space-y-3 font-mono">
+                  <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#00d2ff]">
                     <Wallet className="w-5 h-5" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="font-extrabold text-sm text-slate-100 uppercase tracking-widest">
-                      Sync Wallet to Enter Arena
+                    <h3 className="font-black text-xs text-slate-100 uppercase">
+                      Sync Wallet to Enter
                     </h3>
-                    <p className="text-[10px] text-slate-400 leading-relaxed max-w-xs mx-auto">
+                    <p className="text-[9px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                       Real stake PVP battles require matching through TON wallet signatures to secure your tickets pool.
                     </p>
                   </div>
                   <button
                     onClick={connectWallet}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-black text-xs uppercase tracking-wider rounded-xl hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                    className="w-full py-2 bg-[#00d2ff] text-black font-black text-xs uppercase pixel-btn-interactive border-2 border-black"
                   >
-                    Connect Wallet via TON Connect
+                    Connect TON Wallet
                   </button>
                 </div>
               ) : matchmakingState === 'searching' ? (
-                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl text-center space-y-4">
-                  <div className="relative flex items-center justify-center mx-auto">
-                    <Loader2 className="w-10 h-10 animate-spin text-cyan-400" />
-                    <span className="absolute text-xs font-mono font-bold text-cyan-400">{5 - matchmakingTimer}s</span>
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-6 text-center space-y-4 font-mono">
+                  <div className="relative flex items-center justify-center mx-auto w-12 h-12 bg-slate-950 border border-black">
+                    <span className="text-xs font-black text-[#00d2ff]">{5 - matchmakingTimer}S</span>
                   </div>
                   <div className="space-y-1">
-                    <h3 className="font-black text-xs text-cyan-455 uppercase tracking-wider">
-                      Matchmaker Queue Active
+                    <h3 className="font-black text-[10px] text-[#00ff66] uppercase">
+                      QUEUE ACTIVE
                     </h3>
-                    <p className="text-[9px] text-slate-400 leading-relaxed max-w-xs mx-auto">
+                    <p className="text-[9px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                       Anti-Sync buffer active. Gathering active tickets for a random delay. Players are anonymous to avoid collusion.
                     </p>
                   </div>
@@ -579,32 +591,32 @@ export function Web3Dashboard({
                       setGoldenTickets(prev => prev + selectedStake);
                       setMatchmakingState('idle');
                     }}
-                    className="px-3 py-1 bg-rose-950 text-rose-300 border border-rose-900 text-[10px] uppercase font-bold tracking-widest rounded-xl hover:bg-rose-900 transition-all cursor-pointer"
+                    className="w-full py-2 bg-[#ff4b4b] text-black border-2 border-black text-[9px] uppercase font-black pixel-btn-interactive"
                   >
                     Cancel Queue
                   </button>
                 </div>
               ) : matchmakingState === 'success' ? (
-                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl text-center space-y-2">
-                  <h3 className="font-black text-sm text-cyan-400 uppercase tracking-widest">
-                    Match Ready
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-6 text-center space-y-2 font-mono">
+                  <h3 className="font-black text-xs text-[#00ff66] uppercase">
+                    MATCH READY!
                   </h3>
-                  <p className="text-[10px] text-slate-400 font-mono">
+                  <p className="text-[9px] text-slate-455">
                     Stakes pool: {(selectedStake * 4 * 0.9).toFixed(1)} Tickets (10% platform tax applied)
                   </p>
                 </div>
               ) : (
-                <div className="bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-2xl space-y-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-black text-xs text-slate-100 uppercase tracking-wider">
-                      TON PVP Arena Room
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3.5 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[10px]">
+                    <h3 className="font-black text-slate-100 uppercase">
+                      TON PVP ARENA
                     </h3>
-                    <span className="text-[10px] font-mono text-cyan-400 bg-slate-950/40 px-2 py-0.5 rounded border border-slate-800">
-                      Balance: <strong>{goldenTickets}</strong> Tickets
+                    <span className="text-[9px] text-[#ffcc00] bg-black px-2 py-0.5 border border-black">
+                      BAL: <strong>{goldenTickets}</strong> TKT
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-1.5 text-center">
+                  <div className="grid grid-cols-4 gap-1">
                     {([1, 5, 10, 50] as const).map((stake) => (
                       <button
                         key={stake}
@@ -612,30 +624,30 @@ export function Web3Dashboard({
                           sound.playPop();
                           setSelectedStake(stake);
                         }}
-                        className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                        className={`p-2 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
                           selectedStake === stake
-                            ? 'bg-cyan-950/60 border-cyan-400 text-cyan-300 font-black shadow-md'
-                            : 'bg-slate-950/40 border-slate-800 text-slate-455'
+                            ? 'bg-[#00d2ff] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                            : 'bg-black border-black text-slate-450'
                         }`}
                       >
-                        <span className="block text-xs font-black">{stake} TKT</span>
-                        <span className="text-[7px] block text-slate-455 mt-0.5">{(stake * 0.5).toFixed(1)} TON</span>
+                        <span className="text-[10px] font-black">{stake}TKT</span>
+                        <span className="text-[7px] block mt-0.5">{(stake * 0.5).toFixed(1)}TON</span>
                       </button>
                     ))}
                   </div>
 
-                  <div className="bg-slate-950/60 p-2.5 rounded-xl border border-slate-850 text-[8px] font-mono leading-relaxed space-y-1.5 text-slate-455">
+                  <div className="bg-black p-2.5 border border-black text-[8px] leading-relaxed space-y-1 text-slate-450">
                     <div className="flex justify-between text-slate-350">
-                      <span>Prize pool model:</span>
-                      <span className="text-cyan-400 font-bold">{(selectedStake * 4 * 0.9).toFixed(1)} Tickets</span>
+                      <span>Prize pool:</span>
+                      <span className="text-[#00ff66] font-bold">{(selectedStake * 4 * 0.9).toFixed(1)} TKT</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Match Delay Buffering:</span>
+                      <span>Match Delay:</span>
                       <span>5-10s random queue</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Anti-Collusion Mode:</span>
-                      <span className="text-cyan-455">Incognito active</span>
+                      <span>Incognito mode:</span>
+                      <span className="text-[#00ff66]">ACTIVE</span>
                     </div>
                   </div>
 
@@ -643,17 +655,17 @@ export function Web3Dashboard({
                     <button
                       onClick={buyTicketsWithTon}
                       disabled={buyingTickets}
-                      className="flex-1 py-2 bg-slate-950 text-slate-300 hover:text-white border border-slate-800 hover:border-slate-700 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1"
+                      className="flex-1 py-2 bg-black text-slate-300 border border-black text-[9px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1"
                     >
                       {buyingTickets ? (
                         <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          Processing...
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          WAIT...
                         </>
                       ) : (
                         <>
-                          <span>Buy 10 Tickets</span>
-                          <span className="text-cyan-400 text-[8px] font-mono">(5 TON)</span>
+                          <span>BUY 10</span>
+                          <span className="text-[#00d2ff] text-[7px]">(5T)</span>
                         </>
                       )}
                     </button>
@@ -668,9 +680,9 @@ export function Web3Dashboard({
                         setMatchmakingState('searching');
                         setMatchmakingTimer(0);
                       }}
-                      className="flex-1 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 hover:brightness-110 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center"
+                      className="flex-1 py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                     >
-                      Find PvP Match
+                      FIND PVP
                     </button>
                   </div>
                 </div>
@@ -681,42 +693,42 @@ export function Web3Dashboard({
           {currentTab === 'rooms' && (
             <motion.div
               key="rooms"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               className="space-y-3 h-full flex flex-col justify-center py-2 text-left"
             >
               {!walletConnected ? (
-                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl text-center space-y-3">
-                  <div className="mx-auto w-12 h-12 bg-blue-500/10 border border-blue-500/20 rounded-full flex items-center justify-center text-blue-400 shadow-md">
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-6 text-center space-y-3 font-mono">
+                  <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#00d2ff]">
                     <Wallet className="w-5 h-5" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="font-extrabold text-sm text-slate-100 uppercase tracking-widest">
-                      Sync Wallet to Create Rooms
+                    <h3 className="font-black text-xs text-slate-100 uppercase">
+                      Sync Wallet to Create
                     </h3>
-                    <p className="text-[10px] text-slate-400 leading-relaxed max-w-xs mx-auto">
+                    <p className="text-[9px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                       Private custom matches require active wallet pairs to verify and reward the winner.
                     </p>
                   </div>
                   <button
                     onClick={connectWallet}
-                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-black text-xs uppercase tracking-wider rounded-xl hover:brightness-110 active:scale-95 transition-all cursor-pointer"
+                    className="w-full py-2 bg-[#00d2ff] text-black font-black text-xs uppercase pixel-btn-interactive border-2 border-black"
                   >
-                    Connect Wallet via TON Connect
+                    Connect TON Wallet
                   </button>
                 </div>
               ) : showRoomDisclaimer ? (
-                <div className="bg-slate-950/80 border border-rose-500/40 p-4 rounded-2xl text-center space-y-3">
-                  <h3 className="font-black text-xs text-rose-400 uppercase tracking-widest">
-                    Private Room Disclaimer
+                <div className="bg-[#0c0f12] border-2 border-[#ff4b4b] pixel-box-sm p-4 text-center space-y-3 font-mono text-[9px]">
+                  <h3 className="font-black text-xs text-[#ff4b4b] uppercase">
+                    !! PRIVATE MATCH RISK !!
                   </h3>
-                  <div className="text-[9px] text-slate-400 leading-relaxed text-left bg-slate-900/60 p-2.5 rounded-xl border border-slate-850 space-y-2">
+                  <div className="text-[8px] text-slate-350 leading-relaxed text-left bg-black p-2 border border-black space-y-1.5">
                     <p>
-                      <strong>You are joining a PRIVATE table.</strong> This match was created via a direct link. Opponents might play in collusion.
+                      <strong>You are joining a PRIVATE table.</strong> Opponents might play in collusion.
                     </p>
-                    <p className="text-cyan-400 font-bold">
-                      Platform tax is increased to 30% to prevent commercial abuse and token dumps.
+                    <p className="text-[#ffcc00] font-bold">
+                      Platform tax is increased to 30% to prevent token abuse.
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -725,9 +737,9 @@ export function Web3Dashboard({
                         sound.playPop();
                         setShowRoomDisclaimer(false);
                       }}
-                      className="flex-1 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-450 border border-slate-800 text-[9px] uppercase font-bold tracking-widest rounded-lg cursor-pointer"
+                      className="flex-1 py-1.5 bg-black text-slate-450 border border-black uppercase font-bold pixel-btn-interactive text-[8px]"
                     >
-                      Safe PVP
+                      EXIT
                     </button>
                     <button
                       onClick={() => {
@@ -740,26 +752,26 @@ export function Web3Dashboard({
                         setShowRoomDisclaimer(false);
                         onStartGame();
                       }}
-                      className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-[9px] uppercase font-bold tracking-widest rounded-lg cursor-pointer"
+                      className="flex-1 py-1.5 bg-[#ff4b4b] text-black uppercase font-black pixel-btn-interactive border border-black text-[8px]"
                     >
-                      Accept & Enter
+                      CONFIRM
                     </button>
                   </div>
                 </div>
               ) : (
-                <div className="bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-2xl space-y-3">
-                  <div className="flex justify-between items-center">
-                    <h3 className="font-black text-xs text-slate-100 uppercase tracking-wider">
-                      Private Room Creator
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3.5 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[10px]">
+                    <h3 className="font-black text-slate-100 uppercase">
+                      PRIVATE ROOM
                     </h3>
-                    <span className="text-[9px] font-mono text-cyan-400 bg-slate-950/40 px-2 py-0.5 rounded border border-slate-800">
-                      Balance: <strong>{goldenTickets}</strong> Tickets
+                    <span className="text-[9px] text-[#00d2ff] bg-black px-2 py-0.5 border border-black">
+                      BAL: <strong>{goldenTickets}</strong> TKT
                     </span>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[8px] font-bold text-slate-400 uppercase tracking-wider">Select Room Stake</label>
-                    <div className="grid grid-cols-4 gap-1.5 text-center">
+                    <label className="text-[8px] font-bold text-slate-400 uppercase font-mono">Select Room Stake</label>
+                    <div className="grid grid-cols-4 gap-1">
                       {([1, 5, 10, 50] as const).map((stake) => (
                         <button
                           key={stake}
@@ -768,14 +780,14 @@ export function Web3Dashboard({
                             setPrivateRoomStake(stake);
                             setGeneratedLink('');
                           }}
-                          className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                          className={`p-2 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
                             privateRoomStake === stake
-                              ? 'bg-cyan-950/60 border-cyan-400 text-cyan-300 font-black shadow-md'
-                              : 'bg-slate-950/40 border-slate-800 text-slate-450'
+                              ? 'bg-[#00d2ff] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                              : 'bg-black border-black text-slate-450'
                           }`}
                         >
-                          <span className="block text-xs font-black">{stake} TKT</span>
-                          <span className="text-[7px] block text-slate-455 mt-0.5">{(stake * 0.5).toFixed(1)} TON</span>
+                          <span className="text-[10px] font-black">{stake}TKT</span>
+                          <span className="text-[7px] block mt-0.5">{(stake * 0.5).toFixed(1)}TON</span>
                         </button>
                       ))}
                     </div>
@@ -788,18 +800,18 @@ export function Web3Dashboard({
                         const randomRoom = Math.random().toString(36).substring(2, 8);
                         setGeneratedLink(`https://t.me/yo_uno_bot/app?startapp=room_${randomRoom}`);
                       }}
-                      className="w-full py-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 hover:brightness-110 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center"
+                      className="w-full py-2.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                     >
-                      Generate Invite Link
+                      GENERATE INVITE LINK
                     </button>
                   ) : (
-                    <div className="space-y-2">
-                      <div className="flex gap-1.5">
+                    <div className="space-y-2 text-[9px]">
+                      <div className="flex gap-1">
                         <input
                           type="text"
                           readOnly
                           value={generatedLink}
-                          className="flex-1 bg-slate-950 border border-slate-800 text-slate-300 px-2.5 py-1.5 rounded-lg text-[9px] font-mono select-all focus:outline-none"
+                          className="flex-1 bg-black border border-black text-slate-300 px-2 py-1.5 text-[8px] font-mono focus:outline-none select-all"
                         />
                         <button
                           onClick={() => {
@@ -807,7 +819,7 @@ export function Web3Dashboard({
                             navigator.clipboard.writeText(generatedLink);
                             alert("Link copied to clipboard!");
                           }}
-                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[9px] font-bold uppercase rounded-lg border border-slate-750 cursor-pointer"
+                          className="px-3 py-1.5 bg-[#00d2ff] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black"
                         >
                           Copy
                         </button>
@@ -817,9 +829,9 @@ export function Web3Dashboard({
                           sound.playPop();
                           setShowRoomDisclaimer(true);
                         }}
-                        className="w-full py-2 bg-slate-950 text-slate-300 hover:text-white border border-slate-850 text-[10px] font-black uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                        className="w-full py-2 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
                       >
-                        Enter Room Lobby
+                        ENTER ROOM
                       </button>
                     </div>
                   )}
