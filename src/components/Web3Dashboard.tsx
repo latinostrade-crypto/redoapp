@@ -33,6 +33,7 @@ interface Web3DashboardProps {
   onStartGame: () => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
+  onOpenRules?: () => void;
 }
 
 export function Web3Dashboard({
@@ -49,6 +50,7 @@ export function Web3Dashboard({
   onStartGame,
   onNameChange,
   onAvatarSelect,
+  onOpenRules,
 }: Web3DashboardProps) {
   const [currentTab, setCurrentTab] = useState<'lobby' | 'profile' | 'tournaments' | 'pvp' | 'rooms'>('lobby');
 
@@ -224,96 +226,8 @@ export function Web3Dashboard({
   return (
     <div className="w-full bg-[#0c0f12] text-[#f8fafc] pixel-box-lg p-3 sm:p-5 relative overflow-hidden flex flex-col gap-4 select-none pixel-scanlines">
       
-      {/* Network Connectivity bar */}
-      <div className="flex justify-between items-center bg-[#18181c] p-2.5 pixel-box-sm border-black">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00ff66] opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00ff66]"></span>
-          </span>
-          <div className="leading-none text-left">
-            <span className="block text-[8px] uppercase font-black tracking-widest text-[#00ff66] font-mono">
-              TON NETWORK
-            </span>
-            <span className="text-[9px] font-mono text-slate-400">
-              SURF_ARENA_NODE_1
-            </span>
-          </div>
-        </div>
-
-        <button
-          onClick={connectWallet}
-          disabled={isConnecting}
-          className={`px-3 py-1.5 pixel-btn-interactive text-[10px] font-black uppercase font-mono tracking-wider flex items-center gap-1.5 ${
-            isConnecting
-              ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-              : walletConnected
-              ? 'bg-[#ff4b4b] text-black border-2 border-black shadow-[2px_2px_0_#000]'
-              : 'bg-[#00d2ff] text-black border-2 border-black shadow-[2px_2px_0_#000]'
-          }`}
-        >
-          {isConnecting ? (
-            <>
-              <Loader2 className="w-3 h-3 animate-spin" />
-              SYNCING...
-            </>
-          ) : walletConnected ? (
-            <>
-              <Check className="w-3 h-3 text-black" />
-              {walletAddress}
-            </>
-          ) : (
-            <>
-              <Wallet className="w-3 h-3 text-black" />
-              CONNECT
-            </>
-          )}
-        </button>
-      </div>
-
-      {/* Grid statistics (Neon-bordered boxes) */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            TON POINTS
-          </span>
-          <div className="flex items-center justify-between mt-1">
-            <span className="text-xs font-black text-[#00d2ff]">
-              {yoTokenBalance}
-            </span>
-            {walletConnected && !faucetClaimedToday && (
-              <button
-                onClick={claimFaucet}
-                className="p-0.5 bg-[#00ff66] text-black border border-black hover:scale-105 active:scale-95 shrink-0"
-                title="Claim daily 50 TON"
-              >
-                <Gift className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            TICKETS
-          </span>
-          <span className="block text-xs font-black text-[#ffcc00] mt-1">
-            {goldenTickets} TKT
-          </span>
-        </div>
-
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            RANK
-          </span>
-          <span className="block text-xs font-black text-[#ec4899] mt-1">
-            LVL {playerLevel}
-          </span>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="grid grid-cols-5 border-2 border-black bg-slate-950 p-0.5 gap-0.5">
+      {/* 1. Tabs (Swapped to the top of the card) */}
+      <div className="grid grid-cols-5 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
         {[
           { id: 'lobby', label: 'PLAY' },
           { id: 'profile', label: 'ME' },
@@ -341,6 +255,96 @@ export function Web3Dashboard({
         })}
       </div>
 
+      {/* 2. Network Connectivity bar */}
+      <div className="flex justify-between items-center bg-[#18181c] p-2.5 pixel-box-sm border-black">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00ff66] opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00ff66]"></span>
+          </span>
+          <div className="leading-none text-left">
+            <span className="block text-[8px] uppercase font-black tracking-widest text-[#00ff66] font-mono">
+              TON NETWORK
+            </span>
+            <span className="text-[9px] font-mono text-slate-400">
+              SURF_ARENA_NODE_1
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {walletConnected && !faucetClaimedToday && (
+            <button
+              onClick={claimFaucet}
+              className="p-1 bg-[#00ff66] text-black border-2 border-black pixel-btn-interactive text-[8px] font-black uppercase font-mono tracking-wider flex items-center justify-center gap-1"
+              title="Claim daily 50 TON Points"
+            >
+              <Gift className="w-3.5 h-3.5" />
+              <span>CLAIM</span>
+            </button>
+          )}
+          <button
+            onClick={connectWallet}
+            disabled={isConnecting}
+            className={`px-3 py-1.5 pixel-btn-interactive text-[10px] font-black uppercase font-mono tracking-wider flex items-center gap-1.5 ${
+              isConnecting
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                : walletConnected
+                ? 'bg-[#ff4b4b] text-black border-2 border-black shadow-[2px_2px_0_#000]'
+                : 'bg-[#00d2ff] text-black border-2 border-black shadow-[2px_2px_0_#000]'
+            }`}
+          >
+            {isConnecting ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin" />
+                SYNCING...
+              </>
+            ) : walletConnected ? (
+              <>
+                <Check className="w-3 h-3 text-black" />
+                {walletAddress}
+              </>
+            ) : (
+              <>
+                <Wallet className="w-3 h-3 text-black" />
+                CONNECT
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* 3. Grid statistics (XP instead of TON Points) */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            XP POINTS
+          </span>
+          <span className="block text-xs font-black text-[#00d2ff] mt-1">
+            {playerXp} XP
+          </span>
+        </div>
+
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            TICKETS
+          </span>
+          <span className="block text-xs font-black text-[#ffcc00] mt-1">
+            {goldenTickets} TKT
+          </span>
+        </div>
+
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            RANK
+          </span>
+          <span className="block text-xs font-black text-[#ec4899] mt-1">
+            LVL {playerLevel}
+          </span>
+        </div>
+      </div>
+
+      {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-between">
         <AnimatePresence mode="wait">
           {currentTab === 'lobby' && (
@@ -358,8 +362,14 @@ export function Web3Dashboard({
                 <p className="text-[10px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
                   Challenge smart contract nodes. Level up your rank, prove your skills, and earn cryptographic TON points.
                 </p>
-                <div className="pt-2 text-[9px] font-mono text-[#ffcc00] bg-black p-1.5 border border-black inline-block max-w-[200px] mx-auto">
-                  Rider: {userName}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenRules?.()}
+                    className="py-1 px-3 bg-[#ffcc00] text-black font-black text-[9px] uppercase font-mono tracking-wider pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
+                  >
+                    [ RULES & GUIDE ]
+                  </button>
                 </div>
               </div>
 
@@ -426,7 +436,7 @@ export function Web3Dashboard({
 
                 <div className="space-y-1 bg-black p-2 border border-black">
                   <div className="flex justify-between items-center text-[8px] font-bold">
-                    <span className="text-slate-450">XP PROGRESS</span>
+                    <span className="text-slate-455">XP PROGRESS</span>
                     <span className="text-[#00d2ff]">{currentLevelXp} / {xpNeeded} XP</span>
                   </div>
                   <div className="w-full bg-slate-900 h-3 border border-black overflow-hidden relative">
@@ -451,8 +461,8 @@ export function Web3Dashboard({
                     <span className="text-xs font-black text-[#00ff66]">{stats.gamesWon}</span>
                   </div>
                   <div className="bg-black p-2 border border-black">
-                    <span className="block text-slate-500 text-[7px] uppercase font-bold">TOTAL XP</span>
-                    <span className="text-xs font-black text-[#ec4899]">{playerXp} XP</span>
+                    <span className="block text-slate-500 text-[7px] uppercase font-bold">TON POINTS</span>
+                    <span className="text-xs font-black text-[#ffcc00]">{yoTokenBalance} pts</span>
                   </div>
                 </div>
               </div>

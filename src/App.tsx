@@ -267,8 +267,8 @@ export default function App() {
   }, [gameState]);
 
   return (
-    <div className={`w-full bg-[#0c0f12] text-[#f8fafc] flex flex-col items-center justify-start relative select-none overflow-hidden ${
-      gameState.phase === 'setup' ? 'min-h-screen bg-[#0c0f12]' : 'h-screen max-h-screen'
+    <div className={`w-full bg-[#0c0f12] text-[#f8fafc] flex flex-col items-center relative select-none overflow-hidden ${
+      gameState.phase === 'setup' ? 'min-h-screen justify-end pb-8 sm:pb-12' : 'h-screen max-h-screen justify-start'
     }`}>
       
       {/* Pixelated grid background in setup mode */}
@@ -284,20 +284,20 @@ export default function App() {
         </div>
       )}
 
-      {/* HEADER PANELS */}
-      <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
-            YO
-          </span>
-          <h1 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
-            PIXEL <span className="text-[#ffcc00]">UNO</span>
-          </h1>
-        </div>
+      {/* HEADER PANELS (Only rendered during active gameplay) */}
+      {gameState.phase !== 'setup' && (
+        <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
+              YO
+            </span>
+            <h1 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
+              PIXEL <span className="text-[#ffcc00]">UNO</span>
+            </h1>
+          </div>
 
-        {/* Global Controls */}
-        <div className="flex items-center gap-2">
-          {gameState.phase !== 'setup' && (
+          {/* Global Controls */}
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 sound.playPop();
@@ -311,30 +311,30 @@ export default function App() {
             >
               <RotateCcw className="w-4 h-4" />
             </button>
-          )}
 
-          <button
-            onClick={() => {
-              sound.playPop();
-              setRulesOpen(true);
-            }}
-            className="p-1 bg-slate-950 border-2 border-black text-[#ffcc00] pixel-btn-interactive"
-            title="Schedules / Rules"
-          >
-            <HelpCircle className="w-4 h-4 stroke-[3]" />
-          </button>
+            <button
+              onClick={() => {
+                sound.playPop();
+                setRulesOpen(true);
+              }}
+              className="p-1 bg-slate-950 border-2 border-black text-[#ffcc00] pixel-btn-interactive"
+              title="Schedules / Rules"
+            >
+              <HelpCircle className="w-4 h-4 stroke-[3]" />
+            </button>
 
-          <button
-            onClick={toggleMute}
-            className={`p-1 border-2 border-black pixel-btn-interactive ${
-              muted ? 'bg-red-950/40 text-[#ff4b4b]' : 'bg-slate-950 text-[#00ff66]'
-            }`}
-            title={muted ? 'Unmute Sound' : 'Mute Sound'}
-          >
-            {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-          </button>
-        </div>
-      </header>
+            <button
+              onClick={toggleMute}
+              className={`p-1 border-2 border-black pixel-btn-interactive ${
+                muted ? 'bg-red-950/40 text-[#ff4b4b]' : 'bg-slate-950 text-[#00ff66]'
+              }`}
+              title={muted ? 'Unmute Sound' : 'Mute Sound'}
+            >
+              {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+          </div>
+        </header>
+      )}
 
       {/* GAME EVENT TICKER LOG */}
       {gameState.phase === 'playing' && gameState.logs.length > 0 && (
@@ -353,29 +353,16 @@ export default function App() {
 
       {/* LOBBY / SETUP SCREEN */}
       {gameState.phase === 'setup' && (
-        <main className="flex-1 w-full max-w-lg px-4 py-6 flex flex-col justify-center items-center gap-6 z-10 animate-fade-in">
-          
-          {/* Main Title Badge */}
-          <div className="text-center space-y-2 mt-1">
-            <div className="inline-block transform rotate-[-2deg] hover:rotate-2 transition-transform duration-300">
-              <div className="bg-[#0c0f12] text-white border-4 border-black p-4 shadow-[6px_6px_0_#000] relative">
-                <span className="absolute -top-3 -right-2 text-2xl animate-bounce">🍌</span>
-                <span className="absolute -bottom-2 -left-2 text-xl">🎮</span>
-                <h2 className="text-3xl sm:text-5xl font-black font-mono tracking-tight leading-none text-[#ffcc00]">
-                  YO_UNO!
-                </h2>
-                <span className="text-[8px] sm:text-[10px] uppercase font-black font-mono text-[#00d2ff] tracking-widest mt-1 block">
-                  Web3 Arcade Card Game
-                </span>
-              </div>
-            </div>
-            <p className="text-slate-400 font-mono text-[10px] bg-black border border-black px-3 py-1 inline-block">
-              [ PLAY AGAINST FLUFFY AI FRIENDS! ]
-            </p>
+        <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-end">
+          {/* Small minimalist title */}
+          <div className="text-center mb-4">
+            <span className="px-2 py-0.5 bg-black border border-black text-[#ffcc00] font-black text-xs font-mono tracking-widest shadow-[2px_2px_0_#000]">
+              :: YO_UNO ::
+            </span>
           </div>
 
           {/* Web3 Smartphone-Oriented Dashboard Menu */}
-          <div className="w-full max-w-md z-10">
+          <div className="w-full z-10">
             <Web3Dashboard
               userName={userName}
               selectedAvatar={selectedAvatar}
@@ -390,6 +377,7 @@ export default function App() {
               onStartGame={() => startGame(selectedAvatar, userName)}
               onNameChange={setUserName}
               onAvatarSelect={setSelectedAvatar}
+              onOpenRules={() => setRulesOpen(true)}
             />
           </div>
         </main>
