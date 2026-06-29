@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { UnoCardType, CardColor, CardValue } from '../types';
-import { RefreshCw, Ban, Layers, Palette } from 'lucide-react';
+import { RefreshCw, Ban } from 'lucide-react';
 
 interface UnoCardProps {
   card: UnoCardType;
@@ -14,6 +14,85 @@ interface UnoCardProps {
   isPlayable?: boolean;
   size?: 'sm' | 'md' | 'lg' | 'responsive';
   indexOffset?: number; // useful for overlapping fanning hand
+}
+
+function getDeterministicHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash);
+}
+
+function getCardImageUrl(color: CardColor, value: CardValue, id: string): string {
+  // Check wild values first, regardless of the card's active color state
+  if (value === 'wild') {
+    const hash = getDeterministicHash(id || 'wild');
+    const index = (hash % 4) + 1;
+    return `/cards/wild ${index}.jpeg`;
+  }
+
+  if (value === 'wild_draw4') {
+    let colorName = '';
+    if (color === 'wild') {
+      const hash = getDeterministicHash(id || 'draw4');
+      const colors = ['red', 'blue', 'gold', 'purp'];
+      colorName = colors[hash % 4];
+    } else {
+      if (color === 'red') colorName = 'red';
+      else if (color === 'blue') colorName = 'blue';
+      else if (color === 'yellow') colorName = 'gold';
+      else if (color === 'green') colorName = 'purp';
+    }
+    return `/cards/+4 ${colorName}.jpeg`;
+  }
+
+  // Regular color cards
+  let colorName = '';
+  if (color === 'red') {
+    colorName = 'red';
+  } else if (color === 'blue') {
+    colorName = 'blue';
+  } else if (color === 'yellow') {
+    colorName = 'gold';
+  } else if (color === 'green') {
+    const usePurple = ['1', '2', '5', '6', 'reverse'];
+    if (usePurple.includes(value)) {
+      colorName = 'purple';
+    } else {
+      colorName = 'purp';
+    }
+  }
+
+  if (value === 'draw2') {
+    const displayColor = color === 'red' ? 'Red' : colorName;
+    return `/cards/+2 ${displayColor}.jpeg`;
+  }
+
+  if (value === 'skip') {
+    const skipWord = color === 'green' ? 'rug' : 'Rug';
+    return `/cards/${skipWord} ${colorName}.jpeg`;
+  }
+
+  if (value === 'reverse') {
+    return `/cards/Flip ${colorName}.jpeg`;
+  }
+
+  if (value >= '0' && value <= '9') {
+    if (value === '3' && color === 'yellow') {
+      return `/cards/3gold.jpeg`;
+    }
+    return `/cards/${value} ${colorName}.jpeg`;
+  }
+
+  return '';
+}
+
+function getEncodedCardImageUrl(color: CardColor, value: CardValue, id: string): string {
+  const path = getCardImageUrl(color, value, id);
+  if (!path) return '';
+  // Encode spaces to %20 and pluses to %2B for clean local server requests
+  return encodeURI(path).replace(/\+/g, '%2B');
 }
 
 export const UnoCard: React.FC<UnoCardProps> = ({
@@ -25,8 +104,29 @@ export const UnoCard: React.FC<UnoCardProps> = ({
   indexOffset = 0,
 }) => {
   const { color, value } = card;
+  const [imgError, setImgError] = React.useState(false);
 
-  // Background and border colors based on cartoony palettes
+  React.useEffect(() => {
+    setImgError(false);
+  }, [card.id, card.color, card.value, isBack]);
+
+  const imageUrl = getEncodedCardImageUrl(color, value, card.id);
+  const isPlayedWild = (value === 'wild' || value === 'wild_draw4') && color !== 'wild';
+
+  const getBorderClass = (c: CardColor, isWild: boolean) => {
+    if (!isWild) return 'border-white';
+    switch (c) {
+      case 'red': return 'border-[#EF233C]';
+      case 'blue': return 'border-[#0077B6]';
+      case 'green': return 'border-[#38B000]';
+      case 'yellow': return 'border-[#FFD60A]';
+      default: return 'border-white';
+    }
+  };
+
+  const borderClass = getBorderClass(color, isPlayedWild);
+
+  // Background and border colors based on cartoony palettes (for CSS fallback)
   const getPalette = (c: CardColor) => {
     switch (c) {
       case 'red':
@@ -204,7 +304,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
       id={card.id}
       onClick={onClick}
       disabled={!onClick}
-      className={`relative ${sizeClasses.card} ${palette.border} ${palette.bg} transition-all duration-300 select-none overflow-hidden flex items-center justify-center text-white
+      className={`relative ${sizeClasses.card} ${borderClass} ${palette.bg} transition-all duration-300 select-none overflow-hidden flex items-center justify-center text-white
         ${isPlayable
           ? 'cursor-pointer hover:scale-110 active:scale-95 ring-4 ring-[#FFD60A] hover:rotate-[-2deg] animate-bounce-subtle outline-none shadow-[0_0_15px_rgba(250,204,21,0.5)] z-20'
           : 'cursor-default opacity-90'
@@ -216,34 +316,54 @@ export const UnoCard: React.FC<UnoCardProps> = ({
           : '0 4px 8px rgba(0,0,0,0.15), inset 0 2px 4px 0 rgba(255,255,255,0.2)',
       }}
     >
-      {/* Cartoon inside highlight bubble overlay */}
-      <div className="absolute top-1 left-1 w-2/3 h-5 bg-white/20 rounded-full rotate-[-12deg] filter blur-[0.5px]"></div>
-
-      {/* Tiny badge numbers in corners - bold crisp white */}
-      <div className={`absolute ${sizeClasses.badgeNum} font-extrabold select-none tracking-widest drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]`}>
-        {getBadgeSymbol(value)}
-      </div>
-
-      <div className={`absolute ${sizeClasses.badgeNumBottom} font-extrabold select-none tracking-widest rotate-180 drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]`}>
-        {getBadgeSymbol(value)}
-      </div>
-
-      {/* Center White Oval: solid white background to pop the content */}
-      <div
-        className={`${sizeClasses.centerOval} bg-white rotate-[15deg] flex items-center justify-center transform hover:scale-105 transition-transform`}
-        style={{
-          boxShadow: '0 2px 5px rgba(0,0,0,0.2), inset 0 -2px 4px rgba(0,0,0,0.1)',
-        }}
-      >
-        {/* Playable Star Burst effect */}
-        {isPlayable && (
-          <div className="absolute inset-0 bg-[#FFD60A]/10 rounded-full animate-pulse"></div>
-        )}
-
-        <div className="rotate-[-15deg] flex items-center justify-center transform active:scale-110">
-          {renderSymbol(value, color)}
+      {imageUrl && !imgError ? (
+        <div className="w-full h-full relative flex items-center justify-center bg-black/5">
+          <img
+            src={imageUrl}
+            alt={`${color} ${value}`}
+            onError={() => {
+              console.warn(`Failed to load card image: ${imageUrl}. Falling back to CSS render.`);
+              setImgError(true);
+            }}
+            className="w-full h-full object-cover select-none pointer-events-none"
+          />
+          {/* Subtle cartoon glow if playable */}
+          {isPlayable && (
+            <div className="absolute inset-0 bg-[#FFD60A]/10 animate-pulse pointer-events-none"></div>
+          )}
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Cartoon inside highlight bubble overlay */}
+          <div className="absolute top-1 left-1 w-2/3 h-5 bg-white/20 rounded-full rotate-[-12deg] filter blur-[0.5px]"></div>
+
+          {/* Tiny badge numbers in corners - bold crisp white */}
+          <div className={`absolute ${sizeClasses.badgeNum} font-extrabold select-none tracking-widest drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]`}>
+            {getBadgeSymbol(value)}
+          </div>
+
+          <div className={`absolute ${sizeClasses.badgeNumBottom} font-extrabold select-none tracking-widest rotate-180 drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]`}>
+            {getBadgeSymbol(value)}
+          </div>
+
+          {/* Center White Oval: solid white background to pop the content */}
+          <div
+            className={`${sizeClasses.centerOval} bg-white rotate-[15deg] flex items-center justify-center transform hover:scale-105 transition-transform`}
+            style={{
+              boxShadow: '0 2px 5px rgba(0,0,0,0.2), inset 0 -2px 4px rgba(0,0,0,0.1)',
+            }}
+          >
+            {/* Playable Star Burst effect */}
+            {isPlayable && (
+              <div className="absolute inset-0 bg-[#FFD60A]/10 rounded-full animate-pulse"></div>
+            )}
+
+            <div className="rotate-[-15deg] flex items-center justify-center transform active:scale-110">
+              {renderSymbol(value, color)}
+            </div>
+          </div>
+        </>
+      )}
     </button>
   );
 };

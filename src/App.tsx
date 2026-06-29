@@ -50,18 +50,20 @@ export default function App() {
 
   const [rulesOpen, setRulesOpen] = useState(false);
   const [muted, setMuted] = useState(() => sound.getMuted());
-  const [userName, setUserName] = useState('Cute Cadet');
+  const [userName, setUserName] = useState('Surf Rider');
+
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
 
   // Available avatars to select in lobby
   const AVATAR_LIST: { id: AvatarId; emoji: string; bg: string; description: string }[] = [
-    { id: 'rabbit', emoji: '🐰', bg: 'bg-pink-100 border-pink-400 text-pink-700', description: 'Bouncy bunny hop!' },
-    { id: 'bear', emoji: '🐻', bg: 'bg-amber-100 border-amber-400 text-amber-800', description: 'Sweet honey bear!' },
-    { id: 'fox', emoji: '🦊', bg: 'bg-orange-100 border-orange-400 text-orange-700', description: 'Sneaky clever logs!' },
-    { id: 'panda', emoji: '🐼', bg: 'bg-slate-100 border-slate-400 text-slate-800', description: 'Chill bamboo roller!' },
-    { id: 'cat', emoji: '🐱', bg: 'bg-violet-100 border-violet-400 text-violet-700', description: 'Playful whisker star!' },
-    { id: 'koala', emoji: '🐨', bg: 'bg-emerald-100 border-emerald-400 text-emerald-800', description: 'Cute eucalyptus hug!' },
+    { id: 'rabbit', emoji: 'R', bg: 'bg-pink-950 border-pink-700 text-pink-300', description: 'Twilight Wave rider.' },
+    { id: 'bear', emoji: 'B', bg: 'bg-blue-950 border-blue-700 text-blue-300', description: 'Ocean Deep rider.' },
+    { id: 'fox', emoji: 'F', bg: 'bg-orange-950 border-orange-700 text-orange-300', description: 'Sunset Glide rider.' },
+    { id: 'panda', emoji: 'P', bg: 'bg-teal-950 border-teal-700 text-teal-300', description: 'Lagoon Teal rider.' },
+    { id: 'cat', emoji: 'C', bg: 'bg-rose-950 border-rose-700 text-rose-300', description: 'Coral Surf rider.' },
+    { id: 'koala', emoji: 'K', bg: 'bg-slate-900 border-slate-700 text-slate-300', description: 'Storm Rider.' },
   ];
+
 
   const toggleMute = () => {
     const isNowMuted = sound.toggleMute();
@@ -722,44 +724,45 @@ export default function App() {
 
       {/* WILD COLOR PICKER MODAL SELECTOR OVERLAY */}
       {wildSelectOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl border-4 border-slate-950 p-6 w-full max-w-sm text-center shadow-2xl animate-pop">
-            <h3 className="text-xl font-black text-slate-900 mb-2 flex items-center justify-center gap-1.5">
-              <span>🌈</span> Select Next Suit Color:
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl animate-pop text-slate-200">
+            <h3 className="text-xl font-black text-slate-100 mb-2 flex items-center justify-center gap-1.5">
+              Select Next Suit Color
             </h3>
-            <p className="text-xs text-slate-550 mb-5">
-              Choose which cute color to color-swap the pile to!
+            <p className="text-xs text-slate-400 mb-5">
+              Choose which surfer deck color to swap the active suit to
             </p>
 
             <div className="grid grid-cols-2 gap-4">
               <button
                 onClick={() => selectWildColor('red')}
-                className="py-5 rounded-2xl bg-[#EF233C] text-white font-black text-base border-b-4 border-[#D90429] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-4 rounded-2xl bg-[#EF233C] text-white font-black text-sm border-b-4 border-[#D90429] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
               >
-                🔴 Red Suit
+                Red Suit
               </button>
               <button
                 onClick={() => selectWildColor('blue')}
-                className="py-5 rounded-2xl bg-[#0077B6] text-white font-black text-base border-b-4 border-[#03045E] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-4 rounded-2xl bg-[#0077B6] text-white font-black text-sm border-b-4 border-[#03045E] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
               >
-                🔵 Blue Suit
+                Blue Suit
               </button>
               <button
                 onClick={() => selectWildColor('yellow')}
-                className="py-5 rounded-2xl bg-[#FFD60A] text-zinc-950 font-black text-base border-b-4 border-[#FFB703] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-4 rounded-2xl bg-[#FFD60A] text-zinc-950 font-black text-sm border-b-4 border-[#FFB703] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
               >
-                🟡 Yellow Suit
+                Gold Suit
               </button>
               <button
                 onClick={() => selectWildColor('green')}
-                className="py-5 rounded-2xl bg-[#38B000] text-white font-black text-base border-b-4 border-[#007200] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
+                className="py-4 rounded-2xl bg-[#38B000] text-white font-black text-sm border-b-4 border-[#007200] active:scale-95 hover:brightness-105 transition-all shadow-md select-none uppercase"
               >
-                🟢 Green Suit
+                Purple Suit
               </button>
             </div>
           </div>
         </div>
       )}
+
 
       {/* GAME OVER SCREEN OVERLAY (LEADERBOARD & REWARDS) */}
       {gameState.phase === 'game_over' && (
@@ -786,28 +789,23 @@ export default function App() {
           <div className="bg-[#1A1C23] text-white rounded-3xl border-4 border-slate-900 p-3 sm:p-5 w-full max-w-sm sm:max-w-md text-center shadow-3xl animate-pop relative z-10 max-h-[92vh] flex flex-col overflow-y-auto custom-scroll">
             <div className="absolute -top-12 -left-12 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl"></div>
             <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
-
-            {/* Header Badge */}
-            <div className="inline-block mx-auto px-2.5 py-0.5 bg-slate-850 border border-slate-700 rounded-full text-[9px] sm:text-xs font-black text-yellow-400 tracking-wider uppercase mb-1">
-              🏆 Match Standings
-            </div>
-
             <h2 className="text-lg sm:text-2xl font-black tracking-tight leading-none mb-0.5 text-white flex justify-center items-center gap-1">
+
               {gameState.winnerId === 'player' ? (
-                <>🏆 VICTORY MATCH! <span className="animate-pulse">🎉</span></>
+                <>VICTORY MATCH</>
               ) : (
-                <>🐾 GAME OVER <span className="opacity-80">🐼</span></>
+                <>GAME OVER</>
               )}
             </h2>
             <p className="text-slate-400 text-[9px] sm:text-xs mb-2">
-              {gameState.winnerId === 'player' ? 'Outstanding game! You cleared your hand first!' : 'The cute AI bots cleared their hand first!'}
+              {gameState.winnerId === 'player' ? 'Outstanding game! You cleared your hand first!' : 'The AI bots cleared their hand first!'}
             </p>
 
             {/* Leaderboard entries */}
             <div className="space-y-1 mb-2.5">
               {(leaderboard || []).map((entry: any, index: number) => {
                 const isUser = entry.playerId === 'player';
-                const rankEmojis = ['🥇', '🥈', '🥉', '🎖️'];
+                const rankLabels = ['1st', '2nd', '3rd', '4th'];
                 const rankBadgeColors = [
                   'bg-yellow-500/10 border-yellow-500/30 text-yellow-400',
                   'bg-slate-300/10 border-slate-300/30 text-slate-300',
@@ -826,8 +824,8 @@ export default function App() {
                   >
                     <div className="flex items-center gap-2">
                       {/* Rank Indicator */}
-                      <span className={`w-5 h-5 rounded-lg flex items-center justify-center font-bold text-[10px] border ${rankBadgeColors[index] || 'bg-slate-800'}`}>
-                        {rankEmojis[index] || entry.rank}
+                      <span className={`w-6 h-5 rounded-lg flex items-center justify-center font-bold text-[9px] border ${rankBadgeColors[index] || 'bg-slate-800'}`}>
+                        {rankLabels[index] || entry.rank}
                       </span>
                       
                       {/* Avatar */}
@@ -872,7 +870,7 @@ export default function App() {
                 <div className="bg-slate-900/60 rounded-xl border border-slate-800/80 p-1.5 sm:p-2.5 mb-2.5 text-left space-y-1">
                   <div className="flex justify-between items-center text-[9px] sm:text-xs">
                     <span className="font-extrabold text-indigo-300">
-                      🎖️ Rewards: <span className="text-yellow-400">+{myEntry.xpGained} XP</span>
+                      Rewards: <span className="text-yellow-400">+{myEntry.xpGained} XP</span>
                     </span>
                     <span className="text-slate-450 font-mono text-[8px]">
                       ({placementXp} Rank + {cardsXp} Cards)
@@ -886,33 +884,33 @@ export default function App() {
 
                   <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden relative border border-slate-850">
                     <div
-                      className="bg-gradient-to-r from-yellow-400 via-orange-400 to-rose-500 h-full rounded-full transition-all duration-1000 ease-out"
+                      className="bg-gradient-to-r from-blue-500 to-cyan-500 h-full rounded-full transition-all duration-1000 ease-out"
                       style={{ width: `${xpProgressPercentage}%` }}
                     ></div>
                   </div>
 
                   {playerLevel > prevLevel && (
                     <div className="text-center text-[8px] text-emerald-400 font-black animate-pulse mt-0.5 uppercase tracking-wider">
-                      ⭐ LEVEL UP! REACHED LEVEL {playerLevel}! ⭐
+                      Level Up! Reached Level {playerLevel}
                     </div>
                   )}
                 </div>
               );
             })()}
 
-            {/* ACTION REPLAY LOBBY BUTTON */}
             <button
               onClick={() => {
                 sound.playShuffle();
                 startGame(selectedAvatar, userName);
               }}
-              className="w-full py-2 sm:py-2.5 bg-gradient-to-r from-yellow-400 via-amber-500 to-orange-500 text-white font-black text-xs sm:text-sm rounded-xl border-b-4 border-slate-950 hover:brightness-110 active:scale-[0.98] transition-transform select-none shadow-lg shadow-orange-500/20 uppercase tracking-wider cursor-pointer"
+              className="w-full py-2.5 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-black text-xs sm:text-sm rounded-xl border-b-4 border-blue-800 hover:brightness-110 active:scale-[0.98] transition-transform select-none shadow-lg uppercase tracking-wider cursor-pointer"
             >
-              PLAY AGAIN! 🦊🌾
+              PLAY AGAIN
             </button>
           </div>
         </div>
       )}
+
 
       {/* INJECT RULES MODAL DIALOG */}
       <RuleModal isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />

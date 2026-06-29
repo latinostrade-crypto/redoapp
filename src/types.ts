@@ -5,6 +5,7 @@
 
 export type CardColor = 'red' | 'blue' | 'yellow' | 'green' | 'wild';
 
+
 export type CardValue =
   | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
   | 'skip' | 'reverse' | 'draw2'
