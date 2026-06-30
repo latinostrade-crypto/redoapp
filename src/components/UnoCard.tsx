@@ -26,9 +26,18 @@ function getDeterministicHash(str: string): number {
 
 function getCardImageUrl(color: CardColor, value: CardValue, id: string): string {
   if (value === 'wild') {
-    const hash = getDeterministicHash(id || 'wild');
-    const index = (hash % 4) + 1;
-    return `/cards/wild ${index}.jpeg`;
+    if (color === 'wild') {
+      const hash = getDeterministicHash(id || 'wild');
+      const index = (hash % 4) + 1;
+      return `/cards/wild ${index}.jpeg`;
+    } else {
+      let colorName = '';
+      if (color === 'red') colorName = 'red';
+      else if (color === 'blue') colorName = 'blue';
+      else if (color === 'yellow') colorName = 'gold';
+      else if (color === 'green') colorName = 'purp';
+      return `/cards/wild ${colorName}.jpeg`;
+    }
   }
 
   if (value === 'wild_draw4') {
