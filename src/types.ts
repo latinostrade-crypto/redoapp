@@ -77,4 +77,5 @@ export interface LeaderboardEntry {
   rank: number; // Rank 1 (winner), then 2, 3, 4 based on ascending points
   xpGained: number; // XP gained from this match
   isWinner: boolean;
+  ticketsGained?: number; // Tickets gained/lost from this match
 }

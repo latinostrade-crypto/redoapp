@@ -39,7 +39,23 @@ export default function App() {
     leaderboard,
     cardsPlayedThisRound,
     cardsDrawnThisRound,
+    goldenTickets,
+    setGoldenTickets,
+    transactions,
+    setTransactions,
+    gameMode,
+    setGameMode,
+    activeStake,
   } = useUnoGame();
+
+  const getDisplayName = (p: any) => {
+    if (gameMode !== 'pvp') return p.name;
+    if (p.id === 'player') return p.name;
+    if (p.id === 'ai1') return 'Player 2';
+    if (p.id === 'ai2') return 'Player 3';
+    if (p.id === 'ai3') return 'Player 4';
+    return p.name;
+  };
 
   // Level Progression Calculation
   const playerXp = stats.xp || 0;
@@ -93,7 +109,7 @@ export default function App() {
       case 'blue':
         return 'border-black bg-[#00d2ff] text-black';
       case 'green':
-        return 'border-black bg-[#00ff66] text-black';
+        return 'border-black bg-[#a855f7] text-black';
       case 'yellow':
         return 'border-black bg-[#ffcc00] text-black';
       default:
@@ -306,10 +322,11 @@ export default function App() {
                   window.location.reload();
                 }
               }}
-              className="p-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive"
+              className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
               title="Lobby Setup"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>MENU</span>
             </button>
 
             <button
@@ -336,21 +353,6 @@ export default function App() {
         </header>
       )}
 
-      {/* GAME EVENT TICKER LOG */}
-      {gameState.phase === 'playing' && gameState.logs.length > 0 && (
-        <div className="w-full max-w-4xl px-3 py-1 bg-black text-[#00ff66] font-mono text-[9px] min-[370px]:text-[10px] flex items-center gap-2 border-b-2 border-black z-20">
-          <div className="shrink-0 font-black text-[#ffcc00] uppercase tracking-wider bg-slate-900 px-1.5 py-0.5 border border-black">
-            FEED ::
-          </div>
-          <div className="flex-1 truncate italic">
-            {gameState.logs[0].message}
-          </div>
-          <div className="shrink-0 text-[8px] text-slate-500 font-mono">
-            {gameState.logs[0].timestamp}
-          </div>
-        </div>
-      )}
-
       {/* LOBBY / SETUP SCREEN */}
       {gameState.phase === 'setup' && (
         <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-end">
@@ -359,6 +361,16 @@ export default function App() {
             <span className="px-2 py-0.5 bg-black border border-black text-[#ffcc00] font-black text-xs font-mono tracking-widest shadow-[2px_2px_0_#000]">
               :: YO_UNO ::
             </span>
+          </div>
+
+          {/* Lobby Banner */}
+          <div className="w-full border-4 border-black overflow-hidden bg-slate-950 shadow-[4px_4px_0_#000] aspect-[3/1] mb-4 relative">
+            <img
+              src="/banner.png"
+              alt="YO PIXEL UNO Banner"
+              className="w-full h-full object-cover select-none pointer-events-none"
+              style={{ imageRendering: 'pixelated' }}
+            />
           </div>
 
           {/* Web3 Smartphone-Oriented Dashboard Menu */}
@@ -374,10 +386,14 @@ export default function App() {
               xpProgressPercentage={xpProgressPercentage}
               playerXp={playerXp}
               resetStats={resetStats}
-              onStartGame={() => startGame(selectedAvatar, userName)}
+              onStartGame={(mode, stake) => startGame(selectedAvatar, userName, mode, stake)}
               onNameChange={setUserName}
               onAvatarSelect={setSelectedAvatar}
               onOpenRules={() => setRulesOpen(true)}
+              goldenTickets={goldenTickets}
+              setGoldenTickets={setGoldenTickets}
+              transactions={transactions}
+              setTransactions={setTransactions}
             />
           </div>
         </main>
@@ -431,10 +447,12 @@ export default function App() {
               const isActive = gameState.currentPlayerIndex === 2;
               return (
                 <div className="flex flex-col items-center relative gap-1">
-                  <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={38} />
+                  <div style={{ filter: gameMode === 'pvp' ? 'blur(4.5px)' : 'none' }}>
+                    <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={38} />
+                  </div>
                   
                   <div className="bg-black text-white px-2 py-0.5 border border-black text-[9px] font-mono flex items-center gap-1.5 shadow-[2px_2px_0_#000] max-w-[150px] truncate">
-                    <span className="truncate">{pandaPlayer.name}</span>
+                    <span className="truncate">{getDisplayName(pandaPlayer)}</span>
                     <span className="bg-[#ff4b4b] text-black px-1 border border-black text-[8px] font-black">
                       🎴 {pandaPlayer.hand.length}
                     </span>
@@ -455,10 +473,12 @@ export default function App() {
                 const isActive = gameState.currentPlayerIndex === 1;
                 return (
                   <div className="flex flex-col items-center relative gap-1 text-center">
-                    <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={36} />
+                    <div style={{ filter: gameMode === 'pvp' ? 'blur(4.5px)' : 'none' }}>
+                      <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={36} />
+                    </div>
                     
                     <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000]">
-                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{leftPlayer.name}</span>
+                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{getDisplayName(leftPlayer)}</span>
                       <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {leftPlayer.hand.length} CARDS</span>
                     </div>
                   </div>
@@ -472,14 +492,17 @@ export default function App() {
               {/* Play Mat Felt Grid Background */}
               <div className="absolute inset-0 border border-dashed border-[#2e3846] opacity-60"></div>
 
-              {/* ROTATING DIRECTION RING ANIMATION */}
-              <div className="absolute w-[80px] h-[80px] min-[370px]:w-[100px] min-[370px]:h-[100px] sm:w-[130px] sm:h-[130px] flex items-center justify-center opacity-40 pointer-events-none">
+              {/* SOFT PIXELATED DIRECTION CIRCLE */}
+              <div className="absolute w-[95px] h-[95px] min-[370px]:w-[115px] min-[370px]:h-[115px] sm:w-[155px] sm:h-[155px] flex items-center justify-center pointer-events-none">
                 <div
-                  className={`w-full h-full border border-dashed border-[#ffcc00] flex items-center justify-center font-mono text-[8px] min-[370px]:text-[10px] ${
-                    gameState.direction === 1 ? 'animate-[spin_40s_linear_infinite]' : 'animate-[spin_40s_linear_infinite_reverse]'
-                  }`}
+                  className={`w-full h-full rounded-full border-4 border-dashed border-[#ffcc00]/25 flex items-center justify-center font-mono text-[8px] min-[370px]:text-[10px] shadow-[inset_0_0_12px_rgba(255,204,0,0.15)] bg-radial from-[#ffcc00]/5 to-transparent
+                    ${gameState.direction === 1 ? 'animate-rotate-slow' : 'animate-rotate-slow-reverse'} animate-pulse-soft
+                  `}
+                  style={{ imageRendering: 'pixelated' }}
                 >
-                  ➔ ➔ ➔
+                  <span className="text-[#ffcc00]/40 font-black tracking-widest">
+                    ➔ ➔ ➔
+                  </span>
                 </div>
               </div>
 
@@ -547,10 +570,9 @@ export default function App() {
                       })()}
                     </div>
                   </div>
-                  
-                  {/* Current Table Target Color Badge */}
+                          {/* Current Table Target Color Badge */}
                   <span className={`text-[8px] min-[370px]:text-[9px] font-black uppercase font-mono px-2 py-0.5 border border-black shadow-[1px_1px_0_#000] ${getActiveColorBorder(gameState.activeColor)}`}>
-                    {gameState.activeColor}
+                    {gameState.activeColor === 'green' ? 'purple' : gameState.activeColor}
                   </span>
                 </div>
 
@@ -571,10 +593,12 @@ export default function App() {
                 const isActive = gameState.currentPlayerIndex === 3;
                 return (
                   <div className="flex flex-col items-center relative gap-1 text-center">
-                    <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={36} />
+                    <div style={{ filter: gameMode === 'pvp' ? 'blur(4.5px)' : 'none' }}>
+                      <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={36} />
+                    </div>
                     
                     <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000]">
-                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{rightPlayer.name}</span>
+                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{getDisplayName(rightPlayer)}</span>
                       <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {rightPlayer.hand.length} CARDS</span>
                     </div>
                   </div>
@@ -599,22 +623,6 @@ export default function App() {
           {/* BOTTOM ZONE: HUMAN PLAYER ZONE */}
           <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2">
             
-            {/* Turn status indicator */}
-            <div className="flex justify-between items-center px-1 font-mono text-[9px] min-[370px]:text-[10px]">
-              <span className="text-slate-300 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-[#ffcc00]" />
-                [ YOUR HAND ]
-              </span>
-              
-              <span className={`px-2 py-0.5 border font-black tracking-wide ${
-                isHumanTurn
-                  ? 'bg-[#ffcc00] text-black border-black animate-pulse'
-                  : 'bg-black text-slate-500 border-black'
-              }`}>
-                {isHumanTurn ? '★ YOUR PLAY! ★' : 'AI THINKING...'}
-              </span>
-            </div>
-
             {/* NO-SCROLL DYNAMIC OVERLAPPING CARDS ZONE */}
             <div className="cards-hand-container w-full overflow-x-auto py-2 px-1 flex flex-row items-center justify-start min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative bg-black/40 border border-black">
               {(() => {
@@ -711,7 +719,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => selectWildColor('green')}
-                className="py-3 bg-[#00ff66] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
+                className="py-3 bg-[#a855f7] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
               >
                 Purple Suit
               </button>
@@ -776,6 +784,11 @@ export default function App() {
                       <span className="text-[9px] font-black text-[#ffcc00] block">
                         +{entry.xpGained} XP
                       </span>
+                      {gameMode !== 'offline' && entry.ticketsGained !== undefined && (
+                        <span className="text-[8px] font-extrabold text-[#00ff66] block mt-1">
+                          +{entry.ticketsGained.toFixed(2)} TKT
+                        </span>
+                      )}
                       {entry.isWinner && (
                         <span className="text-[6px] bg-[#00ff66]/20 text-[#00ff66] px-1 border border-[#00ff66] font-black uppercase tracking-wider mt-0.5 inline-block">
                           Winner
@@ -800,10 +813,13 @@ export default function App() {
               return (
                 <div className="bg-black p-2.5 border border-black mb-3 text-left space-y-1.5 font-mono text-[9px]">
                   <div className="flex justify-between items-center">
-                    <span className="font-black text-[#00d2ff]">
-                      REWARDS: <span className="text-[#ffcc00]">+{myEntry.xpGained} XP</span>
+                    <span className="font-black text-[#00d2ff] flex flex-col gap-0.5">
+                      <span>REWARDS: <span className="text-[#ffcc00]">+{myEntry.xpGained} XP</span></span>
+                      {gameMode !== 'offline' && myEntry.ticketsGained !== undefined && (
+                        <span className="text-[#00ff66]">TICKETS: <span className="text-[#ffcc00]">+{myEntry.ticketsGained.toFixed(2)} TKT</span></span>
+                      )}
                     </span>
-                    <span className="text-slate-500 text-[8px]">
+                    <span className="text-slate-500 text-[8px] text-right self-start">
                       ({placementXp} Rank + {cardsXp} Cards)
                     </span>
                   </div>
@@ -832,7 +848,7 @@ export default function App() {
             <button
               onClick={() => {
                 sound.playShuffle();
-                startGame(selectedAvatar, userName);
+                startGame(selectedAvatar, userName, gameMode, activeStake);
               }}
               className="w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
             >

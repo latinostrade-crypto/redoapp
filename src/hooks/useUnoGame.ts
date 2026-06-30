@@ -63,6 +63,30 @@ export function useUnoGame() {
   const [cardsDrawnThisRound, setCardsDrawnThisRound] = useState(0);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
 
+  // Ticket, transaction and game mode states
+  const [gameMode, setGameMode] = useState<'offline' | 'pvp' | 'private'>('offline');
+  const [activeStake, setActiveStake] = useState<number>(0);
+  const [goldenTickets, setGoldenTickets] = useState<number>(() => {
+    const saved = localStorage.getItem('uno_golden_tickets');
+    return saved ? parseInt(saved, 10) : 10;
+  });
+  const [transactions, setTransactions] = useState<any[]>(() => {
+    const saved = localStorage.getItem('yo_transactions');
+    if (saved) return JSON.parse(saved);
+    return [
+      { id: 'tx-001', event: 'Genesis Deck Minted', value: 'NFT #1209', time: '1 day ago', type: 'mint' },
+      { id: 'tx-002', event: 'Initial Airdrop Claim', value: '+150 TON', time: '1 day ago', type: 'claim' },
+    ];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('uno_golden_tickets', goldenTickets.toString());
+  }, [goldenTickets]);
+
+  useEffect(() => {
+    localStorage.setItem('yo_transactions', JSON.stringify(transactions));
+  }, [transactions]);
+
   // Reference to timing timers for clear cleanup
   const aiTurnTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const speechBubbleTimeoutRefs = useRef<{ [key: string]: NodeJS.Timeout }>({});
@@ -88,9 +112,9 @@ export function useUnoGame() {
     });
   }, []);
 
-  // Listen for game over to calculate leaderboard and reward XP
+  // Listen for game over to calculate leaderboard and reward XP and Tickets
   useEffect(() => {
-    if (gameState.phase === 'game_over' && gameState.winnerId) {
+    if (gameState.phase === 'game_over' && gameState.winnerId && leaderboard.length === 0) {
       const winnerId = gameState.winnerId;
       
       const entries = gameState.players.map((player) => {
@@ -113,10 +137,18 @@ export function useUnoGame() {
       // Winner has 0 points, so they are guaranteed 1st place!
       entries.sort((a, b) => a.points - b.points);
 
-      // Distribute ranks and XP rewards
+      // Distribute ranks, XP and Ticket rewards
+      const taxRate = gameMode === 'pvp' ? 0.1 : (gameMode === 'private' ? 0.3 : 0);
+      const totalFund = activeStake * 4 * (1 - taxRate);
+
+      // Points of Rank 2 and Rank 3
+      const p2 = entries[1] ? entries[1].points : 0;
+      const p3 = entries[2] ? entries[2].points : 0;
+
       const finalEntries = entries.map((entry, index) => {
         const rank = index + 1;
         let xpGained = 0;
+        let ticketsGained = 0;
         
         // Base XP on placement
         const placementXp = rank === 1 ? 200 : (rank === 2 ? 100 : (rank === 3 ? 60 : 30));
@@ -133,25 +165,63 @@ export function useUnoGame() {
           xpGained = Math.round(placementXp + (estPlayed * 10));
         }
 
+        // Calculate Ticket Payouts if PVP or Private Mode
+        if (gameMode !== 'offline' && activeStake > 0) {
+          if (rank === 1) {
+            ticketsGained = totalFund * 0.5;
+          } else if (rank === 4) {
+            ticketsGained = totalFund * 0.1;
+          } else if (rank === 2) {
+            if (p2 + p3 > 0) {
+              ticketsGained = totalFund * 0.4 * (p3 / (p2 + p3));
+            } else {
+              ticketsGained = totalFund * 0.4 * 0.5;
+            }
+          } else if (rank === 3) {
+            if (p2 + p3 > 0) {
+              ticketsGained = totalFund * 0.4 * (p2 / (p2 + p3));
+            } else {
+              ticketsGained = totalFund * 0.4 * 0.5;
+            }
+          }
+          // Round to 2 decimal places
+          ticketsGained = Math.round(ticketsGained * 100) / 100;
+        }
+
         return {
           ...entry,
           rank,
           xpGained,
+          ticketsGained,
         };
       });
 
       setLeaderboard(finalEntries);
 
-      // Find player entry to award XP to stats
+      // Find player entry to award XP and tickets to stats
       const playerEntry = finalEntries.find((e) => e.playerId === 'player');
       if (playerEntry) {
         saveStats((prev) => ({
           ...prev,
           xp: (prev.xp || 0) + playerEntry.xpGained,
         }));
+
+        if (gameMode !== 'offline' && activeStake > 0) {
+          const payout = playerEntry.ticketsGained || 0;
+          setGoldenTickets((prev) => prev + payout);
+
+          const newTx = {
+            id: `tx-payout-${Date.now()}`,
+            event: `${gameMode === 'pvp' ? 'PVP Arena' : 'Private Room'} Reward`,
+            value: `+${payout.toFixed(2)} TKT`,
+            time: 'Just now',
+            type: 'mint',
+          };
+          setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+        }
       }
     }
-  }, [gameState.phase, gameState.winnerId, cardsPlayedThisRound, cardsDrawnThisRound, saveStats, gameState.players]);
+  }, [gameState.phase, gameState.winnerId, cardsPlayedThisRound, cardsDrawnThisRound, saveStats, gameState.players, gameMode, activeStake, leaderboard.length]);
 
   const addLog = useCallback((message: string, type: 'info' | 'play' | 'draw' | 'uno' | 'action' | 'win' = 'info') => {
     setGameState((prev) => {
@@ -220,8 +290,28 @@ export function useUnoGame() {
   }, []);
 
   // Initialize Game Setup
-  const startGame = useCallback((selectedAvatar: 'bear' | 'rabbit' | 'fox' | 'panda' | 'cat' | 'koala' = 'bear', userName: string = 'Cute Cadet') => {
+  const startGame = useCallback((
+    selectedAvatar: 'bear' | 'rabbit' | 'fox' | 'panda' | 'cat' | 'koala' = 'bear',
+    userName: string = 'Cute Cadet',
+    mode: 'offline' | 'pvp' | 'private' = 'offline',
+    stakeAmount: number = 0
+  ) => {
     sound.playShuffle();
+    setGameMode(mode);
+    setActiveStake(stakeAmount);
+
+    if (mode === 'pvp' || mode === 'private') {
+      setGoldenTickets((prev) => Math.max(0, prev - stakeAmount));
+      const newTx = {
+        id: `tx-entry-${Date.now()}`,
+        event: `${mode === 'pvp' ? 'PVP Arena' : 'Private Room'} Entry`,
+        value: `-${stakeAmount} TKT`,
+        time: 'Just now',
+        type: 'disconnect',
+      };
+      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+    }
+
     let tempDeck = shuffleDeck(generateDeck());
 
     // Reset round metrics and leaderboard
@@ -400,9 +490,10 @@ export function useUnoGame() {
         accusablePlayers: [],
       };
 
+      const displayColorStr = (col: string) => col === 'green' ? 'purple' : col;
       const cardLabel = card.color === 'wild'
-        ? `${card.value === 'wild_draw4' ? 'Wild Draw +4' : 'Wild'} (Color: ${finalColor.toUpperCase()} 🌈)`
-        : `${card.color.toUpperCase()} ${card.value.toUpperCase()}`;
+        ? `${card.value === 'wild_draw4' ? 'Wild Draw +4' : 'Wild'} (Color: ${displayColorStr(finalColor).toUpperCase()} 🌈)`
+        : `${displayColorStr(card.color).toUpperCase()} ${card.value.toUpperCase()}`;
 
       let logMsg = `🃏 ${sender.name} played ${cardLabel}`;
 
@@ -756,5 +847,12 @@ export function useUnoGame() {
     leaderboard,
     cardsPlayedThisRound,
     cardsDrawnThisRound,
+    goldenTickets,
+    setGoldenTickets,
+    transactions,
+    setTransactions,
+    gameMode,
+    setGameMode,
+    activeStake,
   };
 }

@@ -129,10 +129,10 @@ export const UnoCard: React.FC<UnoCardProps> = ({
         };
       case 'green':
         return {
-          bg: 'bg-[#00ff66]',
-          text: 'text-[#00ff66]',
-          border: 'border-[#00ff66]',
-          pixelShadow: 'shadow-[#00ff66]/20',
+          bg: 'bg-[#a855f7]',
+          text: 'text-[#a855f7]',
+          border: 'border-[#a855f7]',
+          pixelShadow: 'shadow-[#a855f7]/20',
         };
       case 'yellow':
         return {
@@ -208,7 +208,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
             <div className="bg-[#ff4b4b]"></div>
             <div className="bg-[#00d2ff]"></div>
             <div className="bg-[#ffcc00]"></div>
-            <div className="bg-[#00ff66]"></div>
+            <div className="bg-[#a855f7]"></div>
           </div>
         );
       case 'wild_draw4':
@@ -218,7 +218,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
               <div className="bg-[#ff4b4b]"></div>
               <div className="bg-[#00d2ff]"></div>
               <div className="bg-[#ffcc00]"></div>
-              <div className="bg-[#00ff66]"></div>
+              <div className="bg-[#a855f7]"></div>
             </div>
             <span className="text-[7px] min-[370px]:text-[9px] sm:text-[11px] font-black text-white bg-black px-0.5 mt-0.5 border border-white font-mono">
               +4

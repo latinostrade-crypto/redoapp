@@ -9,6 +9,9 @@
   --animate-float: float 3s infinite ease-in-out;
   --animate-pop: pop 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28);
   --animate-confetti: confetti 4s infinite linear;
+  --animate-rotate-slow: rotate-slow 50s linear infinite;
+  --animate-rotate-slow-reverse: rotate-slow-reverse 50s linear infinite;
+  --animate-pulse-soft: pulse-soft 2.5s ease-in-out infinite;
 
   @keyframes bounce-subtle {
     0%, 100% { transform: translateY(0); }
@@ -25,6 +28,18 @@
   @keyframes confetti {
     0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
     100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+  }
+  @keyframes rotate-slow {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  @keyframes rotate-slow-reverse {
+    0% { transform: rotate(360deg); }
+    100% { transform: rotate(0deg); }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.85; }
   }
 }
 

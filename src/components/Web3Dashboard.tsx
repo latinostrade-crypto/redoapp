@@ -30,10 +30,14 @@ interface Web3DashboardProps {
   xpProgressPercentage: number;
   playerXp: number;
   resetStats: () => void;
-  onStartGame: () => void;
+  onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number) => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
   onOpenRules?: () => void;
+  goldenTickets: number;
+  setGoldenTickets: React.Dispatch<React.SetStateAction<number>>;
+  transactions: any[];
+  setTransactions: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
 export function Web3Dashboard({
@@ -51,6 +55,10 @@ export function Web3Dashboard({
   onNameChange,
   onAvatarSelect,
   onOpenRules,
+  goldenTickets,
+  setGoldenTickets,
+  transactions,
+  setTransactions,
 }: Web3DashboardProps) {
   const [currentTab, setCurrentTab] = useState<'lobby' | 'profile' | 'tournaments' | 'pvp' | 'rooms'>('lobby');
 
@@ -70,11 +78,6 @@ export function Web3Dashboard({
     return 150 + (stats.gamesPlayed * 25) + (stats.gamesWon * 100);
   });
 
-  const [goldenTickets, setGoldenTickets] = useState<number>(() => {
-    const saved = localStorage.getItem('uno_golden_tickets');
-    return saved ? parseInt(saved, 10) : 10;
-  });
-
   const [lastFaucetClaim, setLastFaucetClaim] = useState<number>(() => {
     const saved = localStorage.getItem('uno_last_faucet');
     return saved ? parseInt(saved, 10) : 0;
@@ -90,15 +93,6 @@ export function Web3Dashboard({
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
 
-  const [transactions, setTransactions] = useState<any[]>(() => {
-    const saved = localStorage.getItem('yo_transactions');
-    if (saved) return JSON.parse(saved);
-    return [
-      { id: 'tx-001', event: 'Genesis Deck Minted', value: 'NFT #1209', time: '1 day ago', type: 'mint' },
-      { id: 'tx-002', event: 'Initial Airdrop Claim', value: '+150 TON', time: '1 day ago', type: 'claim' },
-    ];
-  });
-
   useEffect(() => {
     if (lastFaucetClaim) {
       const hoursSinceClaim = (Date.now() - lastFaucetClaim) / (1000 * 60 * 60);
@@ -108,9 +102,7 @@ export function Web3Dashboard({
 
   useEffect(() => {
     localStorage.setItem('yo_token_balance', yoTokenBalance.toString());
-    localStorage.setItem('uno_golden_tickets', goldenTickets.toString());
-    localStorage.setItem('yo_transactions', JSON.stringify(transactions));
-  }, [yoTokenBalance, goldenTickets, transactions]);
+  }, [yoTokenBalance]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -208,7 +200,7 @@ export function Web3Dashboard({
             setTimeout(() => {
               setMatchmakingState('idle');
               setMatchmakingTimer(0);
-              onStartGame();
+              onStartGame('pvp', selectedStake);
             }, 1000);
             return 5;
           }
@@ -217,7 +209,7 @@ export function Web3Dashboard({
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [matchmakingState, onStartGame]);
+  }, [matchmakingState, onStartGame, selectedStake]);
 
   const winRate = stats.gamesPlayed > 0 
     ? Math.round((stats.gamesWon / stats.gamesPlayed) * 100) 
@@ -376,7 +368,7 @@ export function Web3Dashboard({
               <button
                 onClick={() => {
                   sound.playShuffle();
-                  onStartGame();
+                  onStartGame('offline', 0);
                 }}
                 className="w-full py-4 bg-[#00ff66] text-black font-black text-xs sm:text-sm uppercase font-mono tracking-wider pixel-btn-interactive border-4 border-black flex items-center justify-center gap-2 shadow-[4px_4px_0_#000]"
               >
@@ -641,7 +633,7 @@ export function Web3Dashboard({
                         }`}
                       >
                         <span className="text-[10px] font-black">{stake}TKT</span>
-                        <span className="text-[7px] block mt-0.5">{(stake * 0.5).toFixed(1)}TON</span>
+                        <span className="text-[7px] block mt-0.5">{stake.toFixed(1)}TON</span>
                       </button>
                     ))}
                   </div>
@@ -675,7 +667,7 @@ export function Web3Dashboard({
                       ) : (
                         <>
                           <span>BUY 10</span>
-                          <span className="text-[#00d2ff] text-[7px]">(5T)</span>
+                          <span className="text-[#00d2ff] text-[7px]">(10T)</span>
                         </>
                       )}
                     </button>
@@ -686,7 +678,6 @@ export function Web3Dashboard({
                           return;
                         }
                         sound.playShuffle();
-                        setGoldenTickets(prev => prev - selectedStake);
                         setMatchmakingState('searching');
                         setMatchmakingTimer(0);
                       }}
@@ -758,9 +749,8 @@ export function Web3Dashboard({
                           return;
                         }
                         sound.playShuffle();
-                        setGoldenTickets(prev => prev - privateRoomStake);
                         setShowRoomDisclaimer(false);
-                        onStartGame();
+                        onStartGame('private', privateRoomStake);
                       }}
                       className="flex-1 py-1.5 bg-[#ff4b4b] text-black uppercase font-black pixel-btn-interactive border border-black text-[8px]"
                     >
@@ -797,7 +787,7 @@ export function Web3Dashboard({
                           }`}
                         >
                           <span className="text-[10px] font-black">{stake}TKT</span>
-                          <span className="text-[7px] block mt-0.5">{(stake * 0.5).toFixed(1)}TON</span>
+                          <span className="text-[7px] block mt-0.5">{stake.toFixed(1)}TON</span>
                         </button>
                       ))}
                     </div>
@@ -808,7 +798,7 @@ export function Web3Dashboard({
                       onClick={() => {
                         sound.playShuffle();
                         const randomRoom = Math.random().toString(36).substring(2, 8);
-                        setGeneratedLink(`https://t.me/yo_uno_bot/app?startapp=room_${randomRoom}`);
+                        setGeneratedLink(`https://t.me/redo_appbot/app?startapp=room_${randomRoom}`);
                       }}
                       className="w-full py-2.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                     >
