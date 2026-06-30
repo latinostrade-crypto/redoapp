@@ -257,7 +257,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
     return (
       <div
         id={card.id || `cardback-${indexOffset}`}
-        className={`relative ${sizeClasses.card} select-none bg-[#ff4b4b] text-white flex items-center justify-center overflow-hidden transition-transform active:scale-95 shadow-[4px_4px_0_#000000]`}
+        className={`relative ${sizeClasses.card} select-none bg-[#ff4b4b] text-white flex items-center justify-center overflow-hidden rounded-[8px] transition-transform active:scale-95 shadow-[4px_4px_0_#000000]`}
       >
         {/* Pixel Inner Border */}
         <div className="absolute inset-1 border border-black/40"></div>
@@ -281,7 +281,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
       id={card.id}
       onClick={onClick}
       disabled={!onClick}
-      className={`relative ${sizeClasses.card} ${palette.bg} transition-all duration-100 select-none overflow-hidden flex items-center justify-center text-white
+      className={`relative ${sizeClasses.card} ${palette.bg} transition-all duration-100 select-none overflow-hidden rounded-[8px] flex items-center justify-center text-white
         ${isPlayable
           ? 'cursor-pointer hover:-translate-y-2 active:translate-y-1 hover:rotate-[-1deg] border-[#ffcc00] animate-bounce-subtle outline-none shadow-[4px_4px_0_#000000] z-20'
           : 'cursor-default opacity-90 shadow-[2px_2px_0_#000000]'
