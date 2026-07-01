@@ -1,7 +1,7 @@
 services:
   # Static Site: React Vite Frontend
   - type: static
-    name: yoapp-frontend
+    name: redoapp-frontend
     buildCommand: npm run build
     publishPath: dist
     envVars:
@@ -12,7 +12,7 @@ services:
 
   # Web Service: Express Node Backend
   - type: web
-    name: yoapp-backend
+    name: redoapp-backend
     env: node
     plan: free
     buildCommand: npm install

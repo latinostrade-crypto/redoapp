@@ -88,5 +88,5 @@ app.post('/api/matchmaker/leave', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`UNO Cartoon Card Game backend running on port ${PORT}`);
+  console.log(`Redoapp backend running on port ${PORT}`);
 });

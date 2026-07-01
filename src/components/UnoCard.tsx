@@ -52,7 +52,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
       else if (color === 'yellow') colorName = 'gold';
       else if (color === 'green') colorName = 'purp';
     }
-    return `/cards/plus4_${colorName}.jpeg`;
+    return `/cards/plus4_${colorName}_v2.jpeg`;
   }
 
   // Regular color cards
@@ -73,7 +73,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
   }
 
   if (value === 'draw2') {
-    return `/cards/plus2_${colorName}.jpeg`;
+    return `/cards/plus2_${colorName}_v2.jpeg`;
   }
 
   if (value === 'skip') {
@@ -98,7 +98,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
 function getEncodedCardImageUrl(color: CardColor, value: CardValue, id: string): string {
   const path = getCardImageUrl(color, value, id);
   if (!path) return '';
-  return `${encodeURI(path)}?v=20260701-2`;
+  return encodeURI(path);
 }
 
 export const UnoCard: React.FC<UnoCardProps> = ({
@@ -259,7 +259,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
         className={`relative ${sizeClasses.card} select-none bg-[#ff4b4b] text-white flex items-center justify-center overflow-hidden rounded-[8px] transition-transform active:scale-95 shadow-[4px_4px_0_#000000]`}
       >
         <img
-          src="/face.png?v=20260701-2"
+          src="/face-20260701.png"
           alt="Card Back"
           className="w-full h-full object-cover select-none pointer-events-none"
           style={{ imageRendering: 'pixelated' }}
