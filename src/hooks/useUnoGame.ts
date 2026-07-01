@@ -73,10 +73,7 @@ export function useUnoGame() {
   const [transactions, setTransactions] = useState<any[]>(() => {
     const saved = localStorage.getItem('yo_transactions');
     if (saved) return JSON.parse(saved);
-    return [
-      { id: 'tx-001', event: 'Genesis Deck Minted', value: 'NFT #1209', time: '1 day ago', type: 'mint' },
-      { id: 'tx-002', event: 'Initial Airdrop Claim', value: '+150 TON', time: '1 day ago', type: 'claim' },
-    ];
+    return [];
   });
 
   useEffect(() => {
@@ -218,6 +215,16 @@ export function useUnoGame() {
             type: 'mint',
           };
           setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+        } else if (gameMode === 'offline') {
+          const won = playerEntry.rank === 1;
+          const newTx = {
+            id: `tx-free-over-${Date.now()}`,
+            event: won ? 'Victory in Free Game' : 'Free Game Ended',
+            value: won ? `+${playerEntry.xpGained} XP` : `Rank ${playerEntry.rank}`,
+            time: 'Just now',
+            type: won ? 'mint' : 'disconnect',
+          };
+          setTransactions((prev) => [newTx, ...prev].slice(0, 10));
         }
       }
     }
@@ -308,6 +315,15 @@ export function useUnoGame() {
         value: `-${stakeAmount} TKT`,
         time: 'Just now',
         type: 'disconnect',
+      };
+      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+    } else if (mode === 'offline') {
+      const newTx = {
+        id: `tx-free-game-${Date.now()}`,
+        event: 'Free Game Played',
+        value: '0 Stake',
+        time: 'Just now',
+        type: 'claim',
       };
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
     }

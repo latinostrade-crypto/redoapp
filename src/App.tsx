@@ -66,7 +66,13 @@ export default function App() {
 
   const [rulesOpen, setRulesOpen] = useState(false);
   const [muted, setMuted] = useState(() => sound.getMuted());
-  const [userName, setUserName] = useState('Surf Rider');
+  const [userName, setUserName] = useState(() => {
+    const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
+    if (tgUser) {
+      return tgUser.username || `${tgUser.first_name} ${tgUser.last_name || ''}`.trim() || 'guest';
+    }
+    return 'guest';
+  });
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
 
   // Available avatars to select in lobby
@@ -356,12 +362,6 @@ export default function App() {
       {/* LOBBY / SETUP SCREEN */}
       {gameState.phase === 'setup' && (
         <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-end">
-          {/* Small minimalist title */}
-          <div className="text-center mb-4">
-            <span className="px-2 py-0.5 bg-black border border-black text-[#ffcc00] font-black text-xs font-mono tracking-widest shadow-[2px_2px_0_#000]">
-              :: YO_UNO ::
-            </span>
-          </div>
 
           {/* Lobby Banner */}
           <div className="w-full border-4 border-black overflow-hidden bg-slate-950 shadow-[4px_4px_0_#000] aspect-[3/1] mb-4 relative">

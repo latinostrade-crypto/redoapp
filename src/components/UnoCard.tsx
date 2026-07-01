@@ -52,7 +52,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
       else if (color === 'yellow') colorName = 'gold';
       else if (color === 'green') colorName = 'purp';
     }
-    return `/cards/+4 ${colorName}.jpeg`;
+    return `/cards/plus4_${colorName}.jpeg`;
   }
 
   // Regular color cards
@@ -73,8 +73,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
   }
 
   if (value === 'draw2') {
-    const displayColor = color === 'red' ? 'Red' : colorName;
-    return `/cards/+2 ${displayColor}.jpeg`;
+    return `/cards/plus2_${colorName}.jpeg`;
   }
 
   if (value === 'skip') {
@@ -99,7 +98,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
 function getEncodedCardImageUrl(color: CardColor, value: CardValue, id: string): string {
   const path = getCardImageUrl(color, value, id);
   if (!path) return '';
-  return encodeURI(path);
+  return `${encodeURI(path)}?v=20260701`;
 }
 
 export const UnoCard: React.FC<UnoCardProps> = ({
