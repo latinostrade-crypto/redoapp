@@ -99,7 +99,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
 function getEncodedCardImageUrl(color: CardColor, value: CardValue, id: string): string {
   const path = getCardImageUrl(color, value, id);
   if (!path) return '';
-  return encodeURI(path).replace(/\+/g, '%2B');
+  return encodeURI(path);
 }
 
 export const UnoCard: React.FC<UnoCardProps> = ({
@@ -299,7 +299,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
               setImgError(true);
             }}
             className="w-full h-full object-cover select-none pointer-events-none"
-            style={{ imageRendering: 'pixelated' }}
+            style={{ imageRendering: 'pixelated', transform: 'scale(1.06)' }}
           />
           {/* Subtle neon filter overlay if playable */}
           {isPlayable && (
