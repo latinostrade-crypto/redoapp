@@ -60,7 +60,7 @@ export function Web3Dashboard({
   transactions,
   setTransactions,
 }: Web3DashboardProps) {
-  const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp' | 'rewards'>('pvp');
+  const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp' | 'rewards'>('profile');
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
 
   const [tonConnectUI] = useTonConnectUI();
@@ -216,17 +216,6 @@ export function Web3Dashboard({
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
     } catch (e) {
       console.error(e);
-      if (window.confirm("Could not complete blockchain transaction. Do you want to credit 10 mock tickets for testing?")) {
-        setGoldenTickets((prev) => prev + 10);
-        const newTx = {
-          id: `tx-mock-${Date.now()}`,
-          event: 'Mock Ticket Purchase',
-          value: '+10 Tickets',
-          time: 'Just now',
-          type: 'mint'
-        };
-        setTransactions((prev) => [newTx, ...prev].slice(0, 10));
-      }
     } finally {
       setBuyingTickets(false);
     }
@@ -264,10 +253,10 @@ export function Web3Dashboard({
       {/* 1. Tabs (Swapped to the top of the card) */}
       <div className="grid grid-cols-4 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
         {[
-          { id: 'pvp', label: 'PVP' },
-          { id: 'tournaments', label: 'TOUR' },
-          { id: 'rewards', label: 'REWARDS' },
           { id: 'profile', label: 'ME' },
+          { id: 'tournaments', label: 'TOUR' },
+          { id: 'pvp', label: 'PVP' },
+          { id: 'rewards', label: 'REWARDS' },
         ].map((tab) => {
           const active = currentTab === tab.id;
           return (

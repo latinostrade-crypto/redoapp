@@ -98,7 +98,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
 function getEncodedCardImageUrl(color: CardColor, value: CardValue, id: string): string {
   const path = getCardImageUrl(color, value, id);
   if (!path) return '';
-  return `${encodeURI(path)}?v=20260701`;
+  return `${encodeURI(path)}?v=20260701-2`;
 }
 
 export const UnoCard: React.FC<UnoCardProps> = ({
@@ -259,7 +259,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
         className={`relative ${sizeClasses.card} select-none bg-[#ff4b4b] text-white flex items-center justify-center overflow-hidden rounded-[8px] transition-transform active:scale-95 shadow-[4px_4px_0_#000000]`}
       >
         <img
-          src="/face.png?v=20260701"
+          src="/face.png?v=20260701-2"
           alt="Card Back"
           className="w-full h-full object-cover select-none pointer-events-none"
           style={{ imageRendering: 'pixelated' }}
