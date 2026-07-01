@@ -1,10 +1,9 @@
 services:
   # Static Site: React Vite Frontend
-  - type: web
+  - type: static
     name: yoapp-frontend
-    env: static
     buildCommand: npm run build
-    staticPublishPath: dist
+    publishPath: dist
     envVars:
       - key: VITE_SUPABASE_URL
         sync: false
