@@ -60,7 +60,7 @@ export function Web3Dashboard({
   transactions,
   setTransactions,
 }: Web3DashboardProps) {
-  const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp'>('pvp');
+  const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp' | 'rewards'>('pvp');
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
 
   const [tonConnectUI] = useTonConnectUI();
@@ -124,6 +124,7 @@ export function Web3Dashboard({
   const [privateRoomStake, setPrivateRoomStake] = useState<1 | 5 | 10 | 50>(1);
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
+  const [showConnectModal, setShowConnectModal] = useState(false);
 
   useEffect(() => {
     if (lastFaucetClaim) {
@@ -150,12 +151,22 @@ export function Web3Dashboard({
         };
         setTransactions((prev) => [newTx, ...prev].slice(0, 10));
       } else {
-        setIsConnecting(true);
-        await tonConnectUI.openModal();
-        setIsConnecting(false);
+        setShowConnectModal(true);
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleActualConnect = async () => {
+    setShowConnectModal(false);
+    setIsConnecting(true);
+    try {
+      sound.playPop();
+      await tonConnectUI.openModal();
+    } catch (e) {
+      console.error(e);
+    } finally {
       setIsConnecting(false);
     }
   };
@@ -251,10 +262,11 @@ export function Web3Dashboard({
     <div className="w-full bg-[#0c0f12] text-[#f8fafc] pixel-box-lg p-3 sm:p-5 relative overflow-hidden flex flex-col gap-4 select-none pixel-scanlines">
       
       {/* 1. Tabs (Swapped to the top of the card) */}
-      <div className="grid grid-cols-3 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
+      <div className="grid grid-cols-4 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
         {[
           { id: 'pvp', label: 'PVP' },
           { id: 'tournaments', label: 'TOUR' },
+          { id: 'rewards', label: 'REWARDS' },
           { id: 'profile', label: 'ME' },
         ].map((tab) => {
           const active = currentTab === tab.id;
@@ -437,33 +449,6 @@ export function Web3Dashboard({
                 </div>
               </div>
 
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-1.5 font-mono text-[9px]">
-                <div className="flex justify-between items-center uppercase font-bold text-slate-400 pb-1 border-b border-black">
-                  <span className="flex items-center gap-1.5">
-                    <History className="w-3.5 h-3.5 text-[#00d2ff]" />
-                    Transaction Log
-                  </span>
-                  <Globe className="w-3 h-3 text-slate-600" />
-                </div>
-
-                <div className="space-y-1 max-h-24 overflow-y-auto pr-0.5 custom-scroll">
-                  {transactions.map((tx: any) => (
-                    <div key={tx.id} className="flex justify-between items-center p-1 bg-black border border-black leading-tight text-[8px]">
-                      <div className="flex items-center gap-1 text-left">
-                        <span className={`w-1.5 h-1.5 ${
-                          tx.type === 'claim' ? 'bg-[#00d2ff]' : tx.type === 'mint' ? 'bg-[#00ff66]' : 'bg-[#ff4b4b]'
-                        }`}></span>
-                        <div>
-                          <span className="text-slate-355 block">{tx.event}</span>
-                          <span className="text-slate-500 text-[7px]">{tx.time}</span>
-                        </div>
-                      </div>
-                      <span className="font-extrabold text-slate-200">{tx.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               <div className="flex flex-col gap-2 pt-2">
                 <button
                   type="button"
@@ -492,6 +477,84 @@ export function Web3Dashboard({
                 >
                   Hard Reset Progress
                 </button>
+              </div>
+            </motion.div>
+          )}
+
+          {currentTab === 'rewards' && (
+            <motion.div
+              key="rewards"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="space-y-3 h-full flex flex-col justify-between py-2 text-left"
+            >
+              {/* Daily Faucet Bonus */}
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-3.5 text-center space-y-3 font-mono">
+                <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#00ff66] animate-bounce-subtle">
+                  <Gift className="w-5 h-5" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="font-black text-xs text-slate-100 uppercase">
+                    Daily Bonus Faucet
+                  </h3>
+                  <p className="text-[9px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
+                    Claim your daily reward of 50 TON Points. Use them to play, level up, and show off your rank!
+                  </p>
+                </div>
+
+                {!walletConnected ? (
+                  <div className="text-[8.5px] text-[#ff4b4b] bg-black p-2 border border-black uppercase font-bold">
+                    Connect wallet to claim daily bonus
+                  </div>
+                ) : faucetClaimedToday ? (
+                  <div className="w-full py-2 bg-slate-950 text-[#00ff66] border border-black/40 text-[10px] font-black uppercase font-mono flex items-center justify-center gap-1.5">
+                    <Check className="w-4 h-4 text-[#00ff66]" />
+                    DAILY BONUS CLAIMED
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={claimFaucet}
+                    className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+                  >
+                    Claim +50 TON Points
+                  </button>
+                )}
+              </div>
+
+              {/* Activity & Payouts Log */}
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-1.5 font-mono text-[9px] flex-1 flex flex-col">
+                <div className="flex justify-between items-center uppercase font-bold text-slate-400 pb-1 border-b border-black">
+                  <span className="flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-[#00d2ff]" />
+                    Activity & Payouts Log
+                  </span>
+                  <Globe className="w-3 h-3 text-slate-600" />
+                </div>
+
+                <div className="space-y-1 overflow-y-auto custom-scroll flex-1 max-h-[140px] pr-0.5">
+                  {transactions.length === 0 ? (
+                    <div className="text-center py-6 text-slate-600 text-[8px] uppercase">
+                      No activity recorded yet
+                    </div>
+                  ) : (
+                    transactions.map((tx: any) => (
+                      <div key={tx.id} className="flex justify-between items-center p-1 bg-black border border-black leading-tight text-[8px]">
+                        <div className="flex items-center gap-1 text-left">
+                          <span className={`w-1.5 h-1.5 ${
+                            tx.type === 'claim' ? 'bg-[#00d2ff]' : tx.type === 'mint' ? 'bg-[#00ff66]' : 'bg-[#ff4b4b]'
+                          }`}></span>
+                          <div>
+                            <span className="text-slate-355 block">{tx.event}</span>
+                            <span className="text-slate-500 text-[7px]">{tx.time}</span>
+                          </div>
+                        </div>
+                        <span className="font-extrabold text-slate-200">{tx.value}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </motion.div>
           )}
@@ -887,6 +950,80 @@ export function Web3Dashboard({
           )}
         </AnimatePresence>
       </div>
+
+      {/* WALLET CONNECT OVERLAY MODAL */}
+      <AnimatePresence>
+        {showConnectModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-mono select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="w-full max-w-sm bg-[#12161a] border-4 border-black p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg flex flex-col gap-4 text-center"
+            >
+              {/* Retro top decoration bar */}
+              <div className="absolute -top-3 left-6 bg-[#00d2ff] text-black text-[7px] font-black uppercase px-2 py-0.5 border-2 border-black">
+                SECURE GATEWAY
+              </div>
+
+              {/* Large pulsing TON Connect Icon */}
+              <div className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#00d2ff] relative overflow-hidden shadow-[inset_0_0_10px_rgba(0,210,255,0.2)] mt-2">
+                <Wallet className="w-7 h-7 text-[#00d2ff]" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wider">
+                  Sync TON Wallet
+                </h3>
+                <p className="text-[9px] min-[370px]:text-[10px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
+                  To participate in PVP battles with ticket stakes, buy ticket packs, and compete in tournaments, you need to connect your TON wallet.
+                </p>
+              </div>
+
+              {/* Benefit list */}
+              <div className="bg-slate-950 p-3 border border-black text-left text-[8px] min-[370px]:text-[9px] space-y-2 text-slate-300">
+                <div className="flex gap-2 items-start">
+                  <span className="text-[#00ff66]">✓</span>
+                  <span>Access PVP Arena with stakes from 1 to 50 tickets.</span>
+                </div>
+                <div className="flex gap-2 items-start">
+                  <span className="text-[#00ff66]">✓</span>
+                  <span>Instant deposits and secure payout distribution.</span>
+                </div>
+                <div className="flex gap-2 items-start">
+                  <span className="text-[#00ff66]">✓</span>
+                  <span>Zero passwords needed. Sign transactions directly.</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleActualConnect}
+                  className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+                >
+                  Sync with TON Connect
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    setShowConnectModal(false);
+                  }}
+                  className="w-full py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 border border-black/40 pixel-btn-interactive text-[10px] font-bold uppercase font-mono"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

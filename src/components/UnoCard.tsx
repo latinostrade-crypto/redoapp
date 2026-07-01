@@ -258,19 +258,12 @@ export const UnoCard: React.FC<UnoCardProps> = ({
         id={card.id || `cardback-${indexOffset}`}
         className={`relative ${sizeClasses.card} select-none bg-[#ff4b4b] text-white flex items-center justify-center overflow-hidden rounded-[8px] transition-transform active:scale-95 shadow-[4px_4px_0_#000000]`}
       >
-        {/* Pixel Inner Border */}
-        <div className="absolute inset-1 border border-black/40"></div>
-
-        {/* Center Grid details */}
-        <div className="w-4/5 h-4/5 border border-dashed border-white/20 flex items-center justify-center rotate-[-12deg]">
-          <div className="bg-black text-[#ffcc00] border-2 border-black font-black font-mono px-2 py-1 text-[10px] min-[370px]:text-xs sm:text-lg italic tracking-widest shadow-[2px_2px_0_#000000]">
-            YO
-          </div>
-        </div>
-
-        {/* Corner Pixel accents */}
-        <div className="absolute top-1 left-1.5 text-[8px] font-mono text-[#ffcc00]">★</div>
-        <div className="absolute bottom-1 right-1.5 text-[8px] font-mono text-[#ffcc00]">★</div>
+        <img
+          src="/face.png?v=20260701"
+          alt="Card Back"
+          className="w-full h-full object-cover select-none pointer-events-none"
+          style={{ imageRendering: 'pixelated' }}
+        />
       </div>
     );
   }
