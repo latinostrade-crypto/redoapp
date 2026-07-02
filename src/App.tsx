@@ -25,6 +25,23 @@ import {
 import { sound } from './utils/sound';
 import { AvatarId, CardColor } from './types';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+    ...init,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || 'Request failed');
+  }
+  return data as T;
+}
+
 export default function App() {
   const {
     gameState,
@@ -139,6 +156,81 @@ export default function App() {
   const [flyingCards, setFlyingCards] = useState<FlyingCardAnimation[]>([]);
   const [visualTopCard, setVisualTopCard] = useState<any>(null);
   const prevGameStateRef = useRef<any>(null);
+  const settlementHandledRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (gameState.phase !== 'game_over' || gameMode === 'offline' || !leaderboard.length) {
+      return;
+    }
+
+    const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+    if (!activeMatchRaw) {
+      return;
+    }
+
+    try {
+      const activeMatch = JSON.parse(activeMatchRaw) as {
+        matchId: string;
+        mode: 'pvp' | 'private';
+        stake: number;
+        currentUserId: string;
+        players: Array<{ userId: string; username: string; avatarId: string }>;
+      };
+
+      if (!activeMatch.matchId || settlementHandledRef.current === activeMatch.matchId) {
+        return;
+      }
+
+      const myEntry = leaderboard.find((entry: any) => entry.playerId === 'player');
+      if (!myEntry) {
+        return;
+      }
+
+      settlementHandledRef.current = activeMatch.matchId;
+
+      const otherPlayers = activeMatch.players.filter((player) => player.userId !== activeMatch.currentUserId);
+      const remainingRanks = [1, 2, 3, 4].filter((rank) => rank !== myEntry.rank);
+      const placements = [
+        {
+          userId: activeMatch.currentUserId,
+          rank: myEntry.rank,
+          walletAddress: localStorage.getItem('redoapp_wallet_address') || undefined,
+        },
+        ...otherPlayers.slice(0, 3).map((player, index) => ({
+          userId: player.userId,
+          rank: remainingRanks[index] as 1 | 2 | 3 | 4,
+        })),
+      ];
+
+      if (placements.length !== 4) {
+        settlementHandledRef.current = null;
+        return;
+      }
+
+      apiRequest('/api/matches/settle', {
+        method: 'POST',
+        body: JSON.stringify({
+          matchId: activeMatch.matchId,
+          mode: activeMatch.mode,
+          stake: activeMatch.stake,
+          placements,
+        }),
+      }).then(() => {
+        return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(activeMatch.currentUserId));
+      }).then((balance) => {
+        setGoldenTickets(balance.availableTickets);
+        return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(activeMatch.currentUserId));
+      }).then((ledger) => {
+        setTransactions(ledger.transactions);
+        localStorage.removeItem('redoapp_active_match');
+      }).catch((error) => {
+        console.error('Settlement failed', error);
+        settlementHandledRef.current = null;
+      });
+    } catch (error) {
+      console.error('Invalid active match payload', error);
+    }
+  }, [gameState.phase, gameMode, leaderboard, setGoldenTickets, setTransactions]);
 
   // Synchronize discard pile top card with flight duration
   useEffect(() => {

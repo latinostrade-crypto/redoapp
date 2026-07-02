@@ -67,6 +67,15 @@ export interface GameStats {
   gamesWon: number;
   cardsPlayedCount: number;
   xp: number; // Persisted experience points
+  practiceGamesPlayed: number;
+  practiceGamesWon: number;
+  realPvpGamesPlayed: number;
+  realPvpGamesWon: number;
+  privateGamesPlayed: number;
+  privateGamesWon: number;
+  practiceXp: number;
+  realPvpXp: number;
+  privateXp: number;
 }
 
 export interface LeaderboardEntry {

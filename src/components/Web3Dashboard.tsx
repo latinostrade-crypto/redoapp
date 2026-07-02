@@ -19,6 +19,23 @@ import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats } from '../types';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+    ...init,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || 'Request failed');
+  }
+  return data as T;
+}
+
 interface Web3DashboardProps {
   userName: string;
   selectedAvatar: AvatarId;
@@ -104,17 +121,11 @@ export function Web3Dashboard({
     prevConnectedRef.current = walletConnected;
   }, [walletConnected, setTransactions]);
 
-  const [yoTokenBalance, setYoTokenBalance] = useState<number>(() => {
-    const saved = localStorage.getItem('yo_token_balance');
-    if (saved) return parseInt(saved, 10);
-    return 150 + (stats.gamesPlayed * 25) + (stats.gamesWon * 100);
-  });
-
-  const [lastFaucetClaim, setLastFaucetClaim] = useState<number>(() => {
-    const saved = localStorage.getItem('uno_last_faucet');
+  const [lastDailyCheckIn, setLastDailyCheckIn] = useState<number>(() => {
+    const saved = localStorage.getItem('redoapp_last_daily_xp_checkin');
     return saved ? parseInt(saved, 10) : 0;
   });
-  const [faucetClaimedToday, setFaucetClaimedToday] = useState(false);
+  const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
 
   const [selectedStake, setSelectedStake] = useState<1 | 5 | 10 | 50>(1);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'searching' | 'success'>('idle');
@@ -124,18 +135,52 @@ export function Web3Dashboard({
   const [privateRoomStake, setPrivateRoomStake] = useState<1 | 5 | 10 | 50>(1);
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
+  const [privateRoomCode, setPrivateRoomCode] = useState('');
+  const [privateJoinCode, setPrivateJoinCode] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const room = params.get('room');
+    const startApp = params.get('startapp');
+    if (room) return room.toUpperCase();
+    if (startApp?.startsWith('room_')) return startApp.replace('room_', '').toUpperCase();
+    return '';
+  });
+  const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
+  const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const privateRoomStreamRef = useRef<EventSource | null>(null);
+  const queueStreamRef = useRef<EventSource | null>(null);
+  const currentUserId = rawAddress || `guest:${userName.toLowerCase()}`;
+  const [heldTickets, setHeldTickets] = useState(0);
+  const [withdrawAmount, setWithdrawAmount] = useState('5');
 
   useEffect(() => {
-    if (lastFaucetClaim) {
-      const hoursSinceClaim = (Date.now() - lastFaucetClaim) / (1000 * 60 * 60);
-      setFaucetClaimedToday(hoursSinceClaim < 24);
+    if (lastDailyCheckIn) {
+      const hoursSinceClaim = (Date.now() - lastDailyCheckIn) / (1000 * 60 * 60);
+      setDailyXpClaimedToday(hoursSinceClaim < 24);
     }
-  }, [lastFaucetClaim]);
+  }, [lastDailyCheckIn]);
 
   useEffect(() => {
-    localStorage.setItem('yo_token_balance', yoTokenBalance.toString());
-  }, [yoTokenBalance]);
+    localStorage.setItem('redoapp_current_user_id', currentUserId);
+    if (rawAddress) {
+      localStorage.setItem('redoapp_wallet_address', rawAddress);
+    }
+    apiRequest('/api/users/sync', {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: currentUserId,
+        walletAddress: rawAddress || null,
+      }),
+    }).then(() => {
+      return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(currentUserId));
+    }).then((balance) => {
+      setGoldenTickets(balance.availableTickets);
+      setHeldTickets(balance.heldTickets);
+      return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
+    }).then((ledger) => {
+      setTransactions(ledger.transactions);
+    }).catch(() => undefined);
+  }, [currentUserId, rawAddress]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -171,22 +216,31 @@ export function Web3Dashboard({
     }
   };
 
-  const claimFaucet = () => {
-    if (faucetClaimedToday) return;
+  const claimDailyXp = () => {
+    if (dailyXpClaimedToday) return;
     sound.playShuffle();
-    setYoTokenBalance((prev) => prev + 50);
-    setLastFaucetClaim(Date.now());
-    setFaucetClaimedToday(true);
-    localStorage.setItem('uno_last_faucet', Date.now().toString());
-
-    const newTx = {
-      id: `tx-${Date.now()}`,
-      event: 'Daily Faucet Claim',
-      value: '+50 TON',
-      time: 'Just now',
-      type: 'claim'
-    };
-    setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+    apiRequest<{ success: boolean }>('/api/xp/daily-checkin', {
+      method: 'POST',
+      body: JSON.stringify({
+        userId: currentUserId,
+        walletAddress: rawAddress || null,
+      }),
+    }).then((result) => {
+      if (!result.success) return;
+      setLastDailyCheckIn(Date.now());
+      setDailyXpClaimedToday(true);
+      localStorage.setItem('redoapp_last_daily_xp_checkin', Date.now().toString());
+      const newTx = {
+        id: `tx-${Date.now()}`,
+        event: 'Daily Check-in',
+        value: '+20 XP',
+        time: 'Just now',
+        type: 'claim'
+      };
+      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+    }).catch((error) => {
+      alert(error.message);
+    });
   };
 
   const buyTicketsWithTon = async () => {
@@ -197,18 +251,29 @@ export function Web3Dashboard({
     sound.playPop();
     setBuyingTickets(true);
     try {
+      const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number }>('/api/tickets/deposit-intent', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: currentUserId,
+          walletAddress: rawAddress,
+          ticketAmount: 10,
+        }),
+      });
       await tonConnectUI.sendTransaction({
         validUntil: Math.floor(Date.now() / 1000) + 360,
         messages: [{
-          address: "UQDa34V_x0Lp34M920D-Jp_v1038V90234_VaDe240_01A5d",
-          amount: "5000000000",
+          address: intent.marketingWallet,
+          amount: Math.round(intent.tonAmount * 1_000_000_000).toString(),
         }]
       });
-      
-      setGoldenTickets((prev) => prev + 10);
+      const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
+        method: 'POST',
+        body: JSON.stringify({ intentId: intent.intentId }),
+      });
+      setGoldenTickets(confirmed.availableTickets);
       const newTx = {
         id: `tx-${Date.now()}`,
-        event: 'Purchased 10 Tickets',
+        event: 'Deposit Confirmed',
         value: '+10 Tickets',
         time: 'Just now',
         type: 'mint'
@@ -229,11 +294,6 @@ export function Web3Dashboard({
           if (prev >= 5) {
             clearInterval(interval);
             setMatchmakingState('success');
-            setTimeout(() => {
-              setMatchmakingState('idle');
-              setMatchmakingTimer(0);
-              onStartGame('pvp', selectedStake);
-            }, 1000);
             return 5;
           }
           return prev + 1;
@@ -242,6 +302,101 @@ export function Web3Dashboard({
     }
     return () => clearInterval(interval);
   }, [matchmakingState, onStartGame, selectedStake]);
+
+  useEffect(() => {
+    if (matchmakingState !== 'searching') return;
+    queueStreamRef.current?.close();
+    const stream = new EventSource(`${API_BASE_URL}/api/matchmaker/stream/${encodeURIComponent(currentUserId)}`);
+    queueStreamRef.current = stream;
+
+    stream.addEventListener('queue-status', (event) => {
+      const result = JSON.parse((event as MessageEvent).data) as { status: 'idle' | 'searching' | 'ready'; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
+      if (result.status === 'ready' && result.matchId) {
+        localStorage.setItem('redoapp_active_match', JSON.stringify({
+          matchId: result.matchId,
+          mode: 'pvp',
+          stake: selectedStake,
+          currentUserId,
+          players: result.players || [],
+          createdAt: Date.now(),
+        }));
+        setMatchmakingState('success');
+        onStartGame('pvp', selectedStake);
+      }
+    });
+
+    stream.onerror = () => {
+      apiRequest<{ status: 'idle' | 'searching' | 'ready'; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/matchmaker/status/' + encodeURIComponent(currentUserId))
+        .then((result) => {
+          if (result.status === 'ready' && result.matchId) {
+            localStorage.setItem('redoapp_active_match', JSON.stringify({
+              matchId: result.matchId,
+              mode: 'pvp',
+              stake: selectedStake,
+              currentUserId,
+              players: result.players || [],
+              createdAt: Date.now(),
+            }));
+            setMatchmakingState('success');
+            onStartGame('pvp', selectedStake);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    return () => {
+      stream.close();
+      if (queueStreamRef.current === stream) {
+        queueStreamRef.current = null;
+      }
+    };
+  }, [matchmakingState, currentUserId, onStartGame, selectedStake]);
+
+  useEffect(() => {
+    if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
+    privateRoomStreamRef.current?.close();
+    const stream = new EventSource(`${API_BASE_URL}/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`);
+    privateRoomStreamRef.current = stream;
+
+    stream.addEventListener('private-room', (event) => {
+      const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
+      setPrivateRoomPlayersCount(result.playersCount);
+      if (result.status === 'started' && result.matchId) {
+        localStorage.setItem('redoapp_active_match', JSON.stringify({
+          matchId: result.matchId,
+          mode: 'private',
+          stake: privateRoomStake,
+          currentUserId,
+          players: result.players || [],
+          createdAt: Date.now(),
+        }));
+        setPrivateRoomStatus('ready');
+        onStartGame('private', privateRoomStake);
+      }
+    });
+
+    stream.onerror = () => {
+      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode))
+        .then((result) => {
+          setPrivateRoomPlayersCount(result.playersCount);
+        })
+        .catch(() => undefined);
+    };
+
+    return () => {
+      stream.close();
+      if (privateRoomStreamRef.current === stream) {
+        privateRoomStreamRef.current = null;
+      }
+    };
+  }, [currentUserId, onStartGame, privateRoomCode, privateRoomStake, privateRoomStatus]);
+
+  useEffect(() => {
+    return () => {
+      privateRoomStreamRef.current?.close();
+      queueStreamRef.current?.close();
+    };
+  }, []);
 
   const winRate = stats.gamesPlayed > 0 
     ? Math.round((stats.gamesWon / stats.gamesPlayed) * 100) 
@@ -290,11 +445,11 @@ export function Web3Dashboard({
         </div>
 
         <div className="flex items-center gap-2">
-          {walletConnected && !faucetClaimedToday && (
+          {walletConnected && !dailyXpClaimedToday && (
             <button
-              onClick={claimFaucet}
+              onClick={claimDailyXp}
               className="p-1 bg-[#00ff66] text-black border-2 border-black pixel-btn-interactive text-[8px] font-black uppercase font-mono tracking-wider flex items-center justify-center gap-1"
-              title="Claim daily 50 TON Points"
+              title="Claim daily XP check-in"
             >
               <Gift className="w-3.5 h-3.5" />
               <span>CLAIM</span>
@@ -432,8 +587,8 @@ export function Web3Dashboard({
                     <span className="text-xs font-black text-[#00ff66]">{stats.gamesWon}</span>
                   </div>
                   <div className="bg-black p-2 border border-black">
-                    <span className="block text-slate-500 text-[7px] uppercase font-bold">TON POINTS</span>
-                    <span className="text-xs font-black text-[#ffcc00]">{yoTokenBalance} pts</span>
+                    <span className="block text-slate-500 text-[7px] uppercase font-bold">REAL PVP WINS</span>
+                    <span className="text-xs font-black text-[#ffcc00]">{stats.realPvpGamesWon}</span>
                   </div>
                 </div>
               </div>
@@ -478,38 +633,98 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="space-y-3 h-full flex flex-col justify-between py-2 text-left"
             >
-              {/* Daily Faucet Bonus */}
+              {/* Daily XP Check-in */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-3.5 text-center space-y-3 font-mono">
                 <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#00ff66] animate-bounce-subtle">
                   <Gift className="w-5 h-5" />
                 </div>
                 <div className="space-y-1">
                   <h3 className="font-black text-xs text-slate-100 uppercase">
-                    Daily Bonus Faucet
+                    Daily XP Check-in
                   </h3>
                   <p className="text-[9px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                    Claim your daily reward of 50 TON Points. Use them to play, level up, and show off your rank!
+                    Claim one daily check-in reward worth 20 XP. Tickets are no longer granted for free.
                   </p>
                 </div>
 
                 {!walletConnected ? (
                   <div className="text-[8.5px] text-[#ff4b4b] bg-black p-2 border border-black uppercase font-bold">
-                    Connect wallet to claim daily bonus
+                    Connect wallet to claim daily XP
                   </div>
-                ) : faucetClaimedToday ? (
+                ) : dailyXpClaimedToday ? (
                   <div className="w-full py-2 bg-slate-950 text-[#00ff66] border border-black/40 text-[10px] font-black uppercase font-mono flex items-center justify-center gap-1.5">
                     <Check className="w-4 h-4 text-[#00ff66]" />
-                    DAILY BONUS CLAIMED
+                    DAILY XP CLAIMED
                   </div>
                 ) : (
                   <button
                     type="button"
-                    onClick={claimFaucet}
+                    onClick={claimDailyXp}
                     className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                   >
-                    Claim +50 TON Points
+                    Claim +20 XP
                   </button>
                 )}
+              </div>
+
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-400 uppercase">Available</span>
+                  <span className="text-[#ffcc00] font-black">{goldenTickets.toFixed(2)} TKT</span>
+                </div>
+                <div className="flex justify-between text-[9px]">
+                  <span className="text-slate-400 uppercase">Held in queue</span>
+                  <span className="text-[#00d2ff] font-black">{heldTickets.toFixed(2)} TKT</span>
+                </div>
+
+                <div className="pt-2 border-t border-black space-y-2">
+                  <div className="text-[8px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="5"
+                      step="1"
+                      value={withdrawAmount}
+                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amount = Number(withdrawAmount);
+                        if (!walletConnected || !rawAddress) {
+                          alert('Connect wallet first.');
+                          return;
+                        }
+                        apiRequest('/api/tickets/withdraw-request', {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            userId: currentUserId,
+                            walletAddress: rawAddress,
+                            ticketAmount: amount,
+                          }),
+                        }).then(() => {
+                          return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(currentUserId));
+                        }).then((balance) => {
+                          setGoldenTickets(balance.availableTickets);
+                          setHeldTickets(balance.heldTickets);
+                          return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
+                        }).then((ledger) => {
+                          setTransactions(ledger.transactions);
+                          alert('Withdrawal request created.');
+                        }).catch((error) => {
+                          alert(error.message);
+                        });
+                      }}
+                      className="px-3 py-1.5 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase"
+                    >
+                      Withdraw
+                    </button>
+                  </div>
+                  <div className="text-[7px] text-slate-500">
+                    Minimum withdrawal: 5 tickets. Final on-chain payout will use the configured marketing wallet later.
+                  </div>
+                </div>
               </div>
 
               {/* Activity & Payouts Log */}
@@ -662,8 +877,17 @@ export function Web3Dashboard({
                         type="button"
                         onClick={() => {
                           sound.playPop();
-                          setGoldenTickets(prev => prev + selectedStake);
-                          setMatchmakingState('idle');
+                          apiRequest('/api/matchmaker/leave', {
+                            method: 'POST',
+                            body: JSON.stringify({ userId: currentUserId }),
+                          }).then(() => {
+                            return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(currentUserId));
+                          }).then((balance) => {
+                            setGoldenTickets(balance.availableTickets);
+                            setHeldTickets(balance.heldTickets);
+                          }).finally(() => {
+                            setMatchmakingState('idle');
+                          });
                         }}
                         className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive"
                       >
@@ -676,7 +900,7 @@ export function Web3Dashboard({
                         MATCH READY!
                       </h3>
                       <p className="text-[8px] text-slate-455">
-                        Stakes pool: {(selectedStake * 4 * 0.9).toFixed(1)} Tickets (10% platform tax applied)
+                        Match session created. Launching validated stake table. Net pool for this stake: {(selectedStake * 4 * 0.94).toFixed(2)} TKT
                       </p>
                     </div>
                   ) : (
@@ -686,7 +910,7 @@ export function Web3Dashboard({
                           TON PVP ARENA
                         </h3>
                         <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
-                          BAL: <strong>{goldenTickets}</strong> TKT
+                          BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
                         </span>
                       </div>
 
@@ -706,23 +930,27 @@ export function Web3Dashboard({
                             }`}
                           >
                             <span className="text-[9px] font-black">{stake}TKT</span>
-                            <span className="text-[6px] block mt-0.5">{stake.toFixed(1)}TON</span>
+                            <span className="text-[6px] block mt-0.5">stake</span>
                           </button>
                         ))}
                       </div>
 
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-450">
                         <div className="flex justify-between text-slate-350">
-                          <span>Prize pool:</span>
-                          <span className="text-[#00ff66] font-bold">{(selectedStake * 4 * 0.9).toFixed(1)} TKT</span>
+                          <span>Net prize pool:</span>
+                          <span className="text-[#00ff66] font-bold">{(selectedStake * 4 * 0.94).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Match Delay:</span>
-                          <span>5-10s random queue</span>
+                          <span>Season fund:</span>
+                          <span>{(selectedStake * 4 * 0.025).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Incognito mode:</span>
-                          <span className="text-[#00ff66]">ACTIVE</span>
+                          <span>Burn fund:</span>
+                          <span>{(selectedStake * 4 * 0.035).toFixed(2)} TKT</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Payout split:</span>
+                          <span>52 / 23 / 15 / 10</span>
                         </div>
                       </div>
 
@@ -746,16 +974,31 @@ export function Web3Dashboard({
                           type="button"
                           onClick={() => {
                             if (goldenTickets < selectedStake) {
-                              alert(`You need at least ${selectedStake} tickets to join this queue. Buy tickets or claim points.`);
+                              alert(`You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`);
                               return;
                             }
                             sound.playShuffle();
-                            setMatchmakingState('searching');
-                            setMatchmakingTimer(0);
+                            apiRequest<{ availableTickets: number }>('/api/matchmaker/join', {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                userId: currentUserId,
+                                username: userName,
+                                avatarId: selectedAvatar,
+                                walletAddress: rawAddress || null,
+                                stake: selectedStake,
+                                mode: 'pvp',
+                              }),
+                            }).then((result) => {
+                              setGoldenTickets(result.availableTickets);
+                              setMatchmakingState('searching');
+                              setMatchmakingTimer(0);
+                            }).catch((error) => {
+                              alert(error.message);
+                            });
                           }}
                           className="flex-1 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
                         >
-                          FIND PVP
+                          JOIN REAL QUEUE
                         </button>
                       </div>
                     </div>
@@ -796,7 +1039,7 @@ export function Web3Dashboard({
                           <strong>You are joining a PRIVATE table.</strong> Opponents might play in collusion.
                         </p>
                         <p className="text-[#ffcc00] font-bold">
-                          Platform tax is increased to 30% to prevent token abuse.
+                          Settlement applies a 6% total fee split into season and burn funds before player payouts.
                         </p>
                       </div>
                       <div className="flex gap-2">
@@ -813,13 +1056,44 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={() => {
-                            if (goldenTickets < privateRoomStake) {
-                              alert("Insufficient tickets for this private room stake.");
+                            sound.playPop();
+                            const roomCodeToUse = (privateJoinCode || privateRoomCode).trim().toUpperCase();
+                            if (!roomCodeToUse) {
+                              alert('Enter or generate a room code first.');
                               return;
                             }
-                            sound.playShuffle();
-                            setShowRoomDisclaimer(false);
-                            onStartGame('private', privateRoomStake);
+                            apiRequest<{ roomCode: string; playersCount: number; status: 'waiting' | 'started'; matchId?: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                roomCode: roomCodeToUse,
+                                userId: currentUserId,
+                                username: userName,
+                                avatarId: selectedAvatar,
+                                walletAddress: rawAddress || null,
+                              }),
+                            }).then((result) => {
+                              setShowRoomDisclaimer(false);
+                              setPrivateRoomCode(result.roomCode);
+                              setPrivateRoomPlayersCount(result.playersCount);
+                              setGoldenTickets(result.availableTickets);
+                              setHeldTickets(result.heldTickets);
+                              if (result.status === 'started' && result.matchId) {
+                                localStorage.setItem('redoapp_active_match', JSON.stringify({
+                                  matchId: result.matchId,
+                                  mode: 'private',
+                                  stake: privateRoomStake,
+                                  currentUserId,
+                                  players: [],
+                                  createdAt: Date.now(),
+                                }));
+                                setPrivateRoomStatus('ready');
+                                onStartGame('private', privateRoomStake);
+                              } else {
+                                setPrivateRoomStatus('waiting');
+                              }
+                            }).catch((error) => {
+                              alert(error.message);
+                            });
                           }}
                           className="flex-1 py-1 bg-[#ff4b4b] text-black uppercase font-black pixel-btn-interactive border border-black text-[8px]"
                         >
@@ -834,7 +1108,7 @@ export function Web3Dashboard({
                           PRIVATE ROOM
                         </h3>
                         <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
-                          BAL: <strong>{goldenTickets}</strong> TKT
+                          BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
                         </span>
                       </div>
 
@@ -849,6 +1123,9 @@ export function Web3Dashboard({
                                 sound.playPop();
                                 setPrivateRoomStake(stake);
                                 setGeneratedLink('');
+                                setPrivateRoomCode('');
+                                setPrivateRoomStatus('idle');
+                                setPrivateRoomPlayersCount(0);
                               }}
                               className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
                                 privateRoomStake === stake
@@ -857,10 +1134,21 @@ export function Web3Dashboard({
                               }`}
                             >
                               <span className="text-[9px] font-black">{stake}TKT</span>
-                              <span className="text-[6px] block mt-0.5">{stake.toFixed(1)}TON</span>
+                              <span className="text-[6px] block mt-0.5">stake</span>
                             </button>
                           ))}
                         </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                        <input
+                          type="text"
+                          value={privateJoinCode}
+                          onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
+                          placeholder="ROOM CODE"
+                          className="w-full bg-black border border-black text-slate-200 px-2 py-2 text-[9px] font-mono tracking-widest uppercase"
+                        />
                       </div>
 
                       {!generatedLink ? (
@@ -868,8 +1156,25 @@ export function Web3Dashboard({
                           type="button"
                           onClick={() => {
                             sound.playShuffle();
-                            const randomRoom = Math.random().toString(36).substring(2, 8);
-                            setGeneratedLink(`https://t.me/redo_appbot/app?startapp=room_${randomRoom}`);
+                            apiRequest<{ roomCode: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                userId: currentUserId,
+                                username: userName,
+                                avatarId: selectedAvatar,
+                                walletAddress: rawAddress || null,
+                                stake: privateRoomStake,
+                              }),
+                            }).then((result) => {
+                              setGoldenTickets(result.availableTickets);
+                              setHeldTickets(result.heldTickets);
+                              setPrivateRoomCode(result.roomCode);
+                              setPrivateRoomPlayersCount(1);
+                              setPrivateRoomStatus('waiting');
+                              setGeneratedLink(`https://t.me/redo_appbot/app?startapp=room_${result.roomCode}`);
+                            }).catch((error) => {
+                              alert(error.message);
+                            });
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
                         >
@@ -906,6 +1211,9 @@ export function Web3Dashboard({
                           >
                             ENTER ROOM
                           </button>
+                          <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
+                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -919,7 +1227,7 @@ export function Web3Dashboard({
                     [ READY TO PRACTICE ]
                   </h3>
                   <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
-                    Practice card matches for free against AI bots. Level up your rank, learn game mechanics, and test your deck strategies.
+                    Practice card matches against AI bots. Practice gives reduced XP and never touches your ticket balance.
                   </p>
                   
                   <button

@@ -24,11 +24,37 @@ import {
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+    ...init,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.error || 'Request failed');
+  }
+  return data as T;
+}
+
 const INITIAL_STATS: GameStats = {
   gamesPlayed: 0,
   gamesWon: 0,
   cardsPlayedCount: 0,
   xp: 0,
+  practiceGamesPlayed: 0,
+  practiceGamesWon: 0,
+  realPvpGamesPlayed: 0,
+  realPvpGamesWon: 0,
+  privateGamesPlayed: 0,
+  privateGamesWon: 0,
+  practiceXp: 0,
+  realPvpXp: 0,
+  privateXp: 0,
 };
 
 export function useUnoGame() {
@@ -68,13 +94,17 @@ export function useUnoGame() {
   const [activeStake, setActiveStake] = useState<number>(0);
   const [goldenTickets, setGoldenTickets] = useState<number>(() => {
     const saved = localStorage.getItem('uno_golden_tickets');
-    return saved ? parseInt(saved, 10) : 10;
+    return saved ? parseFloat(saved) : 0;
   });
   const [transactions, setTransactions] = useState<any[]>(() => {
     const saved = localStorage.getItem('yo_transactions');
     if (saved) return JSON.parse(saved);
     return [];
   });
+  const remoteMatchIdRef = useRef<string | null>(null);
+  const remoteUserIdRef = useRef<string | null>(null);
+  const [remoteSessionActive, setRemoteSessionActive] = useState(false);
+  const remoteMatchStreamRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     localStorage.setItem('uno_golden_tickets', goldenTickets.toString());
@@ -109,6 +139,36 @@ export function useUnoGame() {
     });
   }, []);
 
+  const syncRemoteMatchState = useCallback(async () => {
+    const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+    if (!activeMatchRaw) {
+      remoteMatchIdRef.current = null;
+      remoteUserIdRef.current = null;
+      setRemoteSessionActive(false);
+      return false;
+    }
+
+    try {
+      const activeMatch = JSON.parse(activeMatchRaw) as {
+        matchId: string;
+        currentUserId: string;
+      };
+      if (!activeMatch.matchId || !activeMatch.currentUserId) {
+        return false;
+      }
+      remoteMatchIdRef.current = activeMatch.matchId;
+      remoteUserIdRef.current = activeMatch.currentUserId;
+      const result = await apiRequest<{ gameState: GameState }>(`/api/matches/state/${encodeURIComponent(activeMatch.matchId)}/${encodeURIComponent(activeMatch.currentUserId)}`);
+      setGameState(result.gameState);
+      setRemoteSessionActive(true);
+      return true;
+    } catch (error) {
+      console.error('Remote match state sync failed', error);
+      setRemoteSessionActive(false);
+      return false;
+    }
+  }, []);
+
   // Listen for game over to calculate leaderboard and reward XP and Tickets
   useEffect(() => {
     if (gameState.phase === 'game_over' && gameState.winnerId && leaderboard.length === 0) {
@@ -134,54 +194,35 @@ export function useUnoGame() {
       // Winner has 0 points, so they are guaranteed 1st place!
       entries.sort((a, b) => a.points - b.points);
 
-      // Distribute ranks, XP and Ticket rewards
-      const taxRate = gameMode === 'pvp' ? 0.1 : (gameMode === 'private' ? 0.3 : 0);
-      const totalFund = activeStake * 4 * (1 - taxRate);
-
-      // Points of Rank 2 and Rank 3
-      const p2 = entries[1] ? entries[1].points : 0;
-      const p3 = entries[2] ? entries[2].points : 0;
-
       const finalEntries = entries.map((entry, index) => {
         const rank = index + 1;
         let xpGained = 0;
         let ticketsGained = 0;
         
-        // Base XP on placement
-        const placementXp = rank === 1 ? 200 : (rank === 2 ? 100 : (rank === 3 ? 60 : 30));
-        
         if (entry.playerId === 'player') {
-          // Play card bonus: +10 XP per card played
-          const playXp = cardsPlayedThisRound * 10;
-          // Draw card activity: +3 XP per card drawn
-          const drawXp = cardsDrawnThisRound * 3;
-          xpGained = placementXp + playXp + drawXp;
+          if (gameMode === 'offline') {
+            xpGained = Math.round(12 + (rank === 1 ? 18 : rank === 2 ? 8 : rank === 3 ? 4 : 2) + (cardsPlayedThisRound * 1.5) + (cardsDrawnThisRound * 0.5));
+          } else if (gameMode === 'pvp') {
+            const baseXp = 30 + (rank === 1 ? 55 : rank === 2 ? 30 : rank === 3 ? 18 : 10) + (cardsPlayedThisRound * 2);
+            const stakeMultiplier = activeStake >= 50 ? 1.35 : activeStake >= 10 ? 1.2 : activeStake >= 5 ? 1.1 : 1;
+            xpGained = Math.round(baseXp * stakeMultiplier);
+          } else {
+            xpGained = Math.round(22 + (rank === 1 ? 38 : rank === 2 ? 22 : rank === 3 ? 12 : 8) + (cardsPlayedThisRound * 1.5));
+          }
         } else {
-          // Simulated AI play metrics for aesthetic completeness
-          const estPlayed = Math.max(2, 7 - entry.points / 10);
-          xpGained = Math.round(placementXp + (estPlayed * 10));
+          xpGained = rank === 1 ? 40 : rank === 2 ? 20 : rank === 3 ? 10 : 5;
         }
 
         // Calculate Ticket Payouts if PVP or Private Mode
         if (gameMode !== 'offline' && activeStake > 0) {
-          if (rank === 1) {
-            ticketsGained = totalFund * 0.5;
-          } else if (rank === 4) {
-            ticketsGained = totalFund * 0.1;
-          } else if (rank === 2) {
-            if (p2 + p3 > 0) {
-              ticketsGained = totalFund * 0.4 * (p3 / (p2 + p3));
-            } else {
-              ticketsGained = totalFund * 0.4 * 0.5;
-            }
-          } else if (rank === 3) {
-            if (p2 + p3 > 0) {
-              ticketsGained = totalFund * 0.4 * (p2 / (p2 + p3));
-            } else {
-              ticketsGained = totalFund * 0.4 * 0.5;
-            }
-          }
-          // Round to 2 decimal places
+          const grossPot = activeStake * 4;
+          const seasonFund = grossPot * 0.025;
+          const burnFund = grossPot * 0.035;
+          const netPrizePool = grossPot - seasonFund - burnFund;
+          if (rank === 1) ticketsGained = netPrizePool * 0.52;
+          else if (rank === 2) ticketsGained = netPrizePool * 0.23;
+          else if (rank === 3) ticketsGained = netPrizePool * 0.15;
+          else ticketsGained = netPrizePool * 0.10;
           ticketsGained = Math.round(ticketsGained * 100) / 100;
         }
 
@@ -201,21 +242,12 @@ export function useUnoGame() {
         saveStats((prev) => ({
           ...prev,
           xp: (prev.xp || 0) + playerEntry.xpGained,
+          practiceXp: prev.practiceXp + (gameMode === 'offline' ? playerEntry.xpGained : 0),
+          realPvpXp: prev.realPvpXp + (gameMode === 'pvp' ? playerEntry.xpGained : 0),
+          privateXp: prev.privateXp + (gameMode === 'private' ? playerEntry.xpGained : 0),
         }));
 
-        if (gameMode !== 'offline' && activeStake > 0) {
-          const payout = playerEntry.ticketsGained || 0;
-          setGoldenTickets((prev) => prev + payout);
-
-          const newTx = {
-            id: `tx-payout-${Date.now()}`,
-            event: `${gameMode === 'pvp' ? 'PVP Arena' : 'Private Room'} Reward`,
-            value: `+${payout.toFixed(2)} TKT`,
-            time: 'Just now',
-            type: 'mint',
-          };
-          setTransactions((prev) => [newTx, ...prev].slice(0, 10));
-        } else if (gameMode === 'offline') {
+        if (gameMode === 'offline') {
           const won = playerEntry.rank === 1;
           const newTx = {
             id: `tx-free-over-${Date.now()}`,
@@ -229,6 +261,36 @@ export function useUnoGame() {
       }
     }
   }, [gameState.phase, gameState.winnerId, cardsPlayedThisRound, cardsDrawnThisRound, saveStats, gameState.players, gameMode, activeStake, leaderboard.length]);
+
+  useEffect(() => {
+    if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || gameState.phase === 'game_over') {
+      return;
+    }
+
+    if (!remoteMatchIdRef.current || !remoteUserIdRef.current) {
+      return;
+    }
+
+    remoteMatchStreamRef.current?.close();
+    const stream = new EventSource(`${API_BASE_URL}/api/matches/stream/${encodeURIComponent(remoteMatchIdRef.current)}/${encodeURIComponent(remoteUserIdRef.current)}`);
+    remoteMatchStreamRef.current = stream;
+
+    stream.addEventListener('match-state', (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as { gameState: GameState };
+      setGameState(payload.gameState);
+    });
+
+    stream.onerror = () => {
+      syncRemoteMatchState().catch(() => undefined);
+    };
+
+    return () => {
+      stream.close();
+      if (remoteMatchStreamRef.current === stream) {
+        remoteMatchStreamRef.current = null;
+      }
+    };
+  }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
   const addLog = useCallback((message: string, type: 'info' | 'play' | 'draw' | 'uno' | 'action' | 'win' = 'info') => {
     setGameState((prev) => {
@@ -307,17 +369,49 @@ export function useUnoGame() {
     setGameMode(mode);
     setActiveStake(stakeAmount);
 
-    if (mode === 'pvp' || mode === 'private') {
-      setGoldenTickets((prev) => Math.max(0, prev - stakeAmount));
-      const newTx = {
-        id: `tx-entry-${Date.now()}`,
-        event: `${mode === 'pvp' ? 'PVP Arena' : 'Private Room'} Entry`,
-        value: `-${stakeAmount} TKT`,
-        time: 'Just now',
-        type: 'disconnect',
-      };
-      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
-    } else if (mode === 'offline') {
+    if (mode !== 'pvp' && mode !== 'private') {
+      setRemoteSessionActive(false);
+      remoteMatchIdRef.current = null;
+      remoteUserIdRef.current = null;
+    }
+
+    if ((mode === 'pvp' || mode === 'private') && localStorage.getItem('redoapp_active_match')) {
+      setCardsPlayedThisRound(0);
+      setCardsDrawnThisRound(0);
+      setLeaderboard([]);
+      setWildSelectOpen(false);
+      setPendingWildCard(null);
+      saveStats((prev) => ({
+        ...prev,
+        gamesPlayed: prev.gamesPlayed + 1,
+        realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
+        privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
+      }));
+      setGameState({
+        deck: [],
+        discardPile: [],
+        players: [],
+        currentPlayerIndex: 0,
+        direction: 1,
+        activeColor: 'red',
+        activeValue: '0',
+        phase: 'playing',
+        winnerId: null,
+        logs: [createLog('Connecting to live stake table...', 'info')],
+        drawCountAccumulator: 0,
+        unoShoutCooldown: {},
+        dealerId: 'ai1',
+        consecutiveDraws: 0,
+        accusablePlayers: [],
+      });
+      syncRemoteMatchState();
+      speechBubbleTimeoutRefs.current = {};
+      if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
+      aiTurnHandledRef.current = null;
+      return;
+    }
+
+    if (mode === 'offline') {
       const newTx = {
         id: `tx-free-game-${Date.now()}`,
         event: 'Free Game Played',
@@ -414,7 +508,7 @@ export function useUnoGame() {
       activeValue: startingCard.value,
       phase: 'playing',
       winnerId: null,
-      logs: [createLog('🎈 Welcome to Cartoon UNO! Let is play! 🐾', 'info')],
+      logs: [createLog('🎈 Welcome to the card table! Let the match begin! 🐾', 'info')],
       drawCountAccumulator: 0,
       unoShoutCooldown: {},
       dealerId: 'ai1',
@@ -429,13 +523,16 @@ export function useUnoGame() {
     saveStats((prev) => ({
       ...prev,
       gamesPlayed: prev.gamesPlayed + 1,
+      practiceGamesPlayed: prev.practiceGamesPlayed + (mode === 'offline' ? 1 : 0),
+      realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
+      privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
     }));
 
     // Reset clean bubbles
     speechBubbleTimeoutRefs.current = {};
     if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
     aiTurnHandledRef.current = null;
-  }, [saveStats]);
+  }, [saveStats, syncRemoteMatchState]);
 
   // Execute Player Turn switch log
   const advanceTurn = useCallback((state: GameState, customSkipCount: number = 1): GameState => {
@@ -519,6 +616,9 @@ export function useUnoGame() {
         saveStats((prevStats) => ({
           ...prevStats,
           gamesWon: prevStats.gamesWon + (playerId === 'player' ? 1 : 0),
+          practiceGamesWon: prevStats.practiceGamesWon + (playerId === 'player' && gameMode === 'offline' ? 1 : 0),
+          realPvpGamesWon: prevStats.realPvpGamesWon + (playerId === 'player' && gameMode === 'pvp' ? 1 : 0),
+          privateGamesWon: prevStats.privateGamesWon + (playerId === 'player' && gameMode === 'private' ? 1 : 0),
         }));
 
         // Calculate scores
@@ -634,14 +734,71 @@ export function useUnoGame() {
   // Handle color picker for wild cards
   const selectWildColor = useCallback((color: CardColor) => {
     if (pendingWildCard) {
+      if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive && remoteMatchIdRef.current && remoteUserIdRef.current) {
+        apiRequest<{ gameState: GameState }>('/api/matches/action', {
+          method: 'POST',
+          body: JSON.stringify({
+            matchId: remoteMatchIdRef.current,
+            userId: remoteUserIdRef.current,
+            action: 'play',
+            cardId: pendingWildCard.id,
+            chosenColor: color,
+          }),
+        }).then((result) => {
+          sound.playWild();
+          setGameState(result.gameState);
+          setCardsPlayedThisRound((prev) => prev + 1);
+          saveStats((prevStats) => ({
+            ...prevStats,
+            cardsPlayedCount: prevStats.cardsPlayedCount + 1,
+          }));
+          setWildSelectOpen(false);
+          setPendingWildCard(null);
+        }).catch((error) => {
+          sound.playError();
+          alert(error.message);
+        });
+        return;
+      }
+
       playCard('player', pendingWildCard, color);
       setWildSelectOpen(false);
       setPendingWildCard(null);
     }
-  }, [pendingWildCard, playCard]);
+  }, [gameMode, pendingWildCard, playCard, remoteSessionActive, saveStats]);
 
   // Initiate Playing wild card (Human)
   const initiatePlayCard = useCallback((card: UnoCardType) => {
+    if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive && remoteMatchIdRef.current && remoteUserIdRef.current) {
+      if (card.color === 'wild') {
+        setPendingWildCard(card);
+        setWildSelectOpen(true);
+        sound.playPop();
+      } else {
+        apiRequest<{ gameState: GameState }>('/api/matches/action', {
+          method: 'POST',
+          body: JSON.stringify({
+            matchId: remoteMatchIdRef.current,
+            userId: remoteUserIdRef.current,
+            action: 'play',
+            cardId: card.id,
+          }),
+        }).then((result) => {
+          sound.playPlay();
+          setGameState(result.gameState);
+          setCardsPlayedThisRound((prev) => prev + 1);
+          saveStats((prevStats) => ({
+            ...prevStats,
+            cardsPlayedCount: prevStats.cardsPlayedCount + 1,
+          }));
+        }).catch((error) => {
+          sound.playError();
+          alert(error.message);
+        });
+      }
+      return;
+    }
+
     if (card.color === 'wild') {
       setPendingWildCard(card);
       setWildSelectOpen(true);
@@ -649,10 +806,29 @@ export function useUnoGame() {
     } else {
       playCard('player', card);
     }
-  }, [playCard]);
+  }, [gameMode, playCard, remoteSessionActive, saveStats]);
 
   // Draw Card Logic
   const drawCard = useCallback((playerId: PlayerId) => {
+    if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive && remoteMatchIdRef.current && remoteUserIdRef.current && playerId === 'player') {
+      sound.playDraw();
+      apiRequest<{ gameState: GameState }>('/api/matches/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          matchId: remoteMatchIdRef.current,
+          userId: remoteUserIdRef.current,
+          action: 'draw',
+        }),
+      }).then((result) => {
+        setGameState(result.gameState);
+        setCardsDrawnThisRound((prev) => prev + 1);
+      }).catch((error) => {
+        sound.playError();
+        alert(error.message);
+      });
+      return null;
+    }
+
     sound.playDraw();
     let drawnPlayableCard: UnoCardType | null = null;
 
@@ -732,10 +908,28 @@ export function useUnoGame() {
     }
 
     return drawnPlayableCard;
-  }, [addLog, advanceTurn]);
+  }, [addLog, advanceTurn, gameMode, remoteSessionActive]);
 
   // Human Declares Pass (after drawing playable card but choosing not to play it)
   const passTurn = useCallback(() => {
+    if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive && remoteMatchIdRef.current && remoteUserIdRef.current) {
+      sound.playPop();
+      apiRequest<{ gameState: GameState }>('/api/matches/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          matchId: remoteMatchIdRef.current,
+          userId: remoteUserIdRef.current,
+          action: 'pass',
+        }),
+      }).then((result) => {
+        setGameState(result.gameState);
+      }).catch((error) => {
+        sound.playError();
+        alert(error.message);
+      });
+      return;
+    }
+
     sound.playPop();
     setGameState((prev) => {
       const stateLog = createLog('🐾 You chose to keep the card and passed the turn.', 'info');
@@ -745,10 +939,16 @@ export function useUnoGame() {
         logs: [stateLog, ...advanced.logs].slice(0, 50),
       };
     });
-  }, [advanceTurn]);
+  }, [advanceTurn, gameMode, remoteSessionActive]);
 
   // AI Brain & Play Automation
   useEffect(() => {
+    if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive) {
+      if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
+      aiTurnHandledRef.current = null;
+      return;
+    }
+
     const { players, currentPlayerIndex, phase } = gameState;
     if (phase !== 'playing') {
       if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
@@ -838,6 +1038,7 @@ export function useUnoGame() {
   // Clean-up hooks on dismount
   useEffect(() => {
     return () => {
+      remoteMatchStreamRef.current?.close();
       if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
       Object.values(speechBubbleTimeoutRefs.current).forEach((t) => clearTimeout(t as any));
     };

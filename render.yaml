@@ -1,10 +1,12 @@
 services:
   # Static Site: React Vite Frontend
   - type: static
-    name: yoapp-frontend
+    name: redoapp-frontend
     buildCommand: npm run build
     publishPath: dist
     envVars:
+      - key: VITE_API_BASE_URL
+        value: https://redoapp-backend.onrender.com
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
@@ -12,12 +14,24 @@ services:
 
   # Web Service: Express Node Backend
   - type: web
-    name: yoapp-backend
+    name: redoapp-backend
     env: node
     plan: free
     buildCommand: npm install
     startCommand: npm run start
     envVars:
+      - key: MARKETING_WALLET
+        value: UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj
+      - key: TICKET_PRICE_TON
+        value: 1
+      - key: ENABLE_CHAIN_VERIFICATION
+        value: false
+      - key: TON_VERIFICATION_MODE
+        value: manual
+      - key: TON_API_BASE_URL
+        sync: false
+      - key: TON_API_KEY
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
