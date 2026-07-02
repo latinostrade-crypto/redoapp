@@ -88,3 +88,55 @@ export interface LeaderboardEntry {
   isWinner: boolean;
   ticketsGained?: number; // Tickets gained/lost from this match
 }
+
+export interface EnergyState {
+  energy: number;
+  maxEnergy: number;
+  nextEnergyAt: number | null;
+  regenIntervalSec: number;
+}
+
+export interface QuestView {
+  id: string;
+  title: string;
+  description: string;
+  kind: 'daily' | 'weekly';
+  metric: 'play_online' | 'play_private' | 'win_any' | 'spend_energy' | 'invite_referral';
+  target: number;
+  rewardXp: number;
+  rewardEnergy: number;
+  progress: number;
+  claimed: boolean;
+  completed: boolean;
+}
+
+export interface ReferralInvite {
+  userId: string;
+  username: string;
+  photoUrl: string | null;
+  status: 'pending' | 'activated' | 'rejected';
+  assignedAt: number | null;
+  activatedAt: number | null;
+}
+
+export interface PlayerProfile {
+  userId: string;
+  telegramUsername: string | null;
+  telegramPhotoUrl: string | null;
+  walletAddress: string | null;
+  availableTickets: number;
+  heldTickets: number;
+  xp: number;
+  energy: EnergyState;
+  referralCode: string;
+  referralLink: string;
+  referrals: {
+    referredByUserId: string | null;
+    status: string | null;
+    activatedAt: number | null;
+    referralsActivated: number;
+    invitedUsers: ReferralInvite[];
+  };
+  quests: QuestView[];
+  claimedQuestIds?: string[];
+}

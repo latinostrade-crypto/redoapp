@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
-import { AvatarId, GameStats } from '../types';
+import { AvatarId, GameStats, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
@@ -83,10 +83,12 @@ export function Web3Dashboard({
   const [tonConnectUI] = useTonConnectUI();
   const rawAddress = useTonAddress();
   const walletConnected = !!rawAddress;
+  const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
   
   const walletAddress = walletConnected 
     ? `${rawAddress.substring(0, 6)}...${rawAddress.substring(rawAddress.length - 4)}` 
     : '';
+  const [profile, setProfile] = useState<PlayerProfile | null>(null);
 
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -149,9 +151,25 @@ export function Web3Dashboard({
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
-  const currentUserId = rawAddress || `guest:${userName.toLowerCase()}`;
+  const currentUserId = profile?.userId || rawAddress || `guest:${userName.toLowerCase()}`;
   const [heldTickets, setHeldTickets] = useState(0);
   const [withdrawAmount, setWithdrawAmount] = useState('5');
+  const effectiveXp = profile?.xp ?? playerXp;
+  const displayXpNeeded = 400;
+  const displayLevel = Math.floor(effectiveXp / displayXpNeeded) + 1;
+  const displayCurrentLevelXp = effectiveXp % displayXpNeeded;
+  const displayXpProgressPercentage = Math.min(100, Math.floor((displayCurrentLevelXp / displayXpNeeded) * 100));
+  const energy = profile?.energy ?? { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
+  const quests = profile?.quests ?? [];
+  const referralInvites = profile?.referrals.invitedUsers ?? [];
+  const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - Date.now()) / 1000)) : 0;
+  const tgProfileName = profile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
+  const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
+
+  useEffect(() => {
+    if (!profile) return;
+    window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: profile }));
+  }, [profile]);
 
   useEffect(() => {
     if (lastDailyCheckIn) {
@@ -165,22 +183,39 @@ export function Web3Dashboard({
     if (rawAddress) {
       localStorage.setItem('redoapp_wallet_address', rawAddress);
     }
-    apiRequest('/api/users/sync', {
+    apiRequest<{
+      userId: string;
+      xp: number;
+      availableTickets: number;
+      heldTickets: number;
+      energy: PlayerProfile['energy'];
+      referralCode: string;
+      referralLink: string;
+      quests: PlayerProfile['quests'];
+      telegramUsername: string | null;
+      telegramPhotoUrl: string | null;
+    }>('/api/users/sync', {
       method: 'POST',
       body: JSON.stringify({
         userId: currentUserId,
         walletAddress: rawAddress || null,
+        telegramInitData,
       }),
-    }).then(() => {
-      return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(currentUserId));
-    }).then((balance) => {
-      setGoldenTickets(balance.availableTickets);
-      setHeldTickets(balance.heldTickets);
-      return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
-    }).then((ledger) => {
+    }).then((synced) => {
+      localStorage.setItem('redoapp_current_user_id', synced.userId);
+      setGoldenTickets(synced.availableTickets);
+      setHeldTickets(synced.heldTickets);
+      return Promise.all([
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId)),
+        apiRequest<PlayerProfile>('/api/me/' + encodeURIComponent(synced.userId)),
+      ]);
+    }).then(([ledger, me]) => {
+      setProfile(me);
+      setGoldenTickets(me.availableTickets);
+      setHeldTickets(me.heldTickets);
       setTransactions(ledger.transactions);
     }).catch(() => undefined);
-  }, [currentUserId, rawAddress]);
+  }, [currentUserId, rawAddress, telegramInitData]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -224,6 +259,7 @@ export function Web3Dashboard({
       body: JSON.stringify({
         userId: currentUserId,
         walletAddress: rawAddress || null,
+        telegramInitData,
       }),
     }).then((result) => {
       if (!result.success) return;
@@ -238,6 +274,11 @@ export function Web3Dashboard({
         type: 'claim'
       };
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      return apiRequest<PlayerProfile>('/api/me/' + encodeURIComponent(currentUserId)).then((me) => {
+        setProfile(me);
+        setGoldenTickets(me.availableTickets);
+        setHeldTickets(me.heldTickets);
+      });
     }).catch((error) => {
       alert(error.message);
     });
@@ -493,7 +534,7 @@ export function Web3Dashboard({
             XP POINTS
           </span>
           <span className="block text-xs font-black text-[#00d2ff] mt-1">
-            {playerXp} XP
+            {effectiveXp} XP
           </span>
         </div>
 
@@ -511,7 +552,7 @@ export function Web3Dashboard({
             RANK
           </span>
           <span className="block text-xs font-black text-[#ec4899] mt-1">
-            LVL {playerLevel}
+            LVL {displayLevel}
           </span>
         </div>
       </div>
@@ -530,46 +571,57 @@ export function Web3Dashboard({
               <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                 
                 {/* Profile Read-Only Info */}
-                {(() => {
-                  const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
-                  const isTelegramUser = !!tgUser;
-                  const telegramUsername = tgUser?.username || tgUser?.first_name || '';
-                  const telegramAvatarUrl = tgUser?.photo_url || '';
-                  return (
-                    <div className="flex items-center gap-3 border-b border-black pb-3">
-                      <div className="w-12 h-12 bg-slate-950 border border-black flex items-center justify-center relative overflow-hidden">
-                        {telegramAvatarUrl ? (
-                          <img 
-                            src={telegramAvatarUrl} 
-                            alt="Telegram Avatar" 
-                            className="w-full h-full object-cover" 
-                          />
-                        ) : (
-                          <div className="flex items-center justify-center w-full h-full">
-                            <Avatar id={selectedAvatar} emotion="happy" isActive={false} size={32} />
-                          </div>
-                        )}
+                <div className="flex items-center gap-3 border-b border-black pb-3">
+                  <div className="w-12 h-12 bg-slate-950 border border-black flex items-center justify-center relative overflow-hidden">
+                    {tgPhotoUrl ? (
+                      <img 
+                        src={tgPhotoUrl} 
+                        alt="Telegram Avatar" 
+                        className="w-full h-full object-cover" 
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center w-full h-full">
+                        <Avatar id={selectedAvatar} emotion="happy" isActive={false} size={32} />
                       </div>
-                      <div className="text-left font-mono">
-                        <span className="block text-[7px] text-slate-400 uppercase">Telegram Profile</span>
-                        <span className="text-xs font-black text-[#00ff66]">
-                          {isTelegramUser ? `@${telegramUsername}` : 'guest'}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })()}
+                    )}
+                  </div>
+                  <div className="text-left font-mono">
+                    <span className="block text-[7px] text-slate-400 uppercase">Telegram Profile</span>
+                    <span className="text-xs font-black text-[#00ff66]">
+                      {tgProfileName ? `@${tgProfileName}` : 'guest'}
+                    </span>
+                    <span className="block text-[7px] text-slate-500 mt-1">
+                      ID: {currentUserId}
+                    </span>
+                  </div>
+                </div>
 
                 <div className="space-y-1 bg-black p-2 border border-black">
                   <div className="flex justify-between items-center text-[8px] font-bold">
                     <span className="text-slate-455">XP PROGRESS</span>
-                    <span className="text-[#00d2ff]">{currentLevelXp} / {xpNeeded} XP</span>
+                    <span className="text-[#00d2ff]">{displayCurrentLevelXp} / {displayXpNeeded} XP</span>
                   </div>
                   <div className="w-full bg-slate-900 h-3 border border-black overflow-hidden relative">
                     <div
                       className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
-                      style={{ width: `${xpProgressPercentage}%` }}
+                      style={{ width: `${displayXpProgressPercentage}%` }}
                     ></div>
+                  </div>
+                </div>
+
+                <div className="bg-black p-2 border border-black space-y-1">
+                  <div className="flex justify-between items-center text-[8px] font-bold">
+                    <span className="text-slate-455">ENERGY</span>
+                    <span className="text-[#00ff66]">{energy.energy} / {energy.maxEnergy}</span>
+                  </div>
+                  <div className="w-full bg-slate-900 h-3 border border-black overflow-hidden relative">
+                    <div
+                      className="bg-[#00ff66] h-full transition-all duration-500 ease-out"
+                      style={{ width: `${Math.round((energy.energy / energy.maxEnergy) * 100)}%` }}
+                    ></div>
+                  </div>
+                  <div className="text-[7px] text-slate-500">
+                    {energy.nextEnergyAt ? `Next +1 in ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Energy full'}
                   </div>
                 </div>
 
@@ -589,6 +641,61 @@ export function Web3Dashboard({
                   <div className="bg-black p-2 border border-black">
                     <span className="block text-slate-500 text-[7px] uppercase font-bold">REAL PVP WINS</span>
                     <span className="text-xs font-black text-[#ffcc00]">{stats.realPvpGamesWon}</span>
+                  </div>
+                </div>
+
+                <div className="bg-black p-2 border border-black space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
+                    <span className="text-[8px] font-black text-[#ffcc00]">{profile?.referrals.referralsActivated ?? 0} active</span>
+                  </div>
+                  <div className="text-[8px] text-slate-300 break-all">{profile?.referralLink || 'Sync Telegram to generate invite link'}</div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!profile?.referralLink) return;
+                      navigator.clipboard.writeText(profile.referralLink);
+                      alert('Referral link copied.');
+                    }}
+                    className="w-full py-1.5 bg-[#ffcc00] text-black border border-black text-[8px] font-black uppercase"
+                  >
+                    Copy Referral Link
+                  </button>
+                  <div className="space-y-1 max-h-[96px] overflow-y-auto custom-scroll pr-0.5">
+                    {referralInvites.length === 0 ? (
+                      <div className="text-[8px] text-slate-500">No referrals yet.</div>
+                    ) : (
+                      referralInvites.map((invite) => (
+                        <div key={invite.userId} className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
+                          <span className="text-slate-200">{invite.username}</span>
+                          <span className={invite.status === 'activated' ? 'text-[#00ff66] font-black' : 'text-[#ffcc00] font-black'}>
+                            {invite.status}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-black p-2 border border-black space-y-1">
+                  <div className="text-[7px] uppercase font-bold text-slate-400">Quests</div>
+                  <div className="space-y-1 max-h-[140px] overflow-y-auto custom-scroll pr-0.5">
+                    {quests.length === 0 ? (
+                      <div className="text-[8px] text-slate-500">No quests loaded.</div>
+                    ) : (
+                      quests.map((quest) => (
+                        <div key={quest.id} className="border border-black bg-slate-950 p-2">
+                          <div className="flex justify-between gap-2 text-[8px]">
+                            <span className="font-black text-slate-100">{quest.title}</span>
+                            <span className={quest.claimed ? 'text-[#00ff66]' : quest.completed ? 'text-[#ffcc00]' : 'text-slate-400'}>
+                              {quest.progress}/{quest.target}
+                            </span>
+                          </div>
+                          <div className="text-[7px] text-slate-500 mt-1">{quest.description}</div>
+                          <div className="text-[7px] mt-1 text-[#00d2ff]">+{quest.rewardXp} XP / +{quest.rewardEnergy} ENG</div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               </div>

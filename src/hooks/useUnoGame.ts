@@ -139,6 +139,21 @@ export function useUnoGame() {
     });
   }, []);
 
+  useEffect(() => {
+    const handleProfileSync = (event: Event) => {
+      const detail = (event as CustomEvent<{ xp?: number }>).detail;
+      if (typeof detail?.xp !== 'number') return;
+      saveStats((prev) => ({
+        ...prev,
+        xp: detail.xp!,
+      }));
+    };
+    window.addEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
+    return () => {
+      window.removeEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
+    };
+  }, [saveStats]);
+
   const syncRemoteMatchState = useCallback(async () => {
     const activeMatchRaw = localStorage.getItem('redoapp_active_match');
     if (!activeMatchRaw) {

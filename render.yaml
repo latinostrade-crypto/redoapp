@@ -32,6 +32,12 @@ services:
         sync: false
       - key: TON_API_KEY
         sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        value: redo_appbot
+      - key: TELEGRAM_INITDATA_MAX_AGE_SEC
+        value: 86400
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

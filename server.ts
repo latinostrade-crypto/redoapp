@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import type { Response } from 'express';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 dotenv.config();
 
@@ -16,8 +17,19 @@ const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION === 'tru
 const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'manual';
 const TON_API_BASE_URL = process.env.TON_API_BASE_URL || '';
 const TON_API_KEY = process.env.TON_API_KEY || '';
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'redo_appbot';
+const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
+const DEFAULT_MAX_ENERGY = 10;
+const DEFAULT_ENERGY_REGEN_INTERVAL_SEC = 30 * 60;
+const DAILY_ENERGY_REWARD = 3;
+const DAILY_XP_REWARD = 20;
+const REFERRER_REWARD_XP = 100;
+const REFERRER_REWARD_ENERGY = 3;
+const REFERRED_REWARD_XP = 50;
+const REFERRED_REWARD_ENERGY = 2;
 
 app.use(cors());
 app.use(express.json());
@@ -83,12 +95,70 @@ interface ServerGameState {
 
 interface UserState {
   userId: string;
+  telegramId?: number;
+  telegramUsername?: string;
+  telegramFirstName?: string;
+  telegramLastName?: string;
+  telegramPhotoUrl?: string;
+  telegramChatId?: number;
+  telegramAuthAt?: number;
   walletAddress?: string;
   availableTickets: number;
   heldTickets: number;
   xp: number;
   lastDailyXpAt: number | null;
+  lastDailyEnergyAt: number | null;
+  energy: number;
+  maxEnergy: number;
+  energyUpdatedAt: number;
+  referralCode: string;
+  referredByUserId?: string;
+  referralStatus?: 'pending' | 'activated' | 'rejected';
+  referralAssignedAt?: number | null;
+  referralActivatedAt?: number | null;
+  referralActivationMatchId?: string | null;
+  referralsActivated: number;
+  completedQuestIds: string[];
   transactions: TicketLedgerEntry[];
+}
+
+interface QuestDefinition {
+  id: string;
+  title: string;
+  description: string;
+  kind: 'daily' | 'weekly';
+  metric: 'play_online' | 'play_private' | 'win_any' | 'spend_energy' | 'invite_referral';
+  target: number;
+  rewardXp: number;
+  rewardEnergy: number;
+}
+
+interface UserQuestProgress {
+  questId: string;
+  progress: number;
+  claimed: boolean;
+  updatedAt: number;
+}
+
+interface TelegramNotification {
+  id: string;
+  userId: string;
+  telegramChatId: number;
+  message: string;
+  status: 'pending' | 'sent' | 'failed';
+  createdAt: number;
+  sentAt?: number;
+  error?: string;
+}
+
+interface TelegramAuthPayload {
+  id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  photo_url?: string;
+  auth_date: number;
+  start_param?: string;
 }
 
 interface DepositIntent {
@@ -147,6 +217,8 @@ interface PersistedState {
   activeMatches: ActiveMatch[];
   activeMatchByUser: Array<[string, string]>;
   privateRooms: PrivateRoom[];
+  questProgressByUser?: Array<[string, UserQuestProgress[]]>;
+  telegramNotifications?: TelegramNotification[];
 }
 
 interface TonVerificationResult {
@@ -163,10 +235,65 @@ let matchmakingQueue: QueuePlayer[] = [];
 const activeMatches = new Map<string, ActiveMatch>();
 const activeMatchByUser = new Map<string, string>();
 const privateRooms = new Map<string, PrivateRoom>();
+const questProgressByUser = new Map<string, UserQuestProgress[]>();
+const telegramNotifications: TelegramNotification[] = [];
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const queueSubscribers = new Map<string, Set<Response>>();
 let persistTimer: NodeJS.Timeout | null = null;
+
+const QUEST_DEFINITIONS: QuestDefinition[] = [
+  {
+    id: 'daily_online_1',
+    title: 'Public Queue',
+    description: 'Play 1 online queue match.',
+    kind: 'daily',
+    metric: 'play_online',
+    target: 1,
+    rewardXp: 25,
+    rewardEnergy: 1,
+  },
+  {
+    id: 'daily_private_1',
+    title: 'Private Room',
+    description: 'Play 1 private room match.',
+    kind: 'daily',
+    metric: 'play_private',
+    target: 1,
+    rewardXp: 25,
+    rewardEnergy: 1,
+  },
+  {
+    id: 'daily_win_1',
+    title: 'Win Once',
+    description: 'Win any 1 match.',
+    kind: 'daily',
+    metric: 'win_any',
+    target: 1,
+    rewardXp: 40,
+    rewardEnergy: 1,
+  },
+  {
+    id: 'daily_spend_energy_3',
+    title: 'Burn Energy',
+    description: 'Spend 3 energy.',
+    kind: 'daily',
+    metric: 'spend_energy',
+    target: 3,
+    rewardXp: 30,
+    rewardEnergy: 0,
+  },
+  {
+    id: 'weekly_invite_1',
+    title: 'First Referral',
+    description: 'Activate 1 referral.',
+    kind: 'weekly',
+    metric: 'invite_referral',
+    target: 1,
+    rewardXp: 100,
+    rewardEnergy: 2,
+  },
+];
 
 function buildPersistedState(): PersistedState {
   return {
@@ -177,6 +304,8 @@ function buildPersistedState(): PersistedState {
     activeMatches: Array.from(activeMatches.values()),
     activeMatchByUser: Array.from(activeMatchByUser.entries()),
     privateRooms: Array.from(privateRooms.values()),
+    questProgressByUser: Array.from(questProgressByUser.entries()),
+    telegramNotifications,
   };
 }
 
@@ -212,6 +341,8 @@ function loadPersistedState() {
     activeMatches.clear();
     activeMatchByUser.clear();
     privateRooms.clear();
+    questProgressByUser.clear();
+    telegramNotifications.splice(0, telegramNotifications.length);
 
     snapshot.users?.forEach((user) => users.set(user.userId, user));
     snapshot.depositIntents?.forEach((intent) => depositIntents.set(intent.id, intent));
@@ -220,6 +351,8 @@ function loadPersistedState() {
     snapshot.activeMatches?.forEach((match) => activeMatches.set(match.matchId, match));
     snapshot.activeMatchByUser?.forEach(([userId, matchId]) => activeMatchByUser.set(userId, matchId));
     snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
+    snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
+    snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
   } catch (error) {
     console.error('Failed to load persisted runtime state', error);
   }
@@ -229,6 +362,7 @@ function getUser(userId: string, walletAddress?: string): UserState {
   const existing = users.get(userId);
   if (existing) {
     if (walletAddress) existing.walletAddress = walletAddress;
+    hydrateUser(existing);
     schedulePersist();
     return existing;
   }
@@ -236,15 +370,337 @@ function getUser(userId: string, walletAddress?: string): UserState {
   const created: UserState = {
     userId,
     walletAddress,
+    lastDailyEnergyAt: null,
     availableTickets: 0,
     heldTickets: 0,
     xp: 0,
     lastDailyXpAt: null,
+    energy: DEFAULT_MAX_ENERGY,
+    maxEnergy: DEFAULT_MAX_ENERGY,
+    energyUpdatedAt: Date.now(),
+    referralCode: createReferralCode(),
+    referralsActivated: 0,
+    completedQuestIds: [],
     transactions: [],
   };
   users.set(userId, created);
   schedulePersist();
   return created;
+}
+
+function createReferralCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function hydrateUser(user: UserState) {
+  user.energy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
+  user.maxEnergy = Math.max(1, Number.isFinite(user.maxEnergy) ? user.maxEnergy : DEFAULT_MAX_ENERGY);
+  user.energyUpdatedAt = Number.isFinite(user.energyUpdatedAt) ? user.energyUpdatedAt : Date.now();
+  user.referralCode = user.referralCode || createReferralCode();
+  user.completedQuestIds = Array.isArray(user.completedQuestIds) ? user.completedQuestIds : [];
+  user.referralsActivated = Number.isFinite(user.referralsActivated) ? user.referralsActivated : 0;
+  user.lastDailyEnergyAt ??= null;
+}
+
+function getStartOfUtcDay(ts: number) {
+  const d = new Date(ts);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function getStartOfUtcWeek(ts: number) {
+  const d = new Date(ts);
+  const day = d.getUTCDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  start.setUTCDate(start.getUTCDate() + diff);
+  return start.getTime();
+}
+
+function recalculateEnergy(user: UserState, now = Date.now()) {
+  hydrateUser(user);
+  if (user.energy >= user.maxEnergy) {
+    user.energy = user.maxEnergy;
+    user.energyUpdatedAt = now;
+    return user;
+  }
+  const elapsedSec = Math.max(0, Math.floor((now - user.energyUpdatedAt) / 1000));
+  const restored = Math.floor(elapsedSec / DEFAULT_ENERGY_REGEN_INTERVAL_SEC);
+  if (restored > 0) {
+    user.energy = Math.min(user.maxEnergy, user.energy + restored);
+    user.energyUpdatedAt = now;
+    schedulePersist();
+  }
+  return user;
+}
+
+function getEnergyState(user: UserState) {
+  const hydrated = recalculateEnergy(user);
+  const nextEnergyAt = hydrated.energy >= hydrated.maxEnergy
+    ? null
+    : hydrated.energyUpdatedAt + DEFAULT_ENERGY_REGEN_INTERVAL_SEC * 1000;
+  return {
+    energy: hydrated.energy,
+    maxEnergy: hydrated.maxEnergy,
+    nextEnergyAt,
+    regenIntervalSec: DEFAULT_ENERGY_REGEN_INTERVAL_SEC,
+  };
+}
+
+function spendEnergy(user: UserState, amount: number, reason: string) {
+  recalculateEnergy(user);
+  if (user.energy < amount) {
+    throw new Error('Not enough energy.');
+  }
+  user.energy -= amount;
+  user.energyUpdatedAt = Date.now();
+  createLedgerEntry(user, {
+    event: reason,
+    value: `-${amount} ENG`,
+    type: 'reward',
+    amount: -amount,
+  });
+}
+
+function rewardEnergy(user: UserState, amount: number, reason: string) {
+  recalculateEnergy(user);
+  user.energy = Math.min(user.maxEnergy, user.energy + amount);
+  user.energyUpdatedAt = Date.now();
+  createLedgerEntry(user, {
+    event: reason,
+    value: `+${amount} ENG`,
+    type: 'reward',
+    amount,
+  });
+}
+
+function rewardXp(user: UserState, amount: number, reason: string) {
+  user.xp += amount;
+  createLedgerEntry(user, {
+    event: reason,
+    value: `+${amount} XP`,
+    type: 'reward',
+    amount,
+  });
+}
+
+function getQuestProgress(userId: string) {
+  if (!questProgressByUser.has(userId)) {
+    questProgressByUser.set(userId, []);
+  }
+  return questProgressByUser.get(userId)!;
+}
+
+function updateQuestProgress(userId: string, metric: QuestDefinition['metric'], delta = 1) {
+  const now = Date.now();
+  const questProgress = getQuestProgress(userId);
+  for (const quest of QUEST_DEFINITIONS.filter((entry) => entry.metric === metric)) {
+    const resetBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
+    let progress = questProgress.find((entry) => entry.questId === quest.id);
+    if (!progress) {
+      progress = { questId: quest.id, progress: 0, claimed: false, updatedAt: resetBoundary };
+      questProgress.push(progress);
+    }
+    const existingBoundary = quest.kind === 'daily' ? getStartOfUtcDay(progress.updatedAt) : getStartOfUtcWeek(progress.updatedAt);
+    if (existingBoundary !== resetBoundary) {
+      progress.progress = 0;
+      progress.claimed = false;
+      progress.updatedAt = now;
+    }
+    progress.progress = Math.min(quest.target, progress.progress + delta);
+    progress.updatedAt = now;
+  }
+  schedulePersist();
+}
+
+function claimCompletedQuests(user: UserState) {
+  const progressList = getQuestProgress(user.userId);
+  const claimed: string[] = [];
+  for (const quest of QUEST_DEFINITIONS) {
+    const progress = progressList.find((entry) => entry.questId === quest.id);
+    if (!progress || progress.claimed || progress.progress < quest.target) {
+      continue;
+    }
+    progress.claimed = true;
+    if (quest.rewardXp) rewardXp(user, quest.rewardXp, `Quest: ${quest.title}`);
+    if (quest.rewardEnergy) rewardEnergy(user, quest.rewardEnergy, `Quest: ${quest.title}`);
+    claimed.push(quest.id);
+  }
+  if (claimed.length) {
+    user.completedQuestIds = Array.from(new Set([...user.completedQuestIds, ...claimed]));
+    schedulePersist();
+  }
+  return claimed;
+}
+
+function buildQuestView(userId: string) {
+  const progressList = getQuestProgress(userId);
+  const now = Date.now();
+  return QUEST_DEFINITIONS.map((quest) => {
+    const progress = progressList.find((entry) => entry.questId === quest.id);
+    const boundary = progress ? (quest.kind === 'daily' ? getStartOfUtcDay(progress.updatedAt) : getStartOfUtcWeek(progress.updatedAt)) : null;
+    const currentBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
+    const currentProgress = boundary === currentBoundary && progress ? progress.progress : 0;
+    const claimed = boundary === currentBoundary && !!progress?.claimed;
+    return {
+      ...quest,
+      progress: currentProgress,
+      claimed,
+      completed: currentProgress >= quest.target,
+    };
+  });
+}
+
+function findUserByReferralCode(code: string) {
+  const normalized = String(code || '').trim().toUpperCase();
+  return Array.from(users.values()).find((user) => user.referralCode === normalized);
+}
+
+function queueTelegramNotification(user: UserState, message: string) {
+  if (!user.telegramChatId) {
+    return;
+  }
+  telegramNotifications.push({
+    id: `tg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    userId: user.userId,
+    telegramChatId: user.telegramChatId,
+    message,
+    status: 'pending',
+    createdAt: Date.now(),
+  });
+  schedulePersist();
+}
+
+async function flushTelegramNotifications() {
+  if (!TELEGRAM_BOT_TOKEN) return;
+  const pending = telegramNotifications.filter((item) => item.status === 'pending').slice(0, 5);
+  for (const item of pending) {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: item.telegramChatId,
+          text: item.message,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.text();
+        item.status = 'failed';
+        item.error = payload;
+      } else {
+        item.status = 'sent';
+        item.sentAt = Date.now();
+      }
+    } catch (error) {
+      item.status = 'failed';
+      item.error = error instanceof Error ? error.message : 'Notification failed';
+    }
+  }
+  schedulePersist();
+}
+
+function verifyTelegramInitData(initData: string): TelegramAuthPayload | null {
+  if (!initData || !TELEGRAM_BOT_TOKEN) {
+    return null;
+  }
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash) return null;
+  params.delete('hash');
+  const sorted = Array.from(params.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(TELEGRAM_BOT_TOKEN).digest();
+  const calculated = crypto.createHmac('sha256', secret).update(sorted).digest('hex');
+  if (calculated !== hash) {
+    return null;
+  }
+  const authDate = Number(params.get('auth_date') || '0');
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (!authDate || nowSec - authDate > TELEGRAM_INITDATA_MAX_AGE_SEC) {
+    return null;
+  }
+  const rawUser = params.get('user');
+  if (!rawUser) {
+    return null;
+  }
+  const user = JSON.parse(rawUser) as { id: number; username?: string; first_name?: string; last_name?: string; photo_url?: string };
+  return {
+    id: user.id,
+    username: user.username,
+    first_name: user.first_name,
+    last_name: user.last_name,
+    photo_url: user.photo_url,
+    auth_date: authDate,
+    start_param: params.get('start_param') || params.get('tgWebAppStartParam') || undefined,
+  };
+}
+
+function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
+  user.telegramId = auth.id;
+  user.telegramChatId = auth.id;
+  user.telegramUsername = auth.username;
+  user.telegramFirstName = auth.first_name;
+  user.telegramLastName = auth.last_name;
+  user.telegramPhotoUrl = auth.photo_url;
+  user.telegramAuthAt = auth.auth_date;
+}
+
+function resolveCanonicalUserId(body: { userId?: string; telegramInitData?: string; walletAddress?: string }) {
+  const auth = body.telegramInitData ? verifyTelegramInitData(body.telegramInitData) : null;
+  if (auth) {
+    return {
+      userId: `tg:${auth.id}`,
+      auth,
+    };
+  }
+  return {
+    userId: body.userId || '',
+    auth: null,
+  };
+}
+
+function assignReferralIfNeeded(user: UserState, startParam?: string) {
+  if (!startParam || user.referredByUserId || !startParam.startsWith('ref_')) {
+    return;
+  }
+  const referralCode = startParam.replace(/^ref_/i, '').trim().toUpperCase();
+  const inviter = findUserByReferralCode(referralCode);
+  if (!inviter || inviter.userId === user.userId) {
+    user.referralStatus = 'rejected';
+    return;
+  }
+  user.referredByUserId = inviter.userId;
+  user.referralStatus = 'pending';
+  user.referralAssignedAt = Date.now();
+  schedulePersist();
+}
+
+function maybeActivateReferral(user: UserState, matchId: string) {
+  if (!user.referredByUserId || user.referralStatus === 'activated') {
+    return false;
+  }
+  const inviter = users.get(user.referredByUserId);
+  if (!inviter || inviter.userId === user.userId) {
+    user.referralStatus = 'rejected';
+    return false;
+  }
+  user.referralStatus = 'activated';
+  user.referralActivatedAt = Date.now();
+  user.referralActivationMatchId = matchId;
+  user.referralsActivated += 0;
+  inviter.referralsActivated += 1;
+  rewardXp(user, REFERRED_REWARD_XP, 'Referral Activated');
+  rewardEnergy(user, REFERRED_REWARD_ENERGY, 'Referral Activated');
+  rewardXp(inviter, REFERRER_REWARD_XP, 'Referral Reward');
+  rewardEnergy(inviter, REFERRER_REWARD_ENERGY, 'Referral Reward');
+  updateQuestProgress(inviter.userId, 'invite_referral', 1);
+  claimCompletedQuests(inviter);
+  queueTelegramNotification(inviter, `Referral activated: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId}. Rewards: +${REFERRER_REWARD_ENERGY} energy, +${REFERRER_REWARD_XP} XP.`);
+  queueTelegramNotification(user, `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`);
+  schedulePersist();
+  return true;
 }
 
 function createLedgerEntry(user: UserState, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'>) {
@@ -761,39 +1217,93 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/users/sync', (req, res) => {
-  const { userId, walletAddress } = req.body;
-  if (!userId) {
+  const { walletAddress, telegramInitData } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string };
+  const resolved = resolveCanonicalUserId(req.body);
+  if (!resolved.userId) {
     return res.status(400).json({ error: 'Missing userId.' });
   }
-  const user = getUser(userId, walletAddress);
+  const user = getUser(resolved.userId, walletAddress);
+  if (resolved.auth) {
+    applyTelegramAuth(user, resolved.auth);
+    assignReferralIfNeeded(user, resolved.auth.start_param);
+  }
+  const energy = getEnergyState(user);
+  const claimedQuestIds = claimCompletedQuests(user);
   return res.json({
     userId: user.userId,
+    telegramInitDataValid: !!resolved.auth,
+    telegramUsername: user.telegramUsername || null,
+    telegramPhotoUrl: user.telegramPhotoUrl || null,
     walletAddress: user.walletAddress || null,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     xp: user.xp,
+    energy,
+    referralCode: user.referralCode,
+    referralLink: `https://t.me/${TELEGRAM_BOT_USERNAME}/app?startapp=ref_${user.referralCode}`,
+    quests: buildQuestView(user.userId),
+    claimedQuestIds,
   });
 });
 
 app.post('/api/xp/daily-checkin', (req, res) => {
-  const { userId, walletAddress } = req.body;
-  if (!userId) {
+  const { walletAddress } = req.body;
+  const resolved = resolveCanonicalUserId(req.body);
+  if (!resolved.userId) {
     return res.status(400).json({ error: 'Missing userId.' });
   }
-  const user = getUser(userId, walletAddress);
+  const user = getUser(resolved.userId, walletAddress);
+  if (resolved.auth) {
+    applyTelegramAuth(user, resolved.auth);
+  }
   const now = Date.now();
   if (user.lastDailyXpAt && now - user.lastDailyXpAt < 24 * 60 * 60 * 1000) {
     return res.json({ success: false, alreadyClaimed: true, xp: user.xp });
   }
   user.lastDailyXpAt = now;
-  user.xp += 20;
-  createLedgerEntry(user, {
-    event: 'Daily Check-in',
-    value: '+20 XP',
-    type: 'reward',
-    amount: 20,
+  rewardXp(user, DAILY_XP_REWARD, 'Daily Check-in');
+  if (!user.lastDailyEnergyAt || now - user.lastDailyEnergyAt >= 24 * 60 * 60 * 1000) {
+    user.lastDailyEnergyAt = now;
+    rewardEnergy(user, DAILY_ENERGY_REWARD, 'Daily Energy Refill');
+  }
+  updateQuestProgress(user.userId, 'spend_energy', 0);
+  const claimedQuestIds = claimCompletedQuests(user);
+  return res.json({ success: true, xpAwarded: DAILY_XP_REWARD, xp: user.xp, energy: getEnergyState(user), claimedQuestIds });
+});
+
+app.get('/api/me/:userId', (req, res) => {
+  const user = getUser(req.params.userId);
+  const claimedQuestIds = claimCompletedQuests(user);
+  return res.json({
+    userId: user.userId,
+    telegramUsername: user.telegramUsername || null,
+    telegramPhotoUrl: user.telegramPhotoUrl || null,
+    walletAddress: user.walletAddress || null,
+    availableTickets: user.availableTickets,
+    heldTickets: user.heldTickets,
+    xp: user.xp,
+    energy: getEnergyState(user),
+    referralCode: user.referralCode,
+    referralLink: `https://t.me/${TELEGRAM_BOT_USERNAME}/app?startapp=ref_${user.referralCode}`,
+    referrals: {
+      referredByUserId: user.referredByUserId || null,
+      status: user.referralStatus || null,
+      activatedAt: user.referralActivatedAt || null,
+      referralsActivated: user.referralsActivated,
+      invitedUsers: Array.from(users.values())
+        .filter((entry) => entry.referredByUserId === user.userId)
+        .map((entry) => ({
+          userId: entry.userId,
+          username: entry.telegramUsername || entry.telegramFirstName || entry.userId,
+          photoUrl: entry.telegramPhotoUrl || null,
+          status: entry.referralStatus || 'pending',
+          assignedAt: entry.referralAssignedAt || null,
+          activatedAt: entry.referralActivatedAt || null,
+        })),
+    },
+    quests: buildQuestView(user.userId),
+    claimedQuestIds,
   });
-  return res.json({ success: true, xpAwarded: 20, xp: user.xp });
 });
 
 app.get('/api/tickets/balance/:userId', (req, res) => {
@@ -942,6 +1452,12 @@ app.post('/api/matchmaker/join', (req, res) => {
   }
 
   const user = getUser(userId, walletAddress);
+  try {
+    spendEnergy(user, 2, 'Online Match Energy');
+    updateQuestProgress(user.userId, 'spend_energy', 2);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+  }
   const stakeAmount = Number(stake);
   if (user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for stake.' });
@@ -976,6 +1492,7 @@ app.post('/api/matchmaker/join', (req, res) => {
     queueLength: matchmakingQueue.filter(p => p.stake === stakeAmount && p.mode === mode).length,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
+    energy: getEnergyState(user),
   });
 });
 
@@ -1041,6 +1558,12 @@ app.post('/api/private-rooms/create', (req, res) => {
 
   const roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
   const user = getUser(userId, walletAddress);
+  try {
+    spendEnergy(user, 1, 'Private Room Energy');
+    updateQuestProgress(user.userId, 'spend_energy', 1);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+  }
   const stakeAmount = Number(stake);
   if (user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
@@ -1082,6 +1605,7 @@ app.post('/api/private-rooms/create', (req, res) => {
     playersCount: 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
+    energy: getEnergyState(user),
   });
 });
 
@@ -1115,6 +1639,12 @@ app.post('/api/private-rooms/join', (req, res) => {
   }
 
   const user = getUser(userId, walletAddress);
+  try {
+    spendEnergy(user, 1, 'Private Room Energy');
+    updateQuestProgress(user.userId, 'spend_energy', 1);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+  }
   if (user.availableTickets < room.stake) {
     return res.status(400).json({ error: 'Insufficient available tickets for this private room.' });
   }
@@ -1158,6 +1688,7 @@ app.post('/api/private-rooms/join', (req, res) => {
     matchId: room.matchId || null,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
+    energy: getEnergyState(user),
   });
 });
 
@@ -1338,6 +1869,16 @@ app.post('/api/matches/settle', (req, res) => {
       type: 'match_payout',
       amount: payoutByRank[rank],
     });
+    if (mode === 'pvp') {
+      updateQuestProgress(user.userId, 'play_online', 1);
+    } else {
+      updateQuestProgress(user.userId, 'play_private', 1);
+    }
+    if (rank === 1) {
+      updateQuestProgress(user.userId, 'win_any', 1);
+    }
+    maybeActivateReferral(user, matchId);
+    claimCompletedQuests(user);
   });
 
   activeMatch.settled = true;
@@ -1346,6 +1887,9 @@ app.post('/api/matches/settle', (req, res) => {
   });
   activeMatches.set(matchId, activeMatch);
   schedulePersist();
+  flushTelegramNotifications().catch((error) => {
+    console.error('Telegram notification flush failed', error);
+  });
 
   return res.json({
     success: true,
@@ -1359,6 +1903,11 @@ app.post('/api/matches/settle', (req, res) => {
 });
 
 loadPersistedState();
+setInterval(() => {
+  flushTelegramNotifications().catch((error) => {
+    console.error('Telegram notification worker failed', error);
+  });
+}, 15000);
 
 function flushAndExit(signal: string) {
   try {
