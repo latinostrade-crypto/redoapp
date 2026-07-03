@@ -189,20 +189,20 @@ export default function App() {
       settlementHandledRef.current = activeMatch.matchId;
 
       const otherPlayers = activeMatch.players.filter((player) => player.userId !== activeMatch.currentUserId);
-      const remainingRanks = [1, 2, 3, 4].filter((rank) => rank !== myEntry.rank);
+      const remainingRanks = Array.from({ length: activeMatch.players.length }, (_, index) => index + 1).filter((rank) => rank !== myEntry.rank);
       const placements = [
         {
           userId: activeMatch.currentUserId,
           rank: myEntry.rank,
           walletAddress: localStorage.getItem('redoapp_wallet_address') || undefined,
         },
-        ...otherPlayers.slice(0, 3).map((player, index) => ({
+        ...otherPlayers.slice(0, activeMatch.players.length - 1).map((player, index) => ({
           userId: player.userId,
-          rank: remainingRanks[index] as 1 | 2 | 3 | 4,
+          rank: remainingRanks[index],
         })),
       ];
 
-      if (placements.length !== 4) {
+      if (placements.length !== activeMatch.players.length) {
         settlementHandledRef.current = null;
         return;
       }

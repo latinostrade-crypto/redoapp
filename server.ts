@@ -14,7 +14,6 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj';
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
-const MIN_WITHDRAW_TICKETS = 5;
 const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION === 'true';
 const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'manual';
 const TON_API_BASE_URL = process.env.TON_API_BASE_URL || 'https://tonapi.io/v2';
@@ -36,6 +35,9 @@ const REFERRER_REWARD_XP = 100;
 const REFERRER_REWARD_ENERGY = 3;
 const REFERRED_REWARD_XP = 50;
 const REFERRED_REWARD_ENERGY = 2;
+const MIN_MATCH_PLAYERS = 2;
+const MAX_MATCH_PLAYERS = 4;
+const MATCHMAKING_TIMEOUT_MS = 5_000;
 
 app.use(cors());
 app.use(express.json());
@@ -210,11 +212,21 @@ interface ActiveMatch {
 interface PrivateRoom {
   roomCode: string;
   stake: number;
+  targetPlayers: number;
   hostUserId: string;
   players: QueuePlayer[];
   createdAt: number;
   status: 'waiting' | 'ready' | 'started';
   matchId?: string;
+}
+
+interface MatchmakingStatusPayload {
+  status: 'idle' | 'searching' | 'ready';
+  queueLength?: number;
+  playersNeeded?: number;
+  countdownSec?: number;
+  matchId?: string;
+  players?: QueuePlayer[];
 }
 
 interface PersistedState {
@@ -1146,6 +1158,9 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
 
   if (card.value === 'reverse') {
     nextState.direction = nextState.direction === 1 ? -1 : 1;
+    if (state.players.length === 2) {
+      skipCount = 2;
+    }
   } else if (card.value === 'skip') {
     skipCount = 2;
   } else if (card.value === 'draw2' || card.value === 'wild_draw4') {
@@ -1228,6 +1243,81 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
   return activeMatch;
 }
 
+function buildRankOrder(playerCount: number): number[] {
+  return Array.from({ length: playerCount }, (_, index) => index + 1);
+}
+
+function buildPayoutByRank(playerCount: number, netPrizePool: number): Record<number, number> {
+  if (playerCount <= 2) {
+    return {
+      1: round2(netPrizePool * 0.7),
+      2: round2(netPrizePool * 0.3),
+    };
+  }
+  if (playerCount === 3) {
+    return {
+      1: round2(netPrizePool * 0.6),
+      2: round2(netPrizePool * 0.25),
+      3: round2(netPrizePool * 0.15),
+    };
+  }
+  return {
+    1: round2(netPrizePool * 0.52),
+    2: round2(netPrizePool * 0.23),
+    3: round2(netPrizePool * 0.15),
+    4: round2(netPrizePool * 0.10),
+  };
+}
+
+function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null {
+  const activeMatchId = activeMatchByUser.get(userId);
+  if (activeMatchId) {
+    const activeMatch = activeMatches.get(activeMatchId);
+    if (activeMatch) {
+      return {
+        status: 'ready',
+        matchId: activeMatch.matchId,
+        players: activeMatch.players,
+      };
+    }
+  }
+
+  const player = matchmakingQueue.find((entry) => entry.userId === userId);
+  if (!player) {
+    return { status: 'idle' };
+  }
+
+  const similarPlayers = matchmakingQueue
+    .filter((entry) => entry.stake === player.stake && entry.mode === player.mode)
+    .sort((a, b) => a.joinedAt - b.joinedAt);
+  const matchGroup = similarPlayers.slice(0, MAX_MATCH_PLAYERS);
+  const oldestJoinedAt = matchGroup[0]?.joinedAt ?? player.joinedAt;
+  const waitedMs = Date.now() - oldestJoinedAt;
+  const shouldStart = matchGroup.length >= MAX_MATCH_PLAYERS
+    || (matchGroup.length >= MIN_MATCH_PLAYERS && waitedMs >= MATCHMAKING_TIMEOUT_MS);
+
+  if (shouldStart) {
+    const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activateMatch(matchId, player.mode, matchGroup, player.stake);
+    const matchUserIds = new Set(matchGroup.map((queuedPlayer) => queuedPlayer.userId));
+    matchmakingQueue = matchmakingQueue.filter((queuedPlayer) => !matchUserIds.has(queuedPlayer.userId));
+    schedulePersist();
+    matchGroup.forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
+    return {
+      status: 'ready',
+      matchId,
+      players: matchGroup,
+    };
+  }
+
+  return {
+    status: 'searching',
+    queueLength: similarPlayers.length,
+    playersNeeded: Math.max(0, MIN_MATCH_PLAYERS - similarPlayers.length),
+    countdownSec: Math.max(0, Math.ceil((MATCHMAKING_TIMEOUT_MS - waitedMs) / 1000)),
+  };
+}
+
 function sendSse(response: Response, event: string, payload: unknown) {
   response.write(`event: ${event}\n`);
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -1251,8 +1341,11 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
   return {
     roomCode: room.roomCode,
     stake: room.stake,
+    targetPlayers: room.targetPlayers,
     status: room.status,
     playersCount: room.players.length,
+    minPlayers: MIN_MATCH_PLAYERS,
+    maxPlayers: MAX_MATCH_PLAYERS,
     players: room.players,
     matchId: room.matchId || null,
   };
@@ -1281,27 +1374,7 @@ function broadcastMatch(matchId: string) {
 }
 
 function buildQueuePayload(userId: string) {
-  const activeMatchId = activeMatchByUser.get(userId);
-  if (activeMatchId) {
-    const activeMatch = activeMatches.get(activeMatchId);
-    if (activeMatch) {
-      return {
-        status: 'ready',
-        matchId: activeMatch.matchId,
-        players: activeMatch.players,
-      };
-    }
-  }
-
-  const player = matchmakingQueue.find((entry) => entry.userId === userId);
-  if (!player) {
-    return { status: 'idle' };
-  }
-  const similarPlayers = matchmakingQueue.filter((entry) => entry.stake === player.stake && entry.mode === player.mode);
-  return {
-    status: 'searching',
-    queueLength: similarPlayers.length,
-  };
+  return tryActivateQueuedMatch(userId) || { status: 'idle' };
 }
 
 function broadcastQueue(userId: string) {
@@ -1318,7 +1391,6 @@ app.get('/api/health', (req, res) => {
     walletConfig: {
       marketingWallet: MARKETING_WALLET,
       ticketPriceTon: TICKET_PRICE_TON,
-      minWithdrawTickets: MIN_WITHDRAW_TICKETS,
       chainVerificationEnabled: ENABLE_CHAIN_VERIFICATION,
       verificationMode: TON_VERIFICATION_MODE,
       tonApiConfigured: !!TON_API_KEY,
@@ -1434,16 +1506,17 @@ app.get('/api/tickets/ledger/:userId', (req, res) => {
 
 app.post('/api/tickets/deposit-intent', (req, res) => {
   const { userId, walletAddress, ticketAmount } = req.body;
-  if (!userId || !walletAddress || !ticketAmount || Number(ticketAmount) < 1) {
-    return res.status(400).json({ error: 'Deposit requires userId, walletAddress and at least 1 ticket.' });
+  const amount = Number(ticketAmount);
+  if (!userId || !walletAddress || !Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
   }
   const user = getUser(userId, walletAddress);
   const intent: DepositIntent = {
     id: `dep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     userId,
     walletAddress,
-    ticketAmount: Number(ticketAmount),
-    tonAmount: round2(Number(ticketAmount) * TICKET_PRICE_TON),
+    ticketAmount: round2(amount),
+    tonAmount: round2(amount * TICKET_PRICE_TON),
     status: 'pending',
     createdAt: Date.now(),
   };
@@ -1532,8 +1605,8 @@ app.post('/api/tickets/withdraw-request', (req, res) => {
     return res.status(400).json({ error: 'Withdrawal requires userId, walletAddress and ticketAmount.' });
   }
   const amount = Number(ticketAmount);
-  if (amount < MIN_WITHDRAW_TICKETS) {
-    return res.status(400).json({ error: `Minimum withdrawal is ${MIN_WITHDRAW_TICKETS} tickets.` });
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'Withdrawal amount must be greater than 0.' });
   }
   const user = getUser(userId, walletAddress);
   if (user.availableTickets < amount) {
@@ -1625,12 +1698,15 @@ app.post('/api/matchmaker/join', (req, res) => {
     .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
   schedulePersist();
 
+  const queueStatus = tryActivateQueuedMatch(userId);
+
   return res.json({
     success: true,
     queueLength: matchmakingQueue.filter(p => p.stake === stakeAmount && p.mode === mode).length,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
+    matchmaker: queueStatus,
   });
 });
 
@@ -1663,30 +1739,16 @@ app.get('/api/matchmaker/status/:userId', (req, res) => {
   if (!player) {
     return res.json({ status: 'idle' });
   }
-  const similarPlayers = matchmakingQueue.filter(p => p.stake === player.stake && p.mode === player.mode);
-  if (similarPlayers.length >= 4) {
-    const matchGroup = similarPlayers.slice(0, 4);
-    const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    activateMatch(matchId, player.mode, matchGroup, player.stake);
-    const matchUserIds = new Set(matchGroup.map(p => p.userId));
-    matchmakingQueue = matchmakingQueue.filter(p => !matchUserIds.has(p.userId));
-    schedulePersist();
-    matchGroup.forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
-    return res.json({
-      status: 'ready',
-      matchId,
-      players: matchGroup,
-    });
-  }
-  return res.json({ status: 'searching', queueLength: similarPlayers.length });
+  return res.json(tryActivateQueuedMatch(userId));
 });
 
 app.post('/api/private-rooms/create', (req, res) => {
-  const { userId, username, avatarId, stake, walletAddress } = req.body as {
+  const { userId, username, avatarId, stake, targetPlayers, walletAddress } = req.body as {
     userId: string;
     username: string;
     avatarId: string;
     stake: number;
+    targetPlayers?: number;
     walletAddress?: string;
   };
 
@@ -1703,6 +1765,10 @@ app.post('/api/private-rooms/create', (req, res) => {
     return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
   }
   const stakeAmount = Number(stake);
+  const targetPlayersCount = Number(targetPlayers || MAX_MATCH_PLAYERS);
+  if (!Number.isFinite(targetPlayersCount) || targetPlayersCount < MIN_MATCH_PLAYERS || targetPlayersCount > MAX_MATCH_PLAYERS) {
+    return res.status(400).json({ error: `targetPlayers must be between ${MIN_MATCH_PLAYERS} and ${MAX_MATCH_PLAYERS}.` });
+  }
   if (user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
   }
@@ -1728,6 +1794,7 @@ app.post('/api/private-rooms/create', (req, res) => {
   privateRooms.set(roomCode, {
     roomCode,
     stake: stakeAmount,
+    targetPlayers: targetPlayersCount,
     hostUserId: userId,
     players: [hostPlayer],
     createdAt: Date.now(),
@@ -1740,6 +1807,7 @@ app.post('/api/private-rooms/create', (req, res) => {
     success: true,
     roomCode,
     stake: stakeAmount,
+    targetPlayers: targetPlayersCount,
     playersCount: 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
@@ -1767,12 +1835,13 @@ app.post('/api/private-rooms/join', (req, res) => {
     return res.json({
       success: true,
       roomCode: room.roomCode,
+      targetPlayers: room.targetPlayers,
       playersCount: room.players.length,
       status: room.status,
       matchId: room.matchId || null,
     });
   }
-  if (room.players.length >= 4) {
+  if (room.players.length >= MAX_MATCH_PLAYERS) {
     return res.status(400).json({ error: 'Private room is already full.' });
   }
 
@@ -1805,7 +1874,7 @@ app.post('/api/private-rooms/join', (req, res) => {
     joinedAt: Date.now(),
   });
 
-  if (room.players.length >= 4) {
+  if (room.players.length >= room.targetPlayers) {
     const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     activateMatch(matchId, 'private', room.players, room.stake);
     room.status = 'started';
@@ -1821,6 +1890,7 @@ app.post('/api/private-rooms/join', (req, res) => {
   return res.json({
     success: true,
     roomCode: room.roomCode,
+    targetPlayers: room.targetPlayers,
     playersCount: room.players.length,
     status: room.status,
     matchId: room.matchId || null,
@@ -1839,8 +1909,11 @@ app.get('/api/private-rooms/status/:roomCode', (req, res) => {
   return res.json({
     roomCode: room.roomCode,
     stake: room.stake,
+    targetPlayers: room.targetPlayers,
     status: room.status,
     playersCount: room.players.length,
+    minPlayers: MIN_MATCH_PLAYERS,
+    maxPlayers: MAX_MATCH_PLAYERS,
     players: room.players,
     matchId: room.matchId || null,
   });
@@ -1965,37 +2038,50 @@ app.post('/api/matches/settle', (req, res) => {
     matchId: string;
     mode: MatchMode;
     stake: number;
-    placements: Array<{ userId: string; rank: 1 | 2 | 3 | 4; walletAddress?: string }>;
+    placements: Array<{ userId: string; rank: number; walletAddress?: string }>;
   };
 
-  if (!matchId || !mode || !stake || !placements || placements.length !== 4) {
-    return res.status(400).json({ error: 'Settlement requires matchId, mode, stake and four placements.' });
+  if (!matchId || !mode || !stake || !placements?.length) {
+    return res.status(400).json({ error: 'Settlement requires matchId, mode, stake and placements.' });
   }
 
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
   }
+  if (placements.length !== activeMatch.players.length) {
+    return res.status(400).json({ error: 'Placements count must match active players count.' });
+  }
+  const validRanks = buildRankOrder(activeMatch.players.length);
+  const seenUsers = new Set<string>();
+  const seenRanks = new Set<number>();
+  for (const placement of placements) {
+    if (!activeMatch.players.some((player) => player.userId === placement.userId)) {
+      return res.status(400).json({ error: 'Settlement contains a user outside this match.' });
+    }
+    if (!validRanks.includes(placement.rank)) {
+      return res.status(400).json({ error: 'Settlement contains an invalid rank for this player count.' });
+    }
+    if (seenUsers.has(placement.userId) || seenRanks.has(placement.rank)) {
+      return res.status(400).json({ error: 'Settlement contains duplicate users or ranks.' });
+    }
+    seenUsers.add(placement.userId);
+    seenRanks.add(placement.rank);
+  }
   if (activeMatch.settled) {
     return res.json({
       success: true,
       matchId,
-      grossPot: stake * 4,
+      grossPot: stake * activeMatch.players.length,
       alreadySettled: true,
     });
   }
 
-  const grossPot = stake * 4;
+  const grossPot = stake * activeMatch.players.length;
   const seasonFund = round2(grossPot * 0.025);
   const burnFund = round2(grossPot * 0.035);
   const netPrizePool = round2(grossPot - seasonFund - burnFund);
-
-  const payoutByRank: Record<number, number> = {
-    1: round2(netPrizePool * 0.52),
-    2: round2(netPrizePool * 0.23),
-    3: round2(netPrizePool * 0.15),
-    4: round2(netPrizePool * 0.10),
-  };
+  const payoutByRank = buildPayoutByRank(activeMatch.players.length, netPrizePool);
 
   placements.forEach(({ userId, rank, walletAddress }) => {
     const user = getUser(userId, walletAddress);
@@ -2045,6 +2131,11 @@ setInterval(() => {
     console.error('Telegram notification worker failed', error);
   });
 }, 15000);
+
+setInterval(() => {
+  const queuedUserIds = [...new Set(matchmakingQueue.map((player) => player.userId))];
+  queuedUserIds.forEach((userId) => broadcastQueue(userId));
+}, 1000);
 
 async function flushAndExit(signal: string) {
   try {

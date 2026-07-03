@@ -188,6 +188,14 @@ export function useUnoGame() {
   useEffect(() => {
     if (gameState.phase === 'game_over' && gameState.winnerId && leaderboard.length === 0) {
       const winnerId = gameState.winnerId;
+      const totalPlayers = gameState.players.length;
+      const payoutByRank = gameMode === 'offline' || activeStake <= 0
+        ? {}
+        : totalPlayers <= 2
+          ? { 1: 0.7, 2: 0.3 }
+          : totalPlayers === 3
+            ? { 1: 0.6, 2: 0.25, 3: 0.15 }
+            : { 1: 0.52, 2: 0.23, 3: 0.15, 4: 0.1 };
       
       const entries = gameState.players.map((player) => {
         const isWinner = player.id === winnerId;
@@ -219,7 +227,7 @@ export function useUnoGame() {
             xpGained = Math.round(12 + (rank === 1 ? 18 : rank === 2 ? 8 : rank === 3 ? 4 : 2) + (cardsPlayedThisRound * 1.5) + (cardsDrawnThisRound * 0.5));
           } else if (gameMode === 'pvp') {
             const baseXp = 30 + (rank === 1 ? 55 : rank === 2 ? 30 : rank === 3 ? 18 : 10) + (cardsPlayedThisRound * 2);
-            const stakeMultiplier = activeStake >= 50 ? 1.35 : activeStake >= 10 ? 1.2 : activeStake >= 5 ? 1.1 : 1;
+            const stakeMultiplier = activeStake >= 30 ? 1.35 : activeStake >= 10 ? 1.2 : activeStake >= 5 ? 1.1 : 1;
             xpGained = Math.round(baseXp * stakeMultiplier);
           } else {
             xpGained = Math.round(22 + (rank === 1 ? 38 : rank === 2 ? 22 : rank === 3 ? 12 : 8) + (cardsPlayedThisRound * 1.5));
@@ -230,14 +238,11 @@ export function useUnoGame() {
 
         // Calculate Ticket Payouts if PVP or Private Mode
         if (gameMode !== 'offline' && activeStake > 0) {
-          const grossPot = activeStake * 4;
+          const grossPot = activeStake * totalPlayers;
           const seasonFund = grossPot * 0.025;
           const burnFund = grossPot * 0.035;
           const netPrizePool = grossPot - seasonFund - burnFund;
-          if (rank === 1) ticketsGained = netPrizePool * 0.52;
-          else if (rank === 2) ticketsGained = netPrizePool * 0.23;
-          else if (rank === 3) ticketsGained = netPrizePool * 0.15;
-          else ticketsGained = netPrizePool * 0.10;
+          ticketsGained = netPrizePool * ((payoutByRank as Record<number, number>)[rank] || 0);
           ticketsGained = Math.round(ticketsGained * 100) / 100;
         }
 

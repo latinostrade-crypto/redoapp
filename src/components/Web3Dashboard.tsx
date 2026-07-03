@@ -20,6 +20,11 @@ import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const MIN_MATCH_PLAYERS = 2;
+const MAX_MATCH_PLAYERS = 4;
+const MATCHMAKING_TIMEOUT_SEC = 5;
+const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
+type StakeOption = typeof STAKE_OPTIONS[number];
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -129,12 +134,14 @@ export function Web3Dashboard({
   });
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
 
-  const [selectedStake, setSelectedStake] = useState<1 | 5 | 10 | 50>(1);
+  const [selectedStake, setSelectedStake] = useState<StakeOption>(0.3);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'searching' | 'success'>('idle');
-  const [matchmakingTimer, setMatchmakingTimer] = useState(0);
+  const [matchmakingTimer, setMatchmakingTimer] = useState(MATCHMAKING_TIMEOUT_SEC);
+  const [queueLength, setQueueLength] = useState(1);
   const [buyingTickets, setBuyingTickets] = useState(false);
 
-  const [privateRoomStake, setPrivateRoomStake] = useState<1 | 5 | 10 | 50>(1);
+  const [privateRoomStake, setPrivateRoomStake] = useState<StakeOption>(0.3);
+  const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(4);
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
   const [privateRoomCode, setPrivateRoomCode] = useState('');
@@ -153,6 +160,7 @@ export function Web3Dashboard({
   const queueStreamRef = useRef<EventSource | null>(null);
   const currentUserId = profile?.userId || rawAddress || `guest:${userName.toLowerCase()}`;
   const [heldTickets, setHeldTickets] = useState(0);
+  const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
   const effectiveXp = profile?.xp ?? playerXp;
   const displayXpNeeded = 400;
@@ -289,6 +297,11 @@ export function Web3Dashboard({
       alert("Please connect your wallet first.");
       return;
     }
+    const amount = Number(depositAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Enter a deposit amount greater than 0.');
+      return;
+    }
     sound.playPop();
     setBuyingTickets(true);
     try {
@@ -297,7 +310,7 @@ export function Web3Dashboard({
         body: JSON.stringify({
           userId: currentUserId,
           walletAddress: rawAddress,
-          ticketAmount: 10,
+          ticketAmount: amount,
         }),
       });
       const transaction = await tonConnectUI.sendTransaction({
@@ -317,7 +330,7 @@ export function Web3Dashboard({
       setGoldenTickets(confirmed.availableTickets);
       const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
       setTransactions(ledger.transactions);
-      alert(`Deposit confirmed: +${intent.ticketAmount} tickets.`);
+      alert(`Deposit confirmed: +${intent.ticketAmount.toFixed(2)} tickets.`);
     } catch (e) {
       console.error(e);
       alert(e instanceof Error ? e.message : 'Ticket purchase failed.');
@@ -327,31 +340,25 @@ export function Web3Dashboard({
   };
 
   useEffect(() => {
-    let interval: any;
-    if (matchmakingState === 'searching') {
-      interval = setInterval(() => {
-        setMatchmakingTimer((prev) => {
-          if (prev >= 5) {
-            clearInterval(interval);
-            setMatchmakingState('success');
-            return 5;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    }
-    return () => clearInterval(interval);
-  }, [matchmakingState, onStartGame, selectedStake]);
-
-  useEffect(() => {
     if (matchmakingState !== 'searching') return;
     queueStreamRef.current?.close();
     const stream = new EventSource(`${API_BASE_URL}/api/matchmaker/stream/${encodeURIComponent(currentUserId)}`);
     queueStreamRef.current = stream;
 
     stream.addEventListener('queue-status', (event) => {
-      const result = JSON.parse((event as MessageEvent).data) as { status: 'idle' | 'searching' | 'ready'; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
+      const result = JSON.parse((event as MessageEvent).data) as {
+        status: 'idle' | 'searching' | 'ready';
+        queueLength?: number;
+        countdownSec?: number;
+        matchId?: string;
+        players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+      };
+      if (result.status === 'searching') {
+        setQueueLength(result.queueLength || 1);
+        setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
+      }
       if (result.status === 'ready' && result.matchId) {
+        setQueueLength(result.players?.length || 1);
         localStorage.setItem('redoapp_active_match', JSON.stringify({
           matchId: result.matchId,
           mode: 'pvp',
@@ -366,9 +373,20 @@ export function Web3Dashboard({
     });
 
     stream.onerror = () => {
-      apiRequest<{ status: 'idle' | 'searching' | 'ready'; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/matchmaker/status/' + encodeURIComponent(currentUserId))
+      apiRequest<{
+        status: 'idle' | 'searching' | 'ready';
+        queueLength?: number;
+        countdownSec?: number;
+        matchId?: string;
+        players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+      }>('/api/matchmaker/status/' + encodeURIComponent(currentUserId))
         .then((result) => {
+          if (result.status === 'searching') {
+            setQueueLength(result.queueLength || 1);
+            setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
+          }
           if (result.status === 'ready' && result.matchId) {
+            setQueueLength(result.players?.length || 1);
             localStorage.setItem('redoapp_active_match', JSON.stringify({
               matchId: result.matchId,
               mode: 'pvp',
@@ -399,8 +417,11 @@ export function Web3Dashboard({
     privateRoomStreamRef.current = stream;
 
     stream.addEventListener('private-room', (event) => {
-      const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
+      const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
       setPrivateRoomPlayersCount(result.playersCount);
+      if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
+        setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+      }
       if (result.status === 'started' && result.matchId) {
         localStorage.setItem('redoapp_active_match', JSON.stringify({
           matchId: result.matchId,
@@ -416,9 +437,12 @@ export function Web3Dashboard({
     });
 
     stream.onerror = () => {
-      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode))
+      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode))
         .then((result) => {
           setPrivateRoomPlayersCount(result.playersCount);
+          if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
+            setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+          }
         })
         .catch(() => undefined);
     };
@@ -788,8 +812,8 @@ export function Web3Dashboard({
                   <div className="flex gap-2">
                     <input
                       type="number"
-                      min="5"
-                      step="1"
+                      min="0.01"
+                      step="0.1"
                       value={withdrawAmount}
                       onChange={(e) => setWithdrawAmount(e.target.value)}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono"
@@ -828,7 +852,7 @@ export function Web3Dashboard({
                     </button>
                   </div>
                   <div className="text-[7px] text-slate-500">
-                    Minimum withdrawal: 5 tickets. Final on-chain payout will use the configured marketing wallet later.
+                    Withdraw any positive amount. Final on-chain payout will use the configured marketing wallet later.
                   </div>
                 </div>
               </div>
@@ -969,14 +993,14 @@ export function Web3Dashboard({
                   ) : matchmakingState === 'searching' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                       <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
-                        <span className="text-[10px] font-black text-[#00d2ff]">{5 - matchmakingTimer}S</span>
+                        <span className="text-[10px] font-black text-[#00d2ff]">{matchmakingTimer}S</span>
                       </div>
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
                           QUEUE ACTIVE
                         </h3>
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                          Anti-Sync buffer active. Gathering active tickets for a random delay. Players are anonymous to avoid collusion.
+                          Match launches instantly with 4 players, or after the timer with at least 2. Current queue: {queueLength}/{MAX_MATCH_PLAYERS}.
                         </p>
                       </div>
                       <button
@@ -1006,7 +1030,7 @@ export function Web3Dashboard({
                         MATCH READY!
                       </h3>
                       <p className="text-[8px] text-slate-455">
-                        Match session created. Launching validated stake table. Net pool for this stake: {(selectedStake * 4 * 0.94).toFixed(2)} TKT
+                        Match session created. Launching validated stake table. Estimated net pool: {(selectedStake * Math.max(queueLength, MIN_MATCH_PLAYERS) * 0.94).toFixed(2)} TKT
                       </p>
                     </div>
                   ) : (
@@ -1020,8 +1044,8 @@ export function Web3Dashboard({
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-4 gap-1">
-                        {([1, 5, 10, 50] as const).map((stake) => (
+                        <div className="grid grid-cols-3 gap-1">
+                        {STAKE_OPTIONS.map((stake) => (
                           <button
                             key={stake}
                             type="button"
@@ -1044,23 +1068,32 @@ export function Web3Dashboard({
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-450">
                         <div className="flex justify-between text-slate-350">
                           <span>Net prize pool:</span>
-                          <span className="text-[#00ff66] font-bold">{(selectedStake * 4 * 0.94).toFixed(2)} TKT</span>
+                          <span className="text-[#00ff66] font-bold">{(selectedStake * MIN_MATCH_PLAYERS * 0.94).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.94).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Season fund:</span>
-                          <span>{(selectedStake * 4 * 0.025).toFixed(2)} TKT</span>
+                          <span>{(selectedStake * MIN_MATCH_PLAYERS * 0.025).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.025).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Burn fund:</span>
-                          <span>{(selectedStake * 4 * 0.035).toFixed(2)} TKT</span>
+                          <span>{(selectedStake * MIN_MATCH_PLAYERS * 0.035).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.035).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Payout split:</span>
-                          <span>52 / 23 / 15 / 10</span>
+                          <span>2P: 70/30 · 3P: 60/25/15 · 4P: 52/23/15/10</span>
                         </div>
                       </div>
 
                       <div className="flex gap-2">
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.1"
+                          value={depositAmount}
+                          onChange={(e) => setDepositAmount(e.target.value)}
+                          className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono"
+                          placeholder="Deposit tickets"
+                        />
                         <button
                           type="button"
                           onClick={buyTicketsWithTon}
@@ -1071,8 +1104,8 @@ export function Web3Dashboard({
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
                           ) : (
                             <>
-                              <span>BUY 10</span>
-                              <span className="text-[#00d2ff] text-[7px]">(10T)</span>
+                              <span>DEPOSIT</span>
+                              <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
                             </>
                           )}
                         </button>
@@ -1084,7 +1117,17 @@ export function Web3Dashboard({
                               return;
                             }
                             sound.playShuffle();
-                            apiRequest<{ availableTickets: number }>('/api/matchmaker/join', {
+                            apiRequest<{
+                              availableTickets: number;
+                              heldTickets: number;
+                              matchmaker?: {
+                                status: 'idle' | 'searching' | 'ready';
+                                queueLength?: number;
+                                countdownSec?: number;
+                                matchId?: string;
+                                players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+                              };
+                            }>('/api/matchmaker/join', {
                               method: 'POST',
                               body: JSON.stringify({
                                 userId: currentUserId,
@@ -1096,8 +1139,23 @@ export function Web3Dashboard({
                               }),
                             }).then((result) => {
                               setGoldenTickets(result.availableTickets);
+                              setHeldTickets(result.heldTickets);
+                              setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
+                              setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
+                              if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
+                                localStorage.setItem('redoapp_active_match', JSON.stringify({
+                                  matchId: result.matchmaker.matchId,
+                                  mode: 'pvp',
+                                  stake: selectedStake,
+                                  currentUserId,
+                                  players: result.matchmaker.players || [],
+                                  createdAt: Date.now(),
+                                }));
+                                setMatchmakingState('success');
+                                onStartGame('pvp', selectedStake);
+                                return;
+                              }
                               setMatchmakingState('searching');
-                              setMatchmakingTimer(0);
                             }).catch((error) => {
                               alert(error.message);
                             });
@@ -1168,7 +1226,7 @@ export function Web3Dashboard({
                               alert('Enter or generate a room code first.');
                               return;
                             }
-                            apiRequest<{ roomCode: string; playersCount: number; status: 'waiting' | 'started'; matchId?: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
+                            apiRequest<{ roomCode: string; playersCount: number; targetPlayers?: number; status: 'waiting' | 'started'; matchId?: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
                               method: 'POST',
                               body: JSON.stringify({
                                 roomCode: roomCodeToUse,
@@ -1181,6 +1239,9 @@ export function Web3Dashboard({
                               setShowRoomDisclaimer(false);
                               setPrivateRoomCode(result.roomCode);
                               setPrivateRoomPlayersCount(result.playersCount);
+                              if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
+                                setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+                              }
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               if (result.status === 'started' && result.matchId) {
@@ -1220,8 +1281,8 @@ export function Web3Dashboard({
 
                       <div className="space-y-1">
                         <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Select Room Stake</label>
-                        <div className="grid grid-cols-4 gap-1">
-                          {([1, 5, 10, 50] as const).map((stake) => (
+                        <div className="grid grid-cols-3 gap-1">
+                          {STAKE_OPTIONS.map((stake) => (
                             <button
                               key={stake}
                               type="button"
@@ -1247,6 +1308,34 @@ export function Web3Dashboard({
                       </div>
 
                       <div className="space-y-1">
+                        <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Players In Room</label>
+                        <div className="grid grid-cols-3 gap-1">
+                          {([2, 3, 4] as const).map((count) => (
+                            <button
+                              key={count}
+                              type="button"
+                              onClick={() => {
+                                sound.playPop();
+                                setPrivateRoomTargetPlayers(count);
+                                setGeneratedLink('');
+                                setPrivateRoomCode('');
+                                setPrivateRoomStatus('idle');
+                                setPrivateRoomPlayersCount(0);
+                              }}
+                              className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                                privateRoomTargetPlayers === count
+                                  ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                                  : 'bg-black border-black text-slate-450'
+                              }`}
+                            >
+                              <span className="text-[9px] font-black">{count}</span>
+                              <span className="text-[6px] block mt-0.5">players</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
                         <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
                         <input
                           type="text"
@@ -1262,7 +1351,7 @@ export function Web3Dashboard({
                           type="button"
                           onClick={() => {
                             sound.playShuffle();
-                            apiRequest<{ roomCode: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
+                            apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
                               method: 'POST',
                               body: JSON.stringify({
                                 userId: currentUserId,
@@ -1270,11 +1359,13 @@ export function Web3Dashboard({
                                 avatarId: selectedAvatar,
                                 walletAddress: rawAddress || null,
                                 stake: privateRoomStake,
+                                targetPlayers: privateRoomTargetPlayers,
                               }),
                             }).then((result) => {
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               setPrivateRoomCode(result.roomCode);
+                              setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
                               setPrivateRoomPlayersCount(1);
                               setPrivateRoomStatus('waiting');
                               setGeneratedLink(`https://t.me/redo_appbot/app?startapp=room_${result.roomCode}`);
@@ -1392,7 +1483,7 @@ export function Web3Dashboard({
               <div className="bg-slate-950 p-3 border border-black text-left text-[8px] min-[370px]:text-[9px] space-y-2 text-slate-300">
                 <div className="flex gap-2 items-start">
                   <span className="text-[#00ff66]">✓</span>
-                  <span>Access PVP Arena with stakes from 1 to 50 tickets.</span>
+                  <span>Access PVP Arena with stakes from 0.3 to 30 tickets.</span>
                 </div>
                 <div className="flex gap-2 items-start">
                   <span className="text-[#00ff66]">✓</span>
