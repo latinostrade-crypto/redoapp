@@ -62,6 +62,18 @@ interface Web3DashboardProps {
   setTransactions: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
+type DepositFlowStatus = 'idle' | 'creating' | 'awaiting_wallet' | 'waiting_chain' | 'confirmed' | 'failed';
+
+interface PendingDepositState {
+  intentId: string;
+  signedBoc: string;
+  ticketAmount: number;
+  tonAmount: number;
+  createdAt: number;
+}
+
+const PENDING_DEPOSIT_STORAGE_KEY = 'redoapp_pending_deposit';
+
 export function Web3Dashboard({
   userName,
   selectedAvatar,
@@ -139,6 +151,8 @@ export function Web3Dashboard({
   const [matchmakingTimer, setMatchmakingTimer] = useState(MATCHMAKING_TIMEOUT_SEC);
   const [queueLength, setQueueLength] = useState(1);
   const [buyingTickets, setBuyingTickets] = useState(false);
+  const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
+  const [depositStatusMessage, setDepositStatusMessage] = useState('');
 
   const [privateRoomStake, setPrivateRoomStake] = useState<StakeOption>(0.3);
   const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(4);
@@ -179,12 +193,74 @@ export function Web3Dashboard({
     window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: profile }));
   }, [profile]);
 
+  const readPendingDeposit = (): PendingDepositState | null => {
+    try {
+      const raw = localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw) as PendingDepositState;
+    } catch {
+      return null;
+    }
+  };
+
+  const clearPendingDeposit = () => {
+    localStorage.removeItem(PENDING_DEPOSIT_STORAGE_KEY);
+  };
+
+  const savePendingDeposit = (pending: PendingDepositState) => {
+    localStorage.setItem(PENDING_DEPOSIT_STORAGE_KEY, JSON.stringify(pending));
+  };
+
+  const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
+    setBuyingTickets(true);
+    setDepositFlowStatus('waiting_chain');
+    setDepositStatusMessage(`Waiting for TON confirmation of ${pending.ticketAmount.toFixed(2)} tickets...`);
+    try {
+      const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          intentId: pending.intentId,
+          signedBoc: pending.signedBoc,
+        }),
+      });
+      setGoldenTickets(confirmed.availableTickets);
+      const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
+      setTransactions(ledger.transactions);
+      clearPendingDeposit();
+      setDepositFlowStatus('confirmed');
+      setDepositStatusMessage(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
+      if (!options?.silent) {
+        alert(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
+      }
+      return true;
+    } catch (e) {
+      console.error(e);
+      const message = e instanceof Error ? e.message : 'Ticket purchase failed.';
+      setDepositFlowStatus('failed');
+      setDepositStatusMessage(message);
+      if (!options?.silent) {
+        alert(message);
+      }
+      return false;
+    } finally {
+      setBuyingTickets(false);
+    }
+  };
+
   useEffect(() => {
     if (lastDailyCheckIn) {
       const hoursSinceClaim = (Date.now() - lastDailyCheckIn) / (1000 * 60 * 60);
       setDailyXpClaimedToday(hoursSinceClaim < 24);
     }
   }, [lastDailyCheckIn]);
+
+  useEffect(() => {
+    const pending = readPendingDeposit();
+    if (!pending || !walletConnected || buyingTickets) return;
+    setDepositFlowStatus('waiting_chain');
+    setDepositStatusMessage(`Pending TON deposit found for ${pending.ticketAmount.toFixed(2)} tickets. Resuming confirmation...`);
+    confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
+  }, [walletConnected, currentUserId]);
 
   useEffect(() => {
     localStorage.setItem('redoapp_current_user_id', currentUserId);
@@ -304,6 +380,8 @@ export function Web3Dashboard({
     }
     sound.playPop();
     setBuyingTickets(true);
+    setDepositFlowStatus('creating');
+    setDepositStatusMessage('Preparing deposit request...');
     try {
       const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number; ticketAmount: number }>('/api/tickets/deposit-intent', {
         method: 'POST',
@@ -313,6 +391,8 @@ export function Web3Dashboard({
           ticketAmount: amount,
         }),
       });
+      setDepositFlowStatus('awaiting_wallet');
+      setDepositStatusMessage(`Confirm ${intent.tonAmount.toFixed(2)} TON in your wallet for ${intent.ticketAmount.toFixed(2)} tickets.`);
       const transaction = await tonConnectUI.sendTransaction({
         validUntil: Math.floor(Date.now() / 1000) + 360,
         messages: [{
@@ -320,20 +400,21 @@ export function Web3Dashboard({
           amount: Math.round(intent.tonAmount * 1_000_000_000).toString(),
         }]
       });
-      const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
-        method: 'POST',
-        body: JSON.stringify({
-          intentId: intent.intentId,
-          signedBoc: transaction.boc,
-        }),
-      });
-      setGoldenTickets(confirmed.availableTickets);
-      const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
-      setTransactions(ledger.transactions);
-      alert(`Deposit confirmed: +${intent.ticketAmount.toFixed(2)} tickets.`);
+      const pending: PendingDepositState = {
+        intentId: intent.intentId,
+        signedBoc: transaction.boc,
+        ticketAmount: intent.ticketAmount,
+        tonAmount: intent.tonAmount,
+        createdAt: Date.now(),
+      };
+      savePendingDeposit(pending);
+      await confirmPendingDeposit(pending);
     } catch (e) {
       console.error(e);
-      alert(e instanceof Error ? e.message : 'Ticket purchase failed.');
+      const message = e instanceof Error ? e.message : 'Ticket purchase failed.';
+      setDepositFlowStatus('failed');
+      setDepositStatusMessage(message);
+      alert(message);
     } finally {
       setBuyingTickets(false);
     }
@@ -1109,6 +1190,19 @@ export function Web3Dashboard({
                             </>
                           )}
                         </button>
+                        {depositFlowStatus === 'failed' && readPendingDeposit() && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const pending = readPendingDeposit();
+                              if (!pending) return;
+                              confirmPendingDeposit(pending).catch(() => undefined);
+                            }}
+                            className="py-1.5 px-2 bg-[#3a1200] text-[#ffcc99] border border-black text-[8px] font-black uppercase"
+                          >
+                            RETRY
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -1163,8 +1257,20 @@ export function Web3Dashboard({
                           className="flex-1 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
                         >
                           JOIN REAL QUEUE
-                        </button>
+                          </button>
                       </div>
+
+                      {depositFlowStatus !== 'idle' && depositStatusMessage && (
+                        <div className={`border border-black px-2 py-1.5 text-[7.5px] leading-relaxed ${
+                          depositFlowStatus === 'confirmed'
+                            ? 'bg-[#062b12] text-[#8dffaf]'
+                            : depositFlowStatus === 'failed'
+                              ? 'bg-[#2a0d0d] text-[#ff9a9a]'
+                              : 'bg-[#08131f] text-[#9ed8ff]'
+                        }`}>
+                          {depositStatusMessage}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
