@@ -21,6 +21,7 @@ const TON_API_BASE_URL = process.env.TON_API_BASE_URL || 'https://tonapi.io/v2';
 const TON_API_KEY = process.env.TON_API_KEY || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'redo_appbot';
+const TELEGRAM_APP_SHORT_NAME = process.env.TELEGRAM_APP_SHORT_NAME || 'app';
 const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -215,6 +216,13 @@ let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
+
+function buildTelegramMiniAppLink(startParam: string) {
+  const basePath = TELEGRAM_APP_SHORT_NAME
+    ? `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}`
+    : `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+  return `${basePath}?startapp=${encodeURIComponent(startParam)}`;
+}
 
 const QUEST_DEFINITIONS: QuestDefinition[] = [
   {
@@ -1247,7 +1255,7 @@ app.post('/api/users/sync', (req, res) => {
     xp: user.xp,
     energy,
     referralCode: user.referralCode,
-    referralLink: `https://t.me/${TELEGRAM_BOT_USERNAME}/app?startapp=ref_${user.referralCode}`,
+    referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
     quests: buildQuestView(user.userId),
     claimedQuestIds,
   });
@@ -1291,7 +1299,7 @@ app.get('/api/me/:userId', (req, res) => {
     xp: user.xp,
     energy: getEnergyState(user),
     referralCode: user.referralCode,
-    referralLink: `https://t.me/${TELEGRAM_BOT_USERNAME}/app?startapp=ref_${user.referralCode}`,
+    referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
     referrals: {
       referredByUserId: user.referredByUserId || null,
       status: user.referralStatus || null,

@@ -22,6 +22,8 @@ import { TutorialModal } from './TutorialModal';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
+const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
@@ -31,6 +33,25 @@ type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
 const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
+
+function buildTelegramMiniAppLink(startParam: string) {
+  const basePath = TELEGRAM_APP_SHORT_NAME
+    ? `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}`
+    : `https://t.me/${TELEGRAM_BOT_USERNAME}`;
+  return `${basePath}?startapp=${encodeURIComponent(startParam)}`;
+}
+
+function getTelegramStartParam() {
+  const params = new URLSearchParams(window.location.search);
+  const telegramWebApp = (window as any).Telegram?.WebApp;
+  return (
+    params.get('tgWebAppStartParam') ||
+    params.get('startapp') ||
+    params.get('startApp') ||
+    telegramWebApp?.initDataUnsafe?.start_param ||
+    ''
+  );
+}
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -169,7 +190,7 @@ export function Web3Dashboard({
   const [privateJoinCode, setPrivateJoinCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const room = params.get('room');
-    const startApp = params.get('startapp');
+    const startApp = getTelegramStartParam();
     if (room) return room.toUpperCase();
     if (startApp?.startsWith('room_')) return startApp.replace('room_', '').toUpperCase();
     return '';
@@ -1598,7 +1619,7 @@ export function Web3Dashboard({
                               setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
                               setPrivateRoomPlayersCount(1);
                               setPrivateRoomStatus('waiting');
-                              setGeneratedLink(`https://t.me/redo_appbot/app?startapp=room_${result.roomCode}`);
+                              setGeneratedLink(buildTelegramMiniAppLink(`room_${result.roomCode}`));
                             }).catch((error) => {
                               alert(error.message);
                             });
