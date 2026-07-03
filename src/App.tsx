@@ -95,8 +95,7 @@ export default function App() {
   const shouldPromptWalletAfterFirstFreeGame =
     gameState.phase === 'game_over' &&
     gameMode === 'offline' &&
-    stats.practiceGamesPlayed === 1 &&
-    !localStorage.getItem('redoapp_wallet_address');
+    stats.practiceGamesPlayed === 1;
 
   // Available avatars to select in lobby
   const AVATAR_LIST: { id: AvatarId; emoji: string; bg: string; description: string }[] = [
