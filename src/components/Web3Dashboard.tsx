@@ -22,8 +22,6 @@ import { TutorialModal } from './TutorialModal';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
-const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
@@ -34,20 +32,26 @@ type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
 const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
 
-function buildTelegramMiniAppLink(startParam: string) {
-  const basePath = TELEGRAM_APP_SHORT_NAME
-    ? `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}`
-    : `https://t.me/${TELEGRAM_BOT_USERNAME}`;
-  return `${basePath}?startapp=${encodeURIComponent(startParam)}`;
+function buildPrivateRoomShareLink(roomCode: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('room', roomCode);
+  url.searchParams.delete('startapp');
+  url.searchParams.delete('startApp');
+  return url.toString();
 }
 
 function getTelegramStartParam() {
   const params = new URLSearchParams(window.location.search);
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const hashParams = new URLSearchParams(hash);
   const telegramWebApp = (window as any).Telegram?.WebApp;
   return (
     params.get('tgWebAppStartParam') ||
     params.get('startapp') ||
     params.get('startApp') ||
+    hashParams.get('tgWebAppStartParam') ||
+    hashParams.get('startapp') ||
+    hashParams.get('startApp') ||
     telegramWebApp?.initDataUnsafe?.start_param ||
     ''
   );
@@ -1593,6 +1597,23 @@ export function Web3Dashboard({
                         />
                       </div>
 
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const normalizedCode = privateJoinCode.trim().toUpperCase();
+                          if (!normalizedCode) {
+                            alert('Enter a room code first.');
+                            return;
+                          }
+                          sound.playPop();
+                          setPrivateRoomCode(normalizedCode);
+                          setShowRoomDisclaimer(true);
+                        }}
+                        className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
+                      >
+                        Join By Code
+                      </button>
+
                       {!generatedLink ? (
                         <button
                           type="button"
@@ -1619,7 +1640,7 @@ export function Web3Dashboard({
                               setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
                               setPrivateRoomPlayersCount(1);
                               setPrivateRoomStatus('waiting');
-                              setGeneratedLink(buildTelegramMiniAppLink(`room_${result.roomCode}`));
+                              setGeneratedLink(buildPrivateRoomShareLink(result.roomCode));
                             }).catch((error) => {
                               alert(error.message);
                             });
@@ -1647,6 +1668,18 @@ export function Web3Dashboard({
                               className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
                             >
                               Copy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!privateRoomCode) return;
+                                sound.playPop();
+                                navigator.clipboard.writeText(privateRoomCode);
+                                alert('Room code copied.');
+                              }}
+                              className="px-2 py-1.5 bg-[#ffcc00] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
+                            >
+                              Code
                             </button>
                           </div>
                           <button
