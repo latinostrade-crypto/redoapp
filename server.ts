@@ -6,6 +6,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { Cell, beginCell, loadMessage } from '@ton/core';
 
 dotenv.config();
 
@@ -16,7 +17,7 @@ const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
 const MIN_WITHDRAW_TICKETS = 5;
 const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION === 'true';
 const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'manual';
-const TON_API_BASE_URL = process.env.TON_API_BASE_URL || '';
+const TON_API_BASE_URL = process.env.TON_API_BASE_URL || 'https://tonapi.io/v2';
 const TON_API_KEY = process.env.TON_API_KEY || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -230,7 +231,8 @@ interface TonVerificationResult {
   ok: boolean;
   provider: string;
   reason?: string;
-  normalizedTxHash?: string;
+  normalizedMessageHash?: string;
+  txHash?: string;
 }
 
 const users = new Map<string, UserState>();
@@ -757,13 +759,13 @@ function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-async function verifyTonDeposit(intent: DepositIntent, txHash: string): Promise<TonVerificationResult> {
-  const normalizedTxHash = String(txHash || '').trim();
-  if (!normalizedTxHash) {
+async function verifyTonDeposit(intent: DepositIntent, signedBoc: string): Promise<TonVerificationResult> {
+  const normalizedMessageHash = getNormalizedExternalMessageHash(signedBoc);
+  if (!normalizedMessageHash) {
     return {
       ok: false,
       provider: TON_VERIFICATION_MODE,
-      reason: 'Missing txHash.',
+      reason: 'Missing or invalid signedBoc.',
     };
   }
 
@@ -771,61 +773,17 @@ async function verifyTonDeposit(intent: DepositIntent, txHash: string): Promise<
     return {
       ok: true,
       provider: 'manual',
-      normalizedTxHash,
-    };
-  }
-
-  if (!TON_API_BASE_URL) {
-    return {
-      ok: false,
-      provider: TON_VERIFICATION_MODE,
-      reason: 'TON_API_BASE_URL is not configured.',
+      normalizedMessageHash,
     };
   }
 
   try {
-    const requestUrl = `${TON_API_BASE_URL.replace(/\/$/, '')}/verify-transaction`;
-    const response = await fetch(requestUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(TON_API_KEY ? { Authorization: `Bearer ${TON_API_KEY}` } : {}),
-      },
-      body: JSON.stringify({
-        txHash: normalizedTxHash,
-        expectedWallet: MARKETING_WALLET,
-        expectedAmountTon: intent.tonAmount,
-        expectedSender: intent.walletAddress,
-      }),
-    });
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        provider: TON_VERIFICATION_MODE,
-        reason: `Verification provider returned HTTP ${response.status}.`,
-      };
-    }
-
-    const payload = await response.json() as {
-      ok?: boolean;
-      matched?: boolean;
-      reason?: string;
-      normalizedTxHash?: string;
-    };
-
-    if (!payload.ok && !payload.matched) {
-      return {
-        ok: false,
-        provider: TON_VERIFICATION_MODE,
-        reason: payload.reason || 'Provider did not confirm the transfer.',
-      };
-    }
-
+    const transaction = await pollTonApiTransactionByMessageHash(normalizedMessageHash);
     return {
       ok: true,
       provider: TON_VERIFICATION_MODE,
-      normalizedTxHash: payload.normalizedTxHash || normalizedTxHash,
+      normalizedMessageHash,
+      txHash: transaction.hash,
     };
   } catch (error) {
     return {
@@ -834,6 +792,59 @@ async function verifyTonDeposit(intent: DepositIntent, txHash: string): Promise<
       reason: error instanceof Error ? error.message : 'Unknown verification failure.',
     };
   }
+}
+
+function getNormalizedExternalMessageHash(signedBoc: string) {
+  const normalizedBoc = String(signedBoc || '').trim();
+  if (!normalizedBoc) {
+    return null;
+  }
+
+  try {
+    const root = Cell.fromBase64(normalizedBoc);
+    const message = loadMessage(root.beginParse());
+    if (message.info.type !== 'external-in') {
+      return null;
+    }
+
+    const normalized = beginCell()
+      .storeUint(2, 2)
+      .storeUint(0, 2)
+      .storeAddress(message.info.dest)
+      .storeUint(0, 4)
+      .storeBit(false)
+      .storeBit(true)
+      .storeRef(message.body)
+      .endCell();
+
+    return normalized.hash().toString('hex');
+  } catch {
+    return null;
+  }
+}
+
+async function pollTonApiTransactionByMessageHash(messageHash: string) {
+  const requestUrl = `${TON_API_BASE_URL.replace(/\/$/, '')}/blockchain/messages/${messageHash}/transaction`;
+  const headers: Record<string, string> = TON_API_KEY
+    ? { Authorization: `Bearer ${TON_API_KEY}` }
+    : {};
+  const delaysMs = [1000, 2000, 4000, 8000, 12000];
+
+  for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
+    const response = await fetch(requestUrl, { headers });
+
+    if (response.ok) {
+      return await response.json() as { hash: string };
+    }
+
+    if (response.status !== 404) {
+      throw new Error(`TonAPI returned HTTP ${response.status}.`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+  }
+
+  throw new Error('Transaction was not found in TON within the verification window.');
 }
 
 function generateServerDeck(): ServerCard[] {
@@ -1249,7 +1260,7 @@ app.get('/api/health', (req, res) => {
       minWithdrawTickets: MIN_WITHDRAW_TICKETS,
       chainVerificationEnabled: ENABLE_CHAIN_VERIFICATION,
       verificationMode: TON_VERIFICATION_MODE,
-      tonApiConfigured: !!TON_API_BASE_URL,
+      tonApiConfigured: !!TON_API_KEY,
       supabaseConfigured: !!supabaseAdmin,
       supabaseStateTable: SUPABASE_STATE_TABLE,
     },
@@ -1387,21 +1398,22 @@ app.post('/api/tickets/deposit-intent', (req, res) => {
 });
 
 app.post('/api/tickets/deposit-confirm', async (req, res) => {
-  const { intentId, txHash } = req.body;
+  const { intentId, signedBoc } = req.body;
   const intent = depositIntents.get(intentId);
   if (!intent) {
     return res.status(404).json({ error: 'Deposit intent not found.' });
   }
-  if (ENABLE_CHAIN_VERIFICATION && !txHash) {
-    return res.status(400).json({ error: 'txHash is required when chain verification is enabled.' });
+  if (ENABLE_CHAIN_VERIFICATION && !signedBoc) {
+    return res.status(400).json({ error: 'signedBoc is required when chain verification is enabled.' });
   }
   if (intent.status === 'confirmed') {
     const user = getUser(intent.userId, intent.walletAddress);
     return res.json({ success: true, availableTickets: user.availableTickets, status: intent.status });
   }
 
+  let verification: TonVerificationResult | null = null;
   if (ENABLE_CHAIN_VERIFICATION) {
-    const verification = await verifyTonDeposit(intent, txHash);
+    verification = await verifyTonDeposit(intent, signedBoc);
     if (!verification.ok) {
       return res.status(400).json({
         error: verification.reason || 'Transaction verification failed.',
@@ -1422,7 +1434,8 @@ app.post('/api/tickets/deposit-confirm', async (req, res) => {
   });
   return res.json({
     success: true,
-    txHash: txHash || null,
+    txHash: verification?.txHash || null,
+    normalizedMessageHash: verification?.normalizedMessageHash || null,
     status: intent.status,
     availableTickets: user.availableTickets,
   });

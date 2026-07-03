@@ -29,7 +29,7 @@ services:
       - key: TON_VERIFICATION_MODE
         value: manual
       - key: TON_API_BASE_URL
-        sync: false
+        value: https://tonapi.io/v2
       - key: TON_API_KEY
         sync: false
       - key: TELEGRAM_BOT_TOKEN

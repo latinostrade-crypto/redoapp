@@ -300,7 +300,7 @@ export function Web3Dashboard({
           ticketAmount: 10,
         }),
       });
-      await tonConnectUI.sendTransaction({
+      const transaction = await tonConnectUI.sendTransaction({
         validUntil: Math.floor(Date.now() / 1000) + 360,
         messages: [{
           address: intent.marketingWallet,
@@ -309,7 +309,10 @@ export function Web3Dashboard({
       });
       const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
         method: 'POST',
-        body: JSON.stringify({ intentId: intent.intentId }),
+        body: JSON.stringify({
+          intentId: intent.intentId,
+          signedBoc: transaction.boc,
+        }),
       });
       setGoldenTickets(confirmed.availableTickets);
       const newTx = {

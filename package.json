@@ -16,6 +16,7 @@
     "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.108.2",
     "@tailwindcss/vite": "^4.1.14",
+    "@ton/core": "^0.63.1",
     "@tonconnect/ui-react": "^3.0.0",
     "@types/cors": "^2.8.19",
     "@vitejs/plugin-react": "^5.0.4",

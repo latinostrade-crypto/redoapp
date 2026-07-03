@@ -35,9 +35,10 @@ Stake-based card game frontend + backend with:
 - `TICKET_PRICE_TON`
 - `ENABLE_CHAIN_VERIFICATION`
   - `false` keeps manual confirmation flow
-  - `true` requires `txHash` on deposit confirm
+  - `true` requires `signedBoc` on deposit confirm
 - `TON_VERIFICATION_MODE`
-  - currently `manual`
+  - `manual` bypasses on-chain confirmation
+  - `tonapi` verifies the signed wallet message in TON
 - `TON_API_BASE_URL`
 - `TON_API_KEY`
 
@@ -45,12 +46,11 @@ Stake-based card game frontend + backend with:
 
 - deposits create an intent and request a wallet transfer to the marketing wallet
 - backend confirmation credits tickets
-- if `ENABLE_CHAIN_VERIFICATION=true`, `txHash` becomes mandatory on confirm
-- if `TON_VERIFICATION_MODE` is not `manual`, backend calls the configured TON verification endpoint with:
-  - `txHash`
-  - expected destination wallet
-  - expected TON amount
-  - expected sender wallet
+- if `ENABLE_CHAIN_VERIFICATION=true`, `signedBoc` becomes mandatory on confirm
+- if `TON_VERIFICATION_MODE=tonapi`, backend:
+  - derives the normalized external-in message hash from the signed wallet BOC
+  - polls TonAPI for the blockchain transaction bound to that message
+  - credits tickets only after the transaction is visible on-chain
 - withdrawals are request-based and still require final payout processing
 
 ## Persistence
