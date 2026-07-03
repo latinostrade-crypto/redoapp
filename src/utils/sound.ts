@@ -27,18 +27,18 @@ class SoundSynth {
   toggleMute() {
     this.isMuted = !this.isMuted;
     const cacheVal = this.isMuted ? 'true' : 'false';
-    localStorage.setItem('uno_muted', cacheVal);
+    localStorage.setItem('redoapp_muted', cacheVal);
     return this.isMuted;
   }
 
   setMute(muted: boolean) {
     this.isMuted = muted;
-    localStorage.setItem('uno_muted', muted ? 'true' : 'false');
+    localStorage.setItem('redoapp_muted', muted ? 'true' : 'false');
   }
 
   getMuted() {
     // Read from localStorage to persist user settings
-    const stored = localStorage.getItem('uno_muted');
+    const stored = localStorage.getItem('redoapp_muted');
     if (stored !== null) {
       this.isMuted = stored === 'true';
     }
