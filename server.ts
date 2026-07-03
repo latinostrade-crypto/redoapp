@@ -175,6 +175,8 @@ interface DepositIntent {
   tonAmount: number;
   status: 'pending' | 'confirmed';
   createdAt: number;
+  normalizedMessageHash?: string;
+  txHash?: string;
 }
 
 interface WithdrawalRequest {
@@ -247,6 +249,7 @@ const telegramNotifications: TelegramNotification[] = [];
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const queueSubscribers = new Map<string, Set<Response>>();
+const DEPOSIT_INTENT_TTL_MS = 15 * 60 * 1000;
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -778,7 +781,7 @@ async function verifyTonDeposit(intent: DepositIntent, signedBoc: string): Promi
   }
 
   try {
-    const transaction = await pollTonApiTransactionByMessageHash(normalizedMessageHash);
+    const transaction = await pollTonApiTransactionByMessageHash(normalizedMessageHash, intent);
     return {
       ok: true,
       provider: TON_VERIFICATION_MODE,
@@ -792,6 +795,60 @@ async function verifyTonDeposit(intent: DepositIntent, signedBoc: string): Promi
       reason: error instanceof Error ? error.message : 'Unknown verification failure.',
     };
   }
+}
+
+function toNano(value: number) {
+  return BigInt(Math.round(value * 1_000_000_000));
+}
+
+function extractAddress(candidate: unknown): string | null {
+  if (!candidate) {
+    return null;
+  }
+  if (typeof candidate === 'string') {
+    return candidate;
+  }
+  if (typeof candidate === 'object') {
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.address === 'string') {
+      return record.address;
+    }
+    if (typeof record.raw === 'string') {
+      return record.raw;
+    }
+  }
+  return null;
+}
+
+function extractNanoAmount(candidate: unknown): bigint | null {
+  if (candidate == null) {
+    return null;
+  }
+  if (typeof candidate === 'string' && /^\d+$/.test(candidate)) {
+    return BigInt(candidate);
+  }
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+    return BigInt(Math.trunc(candidate));
+  }
+  if (typeof candidate === 'object') {
+    const record = candidate as Record<string, unknown>;
+    if (typeof record.coins === 'string' && /^\d+$/.test(record.coins)) {
+      return BigInt(record.coins);
+    }
+  }
+  return null;
+}
+
+function transactionMatchesIntent(transaction: Record<string, unknown>, intent: DepositIntent) {
+  const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
+  const expectedNano = toNano(intent.tonAmount);
+
+  return outMessages.some((message) => {
+    const record = (message || {}) as Record<string, unknown>;
+    const destination = extractAddress(record.destination) || extractAddress(record.dest);
+    const value = extractNanoAmount(record.value);
+    return destination === MARKETING_WALLET && value === expectedNano;
+  });
 }
 
 function getNormalizedExternalMessageHash(signedBoc: string) {
@@ -823,7 +880,7 @@ function getNormalizedExternalMessageHash(signedBoc: string) {
   }
 }
 
-async function pollTonApiTransactionByMessageHash(messageHash: string) {
+async function pollTonApiTransactionByMessageHash(messageHash: string, intent: DepositIntent) {
   const requestUrl = `${TON_API_BASE_URL.replace(/\/$/, '')}/blockchain/messages/${messageHash}/transaction`;
   const headers: Record<string, string> = TON_API_KEY
     ? { Authorization: `Bearer ${TON_API_KEY}` }
@@ -834,7 +891,11 @@ async function pollTonApiTransactionByMessageHash(messageHash: string) {
     const response = await fetch(requestUrl, { headers });
 
     if (response.ok) {
-      return await response.json() as { hash: string };
+      const payload = await response.json() as Record<string, unknown>;
+      if (!transactionMatchesIntent(payload, intent)) {
+        throw new Error('TON transaction does not match the expected wallet or ticket amount.');
+      }
+      return payload as { hash: string };
     }
 
     if (response.status !== 404) {
@@ -1403,12 +1464,21 @@ app.post('/api/tickets/deposit-confirm', async (req, res) => {
   if (!intent) {
     return res.status(404).json({ error: 'Deposit intent not found.' });
   }
+  if (Date.now() - intent.createdAt > DEPOSIT_INTENT_TTL_MS) {
+    return res.status(400).json({ error: 'Deposit intent expired. Please start a new purchase.' });
+  }
   if (ENABLE_CHAIN_VERIFICATION && !signedBoc) {
     return res.status(400).json({ error: 'signedBoc is required when chain verification is enabled.' });
   }
   if (intent.status === 'confirmed') {
     const user = getUser(intent.userId, intent.walletAddress);
-    return res.json({ success: true, availableTickets: user.availableTickets, status: intent.status });
+    return res.json({
+      success: true,
+      availableTickets: user.availableTickets,
+      status: intent.status,
+      txHash: intent.txHash || null,
+      normalizedMessageHash: intent.normalizedMessageHash || null,
+    });
   }
 
   let verification: TonVerificationResult | null = null;
@@ -1420,9 +1490,24 @@ app.post('/api/tickets/deposit-confirm', async (req, res) => {
         verificationProvider: verification.provider,
       });
     }
+
+    const duplicateIntent = Array.from(depositIntents.values()).find((entry) => (
+      entry.id !== intent.id
+      && entry.normalizedMessageHash
+      && entry.normalizedMessageHash === verification.normalizedMessageHash
+    ));
+
+    if (duplicateIntent) {
+      return res.status(409).json({
+        error: 'This blockchain payment was already used for another deposit.',
+        verificationProvider: verification.provider,
+      });
+    }
   }
 
   intent.status = 'confirmed';
+  intent.normalizedMessageHash = verification?.normalizedMessageHash;
+  intent.txHash = verification?.txHash;
   schedulePersist();
   const user = getUser(intent.userId, intent.walletAddress);
   user.availableTickets = round2(user.availableTickets + intent.ticketAmount);

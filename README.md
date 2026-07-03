@@ -50,7 +50,10 @@ Stake-based card game frontend + backend with:
 - if `TON_VERIFICATION_MODE=tonapi`, backend:
   - derives the normalized external-in message hash from the signed wallet BOC
   - polls TonAPI for the blockchain transaction bound to that message
+  - verifies the outgoing transfer matches the marketing wallet and expected TON amount
   - credits tickets only after the transaction is visible on-chain
+- each signed blockchain payment can be used only once
+- deposit intents expire after 15 minutes
 - withdrawals are request-based and still require final payout processing
 
 ## Persistence

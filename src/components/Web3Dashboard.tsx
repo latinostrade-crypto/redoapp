@@ -292,7 +292,7 @@ export function Web3Dashboard({
     sound.playPop();
     setBuyingTickets(true);
     try {
-      const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number }>('/api/tickets/deposit-intent', {
+      const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number; ticketAmount: number }>('/api/tickets/deposit-intent', {
         method: 'POST',
         body: JSON.stringify({
           userId: currentUserId,
@@ -315,16 +315,12 @@ export function Web3Dashboard({
         }),
       });
       setGoldenTickets(confirmed.availableTickets);
-      const newTx = {
-        id: `tx-${Date.now()}`,
-        event: 'Deposit Confirmed',
-        value: '+10 Tickets',
-        time: 'Just now',
-        type: 'mint'
-      };
-      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
+      setTransactions(ledger.transactions);
+      alert(`Deposit confirmed: +${intent.ticketAmount} tickets.`);
     } catch (e) {
       console.error(e);
+      alert(e instanceof Error ? e.message : 'Ticket purchase failed.');
     } finally {
       setBuyingTickets(false);
     }
