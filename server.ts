@@ -6,7 +6,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { Cell, beginCell, loadMessage } from '@ton/core';
+import { createTicketingService, type DepositIntent, type TicketLedgerEntry, type WithdrawalRequest } from './server/tickets';
 
 dotenv.config();
 
@@ -14,6 +14,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj';
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
+const MIN_WITHDRAW_TICKETS = 5;
 const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION === 'true';
 const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'manual';
 const TON_API_BASE_URL = process.env.TON_API_BASE_URL || 'https://tonapi.io/v2';
@@ -48,28 +49,6 @@ type CardValue =
   | '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
   | 'skip' | 'reverse' | 'draw2'
   | 'wild' | 'wild_draw4';
-type LedgerType =
-  | 'wallet'
-  | 'reward'
-  | 'purchase'
-  | 'stake_hold'
-  | 'stake_release'
-  | 'match_payout'
-  | 'fund_season'
-  | 'fund_burn'
-  | 'withdraw_pending'
-  | 'withdraw_completed';
-
-interface TicketLedgerEntry {
-  id: string;
-  userId: string;
-  event: string;
-  value: string;
-  type: LedgerType;
-  amount: number;
-  createdAt: number;
-}
-
 interface ServerCard {
   id: string;
   color: CardColor;
@@ -169,27 +148,6 @@ interface TelegramAuthPayload {
   start_param?: string;
 }
 
-interface DepositIntent {
-  id: string;
-  userId: string;
-  walletAddress: string;
-  ticketAmount: number;
-  tonAmount: number;
-  status: 'pending' | 'confirmed';
-  createdAt: number;
-  normalizedMessageHash?: string;
-  txHash?: string;
-}
-
-interface WithdrawalRequest {
-  id: string;
-  userId: string;
-  walletAddress: string;
-  ticketAmount: number;
-  status: 'pending' | 'completed';
-  createdAt: number;
-}
-
 interface QueuePlayer {
   userId: string;
   username: string;
@@ -241,14 +199,6 @@ interface PersistedState {
   telegramNotifications?: TelegramNotification[];
 }
 
-interface TonVerificationResult {
-  ok: boolean;
-  provider: string;
-  reason?: string;
-  normalizedMessageHash?: string;
-  txHash?: string;
-}
-
 const users = new Map<string, UserState>();
 const depositIntents = new Map<string, DepositIntent>();
 const withdrawalRequests = new Map<string, WithdrawalRequest>();
@@ -261,7 +211,6 @@ const telegramNotifications: TelegramNotification[] = [];
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const queueSubscribers = new Map<string, Set<Response>>();
-const DEPOSIT_INTENT_TTL_MS = 15 * 60 * 1000;
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -774,151 +723,24 @@ function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-async function verifyTonDeposit(intent: DepositIntent, signedBoc: string): Promise<TonVerificationResult> {
-  const normalizedMessageHash = getNormalizedExternalMessageHash(signedBoc);
-  if (!normalizedMessageHash) {
-    return {
-      ok: false,
-      provider: TON_VERIFICATION_MODE,
-      reason: 'Missing or invalid signedBoc.',
-    };
-  }
-
-  if (TON_VERIFICATION_MODE === 'manual') {
-    return {
-      ok: true,
-      provider: 'manual',
-      normalizedMessageHash,
-    };
-  }
-
-  try {
-    const transaction = await pollTonApiTransactionByMessageHash(normalizedMessageHash, intent);
-    return {
-      ok: true,
-      provider: TON_VERIFICATION_MODE,
-      normalizedMessageHash,
-      txHash: transaction.hash,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      provider: TON_VERIFICATION_MODE,
-      reason: error instanceof Error ? error.message : 'Unknown verification failure.',
-    };
-  }
-}
-
-function toNano(value: number) {
-  return BigInt(Math.round(value * 1_000_000_000));
-}
-
-function extractAddress(candidate: unknown): string | null {
-  if (!candidate) {
-    return null;
-  }
-  if (typeof candidate === 'string') {
-    return candidate;
-  }
-  if (typeof candidate === 'object') {
-    const record = candidate as Record<string, unknown>;
-    if (typeof record.address === 'string') {
-      return record.address;
-    }
-    if (typeof record.raw === 'string') {
-      return record.raw;
-    }
-  }
-  return null;
-}
-
-function extractNanoAmount(candidate: unknown): bigint | null {
-  if (candidate == null) {
-    return null;
-  }
-  if (typeof candidate === 'string' && /^\d+$/.test(candidate)) {
-    return BigInt(candidate);
-  }
-  if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-    return BigInt(Math.trunc(candidate));
-  }
-  if (typeof candidate === 'object') {
-    const record = candidate as Record<string, unknown>;
-    if (typeof record.coins === 'string' && /^\d+$/.test(record.coins)) {
-      return BigInt(record.coins);
-    }
-  }
-  return null;
-}
-
-function transactionMatchesIntent(transaction: Record<string, unknown>, intent: DepositIntent) {
-  const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
-  const expectedNano = toNano(intent.tonAmount);
-
-  return outMessages.some((message) => {
-    const record = (message || {}) as Record<string, unknown>;
-    const destination = extractAddress(record.destination) || extractAddress(record.dest);
-    const value = extractNanoAmount(record.value);
-    return destination === MARKETING_WALLET && value === expectedNano;
-  });
-}
-
-function getNormalizedExternalMessageHash(signedBoc: string) {
-  const normalizedBoc = String(signedBoc || '').trim();
-  if (!normalizedBoc) {
-    return null;
-  }
-
-  try {
-    const root = Cell.fromBase64(normalizedBoc);
-    const message = loadMessage(root.beginParse());
-    if (message.info.type !== 'external-in') {
-      return null;
-    }
-
-    const normalized = beginCell()
-      .storeUint(2, 2)
-      .storeUint(0, 2)
-      .storeAddress(message.info.dest)
-      .storeUint(0, 4)
-      .storeBit(false)
-      .storeBit(true)
-      .storeRef(message.body)
-      .endCell();
-
-    return normalized.hash().toString('hex');
-  } catch {
-    return null;
-  }
-}
-
-async function pollTonApiTransactionByMessageHash(messageHash: string, intent: DepositIntent) {
-  const requestUrl = `${TON_API_BASE_URL.replace(/\/$/, '')}/blockchain/messages/${messageHash}/transaction`;
-  const headers: Record<string, string> = TON_API_KEY
-    ? { Authorization: `Bearer ${TON_API_KEY}` }
-    : {};
-  const delaysMs = [1000, 2000, 4000, 8000, 12000];
-
-  for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
-    const response = await fetch(requestUrl, { headers });
-
-    if (response.ok) {
-      const payload = await response.json() as Record<string, unknown>;
-      if (!transactionMatchesIntent(payload, intent)) {
-        throw new Error('TON transaction does not match the expected wallet or ticket amount.');
-      }
-      return payload as { hash: string };
-    }
-
-    if (response.status !== 404) {
-      throw new Error(`TonAPI returned HTTP ${response.status}.`);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
-  }
-
-  throw new Error('Transaction was not found in TON within the verification window.');
-}
+const ticketingService = createTicketingService({
+  createLedgerEntry,
+  depositIntents,
+  getUser,
+  round2,
+  schedulePersist,
+  withdrawalRequests,
+}, {
+  backgroundRecheckIntervalMs: 15_000,
+  depositIntentTtlMs: 15 * 60 * 1000,
+  enableChainVerification: ENABLE_CHAIN_VERIFICATION,
+  marketingWallet: MARKETING_WALLET,
+  minWithdrawTickets: MIN_WITHDRAW_TICKETS,
+  ticketPriceTon: TICKET_PRICE_TON,
+  tonApiBaseUrl: TON_API_BASE_URL,
+  tonApiKey: TON_API_KEY,
+  tonVerificationMode: TON_VERIFICATION_MODE,
+});
 
 function generateServerDeck(): ServerCard[] {
   const deck: ServerCard[] = [];
@@ -1391,6 +1213,7 @@ app.get('/api/health', (req, res) => {
     walletConfig: {
       marketingWallet: MARKETING_WALLET,
       ticketPriceTon: TICKET_PRICE_TON,
+      minWithdrawTickets: MIN_WITHDRAW_TICKETS,
       chainVerificationEnabled: ENABLE_CHAIN_VERIFICATION,
       verificationMode: TON_VERIFICATION_MODE,
       tonApiConfigured: !!TON_API_KEY,
@@ -1490,164 +1313,7 @@ app.get('/api/me/:userId', (req, res) => {
   });
 });
 
-app.get('/api/tickets/balance/:userId', (req, res) => {
-  const user = getUser(req.params.userId);
-  return res.json({
-    availableTickets: user.availableTickets,
-    heldTickets: user.heldTickets,
-    totalTickets: round2(user.availableTickets + user.heldTickets),
-  });
-});
-
-app.get('/api/tickets/ledger/:userId', (req, res) => {
-  const user = getUser(req.params.userId);
-  return res.json({ transactions: user.transactions });
-});
-
-app.post('/api/tickets/deposit-intent', (req, res) => {
-  const { userId, walletAddress, ticketAmount } = req.body;
-  const amount = Number(ticketAmount);
-  if (!userId || !walletAddress || !Number.isFinite(amount) || amount <= 0) {
-    return res.status(400).json({ error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
-  }
-  const user = getUser(userId, walletAddress);
-  const intent: DepositIntent = {
-    id: `dep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    userId,
-    walletAddress,
-    ticketAmount: round2(amount),
-    tonAmount: round2(amount * TICKET_PRICE_TON),
-    status: 'pending',
-    createdAt: Date.now(),
-  };
-  depositIntents.set(intent.id, intent);
-  schedulePersist();
-  return res.json({
-    intentId: intent.id,
-    marketingWallet: MARKETING_WALLET,
-    ticketAmount: intent.ticketAmount,
-    tonAmount: intent.tonAmount,
-    status: intent.status,
-  });
-});
-
-app.post('/api/tickets/deposit-confirm', async (req, res) => {
-  const { intentId, signedBoc } = req.body;
-  const intent = depositIntents.get(intentId);
-  if (!intent) {
-    return res.status(404).json({ error: 'Deposit intent not found.' });
-  }
-  if (Date.now() - intent.createdAt > DEPOSIT_INTENT_TTL_MS) {
-    return res.status(400).json({ error: 'Deposit intent expired. Please start a new purchase.' });
-  }
-  if (ENABLE_CHAIN_VERIFICATION && !signedBoc) {
-    return res.status(400).json({ error: 'signedBoc is required when chain verification is enabled.' });
-  }
-  if (intent.status === 'confirmed') {
-    const user = getUser(intent.userId, intent.walletAddress);
-    return res.json({
-      success: true,
-      availableTickets: user.availableTickets,
-      status: intent.status,
-      txHash: intent.txHash || null,
-      normalizedMessageHash: intent.normalizedMessageHash || null,
-    });
-  }
-
-  let verification: TonVerificationResult | null = null;
-  if (ENABLE_CHAIN_VERIFICATION) {
-    verification = await verifyTonDeposit(intent, signedBoc);
-    if (!verification.ok) {
-      return res.status(400).json({
-        error: verification.reason || 'Transaction verification failed.',
-        verificationProvider: verification.provider,
-      });
-    }
-
-    const duplicateIntent = Array.from(depositIntents.values()).find((entry) => (
-      entry.id !== intent.id
-      && entry.normalizedMessageHash
-      && entry.normalizedMessageHash === verification.normalizedMessageHash
-    ));
-
-    if (duplicateIntent) {
-      return res.status(409).json({
-        error: 'This blockchain payment was already used for another deposit.',
-        verificationProvider: verification.provider,
-      });
-    }
-  }
-
-  intent.status = 'confirmed';
-  intent.normalizedMessageHash = verification?.normalizedMessageHash;
-  intent.txHash = verification?.txHash;
-  schedulePersist();
-  const user = getUser(intent.userId, intent.walletAddress);
-  user.availableTickets = round2(user.availableTickets + intent.ticketAmount);
-  createLedgerEntry(user, {
-    event: 'Deposit Confirmed',
-    value: `+${intent.ticketAmount.toFixed(2)} TKT`,
-    type: 'purchase',
-    amount: intent.ticketAmount,
-  });
-  return res.json({
-    success: true,
-    txHash: verification?.txHash || null,
-    normalizedMessageHash: verification?.normalizedMessageHash || null,
-    status: intent.status,
-    availableTickets: user.availableTickets,
-  });
-});
-
-app.post('/api/tickets/withdraw-request', (req, res) => {
-  const { userId, walletAddress, ticketAmount } = req.body;
-  if (!userId || !walletAddress || !ticketAmount) {
-    return res.status(400).json({ error: 'Withdrawal requires userId, walletAddress and ticketAmount.' });
-  }
-  const amount = Number(ticketAmount);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return res.status(400).json({ error: 'Withdrawal amount must be greater than 0.' });
-  }
-  const user = getUser(userId, walletAddress);
-  if (user.availableTickets < amount) {
-    return res.status(400).json({ error: 'Insufficient available tickets.' });
-  }
-  user.availableTickets = round2(user.availableTickets - amount);
-  const request: WithdrawalRequest = {
-    id: `wd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    userId,
-    walletAddress,
-    ticketAmount: amount,
-    status: 'pending',
-    createdAt: Date.now(),
-  };
-  withdrawalRequests.set(request.id, request);
-  createLedgerEntry(user, {
-    event: 'Withdrawal Requested',
-    value: `-${amount.toFixed(2)} TKT`,
-    type: 'withdraw_pending',
-    amount: -amount,
-  });
-  return res.json({ success: true, requestId: request.id, status: request.status });
-});
-
-app.post('/api/tickets/withdraw-complete', (req, res) => {
-  const { requestId } = req.body;
-  const request = withdrawalRequests.get(requestId);
-  if (!request) {
-    return res.status(404).json({ error: 'Withdrawal request not found.' });
-  }
-  request.status = 'completed';
-  schedulePersist();
-  const user = getUser(request.userId, request.walletAddress);
-  createLedgerEntry(user, {
-    event: 'Withdrawal Completed',
-    value: `${request.ticketAmount.toFixed(2)} TKT`,
-    type: 'withdraw_completed',
-    amount: request.ticketAmount,
-  });
-  return res.json({ success: true, status: request.status });
-});
+ticketingService.registerRoutes(app);
 
 app.post('/api/matchmaker/join', (req, res) => {
   const { userId, username, avatarId, stake, mode, walletAddress } = req.body as {
@@ -2175,6 +1841,10 @@ process.on('beforeExit', () => {
 
 async function bootstrap() {
   await loadPersistedState();
+  ticketingService.startBackgroundDepositRecheck();
+  ticketingService.recheckPendingDeposits().catch((error) => {
+    console.error('Initial pending deposit recheck failed', error);
+  });
   app.listen(PORT, () => {
     console.log(`Redoapp backend running on port ${PORT}`);
   });

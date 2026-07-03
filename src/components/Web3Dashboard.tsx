@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
-import { AvatarId, GameStats, PlayerProfile } from '../types';
+import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const MIN_MATCH_PLAYERS = 2;
@@ -153,6 +153,7 @@ export function Web3Dashboard({
   const [buyingTickets, setBuyingTickets] = useState(false);
   const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
   const [depositStatusMessage, setDepositStatusMessage] = useState('');
+  const [pendingDeposits, setPendingDeposits] = useState<PendingDepositView[]>([]);
 
   const [privateRoomStake, setPrivateRoomStake] = useState<StakeOption>(0.3);
   const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(4);
@@ -211,6 +212,18 @@ export function Web3Dashboard({
     localStorage.setItem(PENDING_DEPOSIT_STORAGE_KEY, JSON.stringify(pending));
   };
 
+  const refreshPendingDeposits = () => {
+    return apiRequest<{ deposits: PendingDepositView[] }>('/api/tickets/pending/' + encodeURIComponent(currentUserId))
+      .then((result) => {
+        setPendingDeposits(result.deposits);
+        return result.deposits;
+      })
+      .catch(() => {
+        setPendingDeposits([]);
+        return [];
+      });
+  };
+
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     setBuyingTickets(true);
     setDepositFlowStatus('waiting_chain');
@@ -226,6 +239,7 @@ export function Web3Dashboard({
       setGoldenTickets(confirmed.availableTickets);
       const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
       setTransactions(ledger.transactions);
+      await refreshPendingDeposits();
       clearPendingDeposit();
       setDepositFlowStatus('confirmed');
       setDepositStatusMessage(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
@@ -238,6 +252,7 @@ export function Web3Dashboard({
       const message = e instanceof Error ? e.message : 'Ticket purchase failed.';
       setDepositFlowStatus('failed');
       setDepositStatusMessage(message);
+      await refreshPendingDeposits();
       if (!options?.silent) {
         alert(message);
       }
@@ -261,6 +276,14 @@ export function Web3Dashboard({
     setDepositStatusMessage(`Pending TON deposit found for ${pending.ticketAmount.toFixed(2)} tickets. Resuming confirmation...`);
     confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
   }, [walletConnected, currentUserId]);
+
+  useEffect(() => {
+    refreshPendingDeposits().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      refreshPendingDeposits().catch(() => undefined);
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [currentUserId]);
 
   useEffect(() => {
     localStorage.setItem('redoapp_current_user_id', currentUserId);
@@ -1269,6 +1292,58 @@ export function Web3Dashboard({
                               : 'bg-[#08131f] text-[#9ed8ff]'
                         }`}>
                           {depositStatusMessage}
+                        </div>
+                      )}
+
+                      {pendingDeposits.length > 0 && (
+                        <div className="bg-[#12091e] border border-black p-2 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[8px] font-black uppercase text-[#d8a8ff]">Pending blockchain deposits</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                refreshPendingDeposits().catch(() => undefined);
+                              }}
+                              className="text-[7px] uppercase text-[#9ed8ff]"
+                            >
+                              Refresh
+                            </button>
+                          </div>
+                          <div className="space-y-1.5">
+                            {pendingDeposits.map((deposit) => {
+                              const localPending = readPendingDeposit();
+                              const canResumeLocal = localPending?.intentId === deposit.id;
+                              return (
+                                <div key={deposit.id} className="border border-black bg-black/60 px-2 py-1.5 text-[7px] text-slate-250 space-y-1">
+                                  <div className="flex justify-between gap-2">
+                                    <span>{deposit.ticketAmount.toFixed(2)} TKT / {deposit.tonAmount.toFixed(2)} TON</span>
+                                    <span className="text-[#ffcc99]">{deposit.confirmationAttempts} checks</span>
+                                  </div>
+                                  <div className="flex justify-between gap-2">
+                                    <span>Created: {new Date(deposit.createdAt).toLocaleTimeString()}</span>
+                                    <span>Expires: {new Date(deposit.expiresAt).toLocaleTimeString()}</span>
+                                  </div>
+                                  {deposit.lastVerificationError && (
+                                    <div className="text-[#ff9a9a]">{deposit.lastVerificationError}</div>
+                                  )}
+                                  <div className="flex gap-2">
+                                    {canResumeLocal && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (!localPending) return;
+                                          confirmPendingDeposit(localPending).catch(() => undefined);
+                                        }}
+                                        className="px-2 py-1 bg-[#17324d] border border-black text-[#9ed8ff] uppercase"
+                                      >
+                                        Retry now
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
                     </div>

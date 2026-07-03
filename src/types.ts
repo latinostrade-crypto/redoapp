@@ -140,3 +140,18 @@ export interface PlayerProfile {
   quests: QuestView[];
   claimedQuestIds?: string[];
 }
+
+export interface PendingDepositView {
+  id: string;
+  ticketAmount: number;
+  tonAmount: number;
+  status: 'pending' | 'confirmed';
+  createdAt: number;
+  txHash?: string | null;
+  normalizedMessageHash?: string | null;
+  lastVerificationError?: string | null;
+  lastVerificationAt?: number | null;
+  confirmationAttempts: number;
+  expiresAt: number;
+  canRetry: boolean;
+}
