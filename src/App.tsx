@@ -43,6 +43,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export default function App() {
+  const firstFreeGameWalletPromptKey = 'redoapp_prompt_connect_wallet_after_free_game';
   const {
     gameState,
     stats,
@@ -91,6 +92,11 @@ export default function App() {
     return 'guest';
   });
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
+  const shouldPromptWalletAfterFirstFreeGame =
+    gameState.phase === 'game_over' &&
+    gameMode === 'offline' &&
+    stats.practiceGamesPlayed === 1 &&
+    !localStorage.getItem('redoapp_wallet_address');
 
   // Available avatars to select in lobby
   const AVATAR_LIST: { id: AvatarId; emoji: string; bg: string; description: string }[] = [
@@ -936,6 +942,27 @@ export default function App() {
                 </div>
               );
             })()}
+
+            {shouldPromptWalletAfterFirstFreeGame && (
+              <div className="bg-[#08131f] border border-[#00d2ff] mb-3 p-3 text-left font-mono">
+                <div className="text-[10px] font-black uppercase text-[#00d2ff]">After Your First Free Game</div>
+                <p className="mt-1 text-[9px] leading-relaxed text-slate-200 font-sans">
+                  Return to the lobby and connect your wallet to sync progress, open the rewards flow, and start earning free energy from quests.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.setItem(firstFreeGameWalletPromptKey, '1');
+                    sound.playPop();
+                    startGame(selectedAvatar, userName);
+                    window.location.reload();
+                  }}
+                  className="mt-3 w-full py-2 bg-[#00d2ff] text-black font-black text-[10px] uppercase border-2 border-black shadow-[2px_2px_0_#000]"
+                >
+                  Open Rewards And Connect Wallet
+                </button>
+              </div>
+            )}
 
             <button
               onClick={() => {

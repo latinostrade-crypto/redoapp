@@ -14,9 +14,11 @@ import {
   Lock,
   Trophy,
   Ticket,
+  BookOpen,
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
+import { TutorialModal } from './TutorialModal';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -24,7 +26,11 @@ const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
+const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 type StakeOption = typeof STAKE_OPTIONS[number];
+type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
+const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
+const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -155,7 +161,7 @@ export function Web3Dashboard({
   const [depositStatusMessage, setDepositStatusMessage] = useState('');
   const [pendingDeposits, setPendingDeposits] = useState<PendingDepositView[]>([]);
 
-  const [privateRoomStake, setPrivateRoomStake] = useState<StakeOption>(0.3);
+  const [privateRoomStake, setPrivateRoomStake] = useState<PrivateStakeOption>(0);
   const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(4);
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
@@ -171,6 +177,7 @@ export function Web3Dashboard({
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const currentUserId = profile?.userId || rawAddress || `guest:${userName.toLowerCase()}`;
@@ -188,6 +195,22 @@ export function Web3Dashboard({
   const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - Date.now()) / 1000)) : 0;
   const tgProfileName = profile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
+  const privateStakeRequiresWallet = privateRoomStake > 0;
+
+  useEffect(() => {
+    if (localStorage.getItem(TUTORIAL_SEEN_KEY)) return;
+    setTutorialOpen(true);
+    localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
+  }, []);
+
+  useEffect(() => {
+    if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
+    localStorage.removeItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY);
+    setCurrentTab('rewards');
+    if (!walletConnected) {
+      setShowConnectModal(true);
+    }
+  }, [walletConnected]);
 
   useEffect(() => {
     if (!profile) return;
@@ -613,6 +636,29 @@ export function Web3Dashboard({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              sound.playPop();
+              setTutorialOpen(true);
+            }}
+            className="px-2 py-1.5 bg-black text-[#ffcc00] border-2 border-black pixel-btn-interactive text-[9px] font-black uppercase font-mono tracking-wider flex items-center gap-1"
+          >
+            <BookOpen className="w-3 h-3" />
+            Guide
+          </button>
+          {onOpenRules && (
+            <button
+              type="button"
+              onClick={() => {
+                sound.playPop();
+                onOpenRules();
+              }}
+              className="px-2 py-1.5 bg-black text-[#00d2ff] border-2 border-black pixel-btn-interactive text-[9px] font-black uppercase font-mono tracking-wider"
+            >
+              Rules
+            </button>
+          )}
           {walletConnected && !dailyXpClaimedToday && (
             <button
               onClick={claimDailyXp}
@@ -1353,39 +1399,24 @@ export function Web3Dashboard({
 
               {pvpSubMode === 'private' && (
                 <>
-                  {!walletConnected ? (
-                    <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                      <div className="mx-auto w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-[#00d2ff]">
-                        <Wallet className="w-4 h-4" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="font-black text-[10px] text-slate-100 uppercase">
-                          Sync Wallet to Create
-                        </h3>
-                        <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                          Private custom matches require active wallet pairs to verify and reward the winner.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={connectWallet}
-                        className="w-full py-1.5 bg-[#00d2ff] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black"
-                      >
-                        Connect TON Wallet
-                      </button>
-                    </div>
-                  ) : showRoomDisclaimer ? (
+                  {showRoomDisclaimer ? (
                     <div className="bg-[#0c0f12] border-2 border-[#ff4b4b] pixel-box-sm p-3 text-center space-y-2 font-mono text-[8px]">
                       <h3 className="font-black text-[9px] text-[#ff4b4b] uppercase">
-                        !! PRIVATE MATCH RISK !!
+                        {privateStakeRequiresWallet ? 'Private Stake Match' : 'Free Private Match'}
                       </h3>
                       <div className="text-[7.5px] text-slate-355 leading-relaxed text-left bg-black p-2 border border-black space-y-1">
                         <p>
-                          <strong>You are joining a PRIVATE table.</strong> Opponents might play in collusion.
+                          <strong>{privateStakeRequiresWallet ? 'You are joining a PRIVATE stake table.' : 'You are joining a FREE private table.'}</strong>
                         </p>
-                        <p className="text-[#ffcc00] font-bold">
-                          Settlement applies a 6% total fee split into season and burn funds before player payouts.
-                        </p>
+                        {privateStakeRequiresWallet ? (
+                          <p className="text-[#ffcc00] font-bold">
+                            Settlement applies a 6% total fee split into season and burn funds before player payouts.
+                          </p>
+                        ) : (
+                          <p className="text-[#00ff66] font-bold">
+                            This room uses 0 TKT stake, so no ticket hold or payout is applied.
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         <button
@@ -1396,11 +1427,15 @@ export function Web3Dashboard({
                           }}
                           className="flex-1 py-1 bg-black text-slate-455 border border-black uppercase font-bold pixel-btn-interactive text-[8px]"
                         >
-                          EXIT
+                          Exit
                         </button>
                         <button
                           type="button"
                           onClick={() => {
+                            if (privateStakeRequiresWallet && !walletConnected) {
+                              connectWallet();
+                              return;
+                            }
                             sound.playPop();
                             const roomCodeToUse = (privateJoinCode || privateRoomCode).trim().toUpperCase();
                             if (!roomCodeToUse) {
@@ -1445,7 +1480,7 @@ export function Web3Dashboard({
                           }}
                           className="flex-1 py-1 bg-[#ff4b4b] text-black uppercase font-black pixel-btn-interactive border border-black text-[8px]"
                         >
-                          CONFIRM
+                          Confirm
                         </button>
                       </div>
                     </div>
@@ -1460,10 +1495,20 @@ export function Web3Dashboard({
                         </span>
                       </div>
 
+                      {!walletConnected && (
+                        <div className={`border border-black p-2 text-[8px] leading-relaxed ${
+                          privateStakeRequiresWallet ? 'bg-[#1c1010] text-[#ffb3b3]' : 'bg-[#08131f] text-[#9ed8ff]'
+                        }`}>
+                          {privateStakeRequiresWallet
+                            ? 'Paid private rooms still require a wallet connection. Switch stake to FREE or connect your wallet.'
+                            : 'FREE private rooms are open without wallet connection. Invite friends with a room code and play at 0 TKT stake.'}
+                        </div>
+                      )}
+
                       <div className="space-y-1">
                         <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Select Room Stake</label>
-                        <div className="grid grid-cols-3 gap-1">
-                          {STAKE_OPTIONS.map((stake) => (
+                        <div className="grid grid-cols-4 gap-1">
+                          {PRIVATE_STAKE_OPTIONS.map((stake) => (
                             <button
                               key={stake}
                               type="button"
@@ -1481,8 +1526,8 @@ export function Web3Dashboard({
                                   : 'bg-black border-black text-slate-450'
                               }`}
                             >
-                              <span className="text-[9px] font-black">{stake}TKT</span>
-                              <span className="text-[6px] block mt-0.5">stake</span>
+                              <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
+                              <span className="text-[6px] block mt-0.5">{stake === 0 ? '0 stake' : 'stake'}</span>
                             </button>
                           ))}
                         </div>
@@ -1531,6 +1576,10 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={() => {
+                            if (privateStakeRequiresWallet && !walletConnected) {
+                              connectWallet();
+                              return;
+                            }
                             sound.playShuffle();
                             apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
                               method: 'POST',
@@ -1556,7 +1605,7 @@ export function Web3Dashboard({
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
                         >
-                          GENERATE INVITE LINK
+                          {privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       ) : (
                         <div className="space-y-2 text-[9px]">
@@ -1582,12 +1631,16 @@ export function Web3Dashboard({
                           <button
                             type="button"
                             onClick={() => {
+                              if (privateStakeRequiresWallet && !walletConnected) {
+                                connectWallet();
+                                return;
+                              }
                               sound.playPop();
                               setShowRoomDisclaimer(true);
                             }}
                             className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
                           >
-                            ENTER ROOM
+                            Enter Room
                           </button>
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
                             Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
@@ -1656,7 +1709,7 @@ export function Web3Dashboard({
                   Sync TON Wallet
                 </h3>
                 <p className="text-[9px] min-[370px]:text-[10px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                  To participate in PVP battles with ticket stakes, buy ticket packs, and compete in tournaments, you need to connect your TON wallet.
+                  Connect your TON wallet to sync progress, enter stake-based tables, and unlock reward flows that refill your energy through quests.
                 </p>
               </div>
 
@@ -1699,6 +1752,11 @@ export function Web3Dashboard({
           </motion.div>
         )}
       </AnimatePresence>
+      <TutorialModal
+        isOpen={tutorialOpen}
+        onClose={() => setTutorialOpen(false)}
+        onOpenRules={onOpenRules}
+      />
     </div>
   );
 }

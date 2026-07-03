@@ -1418,7 +1418,7 @@ app.post('/api/private-rooms/create', (req, res) => {
     walletAddress?: string;
   };
 
-  if (!userId || !username || !avatarId || !stake) {
+  if (!userId || !username || !avatarId || stake === undefined || stake === null) {
     return res.status(400).json({ error: 'Missing room creator data.' });
   }
 
@@ -1431,6 +1431,9 @@ app.post('/api/private-rooms/create', (req, res) => {
     return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
   }
   const stakeAmount = Number(stake);
+  if (!Number.isFinite(stakeAmount) || stakeAmount < 0) {
+    return res.status(400).json({ error: 'Private room stake must be 0 or greater.' });
+  }
   const targetPlayersCount = Number(targetPlayers || MAX_MATCH_PLAYERS);
   if (!Number.isFinite(targetPlayersCount) || targetPlayersCount < MIN_MATCH_PLAYERS || targetPlayersCount > MAX_MATCH_PLAYERS) {
     return res.status(400).json({ error: `targetPlayers must be between ${MIN_MATCH_PLAYERS} and ${MAX_MATCH_PLAYERS}.` });
@@ -1439,14 +1442,16 @@ app.post('/api/private-rooms/create', (req, res) => {
     return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
   }
 
-  user.availableTickets = round2(user.availableTickets - stakeAmount);
-  user.heldTickets = round2(user.heldTickets + stakeAmount);
-  createLedgerEntry(user, {
-    event: 'Private Room Hold',
-    value: `-${stakeAmount.toFixed(2)} TKT`,
-    type: 'stake_hold',
-    amount: -stakeAmount,
-  });
+  if (stakeAmount > 0) {
+    user.availableTickets = round2(user.availableTickets - stakeAmount);
+    user.heldTickets = round2(user.heldTickets + stakeAmount);
+    createLedgerEntry(user, {
+      event: 'Private Room Hold',
+      value: `-${stakeAmount.toFixed(2)} TKT`,
+      type: 'stake_hold',
+      amount: -stakeAmount,
+    });
+  }
 
   const hostPlayer: QueuePlayer = {
     userId,
@@ -1522,14 +1527,16 @@ app.post('/api/private-rooms/join', (req, res) => {
     return res.status(400).json({ error: 'Insufficient available tickets for this private room.' });
   }
 
-  user.availableTickets = round2(user.availableTickets - room.stake);
-  user.heldTickets = round2(user.heldTickets + room.stake);
-  createLedgerEntry(user, {
-    event: 'Private Room Hold',
-    value: `-${room.stake.toFixed(2)} TKT`,
-    type: 'stake_hold',
-    amount: -room.stake,
-  });
+  if (room.stake > 0) {
+    user.availableTickets = round2(user.availableTickets - room.stake);
+    user.heldTickets = round2(user.heldTickets + room.stake);
+    createLedgerEntry(user, {
+      event: 'Private Room Hold',
+      value: `-${room.stake.toFixed(2)} TKT`,
+      type: 'stake_hold',
+      amount: -room.stake,
+    });
+  }
 
   room.players.push({
     userId,
@@ -1707,7 +1714,7 @@ app.post('/api/matches/settle', (req, res) => {
     placements: Array<{ userId: string; rank: number; walletAddress?: string }>;
   };
 
-  if (!matchId || !mode || !stake || !placements?.length) {
+  if (!matchId || !mode || stake === undefined || stake === null || !placements?.length) {
     return res.status(400).json({ error: 'Settlement requires matchId, mode, stake and placements.' });
   }
 
