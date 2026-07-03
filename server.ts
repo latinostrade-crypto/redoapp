@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import type { Response } from 'express';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -20,6 +21,10 @@ const TON_API_KEY = process.env.TON_API_KEY || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
+const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
 const DEFAULT_MAX_ENERGY = 10;
@@ -241,6 +246,9 @@ const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const queueSubscribers = new Map<string, Set<Response>>();
 let persistTimer: NodeJS.Timeout | null = null;
+const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null;
 
 const QUEST_DEFINITIONS: QuestDefinition[] = [
   {
@@ -309,9 +317,23 @@ function buildPersistedState(): PersistedState {
   };
 }
 
-function persistStateNow() {
+async function persistStateNow() {
+  const snapshot = buildPersistedState();
+  if (supabaseAdmin) {
+    const { error } = await supabaseAdmin
+      .from(SUPABASE_STATE_TABLE)
+      .upsert({
+        id: SUPABASE_STATE_ROW_ID,
+        payload: snapshot,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+    if (error) {
+      throw new Error(`Supabase persist failed: ${error.message}`);
+    }
+    return;
+  }
   mkdirSync(DATA_DIR, { recursive: true });
-  writeFileSync(STATE_FILE, JSON.stringify(buildPersistedState()), 'utf8');
+  writeFileSync(STATE_FILE, JSON.stringify(snapshot), 'utf8');
 }
 
 function schedulePersist() {
@@ -320,21 +342,13 @@ function schedulePersist() {
   }
   persistTimer = setTimeout(() => {
     persistTimer = null;
-    try {
-      persistStateNow();
-    } catch (error) {
+    persistStateNow().catch((error) => {
       console.error('Failed to persist runtime state', error);
-    }
+    });
   }, 100);
 }
 
-function loadPersistedState() {
-  if (!existsSync(STATE_FILE)) {
-    return;
-  }
-
-  try {
-    const snapshot = JSON.parse(readFileSync(STATE_FILE, 'utf8')) as PersistedState;
+function applySnapshot(snapshot: PersistedState) {
     users.clear();
     depositIntents.clear();
     withdrawalRequests.clear();
@@ -353,6 +367,30 @@ function loadPersistedState() {
     snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
     snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
     snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
+}
+
+async function loadPersistedState() {
+  if (supabaseAdmin) {
+    const { data, error } = await supabaseAdmin
+      .from(SUPABASE_STATE_TABLE)
+      .select('payload')
+      .eq('id', SUPABASE_STATE_ROW_ID)
+      .maybeSingle();
+    if (error) {
+      console.error('Failed to load runtime state from Supabase', error);
+    } else if (data?.payload) {
+      applySnapshot(data.payload as PersistedState);
+      return;
+    }
+  }
+
+  if (!existsSync(STATE_FILE)) {
+    return;
+  }
+
+  try {
+    const snapshot = JSON.parse(readFileSync(STATE_FILE, 'utf8')) as PersistedState;
+    applySnapshot(snapshot);
   } catch (error) {
     console.error('Failed to load persisted runtime state', error);
   }
@@ -1212,6 +1250,8 @@ app.get('/api/health', (req, res) => {
       chainVerificationEnabled: ENABLE_CHAIN_VERIFICATION,
       verificationMode: TON_VERIFICATION_MODE,
       tonApiConfigured: !!TON_API_BASE_URL,
+      supabaseConfigured: !!supabaseAdmin,
+      supabaseStateTable: SUPABASE_STATE_TABLE,
     },
   });
 });
@@ -1902,20 +1942,19 @@ app.post('/api/matches/settle', (req, res) => {
   });
 });
 
-loadPersistedState();
 setInterval(() => {
   flushTelegramNotifications().catch((error) => {
     console.error('Telegram notification worker failed', error);
   });
 }, 15000);
 
-function flushAndExit(signal: string) {
+async function flushAndExit(signal: string) {
   try {
     if (persistTimer) {
       clearTimeout(persistTimer);
       persistTimer = null;
     }
-    persistStateNow();
+    await persistStateNow();
   } catch (error) {
     console.error(`Failed to flush runtime state on ${signal}`, error);
   } finally {
@@ -1923,20 +1962,36 @@ function flushAndExit(signal: string) {
   }
 }
 
-process.on('SIGINT', () => flushAndExit('SIGINT'));
-process.on('SIGTERM', () => flushAndExit('SIGTERM'));
+process.on('SIGINT', () => {
+  flushAndExit('SIGINT').catch((error) => {
+    console.error('SIGINT flush failed', error);
+    process.exit(1);
+  });
+});
+process.on('SIGTERM', () => {
+  flushAndExit('SIGTERM').catch((error) => {
+    console.error('SIGTERM flush failed', error);
+    process.exit(1);
+  });
+});
 process.on('beforeExit', () => {
-  try {
-    if (persistTimer) {
-      clearTimeout(persistTimer);
-      persistTimer = null;
-    }
-    persistStateNow();
-  } catch (error) {
-    console.error('Failed to flush runtime state on beforeExit', error);
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
   }
+  persistStateNow().catch((error) => {
+    console.error('Failed to flush runtime state on beforeExit', error);
+  });
 });
 
-app.listen(PORT, () => {
-  console.log(`Redoapp backend running on port ${PORT}`);
+async function bootstrap() {
+  await loadPersistedState();
+  app.listen(PORT, () => {
+    console.log(`Redoapp backend running on port ${PORT}`);
+  });
+}
+
+bootstrap().catch((error) => {
+  console.error('Backend bootstrap failed', error);
+  process.exit(1);
 });
