@@ -22,6 +22,8 @@ import { TutorialModal } from './TutorialModal';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
+const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
@@ -32,12 +34,19 @@ type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
 const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
 
-function buildPrivateRoomShareLink(roomCode: string) {
-  const url = new URL(window.location.href);
-  url.searchParams.set('room', roomCode);
-  url.searchParams.delete('startapp');
-  url.searchParams.delete('startApp');
-  return url.toString();
+function buildTelegramMiniAppLink(startParam: string) {
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
+}
+
+function buildTelegramMiniAppSchemeLink(startParam: string) {
+  return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
+}
+
+function buildPrivateRoomSharePayload(roomCode: string) {
+  return {
+    telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
+    telegramSchemeLink: buildTelegramMiniAppSchemeLink(`room_${roomCode}`),
+  };
 }
 
 function getTelegramStartParam() {
@@ -1640,7 +1649,8 @@ export function Web3Dashboard({
                               setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
                               setPrivateRoomPlayersCount(1);
                               setPrivateRoomStatus('waiting');
-                              setGeneratedLink(buildPrivateRoomShareLink(result.roomCode));
+                              const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
+                              setGeneratedLink(sharePayload.telegramLink);
                             }).catch((error) => {
                               alert(error.message);
                             });
@@ -1674,12 +1684,13 @@ export function Web3Dashboard({
                               onClick={() => {
                                 if (!privateRoomCode) return;
                                 sound.playPop();
-                                navigator.clipboard.writeText(privateRoomCode);
-                                alert('Room code copied.');
+                                const sharePayload = buildPrivateRoomSharePayload(privateRoomCode);
+                                navigator.clipboard.writeText(sharePayload.telegramSchemeLink);
+                                alert('Telegram deep link copied.');
                               }}
                               className="px-2 py-1.5 bg-[#ffcc00] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
                             >
-                              Code
+                              Tg Link
                             </button>
                           </div>
                           <button
