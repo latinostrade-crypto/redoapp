@@ -1138,11 +1138,17 @@ export function Web3Dashboard({
                       <div key={tx.id} className="flex justify-between items-center p-1 bg-black border border-black leading-tight text-[8px]">
                         <div className="flex items-center gap-1 text-left">
                           <span className={`w-1.5 h-1.5 ${
-                            tx.type === 'claim' ? 'bg-[#00d2ff]' : tx.type === 'mint' ? 'bg-[#00ff66]' : 'bg-[#ff4b4b]'
+                            tx.type === 'claim'
+                              ? 'bg-[#00d2ff]'
+                              : tx.type === 'mint' || tx.type === 'reward' || tx.type === 'match_payout' || tx.type === 'referral_bonus'
+                                ? 'bg-[#00ff66]'
+                                : 'bg-[#ff4b4b]'
                           }`}></span>
                           <div>
                             <span className="text-slate-355 block">{tx.event}</span>
-                            <span className="text-slate-500 text-[7px]">{tx.time}</span>
+                            <span className="text-slate-500 text-[7px]">
+                              {tx.time || (tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}
+                            </span>
                           </div>
                         </div>
                         <span className="font-extrabold text-slate-200">{tx.value}</span>

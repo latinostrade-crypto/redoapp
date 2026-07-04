@@ -712,6 +712,35 @@ function maybeActivateReferral(user: UserState, matchId: string) {
   return true;
 }
 
+function rewardReferralMatchBonus(user: UserState, payoutAmount: number, matchId: string) {
+  if (!user.referredByUserId || payoutAmount <= 0) {
+    return;
+  }
+
+  const inviter = users.get(user.referredByUserId);
+  if (!inviter || inviter.userId === user.userId) {
+    return;
+  }
+
+  const referralBonus = round2(payoutAmount * 0.01);
+  if (referralBonus <= 0) {
+    return;
+  }
+
+  inviter.availableTickets = round2(inviter.availableTickets + referralBonus);
+  createLedgerEntry(inviter, {
+    event: 'Referral Match Bonus',
+    value: `+${referralBonus.toFixed(2)} TKT`,
+    type: 'referral_bonus',
+    amount: referralBonus,
+  });
+  queueTelegramNotification(
+    inviter,
+    `Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} finished a public match. You received +${referralBonus.toFixed(2)} TKT.`
+  );
+  schedulePersist();
+}
+
 function createLedgerEntry(user: UserState, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'>) {
   const ledgerEntry: TicketLedgerEntry = {
     id: `ledger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1780,6 +1809,9 @@ app.post('/api/matches/settle', (req, res) => {
       updateQuestProgress(user.userId, 'win_any', 1);
     }
     maybeActivateReferral(user, matchId);
+    if (mode === 'pvp') {
+      rewardReferralMatchBonus(user, payoutByRank[rank], matchId);
+    }
     claimCompletedQuests(user);
   });
 

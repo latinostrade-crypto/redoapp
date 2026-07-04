@@ -8,6 +8,7 @@ export type LedgerType =
   | 'stake_hold'
   | 'stake_release'
   | 'match_payout'
+  | 'referral_bonus'
   | 'fund_season'
   | 'fund_burn'
   | 'withdraw_pending'
