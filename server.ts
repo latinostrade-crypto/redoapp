@@ -218,7 +218,7 @@ const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_RO
   : null;
 
 function buildTelegramMiniAppLink(startParam: string) {
-  return `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=${encodeURIComponent(startParam)}`;
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
 }
 
 const QUEST_DEFINITIONS: QuestDefinition[] = [

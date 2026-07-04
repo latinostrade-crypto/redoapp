@@ -35,11 +35,11 @@ const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_f
 const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
 
 function buildTelegramMiniAppLink(startParam: string) {
-  return `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=${encodeURIComponent(startParam)}`;
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
 }
 
 function buildTelegramMiniAppSchemeLink(startParam: string) {
-  return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&startapp=${encodeURIComponent(startParam)}`;
+  return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
 }
 
 function buildPrivateRoomSharePayload(roomCode: string) {
