@@ -35,6 +35,32 @@ const PVP_PAYOUT_BY_PLAYERS: Record<2 | 3 | 4, number[]> = {
 type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
+const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
+
+function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
+  if (!profile?.userId) return null;
+  return {
+    userId: profile.userId,
+    telegramUsername: profile.telegramUsername ?? null,
+    telegramPhotoUrl: profile.telegramPhotoUrl ?? null,
+    walletAddress: profile.walletAddress ?? null,
+    availableTickets: Number(profile.availableTickets) || 0,
+    heldTickets: Number(profile.heldTickets) || 0,
+    xp: Number(profile.xp) || 0,
+    energy: profile.energy ?? DEFAULT_ENERGY_STATE,
+    referralCode: profile.referralCode ?? '',
+    referralLink: profile.referralLink ?? '',
+    referrals: {
+      referredByUserId: profile.referrals?.referredByUserId ?? null,
+      status: profile.referrals?.status ?? null,
+      activatedAt: profile.referrals?.activatedAt ?? null,
+      referralsActivated: profile.referrals?.referralsActivated ?? 0,
+      invitedUsers: profile.referrals?.invitedUsers ?? [],
+    },
+    quests: profile.quests ?? [],
+    claimedQuestIds: profile.claimedQuestIds ?? [],
+  };
+}
 
 function buildTelegramMiniAppLink(startParam: string) {
   return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
@@ -222,9 +248,9 @@ export function Web3Dashboard({
   const displayLevel = Math.floor(effectiveXp / displayXpNeeded) + 1;
   const displayCurrentLevelXp = effectiveXp % displayXpNeeded;
   const displayXpProgressPercentage = Math.min(100, Math.floor((displayCurrentLevelXp / displayXpNeeded) * 100));
-  const energy = profile?.energy ?? { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
+  const energy = profile?.energy ?? DEFAULT_ENERGY_STATE;
   const quests = profile?.quests ?? [];
-  const referralInvites = profile?.referrals.invitedUsers ?? [];
+  const referralInvites = profile?.referrals?.invitedUsers ?? [];
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus')
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
@@ -444,7 +470,7 @@ export function Web3Dashboard({
     }).then((synced) => {
       setSessionToken(synced.sessionToken);
       localStorage.setItem('redoapp_current_user_id', synced.userId);
-      setProfile(synced);
+      setProfile(normalizeProfile(synced));
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
       return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId));
@@ -511,7 +537,7 @@ export function Web3Dashboard({
       };
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
       return apiRequest<PlayerProfile>('/api/me').then((me) => {
-        setProfile(me);
+        setProfile(normalizeProfile(me));
         setGoldenTickets(me.availableTickets);
         setHeldTickets(me.heldTickets);
       });
@@ -923,7 +949,7 @@ export function Web3Dashboard({
                 <div className="bg-black p-2 border border-black space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
-                    <span className="text-[8px] font-black text-[#ffcc00]">{profile?.referrals.referralsActivated ?? 0} active</span>
+                    <span className="text-[8px] font-black text-[#ffcc00]">{profile?.referrals?.referralsActivated ?? 0} active</span>
                   </div>
                   <div className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
                     <span className="text-slate-400 uppercase">Referral Earnings</span>
