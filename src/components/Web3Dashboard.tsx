@@ -27,6 +27,11 @@ const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
+const PVP_PAYOUT_BY_PLAYERS: Record<2 | 3 | 4, number[]> = {
+  2: [0.7, 0.3],
+  3: [0.6, 0.25, 0.15],
+  4: [0.52, 0.23, 0.15, 0.1],
+};
 type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
@@ -238,6 +243,13 @@ export function Web3Dashboard({
   const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const privateStakeRequiresWallet = privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
+  const formatPlaceLabel = (place: number) => (place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`);
+  const formatPayoutRow = (stake: number, playersCount: 2 | 3 | 4) => {
+    const netPrizePool = stake * playersCount * 0.94;
+    return PVP_PAYOUT_BY_PLAYERS[playersCount]
+      .map((share, index) => `${formatPlaceLabel(index + 1)} ${(netPrizePool * share).toFixed(2)} TKT`)
+      .join(' · ');
+  };
 
   useEffect(() => {
     if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
@@ -1316,20 +1328,20 @@ export function Web3Dashboard({
 
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-450">
                         <div className="flex justify-between text-slate-350">
-                          <span>Net prize pool:</span>
+                          <span>Total rewards:</span>
                           <span className="text-[#00ff66] font-bold">{(selectedStake * MIN_MATCH_PLAYERS * 0.94).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.94).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Season fund:</span>
-                          <span>{(selectedStake * MIN_MATCH_PLAYERS * 0.025).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.025).toFixed(2)} TKT</span>
+                          <span>2 players:</span>
+                          <span>{formatPayoutRow(selectedStake, 2)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Burn fund:</span>
-                          <span>{(selectedStake * MIN_MATCH_PLAYERS * 0.035).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.035).toFixed(2)} TKT</span>
+                          <span>3 players:</span>
+                          <span>{formatPayoutRow(selectedStake, 3)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span>Payout split:</span>
-                          <span>2P: 70/30 · 3P: 60/25/15 · 4P: 52/23/15/10</span>
+                          <span>4 players:</span>
+                          <span>{formatPayoutRow(selectedStake, 4)}</span>
                         </div>
                       </div>
 
@@ -1509,7 +1521,7 @@ export function Web3Dashboard({
                         </p>
                         {privateStakeRequiresWallet ? (
                           <p className="text-[#ffcc00] font-bold">
-                            Settlement applies a 6% total fee split into season and burn funds before player payouts.
+                            Rewards are paid for every place. Commission details are listed in the rules.
                           </p>
                         ) : (
                           <p className="text-[#00ff66] font-bold">
@@ -1846,3 +1858,4 @@ export function Web3Dashboard({
     </div>
   );
 }
+
