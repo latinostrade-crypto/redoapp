@@ -23,23 +23,7 @@ import {
   CARTOON_BUBBLES,
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error || 'Request failed');
-  }
-  return data as T;
-}
+import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 
 const INITIAL_STATS: GameStats = {
   gamesPlayed: 0,
@@ -173,7 +157,7 @@ export function useUnoGame() {
       }
       remoteMatchIdRef.current = activeMatch.matchId;
       remoteUserIdRef.current = activeMatch.currentUserId;
-      const result = await apiRequest<{ gameState: GameState }>(`/api/matches/state/${encodeURIComponent(activeMatch.matchId)}/${encodeURIComponent(activeMatch.currentUserId)}`);
+      const result = await apiRequest<{ gameState: GameState }>(`/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`);
       setGameState(result.gameState);
       setRemoteSessionActive(true);
       return true;
@@ -292,7 +276,7 @@ export function useUnoGame() {
     }
 
     remoteMatchStreamRef.current?.close();
-    const stream = new EventSource(`${API_BASE_URL}/api/matches/stream/${encodeURIComponent(remoteMatchIdRef.current)}/${encodeURIComponent(remoteUserIdRef.current)}`);
+    const stream = new EventSource(buildAuthenticatedUrl(`/api/matches/stream/${encodeURIComponent(remoteMatchIdRef.current)}`));
     remoteMatchStreamRef.current = stream;
 
     stream.addEventListener('match-state', (event) => {

@@ -18,8 +18,8 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
+import { apiRequest, buildAuthenticatedUrl, setSessionToken } from '../utils/api';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
 const MIN_MATCH_PLAYERS = 2;
@@ -77,21 +77,6 @@ function getReferralStartParam() {
     return `ref_${explicitRef.trim().toUpperCase()}`;
   }
   return getTelegramStartParam();
-}
-
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error || 'Request failed');
-  }
-  return data as T;
 }
 
 interface Web3DashboardProps {
@@ -440,6 +425,7 @@ export function Web3Dashboard({
       quests: PlayerProfile['quests'];
       telegramUsername: string | null;
       telegramPhotoUrl: string | null;
+      sessionToken: string | null;
     }>('/api/users/sync', {
       method: 'POST',
       body: JSON.stringify({
@@ -449,12 +435,13 @@ export function Web3Dashboard({
         startParam: launchStartParam || null,
       }),
     }).then((synced) => {
+      setSessionToken(synced.sessionToken);
       localStorage.setItem('redoapp_current_user_id', synced.userId);
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
       return Promise.all([
         apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId)),
-        apiRequest<PlayerProfile>('/api/me/' + encodeURIComponent(synced.userId)),
+        apiRequest<PlayerProfile>('/api/me'),
       ]);
     }).then(([ledger, me]) => {
       setProfile(me);
@@ -521,7 +508,7 @@ export function Web3Dashboard({
         type: 'claim'
       };
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
-      return apiRequest<PlayerProfile>('/api/me/' + encodeURIComponent(currentUserId)).then((me) => {
+      return apiRequest<PlayerProfile>('/api/me').then((me) => {
         setProfile(me);
         setGoldenTickets(me.availableTickets);
         setHeldTickets(me.heldTickets);
@@ -586,7 +573,7 @@ export function Web3Dashboard({
   useEffect(() => {
     if (matchmakingState !== 'searching') return;
     queueStreamRef.current?.close();
-    const stream = new EventSource(`${API_BASE_URL}/api/matchmaker/stream/${encodeURIComponent(currentUserId)}`);
+    const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
     queueStreamRef.current = stream;
 
     stream.addEventListener('queue-status', (event) => {
@@ -623,7 +610,7 @@ export function Web3Dashboard({
         countdownSec?: number;
         matchId?: string;
         players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      }>('/api/matchmaker/status/' + encodeURIComponent(currentUserId))
+      }>('/api/matchmaker/status')
         .then((result) => {
           if (result.status === 'searching') {
             setQueueLength(result.queueLength || 1);
@@ -665,7 +652,7 @@ export function Web3Dashboard({
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
     privateRoomStreamRef.current?.close();
-    const stream = new EventSource(`${API_BASE_URL}/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`);
+    const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
     privateRoomStreamRef.current = stream;
 
     stream.addEventListener('private-room', (event) => {

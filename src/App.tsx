@@ -10,6 +10,7 @@ import { UnoCard } from './components/UnoCard';
 import { RuleModal } from './components/RuleModal';
 import { Web3Dashboard } from './components/Web3Dashboard';
 import { motion, AnimatePresence } from 'motion/react';
+import { apiRequest } from './utils/api';
 import {
   Volume2,
   VolumeX,
@@ -24,23 +25,6 @@ import {
 } from 'lucide-react';
 import { sound } from './utils/sound';
 import { AvatarId, CardColor } from './types';
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-    ...init,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error || 'Request failed');
-  }
-  return data as T;
-}
 
 export default function App() {
   const firstFreeGameWalletPromptKey = 'redoapp_prompt_connect_wallet_after_free_game';
@@ -194,32 +178,10 @@ export default function App() {
 
       settlementHandledRef.current = activeMatch.matchId;
 
-      const otherPlayers = activeMatch.players.filter((player) => player.userId !== activeMatch.currentUserId);
-      const remainingRanks = Array.from({ length: activeMatch.players.length }, (_, index) => index + 1).filter((rank) => rank !== myEntry.rank);
-      const placements = [
-        {
-          userId: activeMatch.currentUserId,
-          rank: myEntry.rank,
-          walletAddress: localStorage.getItem('redoapp_wallet_address') || undefined,
-        },
-        ...otherPlayers.slice(0, activeMatch.players.length - 1).map((player, index) => ({
-          userId: player.userId,
-          rank: remainingRanks[index],
-        })),
-      ];
-
-      if (placements.length !== activeMatch.players.length) {
-        settlementHandledRef.current = null;
-        return;
-      }
-
       apiRequest('/api/matches/settle', {
         method: 'POST',
         body: JSON.stringify({
           matchId: activeMatch.matchId,
-          mode: activeMatch.mode,
-          stake: activeMatch.stake,
-          placements,
         }),
       }).then(() => {
         return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(activeMatch.currentUserId));

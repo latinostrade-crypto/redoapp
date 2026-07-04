@@ -1,4 +1,4 @@
-import type { Express, Request, Response } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
 import { Cell, beginCell, loadMessage } from '@ton/core';
 
 export type LedgerType =
@@ -69,6 +69,7 @@ interface TicketingDeps {
   createLedgerEntry: (user: UserStateLike, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'>) => TicketLedgerEntry;
   depositIntents: Map<string, DepositIntent>;
   getUser: (userId: string, walletAddress?: string) => UserStateLike;
+  requireAdmin: (req: Request, res: Response, next: NextFunction) => void;
   round2: (value: number) => number;
   schedulePersist: () => void;
   withdrawalRequests: Map<string, WithdrawalRequest>;
@@ -231,6 +232,7 @@ async function verifyTonDeposit(intent: DepositIntent, signedBoc: string, config
 
 export function createTicketingService(deps: TicketingDeps, config: TicketingConfig) {
   let backgroundTimer: NodeJS.Timeout | null = null;
+  const getRequestUserId = (req: Request) => (req as Request & { authUserId?: string }).authUserId;
 
   function isIntentExpired(intent: DepositIntent) {
     return Date.now() - intent.createdAt > config.depositIntentTtlMs;
@@ -352,6 +354,9 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
 
   function registerRoutes(app: Express) {
     app.get('/api/tickets/balance/:userId', (req: Request, res: Response) => {
+      if (getRequestUserId(req) !== req.params.userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
       const user = deps.getUser(req.params.userId);
       return res.json({
         availableTickets: user.availableTickets,
@@ -361,11 +366,17 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     });
 
     app.get('/api/tickets/ledger/:userId', (req: Request, res: Response) => {
+      if (getRequestUserId(req) !== req.params.userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
       const user = deps.getUser(req.params.userId);
       return res.json({ transactions: user.transactions });
     });
 
     app.get('/api/tickets/pending/:userId', (req: Request, res: Response) => {
+      if (getRequestUserId(req) !== req.params.userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
       const pending = Array.from(deps.depositIntents.values())
         .filter((intent) => intent.userId === req.params.userId && intent.status === 'pending')
         .sort((a, b) => b.createdAt - a.createdAt)
@@ -374,7 +385,8 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     });
 
     app.post('/api/tickets/deposit-intent', (req: Request, res: Response) => {
-      const { userId, walletAddress, ticketAmount } = req.body;
+      const { walletAddress, ticketAmount } = req.body;
+      const userId = getRequestUserId(req);
       const amount = Number(ticketAmount);
       if (!userId || !walletAddress || !Number.isFinite(amount) || amount <= 0) {
         return res.status(400).json({ error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
@@ -445,7 +457,8 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     });
 
     app.post('/api/tickets/withdraw-request', (req: Request, res: Response) => {
-      const { userId, walletAddress, ticketAmount } = req.body;
+      const { walletAddress, ticketAmount } = req.body;
+      const userId = getRequestUserId(req);
       if (!userId || !walletAddress || !ticketAmount) {
         return res.status(400).json({ error: 'Withdrawal requires userId, walletAddress and ticketAmount.' });
       }
@@ -479,7 +492,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       return res.json({ success: true, requestId: request.id, status: request.status });
     });
 
-    app.post('/api/tickets/withdraw-complete', (req: Request, res: Response) => {
+    app.post('/api/tickets/withdraw-complete', deps.requireAdmin, (req: Request, res: Response) => {
       const { requestId } = req.body;
       const request = deps.withdrawalRequests.get(requestId);
       if (!request) {

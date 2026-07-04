@@ -6,11 +6,15 @@ services:
     publishPath: dist
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://redoapp-backend.onrender.com
+        value: https://yoapp-backend.onrender.com
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
+      - key: VITE_TELEGRAM_BOT_USERNAME
+        value: redo_appbot
+      - key: VITE_TELEGRAM_APP_SHORT_NAME
+        value: app
 
   # Web Service: Express Node Backend
   - type: web
@@ -41,6 +45,10 @@ services:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: APP_SESSION_SECRET
+        sync: false
+      - key: ADMIN_API_KEY
         sync: false
       - key: SUPABASE_STATE_TABLE
         value: app_state

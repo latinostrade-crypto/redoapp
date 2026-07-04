@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import type { Response } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -25,6 +25,8 @@ const TELEGRAM_APP_SHORT_NAME = process.env.TELEGRAM_APP_SHORT_NAME || 'app';
 const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || TELEGRAM_BOT_TOKEN || SUPABASE_SERVICE_ROLE_KEY || 'local-dev-session-secret';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
 const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -41,8 +43,26 @@ const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_MS = 5_000;
 
-app.use(cors());
+app.use(cors({
+  origin: (origin, callback) => {
+    const allowedOrigins = new Set([
+      'https://redoapp.onrender.com',
+      'https://yoapp-frontend.onrender.com',
+      'https://redoapp-frontend.onrender.com',
+      'https://yoapp-backend.onrender.com',
+    ]);
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('Origin not allowed by CORS'));
+  },
+}));
 app.use(express.json());
+
+interface AuthenticatedRequest extends Request {
+  authUserId?: string;
+}
 
 type MatchMode = 'pvp' | 'private';
 type CardColor = 'red' | 'blue' | 'yellow' | 'green' | 'wild';
@@ -646,6 +666,73 @@ function verifyTelegramInitData(initData: string): TelegramAuthPayload | null {
   };
 }
 
+interface SessionTokenPayload {
+  userId: string;
+  issuedAt: number;
+}
+
+function createSessionToken(userId: string) {
+  const payload: SessionTokenPayload = {
+    userId,
+    issuedAt: Date.now(),
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signature = crypto.createHmac('sha256', APP_SESSION_SECRET).update(encodedPayload).digest('base64url');
+  return `${encodedPayload}.${signature}`;
+}
+
+function verifySessionToken(token: string | null | undefined): SessionTokenPayload | null {
+  if (!token) return null;
+  const [encodedPayload, providedSignature] = token.split('.');
+  if (!encodedPayload || !providedSignature) return null;
+  const expectedSignature = crypto.createHmac('sha256', APP_SESSION_SECRET).update(encodedPayload).digest('base64url');
+  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+  const providedBuffer = Buffer.from(providedSignature, 'utf8');
+  if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as SessionTokenPayload;
+    return payload.userId ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractSessionToken(req: Request) {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.slice('Bearer '.length).trim();
+  }
+  const xSessionToken = req.headers['x-session-token'];
+  if (typeof xSessionToken === 'string') {
+    return xSessionToken;
+  }
+  if (typeof req.query.sessionToken === 'string') {
+    return req.query.sessionToken;
+  }
+  return null;
+}
+
+function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const session = verifySessionToken(extractSessionToken(req));
+  if (!session) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
+  req.authUserId = session.userId;
+  next();
+}
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!ADMIN_API_KEY) {
+    return res.status(503).json({ error: 'Admin API key is not configured.' });
+  }
+  if (req.headers['x-admin-api-key'] !== ADMIN_API_KEY) {
+    return res.status(403).json({ error: 'Admin authorization required.' });
+  }
+  next();
+}
+
 function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
   user.telegramId = auth.id;
   user.telegramChatId = auth.id;
@@ -668,6 +755,13 @@ function resolveCanonicalUserId(body: { userId?: string; telegramInitData?: stri
     userId: body.userId || '',
     auth: null,
   };
+}
+
+function getAuthenticatedUserId(req: AuthenticatedRequest) {
+  if (!req.authUserId) {
+    throw new Error('Authentication required.');
+  }
+  return req.authUserId;
 }
 
 function assignReferralIfNeeded(user: UserState, startParam?: string) {
@@ -775,6 +869,7 @@ const ticketingService = createTicketingService({
   createLedgerEntry,
   depositIntents,
   getUser,
+  requireAdmin,
   round2,
   schedulePersist,
   withdrawalRequests,
@@ -1258,16 +1353,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'healthy',
     time: new Date().toISOString(),
-    walletConfig: {
-      marketingWallet: MARKETING_WALLET,
-      ticketPriceTon: TICKET_PRICE_TON,
-      minWithdrawTickets: MIN_WITHDRAW_TICKETS,
-      chainVerificationEnabled: ENABLE_CHAIN_VERIFICATION,
-      verificationMode: TON_VERIFICATION_MODE,
-      tonApiConfigured: !!TON_API_KEY,
-      supabaseConfigured: !!supabaseAdmin,
-      supabaseStateTable: SUPABASE_STATE_TABLE,
-    },
+    service: 'redoapp-backend',
   });
 });
 
@@ -1287,6 +1373,7 @@ app.post('/api/users/sync', (req, res) => {
   return res.json({
     userId: user.userId,
     telegramInitDataValid: !!resolved.auth,
+    sessionToken: resolved.auth ? createSessionToken(user.userId) : null,
     telegramUsername: user.telegramUsername || null,
     telegramPhotoUrl: user.telegramPhotoUrl || null,
     walletAddress: user.walletAddress || null,
@@ -1301,16 +1388,9 @@ app.post('/api/users/sync', (req, res) => {
   });
 });
 
-app.post('/api/xp/daily-checkin', (req, res) => {
+app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) => {
   const { walletAddress } = req.body;
-  const resolved = resolveCanonicalUserId(req.body);
-  if (!resolved.userId) {
-    return res.status(400).json({ error: 'Missing userId.' });
-  }
-  const user = getUser(resolved.userId, walletAddress);
-  if (resolved.auth) {
-    applyTelegramAuth(user, resolved.auth);
-  }
+  const user = getUser(getAuthenticatedUserId(req), walletAddress);
   const now = Date.now();
   if (user.lastDailyXpAt && now - user.lastDailyXpAt < 24 * 60 * 60 * 1000) {
     return res.json({ success: false, alreadyClaimed: true, xp: user.xp });
@@ -1326,8 +1406,8 @@ app.post('/api/xp/daily-checkin', (req, res) => {
   return res.json({ success: true, xpAwarded: DAILY_XP_REWARD, xp: user.xp, energy: getEnergyState(user), claimedQuestIds });
 });
 
-app.get('/api/me/:userId', (req, res) => {
-  const user = getUser(req.params.userId);
+app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
+  const user = getUser(getAuthenticatedUserId(req));
   const claimedQuestIds = claimCompletedQuests(user);
   return res.json({
     userId: user.userId,
@@ -1361,19 +1441,20 @@ app.get('/api/me/:userId', (req, res) => {
   });
 });
 
+app.use('/api/tickets', requireAuth);
 ticketingService.registerRoutes(app);
 
-app.post('/api/matchmaker/join', (req, res) => {
-  const { userId, username, avatarId, stake, mode, walletAddress } = req.body as {
-    userId: string;
+app.post('/api/matchmaker/join', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { username, avatarId, stake, mode, walletAddress } = req.body as {
     username: string;
     avatarId: string;
     stake: number;
     mode: MatchMode;
     walletAddress?: string;
   };
-  if (!userId || !stake || !mode) {
-    return res.status(400).json({ error: 'Missing userId, stake or mode.' });
+  const userId = getAuthenticatedUserId(req);
+  if (!stake || !mode) {
+    return res.status(400).json({ error: 'Missing stake or mode.' });
   }
 
   const user = getUser(userId, walletAddress);
@@ -1424,8 +1505,8 @@ app.post('/api/matchmaker/join', (req, res) => {
   });
 });
 
-app.get('/api/matchmaker/stream/:userId', (req, res) => {
-  const { userId } = req.params;
+app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -1435,8 +1516,8 @@ app.get('/api/matchmaker/stream/:userId', (req, res) => {
   sendSse(res, 'queue-status', buildQueuePayload(userId));
 });
 
-app.get('/api/matchmaker/status/:userId', (req, res) => {
-  const { userId } = req.params;
+app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
   const activeMatchId = activeMatchByUser.get(userId);
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
@@ -1456,17 +1537,16 @@ app.get('/api/matchmaker/status/:userId', (req, res) => {
   return res.json(tryActivateQueuedMatch(userId));
 });
 
-app.post('/api/private-rooms/create', (req, res) => {
-  const { userId, username, avatarId, stake, targetPlayers, walletAddress } = req.body as {
-    userId: string;
+app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { username, avatarId, stake, targetPlayers, walletAddress } = req.body as {
     username: string;
     avatarId: string;
     stake: number;
     targetPlayers?: number;
     walletAddress?: string;
   };
-
-  if (!userId || !username || !avatarId || stake === undefined || stake === null) {
+  const userId = getAuthenticatedUserId(req);
+  if (!username || !avatarId || stake === undefined || stake === null) {
     return res.status(400).json({ error: 'Missing room creator data.' });
   }
 
@@ -1534,14 +1614,14 @@ app.post('/api/private-rooms/create', (req, res) => {
   });
 });
 
-app.post('/api/private-rooms/join', (req, res) => {
-  const { roomCode, userId, username, avatarId, walletAddress } = req.body as {
+app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { roomCode, username, avatarId, walletAddress } = req.body as {
     roomCode: string;
-    userId: string;
     username: string;
     avatarId: string;
     walletAddress?: string;
   };
+  const userId = getAuthenticatedUserId(req);
 
   const room = privateRooms.get(String(roomCode).toUpperCase());
   if (!room) {
@@ -1621,7 +1701,7 @@ app.post('/api/private-rooms/join', (req, res) => {
   });
 });
 
-app.get('/api/private-rooms/status/:roomCode', (req, res) => {
+app.get('/api/private-rooms/status/:roomCode', requireAuth, (req, res) => {
   const room = privateRooms.get(String(req.params.roomCode).toUpperCase());
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
@@ -1640,7 +1720,7 @@ app.get('/api/private-rooms/status/:roomCode', (req, res) => {
   });
 });
 
-app.get('/api/private-rooms/stream/:roomCode', (req, res) => {
+app.get('/api/private-rooms/stream/:roomCode', requireAuth, (req, res) => {
   const roomCode = String(req.params.roomCode).toUpperCase();
   const room = privateRooms.get(roomCode);
   if (!room) {
@@ -1656,8 +1736,9 @@ app.get('/api/private-rooms/stream/:roomCode', (req, res) => {
   sendSse(res, 'private-room', buildPrivateRoomPayload(room));
 });
 
-app.get('/api/matches/state/:matchId/:userId', (req, res) => {
-  const { matchId, userId } = req.params;
+app.get('/api/matches/state/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { matchId } = req.params;
+  const userId = getAuthenticatedUserId(req);
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
@@ -1669,8 +1750,9 @@ app.get('/api/matches/state/:matchId/:userId', (req, res) => {
   return res.json(state);
 });
 
-app.get('/api/matches/stream/:matchId/:userId', (req, res) => {
-  const { matchId, userId } = req.params;
+app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { matchId } = req.params;
+  const userId = getAuthenticatedUserId(req);
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
@@ -1690,14 +1772,14 @@ app.get('/api/matches/stream/:matchId/:userId', (req, res) => {
   sendSse(res, 'match-state', state);
 });
 
-app.post('/api/matches/action', (req, res) => {
-  const { matchId, userId, action, cardId, chosenColor } = req.body as {
+app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { matchId, action, cardId, chosenColor } = req.body as {
     matchId: string;
-    userId: string;
     action: 'play' | 'draw' | 'pass';
     cardId?: string;
     chosenColor?: CardColor;
   };
+  const userId = getAuthenticatedUserId(req);
 
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
@@ -1731,8 +1813,8 @@ app.post('/api/matches/action', (req, res) => {
   }
 });
 
-app.post('/api/matchmaker/leave', (req, res) => {
-  const { userId } = req.body;
+app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
   const player = matchmakingQueue.find(p => p.userId === userId);
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   if (player) {
@@ -1754,72 +1836,65 @@ app.post('/api/matchmaker/leave', (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/matches/settle', (req, res) => {
-  const { matchId, mode, stake, placements } = req.body as {
-    matchId: string;
-    mode: MatchMode;
-    stake: number;
-    placements: Array<{ userId: string; rank: number; walletAddress?: string }>;
-  };
+app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { matchId } = req.body as { matchId: string };
 
-  if (!matchId || !mode || stake === undefined || stake === null || !placements?.length) {
-    return res.status(400).json({ error: 'Settlement requires matchId, mode, stake and placements.' });
+  if (!matchId) {
+    return res.status(400).json({ error: 'Settlement requires matchId.' });
   }
 
+  const requesterUserId = getAuthenticatedUserId(req);
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
   }
-  if (placements.length !== activeMatch.players.length) {
-    return res.status(400).json({ error: 'Placements count must match active players count.' });
+  if (!activeMatch.players.some((player) => player.userId === requesterUserId)) {
+    return res.status(403).json({ error: 'User is not part of this match.' });
   }
-  const validRanks = buildRankOrder(activeMatch.players.length);
-  const seenUsers = new Set<string>();
-  const seenRanks = new Set<number>();
-  for (const placement of placements) {
-    if (!activeMatch.players.some((player) => player.userId === placement.userId)) {
-      return res.status(400).json({ error: 'Settlement contains a user outside this match.' });
-    }
-    if (!validRanks.includes(placement.rank)) {
-      return res.status(400).json({ error: 'Settlement contains an invalid rank for this player count.' });
-    }
-    if (seenUsers.has(placement.userId) || seenRanks.has(placement.rank)) {
-      return res.status(400).json({ error: 'Settlement contains duplicate users or ranks.' });
-    }
-    seenUsers.add(placement.userId);
-    seenRanks.add(placement.rank);
+  if (activeMatch.gameState.phase !== 'game_over' || !activeMatch.gameState.winnerUserId) {
+    return res.status(400).json({ error: 'Match is not ready for settlement.' });
   }
   if (activeMatch.settled) {
     return res.json({
       success: true,
       matchId,
-      grossPot: stake * activeMatch.players.length,
+      grossPot: activeMatch.stake * activeMatch.players.length,
       alreadySettled: true,
     });
   }
 
-  const grossPot = stake * activeMatch.players.length;
+  const placements = [...activeMatch.gameState.players]
+    .sort((a, b) => {
+      if (a.userId === activeMatch.gameState.winnerUserId) return -1;
+      if (b.userId === activeMatch.gameState.winnerUserId) return 1;
+      const aPoints = a.hand.reduce((sum, card) => sum + card.score, 0);
+      const bPoints = b.hand.reduce((sum, card) => sum + card.score, 0);
+      return aPoints - bPoints;
+    })
+    .map((player, index) => ({ userId: player.userId, rank: index + 1 }));
+
+  const grossPot = activeMatch.stake * activeMatch.players.length;
   const seasonFund = round2(grossPot * 0.025);
   const burnFund = round2(grossPot * 0.035);
   const netPrizePool = round2(grossPot - seasonFund - burnFund);
   const payoutByRank = buildPayoutByRank(activeMatch.players.length, netPrizePool);
 
-  placements.forEach(({ userId, rank, walletAddress }) => {
-    const user = getUser(userId, walletAddress);
+  placements.forEach(({ userId, rank }) => {
+    const user = getUser(userId);
     const grossPayout = payoutByRank[rank];
-    const referralSettlement = mode === 'pvp'
+    const referralSettlement = activeMatch.mode === 'pvp'
       ? applyReferralMatchBonus(user, grossPayout)
       : { inviterBonus: 0, netPayout: grossPayout };
 
-    user.heldTickets = round2(Math.max(0, user.heldTickets - stake));
+    user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
     user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
     createLedgerEntry(user, {
-      event: `${mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
+      event: `${activeMatch.mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
       value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
       type: 'match_payout',
       amount: referralSettlement.netPayout,
     });
-    if (mode === 'pvp') {
+    if (activeMatch.mode === 'pvp') {
       updateQuestProgress(user.userId, 'play_online', 1);
     } else {
       updateQuestProgress(user.userId, 'play_private', 1);
