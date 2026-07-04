@@ -293,6 +293,52 @@ export function Web3Dashboard({
       });
   };
 
+  const joinPrivateRoomByCode = (roomCodeInput?: string) => {
+    const roomCodeToUse = (roomCodeInput || privateJoinCode || privateRoomCode).trim().toUpperCase();
+    if (!roomCodeToUse) {
+      alert('Enter or generate a room code first.');
+      return Promise.resolve(false);
+    }
+    return apiRequest<{ roomCode: string; playersCount: number; targetPlayers?: number; status: 'waiting' | 'started'; matchId?: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
+      method: 'POST',
+      body: JSON.stringify({
+        roomCode: roomCodeToUse,
+        userId: currentUserId,
+        username: userName,
+        avatarId: selectedAvatar,
+        walletAddress: rawAddress || null,
+      }),
+    }).then((result) => {
+      setShowRoomDisclaimer(false);
+      setPrivateJoinCode(roomCodeToUse);
+      setPrivateRoomCode(result.roomCode);
+      setPrivateRoomPlayersCount(result.playersCount);
+      if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
+        setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+      }
+      setGoldenTickets(result.availableTickets);
+      setHeldTickets(result.heldTickets);
+      if (result.status === 'started' && result.matchId) {
+        localStorage.setItem('redoapp_active_match', JSON.stringify({
+          matchId: result.matchId,
+          mode: 'private',
+          stake: privateRoomStake,
+          currentUserId,
+          players: [],
+          createdAt: Date.now(),
+        }));
+        setPrivateRoomStatus('ready');
+        onStartGame('private', privateRoomStake);
+      } else {
+        setPrivateRoomStatus('waiting');
+      }
+      return true;
+    }).catch((error) => {
+      alert(error.message);
+      return false;
+    });
+  };
+
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     setBuyingTickets(true);
     setDepositFlowStatus('waiting_chain');
@@ -583,6 +629,14 @@ export function Web3Dashboard({
       }
     };
   }, [matchmakingState, currentUserId, onStartGame, selectedStake]);
+
+  useEffect(() => {
+    const incomingRoomCode = privateJoinCode.trim().toUpperCase();
+    if (!incomingRoomCode || privateRoomStatus !== 'idle') return;
+    setCurrentTab('pvp');
+    setPvpSubMode('private');
+    joinPrivateRoomByCode(incomingRoomCode).catch(() => undefined);
+  }, [privateJoinCode, privateRoomStatus, currentUserId]);
 
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
@@ -1484,46 +1538,7 @@ export function Web3Dashboard({
                               return;
                             }
                             sound.playPop();
-                            const roomCodeToUse = (privateJoinCode || privateRoomCode).trim().toUpperCase();
-                            if (!roomCodeToUse) {
-                              alert('Enter or generate a room code first.');
-                              return;
-                            }
-                            apiRequest<{ roomCode: string; playersCount: number; targetPlayers?: number; status: 'waiting' | 'started'; matchId?: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
-                              method: 'POST',
-                              body: JSON.stringify({
-                                roomCode: roomCodeToUse,
-                                userId: currentUserId,
-                                username: userName,
-                                avatarId: selectedAvatar,
-                                walletAddress: rawAddress || null,
-                              }),
-                            }).then((result) => {
-                              setShowRoomDisclaimer(false);
-                              setPrivateRoomCode(result.roomCode);
-                              setPrivateRoomPlayersCount(result.playersCount);
-                              if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
-                                setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-                              }
-                              setGoldenTickets(result.availableTickets);
-                              setHeldTickets(result.heldTickets);
-                              if (result.status === 'started' && result.matchId) {
-                                localStorage.setItem('redoapp_active_match', JSON.stringify({
-                                  matchId: result.matchId,
-                                  mode: 'private',
-                                  stake: privateRoomStake,
-                                  currentUserId,
-                                  players: [],
-                                  createdAt: Date.now(),
-                                }));
-                                setPrivateRoomStatus('ready');
-                                onStartGame('private', privateRoomStake);
-                              } else {
-                                setPrivateRoomStatus('waiting');
-                              }
-                            }).catch((error) => {
-                              alert(error.message);
-                            });
+                            joinPrivateRoomByCode().catch(() => undefined);
                           }}
                           className="flex-1 py-1 bg-[#ff4b4b] text-black uppercase font-black pixel-btn-interactive border border-black text-[8px]"
                         >
