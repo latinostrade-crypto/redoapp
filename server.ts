@@ -712,21 +712,31 @@ function maybeActivateReferral(user: UserState, matchId: string) {
   return true;
 }
 
-function rewardReferralMatchBonus(user: UserState, payoutAmount: number, matchId: string) {
+function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
   if (!user.referredByUserId || payoutAmount <= 0) {
-    return;
+    return {
+      inviterBonus: 0,
+      netPayout: payoutAmount,
+    };
   }
 
   const inviter = users.get(user.referredByUserId);
   if (!inviter || inviter.userId === user.userId) {
-    return;
+    return {
+      inviterBonus: 0,
+      netPayout: payoutAmount,
+    };
   }
 
   const referralBonus = round2(payoutAmount * 0.01);
   if (referralBonus <= 0) {
-    return;
+    return {
+      inviterBonus: 0,
+      netPayout: payoutAmount,
+    };
   }
 
+  const netPayout = round2(Math.max(0, payoutAmount - referralBonus));
   inviter.availableTickets = round2(inviter.availableTickets + referralBonus);
   createLedgerEntry(inviter, {
     event: 'Referral Match Bonus',
@@ -739,6 +749,10 @@ function rewardReferralMatchBonus(user: UserState, payoutAmount: number, matchId
     `Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} finished a public match. You received +${referralBonus.toFixed(2)} TKT.`
   );
   schedulePersist();
+  return {
+    inviterBonus: referralBonus,
+    netPayout,
+  };
 }
 
 function createLedgerEntry(user: UserState, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'>) {
@@ -1792,13 +1806,18 @@ app.post('/api/matches/settle', (req, res) => {
 
   placements.forEach(({ userId, rank, walletAddress }) => {
     const user = getUser(userId, walletAddress);
+    const grossPayout = payoutByRank[rank];
+    const referralSettlement = mode === 'pvp'
+      ? applyReferralMatchBonus(user, grossPayout)
+      : { inviterBonus: 0, netPayout: grossPayout };
+
     user.heldTickets = round2(Math.max(0, user.heldTickets - stake));
-    user.availableTickets = round2(user.availableTickets + payoutByRank[rank]);
+    user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
     createLedgerEntry(user, {
       event: `${mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
-      value: `+${payoutByRank[rank].toFixed(2)} TKT`,
+      value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
       type: 'match_payout',
-      amount: payoutByRank[rank],
+      amount: referralSettlement.netPayout,
     });
     if (mode === 'pvp') {
       updateQuestProgress(user.userId, 'play_online', 1);
@@ -1809,9 +1828,6 @@ app.post('/api/matches/settle', (req, res) => {
       updateQuestProgress(user.userId, 'win_any', 1);
     }
     maybeActivateReferral(user, matchId);
-    if (mode === 'pvp') {
-      rewardReferralMatchBonus(user, payoutByRank[rank], matchId);
-    }
     claimCompletedQuests(user);
   });
 
