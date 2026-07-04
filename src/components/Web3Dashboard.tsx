@@ -35,11 +35,11 @@ const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_f
 const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
 
 function buildTelegramMiniAppLink(startParam: string) {
-  return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=${encodeURIComponent(startParam)}`;
 }
 
 function buildTelegramMiniAppSchemeLink(startParam: string) {
-  return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
+  return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&startapp=${encodeURIComponent(startParam)}`;
 }
 
 function buildPrivateRoomSharePayload(roomCode: string) {
@@ -64,6 +64,17 @@ function getTelegramStartParam() {
     telegramWebApp?.initDataUnsafe?.start_param ||
     ''
   );
+}
+
+function getReferralStartParam() {
+  const params = new URLSearchParams(window.location.search);
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const hashParams = new URLSearchParams(hash);
+  const explicitRef = params.get('ref') || hashParams.get('ref');
+  if (explicitRef) {
+    return `ref_${explicitRef.trim().toUpperCase()}`;
+  }
+  return getTelegramStartParam();
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -230,6 +241,7 @@ export function Web3Dashboard({
   const tgProfileName = profile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const privateStakeRequiresWallet = privateRoomStake > 0;
+  const launchStartParam = getReferralStartParam();
 
   useEffect(() => {
     if (localStorage.getItem(TUTORIAL_SEEN_KEY)) return;
@@ -364,6 +376,7 @@ export function Web3Dashboard({
         userId: currentUserId,
         walletAddress: rawAddress || null,
         telegramInitData,
+        startParam: launchStartParam || null,
       }),
     }).then((synced) => {
       localStorage.setItem('redoapp_current_user_id', synced.userId);

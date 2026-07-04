@@ -218,10 +218,7 @@ const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_RO
   : null;
 
 function buildTelegramMiniAppLink(startParam: string) {
-  const basePath = TELEGRAM_APP_SHORT_NAME
-    ? `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}`
-    : `https://t.me/${TELEGRAM_BOT_USERNAME}`;
-  return `${basePath}?startapp=${encodeURIComponent(startParam)}`;
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?startapp=${encodeURIComponent(startParam)}`;
 }
 
 const QUEST_DEFINITIONS: QuestDefinition[] = [
@@ -1232,7 +1229,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/users/sync', (req, res) => {
-  const { walletAddress, telegramInitData } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string };
+  const { walletAddress, telegramInitData, startParam } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string; startParam?: string };
   const resolved = resolveCanonicalUserId(req.body);
   if (!resolved.userId) {
     return res.status(400).json({ error: 'Missing userId.' });
@@ -1240,8 +1237,8 @@ app.post('/api/users/sync', (req, res) => {
   const user = getUser(resolved.userId, walletAddress);
   if (resolved.auth) {
     applyTelegramAuth(user, resolved.auth);
-    assignReferralIfNeeded(user, resolved.auth.start_param);
   }
+  assignReferralIfNeeded(user, startParam || resolved.auth?.start_param);
   const energy = getEnergyState(user);
   const claimedQuestIds = claimCompletedQuests(user);
   return res.json({
