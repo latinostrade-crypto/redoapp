@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
-import { apiRequest, buildAuthenticatedUrl, setSessionToken } from '../utils/api';
+import { apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken } from '../utils/api';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
@@ -211,10 +211,12 @@ export function Web3Dashboard({
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
-  const currentUserId = profile?.userId || rawAddress || `guest:${userName.toLowerCase()}`;
+  const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
+  const currentUserId = profile?.userId || bootstrapUserId;
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
+  const [energyNow, setEnergyNow] = useState(() => Date.now());
   const effectiveXp = profile?.xp ?? playerXp;
   const displayXpNeeded = 400;
   const displayLevel = Math.floor(effectiveXp / displayXpNeeded) + 1;
@@ -226,7 +228,7 @@ export function Web3Dashboard({
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus')
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
-  const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - Date.now()) / 1000)) : 0;
+  const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - energyNow) / 1000)) : 0;
   const tgProfileName = profile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const privateStakeRequiresWallet = privateRoomStake > 0;
@@ -272,6 +274,15 @@ export function Web3Dashboard({
     };
   }, []);
 
+  useEffect(() => {
+    if (!energy.nextEnergyAt) return;
+    setEnergyNow(Date.now());
+    const timer = window.setInterval(() => {
+      setEnergyNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [energy.nextEnergyAt]);
+
   const readPendingDeposit = (): PendingDepositState | null => {
     try {
       const raw = localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY);
@@ -291,6 +302,10 @@ export function Web3Dashboard({
   };
 
   const refreshPendingDeposits = () => {
+    if (!getSessionToken()) {
+      setPendingDeposits([]);
+      return Promise.resolve([] as PendingDepositView[]);
+    }
     return apiRequest<{ deposits: PendingDepositView[] }>('/api/tickets/pending/' + encodeURIComponent(currentUserId))
       .then((result) => {
         setPendingDeposits(result.deposits);
@@ -395,41 +410,33 @@ export function Web3Dashboard({
 
   useEffect(() => {
     const pending = readPendingDeposit();
-    if (!pending || !walletConnected || buyingTickets) return;
+    if (!pending || !walletConnected || buyingTickets || !getSessionToken()) return;
     setDepositFlowStatus('waiting_chain');
     setDepositStatusMessage(`Pending TON deposit found for ${pending.ticketAmount.toFixed(2)} tickets. Resuming confirmation...`);
     confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
-  }, [walletConnected, currentUserId]);
+  }, [walletConnected, currentUserId, buyingTickets]);
 
   useEffect(() => {
+    if (!profile) return;
     refreshPendingDeposits().catch(() => undefined);
     const timer = window.setInterval(() => {
       refreshPendingDeposits().catch(() => undefined);
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [currentUserId]);
+  }, [currentUserId, profile]);
 
   useEffect(() => {
     localStorage.setItem('redoapp_current_user_id', currentUserId);
     if (rawAddress) {
       localStorage.setItem('redoapp_wallet_address', rawAddress);
     }
-    apiRequest<{
-      userId: string;
-      xp: number;
-      availableTickets: number;
-      heldTickets: number;
-      energy: PlayerProfile['energy'];
-      referralCode: string;
-      referralLink: string;
-      quests: PlayerProfile['quests'];
-      telegramUsername: string | null;
-      telegramPhotoUrl: string | null;
+    apiRequest<PlayerProfile & {
+      telegramInitDataValid: boolean;
       sessionToken: string | null;
     }>('/api/users/sync', {
       method: 'POST',
       body: JSON.stringify({
-        userId: currentUserId,
+        userId: bootstrapUserId,
         walletAddress: rawAddress || null,
         telegramInitData,
         startParam: launchStartParam || null,
@@ -437,19 +444,14 @@ export function Web3Dashboard({
     }).then((synced) => {
       setSessionToken(synced.sessionToken);
       localStorage.setItem('redoapp_current_user_id', synced.userId);
+      setProfile(synced);
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
-      return Promise.all([
-        apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId)),
-        apiRequest<PlayerProfile>('/api/me'),
-      ]);
-    }).then(([ledger, me]) => {
-      setProfile(me);
-      setGoldenTickets(me.availableTickets);
-      setHeldTickets(me.heldTickets);
+      return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId));
+    }).then((ledger) => {
       setTransactions(ledger.transactions);
     }).catch(() => undefined);
-  }, [currentUserId, rawAddress, telegramInitData]);
+  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
 
   const connectWallet = async () => {
     sound.playPop();

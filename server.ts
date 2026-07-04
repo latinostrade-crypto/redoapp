@@ -456,7 +456,11 @@ function recalculateEnergy(user: UserState, now = Date.now()) {
   const restored = Math.floor(elapsedSec / DEFAULT_ENERGY_REGEN_INTERVAL_SEC);
   if (restored > 0) {
     user.energy = Math.min(user.maxEnergy, user.energy + restored);
-    user.energyUpdatedAt = now;
+    user.energyUpdatedAt += restored * DEFAULT_ENERGY_REGEN_INTERVAL_SEC * 1000;
+    if (user.energy >= user.maxEnergy) {
+      user.energy = user.maxEnergy;
+      user.energyUpdatedAt = now;
+    }
     schedulePersist();
   }
   return user;
@@ -472,6 +476,40 @@ function getEnergyState(user: UserState) {
     maxEnergy: hydrated.maxEnergy,
     nextEnergyAt,
     regenIntervalSec: DEFAULT_ENERGY_REGEN_INTERVAL_SEC,
+  };
+}
+
+function buildProfileResponse(user: UserState) {
+  const claimedQuestIds = claimCompletedQuests(user);
+  return {
+    userId: user.userId,
+    telegramUsername: user.telegramUsername || null,
+    telegramPhotoUrl: user.telegramPhotoUrl || null,
+    walletAddress: user.walletAddress || null,
+    availableTickets: user.availableTickets,
+    heldTickets: user.heldTickets,
+    xp: user.xp,
+    energy: getEnergyState(user),
+    referralCode: user.referralCode,
+    referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
+    referrals: {
+      referredByUserId: user.referredByUserId || null,
+      status: user.referralStatus || null,
+      activatedAt: user.referralActivatedAt || null,
+      referralsActivated: user.referralsActivated,
+      invitedUsers: Array.from(users.values())
+        .filter((entry) => entry.referredByUserId === user.userId)
+        .map((entry) => ({
+          userId: entry.userId,
+          username: entry.telegramUsername || entry.telegramFirstName || entry.userId,
+          photoUrl: entry.telegramPhotoUrl || null,
+          status: entry.referralStatus || 'pending',
+          assignedAt: entry.referralAssignedAt || null,
+          activatedAt: entry.referralActivatedAt || null,
+        })),
+    },
+    quests: buildQuestView(user.userId),
+    claimedQuestIds,
   };
 }
 
@@ -1368,23 +1406,10 @@ app.post('/api/users/sync', (req, res) => {
     applyTelegramAuth(user, resolved.auth);
   }
   assignReferralIfNeeded(user, startParam || resolved.auth?.start_param);
-  const energy = getEnergyState(user);
-  const claimedQuestIds = claimCompletedQuests(user);
   return res.json({
-    userId: user.userId,
     telegramInitDataValid: !!resolved.auth,
     sessionToken: resolved.auth ? createSessionToken(user.userId) : null,
-    telegramUsername: user.telegramUsername || null,
-    telegramPhotoUrl: user.telegramPhotoUrl || null,
-    walletAddress: user.walletAddress || null,
-    availableTickets: user.availableTickets,
-    heldTickets: user.heldTickets,
-    xp: user.xp,
-    energy,
-    referralCode: user.referralCode,
-    referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
-    quests: buildQuestView(user.userId),
-    claimedQuestIds,
+    ...buildProfileResponse(user),
   });
 });
 
@@ -1408,37 +1433,7 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
 
 app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
   const user = getUser(getAuthenticatedUserId(req));
-  const claimedQuestIds = claimCompletedQuests(user);
-  return res.json({
-    userId: user.userId,
-    telegramUsername: user.telegramUsername || null,
-    telegramPhotoUrl: user.telegramPhotoUrl || null,
-    walletAddress: user.walletAddress || null,
-    availableTickets: user.availableTickets,
-    heldTickets: user.heldTickets,
-    xp: user.xp,
-    energy: getEnergyState(user),
-    referralCode: user.referralCode,
-    referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
-    referrals: {
-      referredByUserId: user.referredByUserId || null,
-      status: user.referralStatus || null,
-      activatedAt: user.referralActivatedAt || null,
-      referralsActivated: user.referralsActivated,
-      invitedUsers: Array.from(users.values())
-        .filter((entry) => entry.referredByUserId === user.userId)
-        .map((entry) => ({
-          userId: entry.userId,
-          username: entry.telegramUsername || entry.telegramFirstName || entry.userId,
-          photoUrl: entry.telegramPhotoUrl || null,
-          status: entry.referralStatus || 'pending',
-          assignedAt: entry.referralAssignedAt || null,
-          activatedAt: entry.referralActivatedAt || null,
-        })),
-    },
-    quests: buildQuestView(user.userId),
-    claimedQuestIds,
-  });
+  return res.json(buildProfileResponse(user));
 });
 
 app.use('/api/tickets', requireAuth);
