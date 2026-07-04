@@ -1069,6 +1069,40 @@ export function useUnoGame() {
     saveStats(INITIAL_STATS);
   };
 
+  const returnToLobby = useCallback(() => {
+    sound.playPop();
+    remoteMatchStreamRef.current?.close();
+    remoteMatchStreamRef.current = null;
+    remoteMatchIdRef.current = null;
+    remoteUserIdRef.current = null;
+    setRemoteSessionActive(false);
+    localStorage.removeItem('redoapp_active_match');
+    setCardsPlayedThisRound(0);
+    setCardsDrawnThisRound(0);
+    setLeaderboard([]);
+    setWildSelectOpen(false);
+    setPendingWildCard(null);
+    setGameMode('offline');
+    setActiveStake(0);
+    setGameState({
+      deck: [],
+      discardPile: [],
+      players: [],
+      currentPlayerIndex: 0,
+      direction: 1,
+      activeColor: 'red',
+      activeValue: '0',
+      phase: 'setup',
+      winnerId: null,
+      logs: [],
+      drawCountAccumulator: 0,
+      unoShoutCooldown: {},
+      dealerId: 'ai1',
+      consecutiveDraws: 0,
+      accusablePlayers: [],
+    });
+  }, []);
+
   return {
     gameState,
     stats,
@@ -1091,5 +1125,6 @@ export function useUnoGame() {
     gameMode,
     setGameMode,
     activeStake,
+    returnToLobby,
   };
 }

@@ -253,6 +253,25 @@ export function Web3Dashboard({
     window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: profile }));
   }, [profile]);
 
+  useEffect(() => {
+    const handleProfileSync = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<PlayerProfile> & { xp?: number }>).detail;
+      if (typeof detail?.xp !== 'number') return;
+      setProfile((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          xp: detail.xp,
+        };
+      });
+    };
+
+    window.addEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
+    return () => {
+      window.removeEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
+    };
+  }, []);
+
   const readPendingDeposit = (): PendingDepositState | null => {
     try {
       const raw = localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY);

@@ -64,6 +64,7 @@ export default function App() {
     gameMode,
     setGameMode,
     activeStake,
+    returnToLobby,
   } = useUnoGame();
 
   const getDisplayName = (p: any) => {
@@ -420,9 +421,12 @@ export default function App() {
             <button
               onClick={() => {
                 sound.playPop();
+                if (gameState.phase === 'game_over') {
+                  returnToLobby();
+                  return;
+                }
                 if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
-                  startGame(selectedAvatar, userName);
-                  window.location.reload();
+                  returnToLobby();
                 }
               }}
               className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
@@ -842,10 +846,7 @@ export default function App() {
               <button
                 onClick={() => {
                   sound.playPop();
-                  if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
-                    startGame(selectedAvatar, userName);
-                    window.location.reload();
-                  }
+                  returnToLobby();
                 }}
                 className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
                 title="Lobby Setup"
@@ -990,15 +991,26 @@ export default function App() {
               </div>
             )}
 
-            <button
-              onClick={() => {
-                sound.playShuffle();
-                startGame(selectedAvatar, userName, gameMode, activeStake);
-              }}
-              className="w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-            >
-              PLAY AGAIN
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  sound.playPop();
+                  returnToLobby();
+                }}
+                className="w-full py-2.5 bg-slate-950 text-white font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+              >
+                MENU
+              </button>
+              <button
+                onClick={() => {
+                  sound.playShuffle();
+                  startGame(selectedAvatar, userName, gameMode, activeStake);
+                }}
+                className="w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+              >
+                PLAY AGAIN
+              </button>
+            </div>
             </div>
           </div>
         </div>
