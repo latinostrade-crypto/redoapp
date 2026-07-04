@@ -14,11 +14,9 @@ import {
   Lock,
   Trophy,
   Ticket,
-  BookOpen,
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
-import { TutorialModal } from './TutorialModal';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
@@ -32,7 +30,6 @@ const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
-const TUTORIAL_SEEN_KEY = 'redoapp_tutorial_seen';
 
 function buildTelegramMiniAppLink(startParam: string) {
   return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
@@ -222,7 +219,6 @@ export function Web3Dashboard({
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
-  const [tutorialOpen, setTutorialOpen] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const currentUserId = profile?.userId || rawAddress || `guest:${userName.toLowerCase()}`;
@@ -242,12 +238,6 @@ export function Web3Dashboard({
   const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const privateStakeRequiresWallet = privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
-
-  useEffect(() => {
-    if (localStorage.getItem(TUTORIAL_SEEN_KEY)) return;
-    setTutorialOpen(true);
-    localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
-  }, []);
 
   useEffect(() => {
     if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
@@ -737,17 +727,6 @@ export function Web3Dashboard({
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              sound.playPop();
-              setTutorialOpen(true);
-            }}
-            className="px-2 py-1.5 bg-black text-[#ffcc00] border-2 border-black pixel-btn-interactive text-[9px] font-black uppercase font-mono tracking-wider flex items-center gap-1"
-          >
-            <BookOpen className="w-3 h-3" />
-            Guide
-          </button>
           {onOpenRules && (
             <button
               type="button"
@@ -1845,11 +1824,6 @@ export function Web3Dashboard({
           </motion.div>
         )}
       </AnimatePresence>
-      <TutorialModal
-        isOpen={tutorialOpen}
-        onClose={() => setTutorialOpen(false)}
-        onOpenRules={onOpenRules}
-      />
     </div>
   );
 }

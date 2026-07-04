@@ -408,10 +408,10 @@ export default function App() {
         <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
-              YO
+              REDO
             </span>
             <h1 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
-              PIXEL <span className="text-[#ffcc00]">UNO</span>
+              <span className="text-[#ffcc00]">APP</span>
             </h1>
           </div>
 
@@ -827,8 +827,35 @@ export default function App() {
 
       {/* GAME OVER SCREEN OVERLAY (LEADERBOARD & REWARDS) */}
       {gameState.phase === 'game_over' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#0c0f12] text-white border-4 border-black p-4 w-full max-w-md text-center shadow-[6px_6px_0_#000] font-mono max-h-[92vh] flex flex-col overflow-y-auto custom-scroll">
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 pt-5 bg-black/85 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md space-y-3">
+            <div className="w-full px-3 py-2 flex justify-between items-center bg-[#18181c] border-4 border-black font-mono shadow-[6px_6px_0_#000]">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
+                  REDO
+                </span>
+                <h2 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
+                  <span className="text-[#ffcc00]">APP</span>
+                </h2>
+              </div>
+
+              <button
+                onClick={() => {
+                  sound.playPop();
+                  if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
+                    startGame(selectedAvatar, userName);
+                    window.location.reload();
+                  }
+                }}
+                className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
+                title="Lobby Setup"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>MENU</span>
+              </button>
+            </div>
+
+            <div className="bg-[#0c0f12] text-white border-4 border-black p-4 w-full text-center shadow-[6px_6px_0_#000] font-mono max-h-[78vh] flex flex-col overflow-y-auto custom-scroll">
             
             <h2 className="text-sm sm:text-base font-black tracking-tight leading-none mb-2 text-[#ffcc00] uppercase">
               {gameState.winnerId === 'player' ? '🏆 VICTORY MATCH 🏆' : '💀 GAME OVER 💀'}
@@ -972,6 +999,7 @@ export default function App() {
             >
               PLAY AGAIN
             </button>
+            </div>
           </div>
         </div>
       )}
