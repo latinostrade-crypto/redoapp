@@ -238,6 +238,9 @@ export function Web3Dashboard({
   const energy = profile?.energy ?? { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
   const quests = profile?.quests ?? [];
   const referralInvites = profile?.referrals.invitedUsers ?? [];
+  const referralTicketEarnings = transactions
+    .filter((tx: any) => tx.type === 'referral_bonus')
+    .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
   const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - Date.now()) / 1000)) : 0;
   const tgProfileName = profile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
@@ -932,6 +935,10 @@ export function Web3Dashboard({
                   <div className="flex justify-between items-center">
                     <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
                     <span className="text-[8px] font-black text-[#ffcc00]">{profile?.referrals.referralsActivated ?? 0} active</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
+                    <span className="text-slate-400 uppercase">Referral Earnings</span>
+                    <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
                   </div>
                   <div className="text-[8px] text-slate-300 break-all">{profile?.referralLink || 'Sync Telegram to generate invite link'}</div>
                   <button
