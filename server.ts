@@ -390,9 +390,11 @@ async function loadPersistedState() {
 function getUser(userId: string, walletAddress?: string): UserState {
   const existing = users.get(userId);
   if (existing) {
-    if (walletAddress) existing.walletAddress = walletAddress;
+    if (walletAddress && existing.walletAddress !== walletAddress) {
+      existing.walletAddress = walletAddress;
+      schedulePersist();
+    }
     hydrateUser(existing);
-    schedulePersist();
     return existing;
   }
 
@@ -479,8 +481,7 @@ function getEnergyState(user: UserState) {
   };
 }
 
-function buildProfileResponse(user: UserState) {
-  const claimedQuestIds = claimCompletedQuests(user);
+function buildBootstrapProfileResponse(user: UserState) {
   return {
     userId: user.userId,
     telegramUsername: user.telegramUsername || null,
@@ -492,6 +493,13 @@ function buildProfileResponse(user: UserState) {
     energy: getEnergyState(user),
     referralCode: user.referralCode,
     referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
+  };
+}
+
+function buildProfileResponse(user: UserState) {
+  const claimedQuestIds = claimCompletedQuests(user);
+  return {
+    ...buildBootstrapProfileResponse(user),
     referrals: {
       referredByUserId: user.referredByUserId || null,
       status: user.referralStatus || null,
@@ -602,8 +610,9 @@ function claimCompletedQuests(user: UserState) {
 function buildQuestView(userId: string) {
   const progressList = getQuestProgress(userId);
   const now = Date.now();
+  const progressMap = new Map(progressList.map((entry) => [entry.questId, entry]));
   return QUEST_DEFINITIONS.map((quest) => {
-    const progress = progressList.find((entry) => entry.questId === quest.id);
+    const progress = progressMap.get(quest.id);
     const boundary = progress ? (quest.kind === 'daily' ? getStartOfUtcDay(progress.updatedAt) : getStartOfUtcWeek(progress.updatedAt)) : null;
     const currentBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
     const currentProgress = boundary === currentBoundary && progress ? progress.progress : 0;
@@ -794,6 +803,14 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
+  const changed =
+    user.telegramId !== auth.id ||
+    user.telegramChatId !== auth.id ||
+    user.telegramUsername !== auth.username ||
+    user.telegramFirstName !== auth.first_name ||
+    user.telegramLastName !== auth.last_name ||
+    user.telegramPhotoUrl !== auth.photo_url ||
+    user.telegramAuthAt !== auth.auth_date;
   user.telegramId = auth.id;
   user.telegramChatId = auth.id;
   user.telegramUsername = auth.username;
@@ -801,6 +818,9 @@ function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
   user.telegramLastName = auth.last_name;
   user.telegramPhotoUrl = auth.photo_url;
   user.telegramAuthAt = auth.auth_date;
+  if (changed) {
+    schedulePersist();
+  }
 }
 
 function resolveCanonicalUserId(body: { userId?: string; telegramInitData?: string; walletAddress?: string }) {
@@ -1431,7 +1451,7 @@ app.post('/api/users/sync', (req, res) => {
   return res.json({
     telegramInitDataValid: !!resolved.auth,
     sessionToken: resolved.auth ? createSessionToken(user.userId) : null,
-    ...buildProfileResponse(user),
+    ...buildBootstrapProfileResponse(user),
   });
 });
 

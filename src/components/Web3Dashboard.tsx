@@ -138,6 +138,7 @@ interface PendingDepositState {
 }
 
 const PENDING_DEPOSIT_STORAGE_KEY = 'redoapp_pending_deposit';
+type BootstrapProfile = Pick<PlayerProfile, 'userId' | 'telegramUsername' | 'telegramPhotoUrl' | 'walletAddress' | 'availableTickets' | 'heldTickets' | 'xp' | 'energy' | 'referralCode' | 'referralLink'>;
 
 export function Web3Dashboard({
   userName,
@@ -177,6 +178,8 @@ export function Web3Dashboard({
       return null;
     }
   });
+  const [fullProfile, setFullProfile] = useState<PlayerProfile | null>(null);
+  const [fullProfileLoading, setFullProfileLoading] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -245,25 +248,26 @@ export function Web3Dashboard({
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
-  const currentUserId = profile?.userId || bootstrapUserId;
+  const activeProfile = fullProfile ?? profile;
+  const currentUserId = activeProfile?.userId || bootstrapUserId;
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
   const [energyNow, setEnergyNow] = useState(() => Date.now());
-  const effectiveXp = profile?.xp ?? playerXp;
+  const effectiveXp = activeProfile?.xp ?? playerXp;
   const displayXpNeeded = 400;
   const displayLevel = Math.floor(effectiveXp / displayXpNeeded) + 1;
   const displayCurrentLevelXp = effectiveXp % displayXpNeeded;
   const displayXpProgressPercentage = Math.min(100, Math.floor((displayCurrentLevelXp / displayXpNeeded) * 100));
-  const energy = profile?.energy ?? DEFAULT_ENERGY_STATE;
-  const quests = profile?.quests ?? [];
-  const referralInvites = profile?.referrals?.invitedUsers ?? [];
+  const energy = activeProfile?.energy ?? DEFAULT_ENERGY_STATE;
+  const quests = fullProfile?.quests ?? [];
+  const referralInvites = fullProfile?.referrals?.invitedUsers ?? [];
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus')
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
   const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - energyNow) / 1000)) : 0;
-  const tgProfileName = profile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
-  const tgPhotoUrl = profile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
+  const tgProfileName = activeProfile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
+  const tgPhotoUrl = activeProfile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const privateStakeRequiresWallet = privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
   const formatPlaceLabel = (place: number) => (place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`);
@@ -284,10 +288,10 @@ export function Web3Dashboard({
   }, [walletConnected]);
 
   useEffect(() => {
-    if (!profile) return;
-    localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(profile));
-    window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: profile }));
-  }, [profile]);
+    if (!activeProfile) return;
+    localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(activeProfile));
+    window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: activeProfile }));
+  }, [activeProfile]);
 
   useEffect(() => {
     const handleProfileSync = (event: Event) => {
@@ -300,6 +304,7 @@ export function Web3Dashboard({
           xp: detail.xp,
         };
       });
+      setFullProfile((prev) => prev ? { ...prev, xp: detail.xp } : prev);
     };
 
     window.addEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
@@ -451,20 +456,39 @@ export function Web3Dashboard({
   }, [walletConnected, currentUserId, buyingTickets]);
 
   useEffect(() => {
-    if (!profile) return;
+    if (!activeProfile) return;
     refreshPendingDeposits().catch(() => undefined);
     const timer = window.setInterval(() => {
       refreshPendingDeposits().catch(() => undefined);
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [currentUserId, profile]);
+  }, [currentUserId, activeProfile]);
+
+  const fetchFullProfile = () => {
+    if (fullProfileLoading || !getSessionToken()) {
+      return Promise.resolve(fullProfile);
+    }
+    setFullProfileLoading(true);
+    return apiRequest<PlayerProfile>('/api/me')
+      .then((me) => {
+        const normalized = normalizeProfile(me);
+        setFullProfile(normalized);
+        setProfile((prev) => normalized ?? prev);
+        setGoldenTickets(me.availableTickets);
+        setHeldTickets(me.heldTickets);
+        return normalized;
+      })
+      .finally(() => {
+        setFullProfileLoading(false);
+      });
+  };
 
   useEffect(() => {
     localStorage.setItem('redoapp_current_user_id', currentUserId);
     if (rawAddress) {
       localStorage.setItem('redoapp_wallet_address', rawAddress);
     }
-    apiRequest<PlayerProfile & {
+    apiRequest<BootstrapProfile & {
       telegramInitDataValid: boolean;
       sessionToken: string | null;
     }>('/api/users/sync', {
@@ -478,7 +502,8 @@ export function Web3Dashboard({
     }).then((synced) => {
       setSessionToken(synced.sessionToken);
       localStorage.setItem('redoapp_current_user_id', synced.userId);
-      setProfile(normalizeProfile(synced));
+      setProfile((prev) => normalizeProfile({ ...prev, ...synced }));
+      setFullProfile(null);
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
       return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId))
@@ -488,6 +513,11 @@ export function Web3Dashboard({
         .catch(() => undefined);
     }).catch(() => undefined);
   }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
+
+  useEffect(() => {
+    if (currentTab !== 'profile' || fullProfile || !getSessionToken()) return;
+    fetchFullProfile().catch(() => undefined);
+  }, [currentTab, fullProfile]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -547,7 +577,9 @@ export function Web3Dashboard({
       };
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
       return apiRequest<PlayerProfile>('/api/me').then((me) => {
-        setProfile(normalizeProfile(me));
+        const normalized = normalizeProfile(me);
+        setProfile(normalized);
+        setFullProfile(normalized);
         setGoldenTickets(me.availableTickets);
         setHeldTickets(me.heldTickets);
       });
@@ -959,18 +991,18 @@ export function Web3Dashboard({
                 <div className="bg-black p-2 border border-black space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
-                    <span className="text-[8px] font-black text-[#ffcc00]">{profile?.referrals?.referralsActivated ?? 0} active</span>
+                    <span className="text-[8px] font-black text-[#ffcc00]">{fullProfile?.referrals?.referralsActivated ?? 0} active</span>
                   </div>
                   <div className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
                     <span className="text-slate-400 uppercase">Referral Earnings</span>
                     <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
                   </div>
-                  <div className="text-[8px] text-slate-300 break-all">{profile?.referralLink || 'Sync Telegram to generate invite link'}</div>
+                  <div className="text-[8px] text-slate-300 break-all">{activeProfile?.referralLink || 'Sync Telegram to generate invite link'}</div>
                   <button
                     type="button"
                     onClick={() => {
-                      if (!profile?.referralLink) return;
-                      navigator.clipboard.writeText(profile.referralLink);
+                      if (!activeProfile?.referralLink) return;
+                      navigator.clipboard.writeText(activeProfile.referralLink);
                       alert('Referral link copied.');
                     }}
                     className="w-full py-1.5 bg-[#ffcc00] text-black border border-black text-[8px] font-black uppercase"
@@ -978,7 +1010,9 @@ export function Web3Dashboard({
                     Copy Referral Link
                   </button>
                   <div className="space-y-1 max-h-[96px] overflow-y-auto custom-scroll pr-0.5">
-                    {referralInvites.length === 0 ? (
+                    {fullProfileLoading && !fullProfile ? (
+                      <div className="text-[8px] text-slate-500">Loading referrals...</div>
+                    ) : referralInvites.length === 0 ? (
                       <div className="text-[8px] text-slate-500">No referrals yet.</div>
                     ) : (
                       referralInvites.map((invite) => (
@@ -996,7 +1030,9 @@ export function Web3Dashboard({
                 <div className="bg-black p-2 border border-black space-y-1">
                   <div className="text-[7px] uppercase font-bold text-slate-400">Quests</div>
                   <div className="space-y-1 max-h-[140px] overflow-y-auto custom-scroll pr-0.5">
-                    {quests.length === 0 ? (
+                    {fullProfileLoading && !fullProfile ? (
+                      <div className="text-[8px] text-slate-500">Loading quests...</div>
+                    ) : quests.length === 0 ? (
                       <div className="text-[8px] text-slate-500">No quests loaded.</div>
                     ) : (
                       quests.map((quest) => (
