@@ -36,6 +36,7 @@ type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
 const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
+const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
 
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
@@ -178,7 +179,13 @@ export function Web3Dashboard({
       return null;
     }
   });
-  const [fullProfile, setFullProfile] = useState<PlayerProfile | null>(null);
+  const [fullProfile, setFullProfile] = useState<PlayerProfile | null>(() => {
+    try {
+      return normalizeProfile(JSON.parse(localStorage.getItem(FULL_PROFILE_CACHE_STORAGE_KEY) || 'null'));
+    } catch {
+      return null;
+    }
+  });
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
   const [tgPhotoFailed, setTgPhotoFailed] = useState(false);
 
@@ -248,6 +255,7 @@ export function Web3Dashboard({
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
+  const fullProfileAutoloadedForRef = useRef<string | null>(null);
   const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
   const activeProfile = fullProfile ?? profile;
   const currentUserId = activeProfile?.userId || bootstrapUserId;
@@ -255,7 +263,7 @@ export function Web3Dashboard({
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
   const [energyNow, setEnergyNow] = useState(() => Date.now());
-  const effectiveXp = activeProfile?.xp ?? playerXp;
+  const effectiveXp = Math.max(activeProfile?.xp ?? 0, playerXp ?? 0);
   const displayXpNeeded = 400;
   const displayLevel = Math.floor(effectiveXp / displayXpNeeded) + 1;
   const displayCurrentLevelXp = effectiveXp % displayXpNeeded;
@@ -293,6 +301,17 @@ export function Web3Dashboard({
     localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(activeProfile));
     window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: activeProfile }));
   }, [activeProfile]);
+
+  useEffect(() => {
+    if (!fullProfile) return;
+    localStorage.setItem(FULL_PROFILE_CACHE_STORAGE_KEY, JSON.stringify(fullProfile));
+  }, [fullProfile]);
+
+  useEffect(() => {
+    if (fullProfileAutoloadedForRef.current && fullProfileAutoloadedForRef.current !== currentUserId) {
+      fullProfileAutoloadedForRef.current = null;
+    }
+  }, [currentUserId]);
 
   useEffect(() => {
     setTgPhotoFailed(false);
@@ -508,7 +527,12 @@ export function Web3Dashboard({
       setSessionToken(synced.sessionToken);
       localStorage.setItem('redoapp_current_user_id', synced.userId);
       setProfile((prev) => normalizeProfile({ ...prev, ...synced }));
-      setFullProfile(null);
+      setFullProfile((prev) => {
+        if (!prev?.userId || prev.userId !== synced.userId) {
+          return null;
+        }
+        return normalizeProfile({ ...prev, ...synced });
+      });
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
       return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId))
@@ -518,6 +542,17 @@ export function Web3Dashboard({
         .catch(() => undefined);
     }).catch(() => undefined);
   }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
+
+  useEffect(() => {
+    if (!getSessionToken()) return;
+    if (fullProfileLoading) return;
+    if (fullProfileAutoloadedForRef.current === currentUserId) return;
+    const timer = window.setTimeout(() => {
+      fullProfileAutoloadedForRef.current = currentUserId;
+      fetchFullProfile().catch(() => undefined);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [currentUserId, fullProfileLoading]);
 
   const connectWallet = async () => {
     sound.playPop();
