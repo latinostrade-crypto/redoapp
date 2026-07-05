@@ -1291,25 +1291,16 @@ function buildRankOrder(playerCount: number): number[] {
 }
 
 function buildPayoutByRank(playerCount: number, netPrizePool: number): Record<number, number> {
-  if (playerCount <= 2) {
-    return {
-      1: round2(netPrizePool * 0.65),
-      2: round2(netPrizePool * 0.35),
-    };
-  }
-  if (playerCount === 3) {
-    return {
-      1: round2(netPrizePool * 0.52),
-      2: round2(netPrizePool * 0.30),
-      3: round2(netPrizePool * 0.18),
-    };
-  }
-  return {
-    1: round2(netPrizePool * 0.45),
-    2: round2(netPrizePool * 0.27),
-    3: round2(netPrizePool * 0.17),
-    4: round2(netPrizePool * 0.11),
-  };
+  const shares = playerCount <= 2
+    ? [0.90, 0.10]
+    : playerCount === 3
+      ? [0.65, 0.25, 0.10]
+      : [0.55, 0.25, 0.10, 0.10];
+  const payouts = shares.map((share, index) => index === 0
+    ? 0
+    : Math.floor((netPrizePool * share + Number.EPSILON) * 100) / 100);
+  payouts[0] = round2(netPrizePool - payouts.slice(1).reduce((sum, payout) => sum + payout, 0));
+  return Object.fromEntries(payouts.map((payout, index) => [index + 1, payout]));
 }
 
 function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null {

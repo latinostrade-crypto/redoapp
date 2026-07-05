@@ -19,6 +19,7 @@ import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
 import { apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken } from '../utils/api';
+import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
@@ -27,11 +28,6 @@ const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
-const PVP_PAYOUT_BY_PLAYERS: Record<2 | 3 | 4, number[]> = {
-  2: [0.65, 0.35],
-  3: [0.52, 0.30, 0.18],
-  4: [0.45, 0.27, 0.17, 0.11],
-};
 type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
@@ -285,9 +281,9 @@ export function Web3Dashboard({
   const authReady = bootstrapState === 'ready';
   const formatPlaceLabel = (place: number) => (place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`);
   const formatPayoutRow = (stake: number, playersCount: 2 | 3 | 4) => {
-    const netPrizePool = stake * playersCount * 0.96;
-    return PVP_PAYOUT_BY_PLAYERS[playersCount]
-      .map((share, index) => `${formatPlaceLabel(index + 1)} ${(netPrizePool * share).toFixed(2)} TKT`)
+    const { payouts } = calculateTicketPayouts(stake, playersCount);
+    return payouts
+      .map((payout, index) => `${formatPlaceLabel(index + 1)} ${payout.toFixed(2)} TKT`)
       .join(' · ');
   };
 
@@ -1508,7 +1504,7 @@ export function Web3Dashboard({
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-450">
                         <div className="flex justify-between text-slate-350">
                           <span>Total rewards:</span>
-                          <span className="text-[#00ff66] font-bold">{(selectedStake * MIN_MATCH_PLAYERS * 0.96).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.96).toFixed(2)} TKT</span>
+                          <span className="text-[#00ff66] font-bold">{calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - {calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
                           <span>2 players:</span>
@@ -1814,6 +1810,27 @@ export function Web3Dashboard({
                             </button>
                           ))}
                         </div>
+                      </div>
+
+                      <div className="bg-black p-2 border border-black font-mono text-[8px] leading-relaxed">
+                        {privateRoomStake === 0 ? (
+                          <div className="flex justify-between text-slate-400">
+                            <span>Room reward</span>
+                            <span className="font-black text-[#00d2ff]">FREE · XP ONLY</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex justify-between mb-1">
+                              <span className="text-slate-400">Prize pool</span>
+                              <span className="font-black text-[#00ff66]">
+                                {calculateTicketPayouts(privateRoomStake, privateRoomTargetPlayers).netPrizePool.toFixed(2)} TKT
+                              </span>
+                            </div>
+                            <div className="text-[#ffcc00] font-bold text-right">
+                              {formatPayoutRow(privateRoomStake, privateRoomTargetPlayers)}
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       <div className="space-y-1">

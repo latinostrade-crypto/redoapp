@@ -81,9 +81,9 @@ Settlement supports variable player counts and validates:
 
 ### Net prize pool splits
 
-- `2 players`: `70 / 30`
-- `3 players`: `60 / 25 / 15`
-- `4 players`: `52 / 23 / 15 / 10`
+- `2 players`: `90 / 10`
+- `3 players`: `65 / 25 / 10`
+- `4 players`: `55 / 25 / 10 / 10`
 
 ### Referral share
 
