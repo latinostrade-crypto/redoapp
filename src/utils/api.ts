@@ -1,7 +1,15 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
-// Render free services can take longer than 15 seconds to resume from a cold start.
-const API_REQUEST_TIMEOUT_MS = 60000;
+// Render documents an approximately one-minute wake-up for idle free services.
+const API_REQUEST_TIMEOUT_MS = 90000;
+
+export function wakeBackend() {
+  if (!API_BASE_URL) return;
+  fetch(`${API_BASE_URL}/api/health`, {
+    method: 'GET',
+    cache: 'no-store',
+  }).catch(() => undefined);
+}
 
 export function getSessionToken() {
   return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';

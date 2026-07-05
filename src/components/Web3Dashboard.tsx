@@ -195,6 +195,7 @@ export function Web3Dashboard({
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
   const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [bootstrapError, setBootstrapError] = useState('');
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [tgPhotoFailed, setTgPhotoFailed] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(false);
@@ -256,7 +257,6 @@ export function Web3Dashboard({
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
-  const fullProfileAutoloadedForRef = useRef<string | null>(null);
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
   const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
@@ -310,12 +310,6 @@ export function Web3Dashboard({
     if (!fullProfile) return;
     localStorage.setItem(FULL_PROFILE_CACHE_STORAGE_KEY, JSON.stringify(fullProfile));
   }, [fullProfile]);
-
-  useEffect(() => {
-    if (fullProfileAutoloadedForRef.current && fullProfileAutoloadedForRef.current !== currentUserId) {
-      fullProfileAutoloadedForRef.current = null;
-    }
-  }, [currentUserId]);
 
   useEffect(() => {
     setTgPhotoFailed(false);
@@ -516,7 +510,7 @@ export function Web3Dashboard({
     if (rawAddress) {
       localStorage.setItem('redoapp_wallet_address', rawAddress);
     }
-    const requestKey = [rawAddress || '', telegramInitData || '', launchStartParam || ''].join('|');
+    const requestKey = [rawAddress || '', telegramInitData || '', launchStartParam || '', bootstrapAttempt].join('|');
     if (syncRequestKeyRef.current === requestKey) {
       return;
     }
@@ -582,18 +576,7 @@ export function Web3Dashboard({
     return () => {
       cancelled = true;
     };
-  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
-
-  useEffect(() => {
-    if (!authReady || !getSessionToken()) return;
-    if (fullProfileLoading) return;
-    if (fullProfileAutoloadedForRef.current === currentUserId) return;
-    const timer = window.setTimeout(() => {
-      fullProfileAutoloadedForRef.current = currentUserId;
-      fetchFullProfile().catch(() => undefined);
-    }, 100);
-    return () => window.clearTimeout(timer);
-  }, [authReady, currentUserId, fullProfileLoading]);
+  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam, bootstrapAttempt]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -963,8 +946,18 @@ export function Web3Dashboard({
       </div>
 
       {bootstrapState === 'error' && (
-        <div className="bg-[#2a0d0d] border border-black px-3 py-2 text-[8px] leading-relaxed text-[#ffb3b3] font-mono">
-          {bootstrapError}
+        <div className="flex items-center gap-2 bg-[#2a0d0d] border border-black px-3 py-2 text-[8px] leading-relaxed text-[#ffb3b3] font-mono">
+          <span className="flex-1">{bootstrapError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setBootstrapError('');
+              setBootstrapAttempt((attempt) => attempt + 1);
+            }}
+            className="shrink-0 bg-[#ffcc00] px-2 py-1 text-black font-black uppercase border border-black"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -1624,7 +1617,6 @@ export function Web3Dashboard({
                               alert(error.message);
                             });
                           }}
-                          disabled={!authReady}
                           className="flex-1 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           JOIN REAL QUEUE
@@ -1851,7 +1843,6 @@ export function Web3Dashboard({
                           setPrivateRoomCode(normalizedCode);
                           setShowRoomDisclaimer(true);
                         }}
-                        disabled={!authReady}
                         className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Join By Code
@@ -1893,7 +1884,6 @@ export function Web3Dashboard({
                               alert(error.message);
                             });
                           }}
-                          disabled={!authReady}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
