@@ -35,6 +35,7 @@ const PVP_PAYOUT_BY_PLAYERS: Record<2 | 3 | 4, number[]> = {
 type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
+const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
 
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
@@ -169,7 +170,13 @@ export function Web3Dashboard({
   const walletAddress = walletConnected 
     ? `${rawAddress.substring(0, 6)}...${rawAddress.substring(rawAddress.length - 4)}` 
     : '';
-  const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [profile, setProfile] = useState<PlayerProfile | null>(() => {
+    try {
+      return normalizeProfile(JSON.parse(localStorage.getItem(PROFILE_CACHE_STORAGE_KEY) || 'null'));
+    } catch {
+      return null;
+    }
+  });
 
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -278,6 +285,7 @@ export function Web3Dashboard({
 
   useEffect(() => {
     if (!profile) return;
+    localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(profile));
     window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: profile }));
   }, [profile]);
 
@@ -473,9 +481,11 @@ export function Web3Dashboard({
       setProfile(normalizeProfile(synced));
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
-      return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId));
-    }).then((ledger) => {
-      setTransactions(ledger.transactions);
+      return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId))
+        .then((ledger) => {
+          setTransactions(ledger.transactions);
+        })
+        .catch(() => undefined);
     }).catch(() => undefined);
   }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
 
@@ -1759,20 +1769,25 @@ export function Web3Dashboard({
                               Tg Link
                             </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (privateStakeRequiresWallet && !walletConnected) {
-                                connectWallet();
-                                return;
-                              }
-                              sound.playPop();
-                              setShowRoomDisclaimer(true);
-                            }}
-                            className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
-                          >
-                            Enter Room
-                          </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (privateStakeRequiresWallet && !walletConnected) {
+                              connectWallet();
+                              return;
+                            }
+                            sound.playPop();
+                            if (privateRoomStatus === 'waiting') {
+                              setCurrentTab('pvp');
+                              setPvpSubMode('private');
+                              return;
+                            }
+                            setShowRoomDisclaimer(true);
+                          }}
+                          className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
+                        >
+                          Enter Room
+                        </button>
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
                             Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
                           </div>

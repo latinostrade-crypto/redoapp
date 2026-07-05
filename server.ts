@@ -752,13 +752,35 @@ function extractSessionToken(req: Request) {
   return null;
 }
 
+function extractTelegramInitData(req: Request) {
+  const headerValue = req.headers['x-telegram-init-data'];
+  if (typeof headerValue === 'string' && headerValue) {
+    return headerValue;
+  }
+  if (typeof req.query.telegramInitData === 'string' && req.query.telegramInitData) {
+    return req.query.telegramInitData;
+  }
+  const body = req.body as { telegramInitData?: string } | undefined;
+  if (typeof body?.telegramInitData === 'string' && body.telegramInitData) {
+    return body.telegramInitData;
+  }
+  return '';
+}
+
 function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const session = verifySessionToken(extractSessionToken(req));
-  if (!session) {
+  if (session) {
+    req.authUserId = session.userId;
+    return next();
+  }
+  const auth = verifyTelegramInitData(extractTelegramInitData(req));
+  if (!auth) {
     return res.status(401).json({ error: 'Authentication required.' });
   }
-  req.authUserId = session.userId;
-  next();
+  req.authUserId = `tg:${auth.id}`;
+  const user = getUser(req.authUserId);
+  applyTelegramAuth(user, auth);
+  return next();
 }
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
