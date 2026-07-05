@@ -161,6 +161,12 @@ export function Web3Dashboard({
   transactions,
   setTransactions,
 }: Web3DashboardProps) {
+  const initialLaunchRoomCodeRef = useRef('');
+  if (!initialLaunchRoomCodeRef.current) {
+    const startApp = getTelegramStartParam();
+    const roomFromSearch = new URLSearchParams(window.location.search).get('room');
+    initialLaunchRoomCodeRef.current = (roomFromSearch || (startApp?.startsWith('room_') ? startApp.replace('room_', '') : '')).toUpperCase();
+  }
   const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp' | 'rewards'>('profile');
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
 
@@ -187,6 +193,8 @@ export function Web3Dashboard({
     }
   });
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
+  const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [bootstrapError, setBootstrapError] = useState('');
   const [tgPhotoFailed, setTgPhotoFailed] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(false);
@@ -242,20 +250,15 @@ export function Web3Dashboard({
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
   const [privateRoomCode, setPrivateRoomCode] = useState('');
-  const [privateJoinCode, setPrivateJoinCode] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const room = params.get('room');
-    const startApp = getTelegramStartParam();
-    if (room) return room.toUpperCase();
-    if (startApp?.startsWith('room_')) return startApp.replace('room_', '').toUpperCase();
-    return '';
-  });
+  const [privateJoinCode, setPrivateJoinCode] = useState(() => initialLaunchRoomCodeRef.current);
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const fullProfileAutoloadedForRef = useRef<string | null>(null);
+  const syncRequestKeyRef = useRef<string>('');
+  const launchRoomConsumedRef = useRef(false);
   const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
   const activeProfile = fullProfile ?? profile;
   const currentUserId = activeProfile?.userId || bootstrapUserId;
@@ -279,6 +282,7 @@ export function Web3Dashboard({
   const tgPhotoUrl = activeProfile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const privateStakeRequiresWallet = privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
+  const authReady = bootstrapState === 'ready';
   const formatPlaceLabel = (place: number) => (place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`);
   const formatPayoutRow = (stake: number, playersCount: 2 | 3 | 4) => {
     const netPrizePool = stake * playersCount * 0.94;
@@ -512,6 +516,16 @@ export function Web3Dashboard({
     if (rawAddress) {
       localStorage.setItem('redoapp_wallet_address', rawAddress);
     }
+    const requestKey = [rawAddress || '', telegramInitData || '', launchStartParam || ''].join('|');
+    if (syncRequestKeyRef.current === requestKey) {
+      return;
+    }
+    syncRequestKeyRef.current = requestKey;
+    setBootstrapState('loading');
+    setBootstrapError('');
+
+    let cancelled = false;
+
     apiRequest<BootstrapProfile & {
       telegramInitDataValid: boolean;
       sessionToken: string | null;
@@ -523,7 +537,8 @@ export function Web3Dashboard({
         telegramInitData,
         startParam: launchStartParam || null,
       }),
-    }).then((synced) => {
+    }).then(async (synced) => {
+      if (cancelled) return;
       setSessionToken(synced.sessionToken);
       localStorage.setItem('redoapp_current_user_id', synced.userId);
       setProfile((prev) => normalizeProfile({ ...prev, ...synced }));
@@ -535,24 +550,49 @@ export function Web3Dashboard({
       });
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
-      return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId))
-        .then((ledger) => {
-          setTransactions(ledger.transactions);
-        })
-        .catch(() => undefined);
-    }).catch(() => undefined);
-  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
+      const followUps = await Promise.allSettled([
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId)),
+        (synced.sessionToken || telegramInitData)
+          ? apiRequest<PlayerProfile>('/api/me')
+          : Promise.resolve(null),
+      ]);
+
+      if (cancelled) return;
+
+      const [ledgerResult, profileResult] = followUps;
+      if (ledgerResult.status === 'fulfilled') {
+        setTransactions(ledgerResult.value.transactions);
+      }
+      if (profileResult.status === 'fulfilled' && profileResult.value) {
+        const normalized = normalizeProfile(profileResult.value);
+        setFullProfile(normalized);
+        setProfile((prev) => normalized ?? prev);
+        setGoldenTickets(profileResult.value.availableTickets);
+        setHeldTickets(profileResult.value.heldTickets);
+      }
+
+      setBootstrapState('ready');
+    }).catch((error) => {
+      if (cancelled) return;
+      setBootstrapState('error');
+      setBootstrapError(error instanceof Error ? error.message : 'Failed to initialize the Telegram session.');
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam, currentUserId]);
 
   useEffect(() => {
-    if (!getSessionToken()) return;
+    if (!authReady || !getSessionToken()) return;
     if (fullProfileLoading) return;
     if (fullProfileAutoloadedForRef.current === currentUserId) return;
     const timer = window.setTimeout(() => {
       fullProfileAutoloadedForRef.current = currentUserId;
       fetchFullProfile().catch(() => undefined);
-    }, 1200);
+    }, 100);
     return () => window.clearTimeout(timer);
-  }, [currentUserId, fullProfileLoading]);
+  }, [authReady, currentUserId, fullProfileLoading]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -747,12 +787,17 @@ export function Web3Dashboard({
   }, [matchmakingState, currentUserId, onStartGame, selectedStake]);
 
   useEffect(() => {
-    const incomingRoomCode = privateJoinCode.trim().toUpperCase();
-    if (!incomingRoomCode || privateRoomStatus !== 'idle') return;
+    const incomingRoomCode = initialLaunchRoomCodeRef.current.trim().toUpperCase();
+    if (!authReady || launchRoomConsumedRef.current || !incomingRoomCode || privateRoomStatus !== 'idle') return;
+    launchRoomConsumedRef.current = true;
     setCurrentTab('pvp');
     setPvpSubMode('private');
-    joinPrivateRoomByCode(incomingRoomCode).catch(() => undefined);
-  }, [privateJoinCode, privateRoomStatus, currentUserId]);
+    joinPrivateRoomByCode(incomingRoomCode).then((joined) => {
+      if (!joined) {
+        setBootstrapError(`Failed to auto-join private room ${incomingRoomCode}.`);
+      }
+    }).catch(() => undefined);
+  }, [authReady, privateRoomStatus, currentUserId]);
 
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
@@ -845,10 +890,20 @@ export function Web3Dashboard({
       <div className="flex justify-between items-center bg-[#18181c] p-2.5 pixel-box-sm border-black">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00ff66] opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00ff66]"></span>
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+              bootstrapState === 'error' ? 'bg-[#ff4b4b]' : bootstrapState === 'loading' ? 'bg-[#ffcc00]' : 'bg-[#00ff66]'
+            }`}></span>
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${
+              bootstrapState === 'error' ? 'bg-[#ff4b4b]' : bootstrapState === 'loading' ? 'bg-[#ffcc00]' : 'bg-[#00ff66]'
+            }`}></span>
           </span>
           <div className="leading-none text-left">
+            <div className="text-[8px] font-black uppercase text-slate-200">
+              {bootstrapState === 'loading' ? 'Syncing session' : bootstrapState === 'error' ? 'Sync failed' : 'Session ready'}
+            </div>
+            <div className="text-[7px] text-slate-400">
+              {bootstrapState === 'error' ? bootstrapError : authReady ? currentUserId : 'Waiting for backend/auth bootstrap'}
+            </div>
           </div>
         </div>
 
@@ -905,6 +960,12 @@ export function Web3Dashboard({
           </button>
         </div>
       </div>
+
+      {bootstrapState === 'error' && (
+        <div className="bg-[#2a0d0d] border border-black px-3 py-2 text-[8px] leading-relaxed text-[#ffb3b3] font-mono">
+          {bootstrapError}
+        </div>
+      )}
 
       {/* 3. Grid statistics (XP instead of TON Points) */}
       <div className="grid grid-cols-3 gap-2">
@@ -1482,8 +1543,8 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={buyTicketsWithTon}
-                          disabled={buyingTickets}
-                          className="flex-1 py-1.5 bg-black text-slate-300 border border-black text-[9px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1"
+                          disabled={buyingTickets || !authReady}
+                          className="flex-1 py-1.5 bg-black text-slate-300 border border-black text-[9px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {buyingTickets ? (
                             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1510,6 +1571,10 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={() => {
+                            if (!authReady) {
+                              alert('Session is still syncing with the backend. Try again in a moment.');
+                              return;
+                            }
                             if (goldenTickets < selectedStake) {
                               alert(`You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`);
                               return;
@@ -1558,7 +1623,8 @@ export function Web3Dashboard({
                               alert(error.message);
                             });
                           }}
-                          className="flex-1 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
+                          disabled={!authReady}
+                          className="flex-1 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           JOIN REAL QUEUE
                           </button>
@@ -1771,6 +1837,10 @@ export function Web3Dashboard({
                       <button
                         type="button"
                         onClick={() => {
+                          if (!authReady) {
+                            alert('Session is still syncing with the backend. Try again in a moment.');
+                            return;
+                          }
                           const normalizedCode = privateJoinCode.trim().toUpperCase();
                           if (!normalizedCode) {
                             alert('Enter a room code first.');
@@ -1780,7 +1850,8 @@ export function Web3Dashboard({
                           setPrivateRoomCode(normalizedCode);
                           setShowRoomDisclaimer(true);
                         }}
-                        className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
+                        disabled={!authReady}
+                        className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Join By Code
                       </button>
@@ -1789,6 +1860,10 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={() => {
+                            if (!authReady) {
+                              alert('Session is still syncing with the backend. Try again in a moment.');
+                              return;
+                            }
                             if (privateStakeRequiresWallet && !walletConnected) {
                               connectWallet();
                               return;
@@ -1817,7 +1892,8 @@ export function Web3Dashboard({
                               alert(error.message);
                             });
                           }}
-                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000]"
+                          disabled={!authReady}
+                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>

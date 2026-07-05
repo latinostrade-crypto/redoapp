@@ -1,5 +1,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
+const API_REQUEST_TIMEOUT_MS = 15000;
 
 export function getSessionToken() {
   return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';
@@ -42,16 +43,39 @@ export function buildAuthenticatedUrl(path: string) {
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...buildAuthHeaders(init?.headers),
-    },
-    ...init,
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.error || 'Request failed');
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildAuthHeaders(init?.headers),
+      },
+      ...init,
+      signal: init?.signal ?? controller.signal,
+    });
+
+    const rawBody = await response.text();
+    const data = rawBody ? JSON.parse(rawBody) : null;
+
+    if (!response.ok) {
+      throw new Error(data?.error || `Request failed with status ${response.status}`);
+    }
+
+    return data as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Request timed out while waiting for the backend. Render may still be waking up.');
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error('Backend returned an invalid response.');
+    }
+    if (error instanceof TypeError) {
+      throw new Error('Network request failed. Check Render availability, CORS, and Telegram WebApp connectivity.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  return data as T;
 }
