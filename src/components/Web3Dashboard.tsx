@@ -180,6 +180,7 @@ export function Web3Dashboard({
   });
   const [fullProfile, setFullProfile] = useState<PlayerProfile | null>(null);
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
+  const [tgPhotoFailed, setTgPhotoFailed] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(false);
 
@@ -292,6 +293,10 @@ export function Web3Dashboard({
     localStorage.setItem(PROFILE_CACHE_STORAGE_KEY, JSON.stringify(activeProfile));
     window.dispatchEvent(new CustomEvent('redoapp:profile-sync', { detail: activeProfile }));
   }, [activeProfile]);
+
+  useEffect(() => {
+    setTgPhotoFailed(false);
+  }, [tgPhotoUrl]);
 
   useEffect(() => {
     const handleProfileSync = (event: Event) => {
@@ -513,11 +518,6 @@ export function Web3Dashboard({
         .catch(() => undefined);
     }).catch(() => undefined);
   }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
-
-  useEffect(() => {
-    if (currentTab !== 'profile' || fullProfile || !getSessionToken()) return;
-    fetchFullProfile().catch(() => undefined);
-  }, [currentTab, fullProfile]);
 
   const connectWallet = async () => {
     sound.playPop();
@@ -917,11 +917,15 @@ export function Web3Dashboard({
                 {/* Profile Read-Only Info */}
                 <div className="flex items-center gap-3 border-b border-black pb-3">
                   <div className="w-12 h-12 bg-slate-950 border border-black flex items-center justify-center relative overflow-hidden">
-                    {tgPhotoUrl ? (
+                    {tgPhotoUrl && !tgPhotoFailed ? (
                       <img 
                         src={tgPhotoUrl} 
                         alt="Telegram Avatar" 
-                        className="w-full h-full object-cover" 
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                        onError={() => {
+                          setTgPhotoFailed(true);
+                        }}
                       />
                     ) : (
                       <div className="flex items-center justify-center w-full h-full">
@@ -993,6 +997,17 @@ export function Web3Dashboard({
                     <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
                     <span className="text-[8px] font-black text-[#ffcc00]">{fullProfile?.referrals?.referralsActivated ?? 0} active</span>
                   </div>
+                  {!fullProfile && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        fetchFullProfile().catch(() => undefined);
+                      }}
+                      className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase"
+                    >
+                      {fullProfileLoading ? 'Loading Details...' : 'Load Referrals & Quests'}
+                    </button>
+                  )}
                   <div className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
                     <span className="text-slate-400 uppercase">Referral Earnings</span>
                     <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
