@@ -28,9 +28,9 @@ const MATCHMAKING_TIMEOUT_SEC = 5;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 const PVP_PAYOUT_BY_PLAYERS: Record<2 | 3 | 4, number[]> = {
-  2: [0.7, 0.3],
-  3: [0.6, 0.25, 0.15],
-  4: [0.52, 0.23, 0.15, 0.1],
+  2: [0.65, 0.35],
+  3: [0.52, 0.30, 0.18],
+  4: [0.45, 0.27, 0.17, 0.11],
 };
 type StakeOption = typeof STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
@@ -285,7 +285,7 @@ export function Web3Dashboard({
   const authReady = bootstrapState === 'ready';
   const formatPlaceLabel = (place: number) => (place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`);
   const formatPayoutRow = (stake: number, playersCount: 2 | 3 | 4) => {
-    const netPrizePool = stake * playersCount * 0.94;
+    const netPrizePool = stake * playersCount * 0.96;
     return PVP_PAYOUT_BY_PLAYERS[playersCount]
       .map((share, index) => `${formatPlaceLabel(index + 1)} ${(netPrizePool * share).toFixed(2)} TKT`)
       .join(' · ');
@@ -550,6 +550,9 @@ export function Web3Dashboard({
       });
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
+      // The authoritative sync is enough to unlock the UI. Profile and ledger
+      // hydration are optional follow-ups and must not block room actions.
+      setBootstrapState('ready');
       const followUps = await Promise.allSettled([
         apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId)),
         (synced.sessionToken || telegramInitData)
@@ -570,8 +573,6 @@ export function Web3Dashboard({
         setGoldenTickets(profileResult.value.availableTickets);
         setHeldTickets(profileResult.value.heldTickets);
       }
-
-      setBootstrapState('ready');
     }).catch((error) => {
       if (cancelled) return;
       setBootstrapState('error');
@@ -581,7 +582,7 @@ export function Web3Dashboard({
     return () => {
       cancelled = true;
     };
-  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam, currentUserId]);
+  }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam]);
 
   useEffect(() => {
     if (!authReady || !getSessionToken()) return;
@@ -1476,7 +1477,7 @@ export function Web3Dashboard({
                         MATCH READY!
                       </h3>
                       <p className="text-[8px] text-slate-455">
-                        Match session created. Launching validated stake table. Estimated net pool: {(selectedStake * Math.max(queueLength, MIN_MATCH_PLAYERS) * 0.94).toFixed(2)} TKT
+                        Match ready. Prize pool: {(selectedStake * Math.max(queueLength, MIN_MATCH_PLAYERS) * 0.96).toFixed(2)} TKT
                       </p>
                     </div>
                   ) : (
@@ -1514,7 +1515,7 @@ export function Web3Dashboard({
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-450">
                         <div className="flex justify-between text-slate-350">
                           <span>Total rewards:</span>
-                          <span className="text-[#00ff66] font-bold">{(selectedStake * MIN_MATCH_PLAYERS * 0.94).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.94).toFixed(2)} TKT</span>
+                          <span className="text-[#00ff66] font-bold">{(selectedStake * MIN_MATCH_PLAYERS * 0.96).toFixed(2)} - {(selectedStake * MAX_MATCH_PLAYERS * 0.96).toFixed(2)} TKT</span>
                         </div>
                         <div className="flex justify-between">
                           <span>2 players:</span>

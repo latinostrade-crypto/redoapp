@@ -868,14 +868,6 @@ export default function App() {
                     </div>
 
                     <div className="text-right leading-none">
-                      <span className="text-[9px] font-black text-[#ffcc00] block">
-                        +{entry.xpGained} XP
-                      </span>
-                      {gameMode !== 'offline' && entry.ticketsGained !== undefined && (
-                        <span className="text-[8px] font-extrabold text-[#00ff66] block mt-1">
-                          +{entry.ticketsGained.toFixed(2)} TKT
-                        </span>
-                      )}
                       {entry.isWinner && (
                         <span className="text-[6px] bg-[#00ff66]/20 text-[#00ff66] px-1 border border-[#00ff66] font-black uppercase tracking-wider mt-0.5 inline-block">
                           Winner
@@ -892,8 +884,6 @@ export default function App() {
               const myEntry = (leaderboard || []).find((e: any) => e.playerId === 'player');
               if (!myEntry) return null;
               
-              const placementXp = myEntry.rank === 1 ? 200 : (myEntry.rank === 2 ? 100 : (myEntry.rank === 3 ? 60 : 30));
-              const cardsXp = cardsPlayedThisRound * 10;
               const previousXp = Math.max(0, playerXp - myEntry.xpGained);
               const prevLevel = Math.floor(previousXp / xpNeeded) + 1;
 
@@ -901,13 +891,11 @@ export default function App() {
                 <div className="bg-black p-2.5 border border-black mb-3 text-left space-y-1.5 font-mono text-[9px]">
                   <div className="flex justify-between items-center">
                     <span className="font-black text-[#00d2ff] flex flex-col gap-0.5">
-                      <span>REWARDS: <span className="text-[#ffcc00]">+{myEntry.xpGained} XP</span></span>
+                      <span>YOUR REWARD</span>
+                      <span className="text-[#ffcc00] text-[12px]">+{myEntry.xpGained} XP</span>
                       {gameMode !== 'offline' && myEntry.ticketsGained !== undefined && (
                         <span className="text-[#00ff66]">TICKETS: <span className="text-[#ffcc00]">+{myEntry.ticketsGained.toFixed(2)} TKT</span></span>
                       )}
-                    </span>
-                    <span className="text-slate-500 text-[8px] text-right self-start">
-                      ({placementXp} Rank + {cardsXp} Cards)
                     </span>
                   </div>
 

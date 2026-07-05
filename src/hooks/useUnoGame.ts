@@ -176,10 +176,10 @@ export function useUnoGame() {
       const payoutByRank = gameMode === 'offline' || activeStake <= 0
         ? {}
         : totalPlayers <= 2
-          ? { 1: 0.7, 2: 0.3 }
+          ? { 1: 0.65, 2: 0.35 }
           : totalPlayers === 3
-            ? { 1: 0.6, 2: 0.25, 3: 0.15 }
-            : { 1: 0.52, 2: 0.23, 3: 0.15, 4: 0.1 };
+            ? { 1: 0.52, 2: 0.30, 3: 0.18 }
+            : { 1: 0.45, 2: 0.27, 3: 0.17, 4: 0.11 };
       
       const entries = gameState.players.map((player) => {
         const isWinner = player.id === winnerId;
@@ -223,8 +223,8 @@ export function useUnoGame() {
         // Calculate Ticket Payouts if PVP or Private Mode
         if (gameMode !== 'offline' && activeStake > 0) {
           const grossPot = activeStake * totalPlayers;
-          const seasonFund = grossPot * 0.025;
-          const burnFund = grossPot * 0.035;
+          const seasonFund = grossPot * 0.02;
+          const burnFund = grossPot * 0.02;
           const netPrizePool = grossPot - seasonFund - burnFund;
           ticketsGained = netPrizePool * ((payoutByRank as Record<number, number>)[rank] || 0);
           ticketsGained = Math.round(ticketsGained * 100) / 100;

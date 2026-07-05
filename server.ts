@@ -1293,22 +1293,22 @@ function buildRankOrder(playerCount: number): number[] {
 function buildPayoutByRank(playerCount: number, netPrizePool: number): Record<number, number> {
   if (playerCount <= 2) {
     return {
-      1: round2(netPrizePool * 0.7),
-      2: round2(netPrizePool * 0.3),
+      1: round2(netPrizePool * 0.65),
+      2: round2(netPrizePool * 0.35),
     };
   }
   if (playerCount === 3) {
     return {
-      1: round2(netPrizePool * 0.6),
-      2: round2(netPrizePool * 0.25),
-      3: round2(netPrizePool * 0.15),
+      1: round2(netPrizePool * 0.52),
+      2: round2(netPrizePool * 0.30),
+      3: round2(netPrizePool * 0.18),
     };
   }
   return {
-    1: round2(netPrizePool * 0.52),
-    2: round2(netPrizePool * 0.23),
-    3: round2(netPrizePool * 0.15),
-    4: round2(netPrizePool * 0.10),
+    1: round2(netPrizePool * 0.45),
+    2: round2(netPrizePool * 0.27),
+    3: round2(netPrizePool * 0.17),
+    4: round2(netPrizePool * 0.11),
   };
 }
 
@@ -1909,8 +1909,8 @@ app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) =>
     .map((player, index) => ({ userId: player.userId, rank: index + 1 }));
 
   const grossPot = activeMatch.stake * activeMatch.players.length;
-  const seasonFund = round2(grossPot * 0.025);
-  const burnFund = round2(grossPot * 0.035);
+  const seasonFund = round2(grossPot * 0.02);
+  const burnFund = round2(grossPot * 0.02);
   const netPrizePool = round2(grossPot - seasonFund - burnFund);
   const payoutByRank = buildPayoutByRank(activeMatch.players.length, netPrizePool);
 

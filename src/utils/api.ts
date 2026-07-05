@@ -1,6 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
-const API_REQUEST_TIMEOUT_MS = 15000;
+// Render free services can take longer than 15 seconds to resume from a cold start.
+const API_REQUEST_TIMEOUT_MS = 60000;
 
 export function getSessionToken() {
   return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';
