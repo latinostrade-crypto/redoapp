@@ -2,6 +2,12 @@
 
 ## Scope
 
+Obsolete note:
+
+- All legacy pre-`redoapp` Render domains should be treated as deprecated.
+- The canonical production frontend is `https://redoapp.onrender.com`.
+- The canonical production backend is `https://redoapp-backend.onrender.com`.
+
 - Static review of the repository, backend, frontend, deployment config, and DB schema file.
 - Live verification of the deployed frontend domain and configured backend URL where possible.
 - Inventory of obsolete or likely obsolete files and assets.
@@ -10,7 +16,7 @@
 
 The project currently has multiple critical authorization and business-logic flaws in the backend. Most sensitive operations trust a client-supplied `userId` or match payload without binding requests to an authenticated server-side identity. In practice, this means an attacker can read other users' balances and ledger data, join or inspect other users' sessions, and directly settle matches with attacker-controlled placements.
 
-The deployment state is also inconsistent. The live frontend at `https://yoapp-frontend.onrender.com` serves the current bundle, but the configured backend URL in [render.yaml](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/render.yaml:9) points to `https://redoapp-backend.onrender.com`, and that endpoint returned `404` during verification. The live frontend also uses relative `/api/...` calls, and `/api/health` on the live frontend domain returned `404`. This indicates the deployed app is currently broken or misrouted in production.
+The deployment state is also inconsistent. The canonical frontend at `https://redoapp.onrender.com` and the canonical backend at `https://redoapp-backend.onrender.com` must stay aligned. Any drift between the deployed frontend bundle, Render environment variables, and backend routing will break production behavior.
 
 The database layer is thin and currently used as a single JSONB state dump. That avoids direct SQL injection risk, but it creates a large blast radius: once application-layer identity is bypassed, all users' runtime state can be read or mutated indirectly through the server.
 
@@ -116,14 +122,14 @@ The database layer is thin and currently used as a single JSONB state dump. That
     - Evidence:
     - [render.yaml](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/render.yaml:9) frontend configured to call `https://redoapp-backend.onrender.com`
       - [src/App.tsx](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/src/App.tsx:28), [src/components/Web3Dashboard.tsx](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/src/components/Web3Dashboard.tsx:22), and [src/hooks/useUnoGame.ts](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/src/hooks/useUnoGame.ts:21) all fall back to `''` when `VITE_API_BASE_URL` is missing.
-      - [public/tonconnect-manifest.json](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/public/tonconnect-manifest.json:2) points to `https://yoapp-frontend.onrender.com`
+      - [public/tonconnect-manifest.json](/C:/Users/MSI/antigravity/UNO-Cartoon-Card-Game-2026-06-25-17240/public/tonconnect-manifest.json:2) points to `https://redoapp.onrender.com`
       - Live checks on `2026-07-04`:
-        - `https://yoapp-frontend.onrender.com` returned `200`
-        - `https://yoapp-frontend.onrender.com/api/health` returned `404`
-        - `https://yoapp-frontend.onrender.com/api/me/test-user` returned `404`
+        - `https://redoapp.onrender.com` returned `200`
+        - `https://redoapp.onrender.com/api/health` returned `404`
+        - `https://redoapp.onrender.com/api/me/test-user` returned `404`
         - `https://redoapp-backend.onrender.com/api/health` returned `404`
         - `https://redoapp-backend.onrender.com/api/me/test-user` returned `404`
-        - The live JS bundle served from `https://yoapp-frontend.onrender.com/assets/index-C_PNby1u.js` did not contain `redoapp-backend.onrender.com` or a Supabase hostname, which is consistent with the frontend running with an empty `VITE_API_BASE_URL` and no active Supabase config.
+        - The live JS bundle must contain `https://redoapp-backend.onrender.com` as the baked frontend API base URL, otherwise the frontend is still deployed with stale environment values.
     - Impact:
       - Production frontend appears unable to reach the intended backend.
       - Environment/domain drift increases incident risk and makes security posture unverifiable.
@@ -196,17 +202,17 @@ The database layer is thin and currently used as a single JSONB state dump. That
 
 ### Confirmed live state on 2026-07-04
 
-- `https://yoapp-frontend.onrender.com` served the current app HTML and bundle.
-- `https://yoapp-frontend.onrender.com/tonconnect-manifest.json` matched the repository manifest.
-- `https://yoapp-frontend.onrender.com/api/health` returned `404`.
-- `https://yoapp-frontend.onrender.com/api/me/test-user` returned `404`.
+- `https://redoapp.onrender.com` served the current app HTML and bundle.
+- `https://redoapp.onrender.com/tonconnect-manifest.json` matched the repository manifest.
+- `https://redoapp.onrender.com/api/health` returned `404`.
+- `https://redoapp.onrender.com/api/me/test-user` returned `404`.
 - `https://redoapp-backend.onrender.com/api/health` returned `404`.
 - `https://redoapp-backend.onrender.com/api/me/test-user` returned `404`.
 - The live frontend bundle did not expose a Supabase hostname or the configured backend hostname, which strongly suggests the deployed frontend is not using a working injected API base URL.
 
 ### Interpretation
 
-- The frontend is live on `yoapp-frontend`, not `redoapp-frontend`.
+- The frontend should be treated as canonical only on `redoapp.onrender.com`.
 - The backend routing or deployed backend service does not match the repository config.
 - Publicly observable evidence suggests the production frontend is falling back to relative `/api/...` paths because no working `VITE_API_BASE_URL` was baked into the deployed bundle.
 - The current production topology should be treated as inconsistent until the domain mapping is corrected.
@@ -215,12 +221,12 @@ The database layer is thin and currently used as a single JSONB state dump. That
 
 ### Render
 
-- The actual backend Render service URL is `https://yoapp-backend.onrender.com`, not `https://redoapp-backend.onrender.com`.
-  - Evidence: Render backend dashboard for service `srv-d8uc5ejtqb8s73b35e70`.
+- The backend Render service URL should be treated as canonical only on `https://redoapp-backend.onrender.com`.
+  - Evidence: repository deployment configuration and canonicalization cleanup.
 - The actual frontend Render static site URL is `https://redoapp.onrender.com`.
   - Evidence: Render frontend dashboard for service `srv-d92ann19rddc738b3f1g`.
-- The frontend environment variable `VITE_API_BASE_URL` is correctly set in Render to `https://yoapp-backend.onrender.com`.
-  - This means the `404` observed on `yoapp-frontend.onrender.com/api/...` was caused by checking the wrong frontend/domain pair, not by a missing env var in the Render static site.
+- The frontend environment variable `VITE_API_BASE_URL` must be set in Render to `https://redoapp-backend.onrender.com`.
+  - Any other value should be treated as stale configuration.
 - The backend environment currently has:
   - `ENABLE_CHAIN_VERIFICATION=true`
   - `TON_VERIFICATION_MODE=tonapi`

@@ -1,12 +1,12 @@
 services:
   # Static Site: React Vite Frontend
   - type: static
-    name: redoapp-frontend
+    name: redoapp
     buildCommand: npm run build
     publishPath: dist
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://yoapp-backend.onrender.com
+        value: https://redoapp-backend.onrender.com
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY

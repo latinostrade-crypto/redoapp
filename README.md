@@ -215,15 +215,23 @@ Frontend and backend are separate services.
 
 Frontend should have:
 
-- `VITE_API_BASE_URL=https://your-backend-service.onrender.com`
+- `VITE_API_BASE_URL=https://redoapp-backend.onrender.com`
 - `VITE_TELEGRAM_BOT_USERNAME=redo_appbot`
 - `VITE_TELEGRAM_APP_SHORT_NAME=app`
+
+Canonical production frontend URL:
+
+- `https://redoapp.onrender.com`
 
 Backend should have:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_BOT_USERNAME=redo_appbot`
 - `TELEGRAM_APP_SHORT_NAME=app`
+
+Canonical production backend URL:
+
+- `https://redoapp-backend.onrender.com`
 
 ## Status
 
