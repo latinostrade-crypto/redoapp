@@ -47,7 +47,7 @@ app.use(cors({
   origin: (origin, callback) => {
     const allowedOrigins = new Set([
       'https://redoapp.onrender.com',
-      'https://redoapp-backend.onrender.com',
+      'https://yoapp-backend.onrender.com',
     ]);
     if (!origin || allowedOrigins.has(origin)) {
       callback(null, true);
