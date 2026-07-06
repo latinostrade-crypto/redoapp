@@ -300,6 +300,12 @@ export function Web3Dashboard({
   };
 
   useEffect(() => {
+    if (!creatingPrivateRoom) return;
+    const safetyTimer = window.setTimeout(() => setCreatingPrivateRoom(false), 15000);
+    return () => window.clearTimeout(safetyTimer);
+  }, [creatingPrivateRoom]);
+
+  useEffect(() => {
     if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
     localStorage.removeItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY);
     setCurrentTab('rewards');
@@ -1902,7 +1908,7 @@ export function Web3Dashboard({
                                 targetPlayers: privateRoomTargetPlayers,
                                 createRequestId,
                               }, {
-                                timeoutMs: 10000,
+                                timeoutMs: 6000,
                                 attempts: 2,
                               });
                               setGoldenTickets(result.availableTickets);

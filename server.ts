@@ -1588,6 +1588,25 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
     return res.status(400).json({ error: `targetPlayers must be between ${MIN_MATCH_PLAYERS} and ${MAX_MATCH_PLAYERS}.` });
   }
   const normalizedRequestId = String(createRequestId || '').trim().slice(0, 100);
+  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
+    room.hostUserId === userId &&
+    room.status === 'waiting' &&
+    room.stake === stakeAmount &&
+    room.targetPlayers === targetPlayersCount);
+  if (existingWaitingRoom) {
+    const existingUser = getUser(userId, walletAddress);
+    return res.json({
+      success: true,
+      roomCode: existingWaitingRoom.roomCode,
+      stake: existingWaitingRoom.stake,
+      targetPlayers: existingWaitingRoom.targetPlayers,
+      playersCount: existingWaitingRoom.players.length,
+      availableTickets: existingUser.availableTickets,
+      heldTickets: existingUser.heldTickets,
+      energy: getEnergyState(existingUser),
+      recovered: true,
+    });
+  }
   if (normalizedRequestId) {
     const existingRoom = Array.from(privateRooms.values()).find((room) =>
       room.hostUserId === userId && room.createRequestId === normalizedRequestId);

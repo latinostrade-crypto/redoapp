@@ -116,6 +116,45 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
 
 type FormValue = string | number | null | undefined;
 
+class RetryableFormRequestError extends Error {}
+
+function formRequestAttempt<T>(path: string, body: URLSearchParams, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(watchdogId);
+      callback();
+    };
+    const watchdogId = window.setTimeout(() => {
+      xhr.abort();
+      finish(() => reject(new RetryableFormRequestError('Room request timed out.')));
+    }, timeoutMs);
+
+    xhr.open('POST', buildAuthenticatedUrl(path), true);
+    xhr.timeout = timeoutMs;
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded;charset=UTF-8');
+    xhr.onload = () => finish(() => {
+      try {
+        const data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(data?.error || `Request failed with status ${xhr.status}`));
+          return;
+        }
+        resolve(data as T);
+      } catch (error) {
+        reject(error instanceof SyntaxError ? new Error('Backend returned an invalid response.') : error);
+      }
+    });
+    xhr.onerror = () => finish(() => reject(new RetryableFormRequestError('Connection was interrupted.')));
+    xhr.ontimeout = () => finish(() => reject(new RetryableFormRequestError('Room request timed out.')));
+    xhr.onabort = () => finish(() => reject(new RetryableFormRequestError('Room request was interrupted.')));
+    xhr.send(body.toString());
+  });
+}
+
 export async function apiFormRequest<T>(
   path: string,
   values: Record<string, FormValue>,
@@ -129,45 +168,18 @@ export async function apiFormRequest<T>(
   });
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const controller = new AbortController();
-    let timeoutId = 0;
     try {
-      const fetchPromise = fetch(buildAuthenticatedUrl(path), {
-        method: 'POST',
-        body,
-        cache: 'no-store',
-        signal: controller.signal,
-      });
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = window.setTimeout(() => {
-          controller.abort();
-          reject(new DOMException('Request timed out', 'AbortError'));
-        }, timeoutMs);
-      });
-      const response = await Promise.race([fetchPromise, timeoutPromise]);
-      const rawBody = await response.text();
-      const data = rawBody ? JSON.parse(rawBody) : null;
-      if (!response.ok) throw new Error(data?.error || `Request failed with status ${response.status}`);
-      return data as T;
+      return await formRequestAttempt<T>(path, body, timeoutMs);
     } catch (error) {
-      const retryable = error instanceof TypeError || (error instanceof DOMException && error.name === 'AbortError');
-      if (retryable && attempt + 1 < attempts) {
+      if (error instanceof RetryableFormRequestError && attempt + 1 < attempts) {
         wakeBackend();
         await new Promise((resolve) => window.setTimeout(resolve, 500));
         continue;
       }
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error('Room creation timed out. Please try again.');
-      }
-      if (error instanceof TypeError) {
-        throw new Error('Connection was interrupted. Please try again.');
-      }
-      if (error instanceof SyntaxError) {
-        throw new Error('Backend returned an invalid response.');
+      if (error instanceof RetryableFormRequestError) {
+        throw new Error(`${error.message} Please try again.`);
       }
       throw error;
-    } finally {
-      window.clearTimeout(timeoutId);
     }
   }
 
