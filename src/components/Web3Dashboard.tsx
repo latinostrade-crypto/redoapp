@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
-import { apiFormRequest, apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken } from '../utils/api';
+import { apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -1901,17 +1901,19 @@ export function Web3Dashboard({
                             setPrivateRoomError('');
                             setCreatingPrivateRoom(true);
                             try {
-                              const result = await apiFormRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
-                                userId: currentUserId,
-                                username: userName,
-                                avatarId: selectedAvatar,
-                                walletAddress: rawAddress || null,
-                                stake: privateRoomStake,
-                                targetPlayers: privateRoomTargetPlayers,
-                                createRequestId,
-                              }, {
-                                timeoutMs: 6000,
-                                attempts: 2,
+                              const result = await apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
+                                method: 'POST',
+                                retryOnNetworkError: true,
+                                timeoutMs: 8000,
+                                body: JSON.stringify({
+                                  userId: currentUserId,
+                                  username: userName,
+                                  avatarId: selectedAvatar,
+                                  walletAddress: rawAddress || null,
+                                  stake: privateRoomStake,
+                                  targetPlayers: privateRoomTargetPlayers,
+                                  createRequestId,
+                                }),
                               });
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
