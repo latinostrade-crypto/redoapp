@@ -1561,14 +1561,24 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
   return res.json(tryActivateQueuedMatch(userId));
 });
 
-app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, res) => {
-  const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId } = req.body as {
+function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
+  if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="transparent"/></svg>');
+  }
+  return res.json(payload);
+}
+
+function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId, requestedRoomCode } = input as {
     username: string;
     avatarId: string;
     stake: number;
     targetPlayers?: number;
     walletAddress?: string;
     createRequestId?: string;
+    requestedRoomCode?: string;
   };
   const userId = getAuthenticatedUserId(req);
   if (!username || !avatarId || stake === undefined || stake === null) {
@@ -1584,14 +1594,28 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
     return res.status(400).json({ error: `targetPlayers must be between ${MIN_MATCH_PLAYERS} and ${MAX_MATCH_PLAYERS}.` });
   }
   const normalizedRequestId = String(createRequestId || '').trim().slice(0, 100);
+  const normalizedRequestedCode = String(requestedRoomCode || '').trim().toUpperCase();
+  if (normalizedRequestedCode && !/^[A-Z0-9]{8}$/.test(normalizedRequestedCode)) {
+    return res.status(400).json({ error: 'Requested room code is invalid.' });
+  }
   const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
     room.hostUserId === userId &&
     room.status === 'waiting' &&
     room.stake === stakeAmount &&
     room.targetPlayers === targetPlayersCount);
   if (existingWaitingRoom) {
+    if (normalizedRequestedCode && existingWaitingRoom.roomCode !== normalizedRequestedCode) {
+      const collision = privateRooms.get(normalizedRequestedCode);
+      if (collision && collision.hostUserId !== userId) {
+        return res.status(409).json({ error: 'Requested room code is already in use.' });
+      }
+      privateRooms.delete(existingWaitingRoom.roomCode);
+      existingWaitingRoom.roomCode = normalizedRequestedCode;
+      privateRooms.set(normalizedRequestedCode, existingWaitingRoom);
+      schedulePersist();
+    }
     const existingUser = getUser(userId, walletAddress);
-    return res.json({
+    return sendPrivateRoomCreateSuccess(req, res, {
       success: true,
       roomCode: existingWaitingRoom.roomCode,
       stake: existingWaitingRoom.stake,
@@ -1608,7 +1632,7 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
       room.hostUserId === userId && room.createRequestId === normalizedRequestId);
     if (existingRoom) {
       const existingUser = getUser(userId, walletAddress);
-      return res.json({
+      return sendPrivateRoomCreateSuccess(req, res, {
         success: true,
         roomCode: existingRoom.roomCode,
         stake: existingRoom.stake,
@@ -1652,10 +1676,15 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
     joinedAt: Date.now(),
   };
 
-  let roomCode = '';
-  do {
-    roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-  } while (privateRooms.has(roomCode));
+  let roomCode = normalizedRequestedCode;
+  if (roomCode && privateRooms.has(roomCode)) {
+    return res.status(409).json({ error: 'Requested room code is already in use.' });
+  }
+  if (!roomCode) {
+    do {
+      roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+    } while (privateRooms.has(roomCode));
+  }
 
   privateRooms.set(roomCode, {
     roomCode,
@@ -1670,7 +1699,7 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
   schedulePersist();
   broadcastPrivateRoom(roomCode);
 
-  return res.json({
+  return sendPrivateRoomCreateSuccess(req, res, {
     success: true,
     roomCode,
     stake: stakeAmount,
@@ -1680,7 +1709,10 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
   });
-});
+}
+
+app.post('/api/private-rooms/create', requireAuth, handlePrivateRoomCreate);
+app.get('/api/private-rooms/create-beacon', requireAuth, handlePrivateRoomCreate);
 
 app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res) => {
   const { roomCode, username, avatarId, walletAddress } = req.body as {

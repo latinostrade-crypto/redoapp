@@ -86,6 +86,33 @@ function createClientRequestId() {
   return `room-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
+function createOptimisticRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+}
+
+function registerRoomBeacon(url: string, timeoutMs = 10000) {
+  return new Promise<void>((resolve, reject) => {
+    const image = new Image();
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      callback();
+    };
+    const timer = window.setTimeout(() => {
+      image.src = '';
+      finish(() => reject(new Error('Room registration timed out. Please try again.')));
+    }, timeoutMs);
+    image.onload = () => finish(resolve);
+    image.onerror = () => finish(() => reject(new Error('Room registration failed. Please try again.')));
+    image.src = url;
+  });
+}
+
 function getTelegramStartParam() {
   const params = new URLSearchParams(window.location.search);
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
@@ -1901,6 +1928,25 @@ export function Web3Dashboard({
                             setPrivateRoomError('');
                             setCreatingPrivateRoom(true);
                             try {
+                              if (privateRoomStake === 0) {
+                                const roomCode = createOptimisticRoomCode();
+                                const sharePayload = buildPrivateRoomSharePayload(roomCode);
+                                setPrivateRoomCode(roomCode);
+                                setGeneratedLink(sharePayload.telegramLink);
+                                const params = new URLSearchParams({
+                                  username: userName,
+                                  avatarId: selectedAvatar,
+                                  stake: '0',
+                                  targetPlayers: String(privateRoomTargetPlayers),
+                                  createRequestId,
+                                  requestedRoomCode: roomCode,
+                                  cacheBust: String(Date.now()),
+                                });
+                                await registerRoomBeacon(buildAuthenticatedUrl(`/api/private-rooms/create-beacon?${params.toString()}`));
+                                setPrivateRoomPlayersCount(1);
+                                setPrivateRoomStatus('waiting');
+                                return;
+                              }
                               const result = await apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
                                 method: 'POST',
                                 retryOnNetworkError: true,
@@ -1924,6 +1970,9 @@ export function Web3Dashboard({
                               const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
                               setGeneratedLink(sharePayload.telegramLink);
                             } catch (error) {
+                              setGeneratedLink('');
+                              setPrivateRoomCode('');
+                              setPrivateRoomStatus('idle');
                               setPrivateRoomError(error instanceof Error ? error.message : 'Could not create room. Please try again.');
                             } finally {
                               setCreatingPrivateRoom(false);
