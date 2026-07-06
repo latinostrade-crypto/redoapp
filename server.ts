@@ -1562,6 +1562,15 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
 });
 
 function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
+  if (req.body?.responseMode === 'iframe') {
+    const message = JSON.stringify({
+      source: 'redoapp-room-bridge',
+      requestId: String(req.body.bridgeRequestId || ''),
+      payload,
+    }).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, '*')</script>`);
+  }
   if (req.method === 'GET') {
     res.setHeader('Cache-Control', 'no-store');
     return res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="transparent"/></svg>');

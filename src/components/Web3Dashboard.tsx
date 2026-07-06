@@ -91,25 +91,53 @@ function createOptimisticRoomCode() {
   return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
 }
 
-function registerRoomBeacon(url: string, timeoutMs = 10000) {
-  return new Promise<void>((resolve, reject) => {
-    const image = new Image();
+function registerRoomViaForm<T>(url: string, values: Record<string, string>, requestId: string, timeoutMs = 12000) {
+  return new Promise<T>((resolve, reject) => {
+    const iframe = document.createElement('iframe');
+    const form = document.createElement('form');
+    const frameName = `room-bridge-${requestId.replace(/[^a-z0-9]/gi, '').slice(-20)}`;
+    iframe.name = frameName;
+    iframe.style.display = 'none';
+    form.style.display = 'none';
+    form.method = 'POST';
+    form.action = url;
+    form.target = frameName;
+    Object.entries({ ...values, responseMode: 'iframe', bridgeRequestId: requestId }).forEach(([name, value]) => {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    });
     let settled = false;
     const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      image.onload = null;
-      image.onerror = null;
+      window.removeEventListener('message', onMessage);
+      form.remove();
+      iframe.remove();
       callback();
     };
+    const expectedOrigin = new URL(url, window.location.href).origin;
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
+      if (event.data?.source !== 'redoapp-room-bridge' || event.data?.requestId !== requestId) return;
+      finish(() => resolve(event.data.payload as T));
+    };
     const timer = window.setTimeout(() => {
-      image.src = '';
       finish(() => reject(new Error('Room registration timed out. Please try again.')));
     }, timeoutMs);
-    image.onload = () => finish(resolve);
-    image.onerror = () => finish(() => reject(new Error('Room registration failed. Please try again.')));
-    image.src = url;
+    window.addEventListener('message', onMessage);
+    document.body.appendChild(iframe);
+    document.body.appendChild(form);
+    window.setTimeout(() => {
+      try {
+        form.submit();
+      } catch {
+        finish(() => reject(new Error('Room registration could not start. Please try again.')));
+      }
+    }, 0);
   });
 }
 
@@ -1933,16 +1961,18 @@ export function Web3Dashboard({
                                 const sharePayload = buildPrivateRoomSharePayload(roomCode);
                                 setPrivateRoomCode(roomCode);
                                 setGeneratedLink(sharePayload.telegramLink);
-                                const params = new URLSearchParams({
+                                const result = await registerRoomViaForm<{ roomCode: string; targetPlayers: number }>(buildAuthenticatedUrl('/api/private-rooms/create'), {
                                   username: userName,
                                   avatarId: selectedAvatar,
                                   stake: '0',
                                   targetPlayers: String(privateRoomTargetPlayers),
                                   createRequestId,
                                   requestedRoomCode: roomCode,
-                                  cacheBust: String(Date.now()),
-                                });
-                                await registerRoomBeacon(buildAuthenticatedUrl(`/api/private-rooms/create-beacon?${params.toString()}`));
+                                }, createRequestId);
+                                if (result.roomCode !== roomCode) {
+                                  setPrivateRoomCode(result.roomCode);
+                                  setGeneratedLink(buildPrivateRoomSharePayload(result.roomCode).telegramLink);
+                                }
                                 setPrivateRoomPlayersCount(1);
                                 setPrivateRoomStatus('waiting');
                                 return;
