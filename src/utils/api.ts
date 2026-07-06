@@ -53,15 +53,16 @@ export function buildAuthenticatedUrl(path: string) {
 
 type ApiRequestInit = RequestInit & {
   retryOnNetworkError?: boolean;
+  timeoutMs?: number;
 };
 
 export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
-  const { retryOnNetworkError = false, ...requestInit } = init || {};
+  const { retryOnNetworkError = false, timeoutMs = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
   const attempts = retryOnNetworkError ? 2 : 1;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -82,12 +83,13 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
 
       return data as T;
     } catch (error) {
-      if (error instanceof TypeError && attempt + 1 < attempts) {
+      const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+      if ((error instanceof TypeError || isTimeout) && attempt + 1 < attempts) {
         wakeBackend();
         await new Promise((resolve) => window.setTimeout(resolve, 800));
         continue;
       }
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (isTimeout) {
         throw new Error('Server response timed out. Please try again.');
       }
       if (error instanceof SyntaxError) {

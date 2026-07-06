@@ -75,6 +75,17 @@ function buildPrivateRoomSharePayload(roomCode: string) {
   };
 }
 
+function createClientRequestId() {
+  try {
+    if (typeof globalThis.crypto?.randomUUID === 'function') {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {
+    // Older Telegram WebViews may expose a partial crypto implementation.
+  }
+  return `room-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function getTelegramStartParam() {
   const params = new URLSearchParams(window.location.search);
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
@@ -1869,7 +1880,7 @@ export function Web3Dashboard({
                       {!generatedLink ? (
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             if (!authReady) {
                               alert('Session is still syncing with the backend. Try again in a moment.');
                               return;
@@ -1879,23 +1890,23 @@ export function Web3Dashboard({
                               return;
                             }
                             sound.playShuffle();
+                            const createRequestId = createClientRequestId();
                             setCreatingPrivateRoom(true);
-                            const createRequestId = typeof crypto.randomUUID === 'function'
-                              ? crypto.randomUUID()
-                              : `room-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-                            apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
-                              method: 'POST',
-                              retryOnNetworkError: true,
-                              body: JSON.stringify({
-                                userId: currentUserId,
-                                username: userName,
-                                avatarId: selectedAvatar,
-                                walletAddress: rawAddress || null,
-                                stake: privateRoomStake,
-                                targetPlayers: privateRoomTargetPlayers,
-                                createRequestId,
-                              }),
-                            }).then((result) => {
+                            try {
+                              const result = await apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
+                                method: 'POST',
+                                retryOnNetworkError: true,
+                                timeoutMs: 15000,
+                                body: JSON.stringify({
+                                  userId: currentUserId,
+                                  username: userName,
+                                  avatarId: selectedAvatar,
+                                  walletAddress: rawAddress || null,
+                                  stake: privateRoomStake,
+                                  targetPlayers: privateRoomTargetPlayers,
+                                  createRequestId,
+                                }),
+                              });
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               setPrivateRoomCode(result.roomCode);
@@ -1904,11 +1915,11 @@ export function Web3Dashboard({
                               setPrivateRoomStatus('waiting');
                               const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
                               setGeneratedLink(sharePayload.telegramLink);
-                            }).catch((error) => {
-                              alert(error.message);
-                            }).finally(() => {
+                            } catch (error) {
+                              alert(error instanceof Error ? error.message : 'Could not create room. Please try again.');
+                            } finally {
                               setCreatingPrivateRoom(false);
-                            });
+                            }
                           }}
                           disabled={creatingPrivateRoom}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
