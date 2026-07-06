@@ -262,6 +262,7 @@ export function Web3Dashboard({
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [creatingPrivateRoom, setCreatingPrivateRoom] = useState(false);
+  const [privateRoomError, setPrivateRoomError] = useState('');
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
@@ -1897,6 +1898,7 @@ export function Web3Dashboard({
                             }
                             sound.playShuffle();
                             const createRequestId = createClientRequestId();
+                            setPrivateRoomError('');
                             setCreatingPrivateRoom(true);
                             try {
                               const result = await apiFormRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
@@ -1920,7 +1922,7 @@ export function Web3Dashboard({
                               const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
                               setGeneratedLink(sharePayload.telegramLink);
                             } catch (error) {
-                              alert(error instanceof Error ? error.message : 'Could not create room. Please try again.');
+                              setPrivateRoomError(error instanceof Error ? error.message : 'Could not create room. Please try again.');
                             } finally {
                               setCreatingPrivateRoom(false);
                             }
@@ -1986,6 +1988,19 @@ export function Web3Dashboard({
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
                             Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
                           </div>
+                        </div>
+                      )}
+
+                      {privateRoomError && (
+                        <div className="flex items-center justify-between gap-2 bg-[#2a0d0d] border border-[#ff4b4b] px-2 py-1.5 text-[8px] text-[#ffb3b3] font-mono">
+                          <span>{privateRoomError}</span>
+                          <button
+                            type="button"
+                            onClick={() => setPrivateRoomError('')}
+                            className="shrink-0 px-2 py-1 bg-[#ffcc00] text-black font-black border border-black"
+                          >
+                            OK
+                          </button>
                         </div>
                       )}
                     </div>

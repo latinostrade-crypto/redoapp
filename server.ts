@@ -43,18 +43,14 @@ const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_MS = 5_000;
 
+// Authentication is token-based and the API does not use cookies. Reflecting the
+// caller origin is safe here and supports Telegram iOS WebViews that send `null`
+// or a Telegram-managed origin instead of the public Mini App URL.
 app.use(cors({
-  origin: (origin, callback) => {
-    const allowedOrigins = new Set([
-      'https://redoapp.onrender.com',
-      'https://yoapp-backend.onrender.com',
-    ]);
-    if (!origin || allowedOrigins.has(origin)) {
-      callback(null, true);
-      return;
-    }
-    callback(new Error('Origin not allowed by CORS'));
-  },
+  origin: true,
+  credentials: false,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-token', 'x-telegram-init-data', 'x-admin-api-key'],
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
