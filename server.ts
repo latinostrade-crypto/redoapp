@@ -57,6 +57,7 @@ app.use(cors({
   },
 }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 
 interface AuthenticatedRequest extends Request {
   authUserId?: string;

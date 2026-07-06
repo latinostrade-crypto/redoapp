@@ -62,10 +62,10 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+    let timeoutId = 0;
 
     try {
-      const response = await fetch(`${API_BASE_URL}${path}`, {
+      const fetchPromise = fetch(`${API_BASE_URL}${path}`, {
         headers: {
           'Content-Type': 'application/json',
           ...buildAuthHeaders(requestInit.headers),
@@ -73,6 +73,13 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
         ...requestInit,
         signal: requestInit.signal ?? controller.signal,
       });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          controller.abort();
+          reject(new DOMException('Request timed out', 'AbortError'));
+        }, timeoutMs);
+      });
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
 
       const rawBody = await response.text();
       const data = rawBody ? JSON.parse(rawBody) : null;
@@ -105,4 +112,64 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
   }
 
   throw new Error('Request failed.');
+}
+
+type FormValue = string | number | null | undefined;
+
+export async function apiFormRequest<T>(
+  path: string,
+  values: Record<string, FormValue>,
+  options: { timeoutMs?: number; attempts?: number } = {},
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? 12000;
+  const attempts = options.attempts ?? 2;
+  const body = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => {
+    if (value !== null && value !== undefined) body.set(key, String(value));
+  });
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    let timeoutId = 0;
+    try {
+      const fetchPromise = fetch(buildAuthenticatedUrl(path), {
+        method: 'POST',
+        body,
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => {
+          controller.abort();
+          reject(new DOMException('Request timed out', 'AbortError'));
+        }, timeoutMs);
+      });
+      const response = await Promise.race([fetchPromise, timeoutPromise]);
+      const rawBody = await response.text();
+      const data = rawBody ? JSON.parse(rawBody) : null;
+      if (!response.ok) throw new Error(data?.error || `Request failed with status ${response.status}`);
+      return data as T;
+    } catch (error) {
+      const retryable = error instanceof TypeError || (error instanceof DOMException && error.name === 'AbortError');
+      if (retryable && attempt + 1 < attempts) {
+        wakeBackend();
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        continue;
+      }
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('Room creation timed out. Please try again.');
+      }
+      if (error instanceof TypeError) {
+        throw new Error('Connection was interrupted. Please try again.');
+      }
+      if (error instanceof SyntaxError) {
+        throw new Error('Backend returned an invalid response.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
+  throw new Error('Could not create room.');
 }
