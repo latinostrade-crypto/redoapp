@@ -188,6 +188,7 @@ interface ActiveMatch {
 
 interface PrivateRoom {
   roomCode: string;
+  createRequestId?: string;
   stake: number;
   targetPlayers: number;
   hostUserId: string;
@@ -1564,26 +1565,19 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
 });
 
 app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, res) => {
-  const { username, avatarId, stake, targetPlayers, walletAddress } = req.body as {
+  const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId } = req.body as {
     username: string;
     avatarId: string;
     stake: number;
     targetPlayers?: number;
     walletAddress?: string;
+    createRequestId?: string;
   };
   const userId = getAuthenticatedUserId(req);
   if (!username || !avatarId || stake === undefined || stake === null) {
     return res.status(400).json({ error: 'Missing room creator data.' });
   }
 
-  const roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
-  const user = getUser(userId, walletAddress);
-  try {
-    spendEnergy(user, 1, 'Private Room Energy');
-    updateQuestProgress(user.userId, 'spend_energy', 1);
-  } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
-  }
   const stakeAmount = Number(stake);
   if (!Number.isFinite(stakeAmount) || stakeAmount < 0) {
     return res.status(400).json({ error: 'Private room stake must be 0 or greater.' });
@@ -1592,8 +1586,34 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
   if (!Number.isFinite(targetPlayersCount) || targetPlayersCount < MIN_MATCH_PLAYERS || targetPlayersCount > MAX_MATCH_PLAYERS) {
     return res.status(400).json({ error: `targetPlayers must be between ${MIN_MATCH_PLAYERS} and ${MAX_MATCH_PLAYERS}.` });
   }
+  const normalizedRequestId = String(createRequestId || '').trim().slice(0, 100);
+  if (normalizedRequestId) {
+    const existingRoom = Array.from(privateRooms.values()).find((room) =>
+      room.hostUserId === userId && room.createRequestId === normalizedRequestId);
+    if (existingRoom) {
+      const existingUser = getUser(userId, walletAddress);
+      return res.json({
+        success: true,
+        roomCode: existingRoom.roomCode,
+        stake: existingRoom.stake,
+        targetPlayers: existingRoom.targetPlayers,
+        playersCount: existingRoom.players.length,
+        availableTickets: existingUser.availableTickets,
+        heldTickets: existingUser.heldTickets,
+        energy: getEnergyState(existingUser),
+      });
+    }
+  }
+
+  const user = getUser(userId, walletAddress);
   if (user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
+  }
+  try {
+    spendEnergy(user, 1, 'Private Room Energy');
+    updateQuestProgress(user.userId, 'spend_energy', 1);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
   }
 
   if (stakeAmount > 0) {
@@ -1616,8 +1636,14 @@ app.post('/api/private-rooms/create', requireAuth, (req: AuthenticatedRequest, r
     joinedAt: Date.now(),
   };
 
+  let roomCode = '';
+  do {
+    roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
+  } while (privateRooms.has(roomCode));
+
   privateRooms.set(roomCode, {
     roomCode,
+    createRequestId: normalizedRequestId || undefined,
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
     hostUserId: userId,

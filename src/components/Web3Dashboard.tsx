@@ -250,6 +250,7 @@ export function Web3Dashboard({
   const [privateJoinCode, setPrivateJoinCode] = useState(() => initialLaunchRoomCodeRef.current);
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
+  const [creatingPrivateRoom, setCreatingPrivateRoom] = useState(false);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
@@ -1878,8 +1879,13 @@ export function Web3Dashboard({
                               return;
                             }
                             sound.playShuffle();
+                            setCreatingPrivateRoom(true);
+                            const createRequestId = typeof crypto.randomUUID === 'function'
+                              ? crypto.randomUUID()
+                              : `room-${Date.now()}-${Math.random().toString(36).slice(2)}`;
                             apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
                               method: 'POST',
+                              retryOnNetworkError: true,
                               body: JSON.stringify({
                                 userId: currentUserId,
                                 username: userName,
@@ -1887,6 +1893,7 @@ export function Web3Dashboard({
                                 walletAddress: rawAddress || null,
                                 stake: privateRoomStake,
                                 targetPlayers: privateRoomTargetPlayers,
+                                createRequestId,
                               }),
                             }).then((result) => {
                               setGoldenTickets(result.availableTickets);
@@ -1899,11 +1906,14 @@ export function Web3Dashboard({
                               setGeneratedLink(sharePayload.telegramLink);
                             }).catch((error) => {
                               alert(error.message);
+                            }).finally(() => {
+                              setCreatingPrivateRoom(false);
                             });
                           }}
+                          disabled={creatingPrivateRoom}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
+                          {creatingPrivateRoom ? 'Creating Room...' : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       ) : (
                         <div className="space-y-2 text-[9px]">

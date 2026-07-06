@@ -51,40 +51,56 @@ export function buildAuthenticatedUrl(path: string) {
   return `${API_BASE_URL}${path}${separator}sessionToken=${encodeURIComponent(token)}`;
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
+type ApiRequestInit = RequestInit & {
+  retryOnNetworkError?: boolean;
+};
 
-  try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...buildAuthHeaders(init?.headers),
-      },
-      ...init,
-      signal: init?.signal ?? controller.signal,
-    });
+export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
+  const { retryOnNetworkError = false, ...requestInit } = init || {};
+  const attempts = retryOnNetworkError ? 2 : 1;
 
-    const rawBody = await response.text();
-    const data = rawBody ? JSON.parse(rawBody) : null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS);
 
-    if (!response.ok) {
-      throw new Error(data?.error || `Request failed with status ${response.status}`);
-    }
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...buildAuthHeaders(requestInit.headers),
+        },
+        ...requestInit,
+        signal: requestInit.signal ?? controller.signal,
+      });
 
-    return data as T;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Request timed out while waiting for the backend. Render may still be waking up.');
+      const rawBody = await response.text();
+      const data = rawBody ? JSON.parse(rawBody) : null;
+
+      if (!response.ok) {
+        throw new Error(data?.error || `Request failed with status ${response.status}`);
+      }
+
+      return data as T;
+    } catch (error) {
+      if (error instanceof TypeError && attempt + 1 < attempts) {
+        wakeBackend();
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
+        continue;
+      }
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('Server response timed out. Please try again.');
+      }
+      if (error instanceof SyntaxError) {
+        throw new Error('Backend returned an invalid response.');
+      }
+      if (error instanceof TypeError) {
+        throw new Error('Connection was interrupted. Check your internet and try again.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-    if (error instanceof SyntaxError) {
-      throw new Error('Backend returned an invalid response.');
-    }
-    if (error instanceof TypeError) {
-      throw new Error('Network request failed. Check Render availability, CORS, and Telegram WebApp connectivity.');
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeoutId);
   }
+
+  throw new Error('Request failed.');
 }
