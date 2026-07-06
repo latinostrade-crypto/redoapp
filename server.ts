@@ -1736,10 +1736,8 @@ app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
   }
-  if (room.status === 'started') {
-    return res.status(400).json({ error: 'Private room has already started.' });
-  }
   if (room.players.some((player) => player.userId === userId)) {
+    const user = getUser(userId, walletAddress);
     return res.json({
       success: true,
       roomCode: room.roomCode,
@@ -1747,7 +1745,14 @@ app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res
       playersCount: room.players.length,
       status: room.status,
       matchId: room.matchId || null,
+      players: room.players,
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+      energy: getEnergyState(user),
     });
+  }
+  if (room.status === 'started') {
+    return res.status(400).json({ error: 'Private room has already started.' });
   }
   if (room.players.length >= MAX_MATCH_PLAYERS) {
     return res.status(400).json({ error: 'Private room is already full.' });

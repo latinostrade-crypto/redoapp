@@ -141,6 +141,35 @@ function registerRoomViaForm<T>(url: string, values: Record<string, string>, req
   });
 }
 
+function waitForRegisteredPrivateRoom(roomCode: string, attempts = 5, delayMs = 900) {
+  const normalizedCode = roomCode.trim().toUpperCase();
+  const check = (attempt: number): Promise<{
+    roomCode: string;
+    stake: number;
+    targetPlayers: number;
+    status: 'waiting' | 'started';
+    playersCount: number;
+    matchId?: string | null;
+    players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+  }> => {
+    return apiRequest<{
+      roomCode: string;
+      stake: number;
+      targetPlayers: number;
+      status: 'waiting' | 'started';
+      playersCount: number;
+      matchId?: string | null;
+      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+    }>('/api/private-rooms/status/' + encodeURIComponent(normalizedCode), { timeoutMs: 5000 }).catch((error) => {
+      if (attempt + 1 >= attempts) {
+        throw error;
+      }
+      return new Promise((resolve) => window.setTimeout(resolve, delayMs)).then(() => check(attempt + 1));
+    });
+  };
+  return check(0);
+}
+
 function getTelegramStartParam() {
   const params = new URLSearchParams(window.location.search);
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
@@ -454,7 +483,7 @@ export function Web3Dashboard({
       alert('Enter or generate a room code first.');
       return Promise.resolve(false);
     }
-    return apiRequest<{ roomCode: string; playersCount: number; targetPlayers?: number; status: 'waiting' | 'started'; matchId?: string; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
+    return apiRequest<{ roomCode: string; playersCount: number; targetPlayers?: number; status: 'waiting' | 'started'; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
       method: 'POST',
       body: JSON.stringify({
         roomCode: roomCodeToUse,
@@ -479,7 +508,7 @@ export function Web3Dashboard({
           mode: 'private',
           stake: privateRoomStake,
           currentUserId,
-          players: [],
+          players: result.players || [],
           createdAt: Date.now(),
         }));
         setPrivateRoomStatus('ready');
@@ -859,8 +888,7 @@ export function Web3Dashboard({
     const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
     privateRoomStreamRef.current = stream;
 
-    stream.addEventListener('private-room', (event) => {
-      const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
+    const applyPrivateRoomState = (result: { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string | null; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
       setPrivateRoomPlayersCount(result.playersCount);
       if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
         setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
@@ -877,20 +905,27 @@ export function Web3Dashboard({
         setPrivateRoomStatus('ready');
         onStartGame('private', privateRoomStake);
       }
+    };
+
+    stream.addEventListener('private-room', (event) => {
+      const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
+      applyPrivateRoomState(result);
     });
 
     stream.onerror = () => {
       apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode))
-        .then((result) => {
-          setPrivateRoomPlayersCount(result.playersCount);
-          if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
-            setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-          }
-        })
+        .then(applyPrivateRoomState)
         .catch(() => undefined);
     };
 
+    const pollTimer = window.setInterval(() => {
+      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode), { timeoutMs: 5000 })
+        .then(applyPrivateRoomState)
+        .catch(() => undefined);
+    }, 3000);
+
     return () => {
+      window.clearInterval(pollTimer);
       stream.close();
       if (privateRoomStreamRef.current === stream) {
         privateRoomStreamRef.current = null;
@@ -1958,23 +1993,34 @@ export function Web3Dashboard({
                             try {
                               if (privateRoomStake === 0) {
                                 const roomCode = createOptimisticRoomCode();
-                                const sharePayload = buildPrivateRoomSharePayload(roomCode);
-                                setPrivateRoomCode(roomCode);
-                                setGeneratedLink(sharePayload.telegramLink);
-                                const result = await registerRoomViaForm<{ roomCode: string; targetPlayers: number }>(buildAuthenticatedUrl('/api/private-rooms/create'), {
-                                  username: userName,
-                                  avatarId: selectedAvatar,
-                                  stake: '0',
-                                  targetPlayers: String(privateRoomTargetPlayers),
-                                  createRequestId,
-                                  requestedRoomCode: roomCode,
-                                }, createRequestId);
-                                if (result.roomCode !== roomCode) {
-                                  setPrivateRoomCode(result.roomCode);
-                                  setGeneratedLink(buildPrivateRoomSharePayload(result.roomCode).telegramLink);
+                                let result: { roomCode: string; targetPlayers: number; playersCount?: number };
+                                try {
+                                  result = await registerRoomViaForm<{ roomCode: string; targetPlayers: number; playersCount?: number }>(buildAuthenticatedUrl('/api/private-rooms/create'), {
+                                    username: userName,
+                                    avatarId: selectedAvatar,
+                                    stake: '0',
+                                    targetPlayers: String(privateRoomTargetPlayers),
+                                    createRequestId,
+                                    requestedRoomCode: roomCode,
+                                  }, createRequestId);
+                                } catch (registrationError) {
+                                  try {
+                                    const recoveredRoom = await waitForRegisteredPrivateRoom(roomCode);
+                                    result = {
+                                      roomCode: recoveredRoom.roomCode,
+                                      targetPlayers: recoveredRoom.targetPlayers,
+                                      playersCount: recoveredRoom.playersCount,
+                                    };
+                                  } catch {
+                                    throw registrationError;
+                                  }
                                 }
-                                setPrivateRoomPlayersCount(1);
+                                const confirmedRoomCode = result.roomCode || roomCode;
+                                setPrivateRoomCode(confirmedRoomCode);
+                                setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+                                setPrivateRoomPlayersCount(result.playersCount || 1);
                                 setPrivateRoomStatus('waiting');
+                                setGeneratedLink(buildPrivateRoomSharePayload(confirmedRoomCode).telegramLink);
                                 return;
                               }
                               const result = await apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
