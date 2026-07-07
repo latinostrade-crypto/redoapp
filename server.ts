@@ -1856,6 +1856,7 @@ app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, re
     playersCount: room.players.length,
     status: room.status,
     matchId: room.matchId || null,
+    players: room.players,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),

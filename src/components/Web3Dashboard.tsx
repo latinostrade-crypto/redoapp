@@ -423,6 +423,11 @@ export function Web3Dashboard({
       alert('Enter or generate a room code first.');
       return Promise.resolve(false);
     }
+    if (!authReady) {
+      const message = 'Session is still syncing with the backend. Try again in a moment.';
+      setPrivateRoomError(message);
+      return Promise.resolve(false);
+    }
     setPrivateRoomError('');
     return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
@@ -447,6 +452,10 @@ export function Web3Dashboard({
 
   const createPrivateRoom = () => {
     if (privateRoomCreateState === 'creating') return;
+    if (!authReady) {
+      setPrivateRoomError('Session is still syncing with the backend. Try again in a moment.');
+      return;
+    }
     if (privateStakeRequiresWallet && !walletConnected) {
       connectWallet();
       return;
@@ -1984,10 +1993,12 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={createPrivateRoom}
-                          disabled={privateRoomCreateState === 'creating'}
+                          disabled={!authReady || privateRoomCreateState === 'creating'}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {privateRoomCreateState === 'creating'
+                          {!authReady
+                            ? 'Syncing Session...'
+                            : privateRoomCreateState === 'creating'
                             ? 'Creating Room...'
                             : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
@@ -2045,7 +2056,7 @@ export function Web3Dashboard({
                           Enter Room
                         </button>
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
-                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
+                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</span>
                           </div>
                         </div>
                       )}
