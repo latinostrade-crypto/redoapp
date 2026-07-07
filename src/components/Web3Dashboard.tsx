@@ -34,8 +34,6 @@ const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_f
 const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
 const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
-const APP_BUILD_ID = 'room-diagnostics-20260707-01';
-
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
   if (!profile?.userId) return null;
   return {
@@ -74,110 +72,6 @@ function buildPrivateRoomSharePayload(roomCode: string) {
     telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
     telegramSchemeLink: buildTelegramMiniAppSchemeLink(`room_${roomCode}`),
   };
-}
-
-function createClientRequestId() {
-  try {
-    if (typeof globalThis.crypto?.randomUUID === 'function') {
-      return globalThis.crypto.randomUUID();
-    }
-  } catch {
-    // Older Telegram WebViews may expose a partial crypto implementation.
-  }
-  return `room-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
-}
-
-function createOptimisticRoomCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 8 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
-}
-
-function registerRoomViaForm<T>(url: string, values: Record<string, string>, requestId: string, timeoutMs = 12000) {
-  return new Promise<T>((resolve, reject) => {
-    const iframe = document.createElement('iframe');
-    const form = document.createElement('form');
-    const frameName = `room-bridge-${requestId.replace(/[^a-z0-9]/gi, '').slice(-20)}`;
-    iframe.name = frameName;
-    iframe.style.display = 'none';
-    form.style.display = 'none';
-    form.method = 'POST';
-    form.action = url;
-    form.target = frameName;
-    Object.entries({ ...values, responseMode: 'iframe', bridgeRequestId: requestId }).forEach(([name, value]) => {
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = name;
-      input.value = value;
-      form.appendChild(input);
-    });
-    let settled = false;
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      window.removeEventListener('message', onMessage);
-      form.remove();
-      iframe.remove();
-      callback();
-    };
-    const expectedOrigin = new URL(url, window.location.href).origin;
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
-      if (event.data?.source !== 'redoapp-room-bridge' || event.data?.requestId !== requestId) return;
-      finish(() => resolve(event.data.payload as T));
-    };
-    const timer = window.setTimeout(() => {
-      finish(() => reject(new Error('Room registration timed out. Please try again.')));
-    }, timeoutMs);
-    window.addEventListener('message', onMessage);
-    document.body.appendChild(iframe);
-    document.body.appendChild(form);
-    window.setTimeout(() => {
-      try {
-        form.submit();
-      } catch {
-        finish(() => reject(new Error('Room registration could not start. Please try again.')));
-      }
-    }, 0);
-  });
-}
-
-function waitForRegisteredPrivateRoom(roomCode: string, attempts = 5, delayMs = 900) {
-  const normalizedCode = roomCode.trim().toUpperCase();
-  const check = (attempt: number): Promise<{
-    roomCode: string;
-    stake: number;
-    targetPlayers: number;
-    status: 'waiting' | 'started';
-    playersCount: number;
-    matchId?: string | null;
-    players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-  }> => {
-    return apiRequest<{
-      roomCode: string;
-      stake: number;
-      targetPlayers: number;
-      status: 'waiting' | 'started';
-      playersCount: number;
-      matchId?: string | null;
-      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-    }>('/api/private-rooms/status/' + encodeURIComponent(normalizedCode), { timeoutMs: 5000 }).catch((error) => {
-      if (attempt + 1 >= attempts) {
-        throw error;
-      }
-      return new Promise((resolve) => window.setTimeout(resolve, delayMs)).then(() => check(attempt + 1));
-    });
-  };
-  return check(0);
-}
-
-async function confirmPrivateRoomExists(roomCode: string) {
-  try {
-    return await waitForRegisteredPrivateRoom(roomCode, 3, 500);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : 'unknown status error';
-    throw new Error(`Room ${roomCode} was not confirmed by server. ${detail}`);
-  }
 }
 
 function getTelegramStartParam() {
@@ -355,8 +249,6 @@ export function Web3Dashboard({
   const [privateJoinCode, setPrivateJoinCode] = useState(() => initialLaunchRoomCodeRef.current);
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
-  const [creatingPrivateRoom, setCreatingPrivateRoom] = useState(false);
-  const [privateRoomError, setPrivateRoomError] = useState('');
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
@@ -393,12 +285,6 @@ export function Web3Dashboard({
       .map((payout, index) => `${formatPlaceLabel(index + 1)} ${payout.toFixed(2)} TKT`)
       .join(' · ');
   };
-
-  useEffect(() => {
-    if (!creatingPrivateRoom) return;
-    const safetyTimer = window.setTimeout(() => setCreatingPrivateRoom(false), 15000);
-    return () => window.clearTimeout(safetyTimer);
-  }, [creatingPrivateRoom]);
 
   useEffect(() => {
     if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
@@ -1002,9 +888,6 @@ export function Web3Dashboard({
             </div>
             <div className="text-[7px] text-slate-400">
               {bootstrapState === 'error' ? bootstrapError : authReady ? currentUserId : 'Waiting for backend/auth bootstrap'}
-            </div>
-            <div className="text-[6px] text-slate-600">
-              {APP_BUILD_ID}
             </div>
           </div>
         </div>
@@ -1990,7 +1873,7 @@ export function Web3Dashboard({
                       {!generatedLink ? (
                         <button
                           type="button"
-                          onClick={async () => {
+                          onClick={() => {
                             if (!authReady) {
                               alert('Session is still syncing with the backend. Try again in a moment.');
                               return;
@@ -2000,131 +1883,35 @@ export function Web3Dashboard({
                               return;
                             }
                             sound.playShuffle();
-                            const createRequestId = createClientRequestId();
-                            setPrivateRoomError('');
-                            setCreatingPrivateRoom(true);
-                            try {
-                              if (privateRoomStake === 0) {
-                                const roomCode = createOptimisticRoomCode();
-                                let result: { roomCode: string; targetPlayers: number; playersCount?: number; availableTickets?: number; heldTickets?: number };
-                                try {
-                                  result = await apiRequest<{ roomCode: string; targetPlayers: number; playersCount?: number; availableTickets?: number; heldTickets?: number }>('/api/private-rooms/create', {
-                                    method: 'POST',
-                                    retryOnNetworkError: true,
-                                    timeoutMs: 90000,
-                                    body: JSON.stringify({
-                                      userId: currentUserId,
-                                      username: userName,
-                                      avatarId: selectedAvatar,
-                                      walletAddress: rawAddress || null,
-                                      stake: 0,
-                                      targetPlayers: privateRoomTargetPlayers,
-                                      createRequestId,
-                                      requestedRoomCode: roomCode,
-                                    }),
-                                  });
-                                } catch (primaryError) {
-                                  try {
-                                    result = await apiRequest<{ roomCode: string; targetPlayers: number; playersCount?: number; availableTickets?: number; heldTickets?: number }>('/api/private-rooms/create', {
-                                      method: 'POST',
-                                      retryOnNetworkError: true,
-                                      timeoutMs: 90000,
-                                      body: JSON.stringify({
-                                        userId: currentUserId,
-                                        username: userName,
-                                        avatarId: selectedAvatar,
-                                        walletAddress: rawAddress || null,
-                                        stake: 0,
-                                        targetPlayers: privateRoomTargetPlayers,
-                                        createRequestId,
-                                      }),
-                                    });
-                                  } catch {
-                                    try {
-                                      const recoveredRoom = await waitForRegisteredPrivateRoom(roomCode, 10, 1000);
-                                      result = {
-                                        roomCode: recoveredRoom.roomCode,
-                                        targetPlayers: recoveredRoom.targetPlayers,
-                                        playersCount: recoveredRoom.playersCount,
-                                      };
-                                    } catch {
-                                      throw primaryError;
-                                    }
-                                  }
-                                }
-                                const confirmedRoomCode = result.roomCode || roomCode;
-                                const confirmedRoom = await confirmPrivateRoomExists(confirmedRoomCode);
-                                setPrivateRoomCode(confirmedRoomCode);
-                                setPrivateRoomTargetPlayers(confirmedRoom.targetPlayers as 2 | 3 | 4);
-                                setPrivateRoomPlayersCount(confirmedRoom.playersCount || result.playersCount || 1);
-                                if (typeof result.availableTickets === 'number') {
-                                  setGoldenTickets(result.availableTickets);
-                                }
-                                if (typeof result.heldTickets === 'number') {
-                                  setHeldTickets(result.heldTickets);
-                                }
-                                setPrivateRoomStatus('waiting');
-                                setGeneratedLink(buildPrivateRoomSharePayload(confirmedRoomCode).telegramLink);
-                                return;
-                              }
-                              const result = await apiRequest<{ roomCode: string; targetPlayers: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
-                                method: 'POST',
-                                retryOnNetworkError: true,
-                                timeoutMs: 8000,
-                                body: JSON.stringify({
-                                  userId: currentUserId,
-                                  username: userName,
-                                  avatarId: selectedAvatar,
-                                  walletAddress: rawAddress || null,
-                                  stake: privateRoomStake,
-                                  targetPlayers: privateRoomTargetPlayers,
-                                  createRequestId,
-                                }),
-                              });
-                              const confirmedRoom = await confirmPrivateRoomExists(result.roomCode);
+                            apiRequest<{ roomCode: string; targetPlayers: number; playersCount?: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                userId: currentUserId,
+                                username: userName,
+                                avatarId: selectedAvatar,
+                                walletAddress: rawAddress || null,
+                                stake: privateRoomStake,
+                                targetPlayers: privateRoomTargetPlayers,
+                              }),
+                            }).then((result) => {
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               setPrivateRoomCode(result.roomCode);
-                              setPrivateRoomTargetPlayers(confirmedRoom.targetPlayers as 2 | 3 | 4);
-                              setPrivateRoomPlayersCount(confirmedRoom.playersCount || 1);
+                              setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+                              setPrivateRoomPlayersCount(result.playersCount || 1);
                               setPrivateRoomStatus('waiting');
                               const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
                               setGeneratedLink(sharePayload.telegramLink);
-                            } catch (error) {
-                              setGeneratedLink('');
-                              setPrivateRoomCode('');
-                              setPrivateRoomStatus('idle');
-                              const authContext = `build=${APP_BUILD_ID}; req=${createRequestId}; token=${getSessionToken() ? 'yes' : 'no'}; tg=${telegramInitData ? 'yes' : 'no'}`;
-                              setPrivateRoomError(`${error instanceof Error ? error.message : 'Could not create room.'} (${authContext})`);
-                            } finally {
-                              setCreatingPrivateRoom(false);
-                            }
+                            }).catch((error) => {
+                              alert(error.message);
+                            });
                           }}
-                          disabled={creatingPrivateRoom}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {creatingPrivateRoom ? 'Creating Room...' : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
+                          {privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       ) : (
-                        <div className="space-y-2 text-[9px] bg-[#07180f] border border-[#00ff66] p-2">
-                          <div className="bg-black border border-black p-2 text-center space-y-1">
-                            <div className="text-[#00ff66] font-black uppercase text-[9px]">
-                              Room created · you are inside
-                            </div>
-                            <div className="text-slate-350 text-[7px] leading-relaxed">
-                              Waiting for players. Share the code or link below.
-                            </div>
-                            <div className="grid grid-cols-2 gap-1 pt-1">
-                              <div className="bg-[#10131a] border border-black p-1">
-                                <div className="text-[6px] text-slate-500 uppercase">Room code</div>
-                                <div className="text-[#00d2ff] font-black text-[12px]">{privateRoomCode || 'pending'}</div>
-                              </div>
-                              <div className="bg-[#10131a] border border-black p-1">
-                                <div className="text-[6px] text-slate-500 uppercase">Players</div>
-                                <div className="text-[#ffcc00] font-black text-[12px]">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</div>
-                              </div>
-                            </div>
-                          </div>
+                        <div className="space-y-2 text-[9px]">
                           <div className="flex gap-1">
                             <input
                               type="text"
@@ -2166,41 +1953,19 @@ export function Web3Dashboard({
                             }
                             sound.playPop();
                             if (privateRoomStatus === 'waiting') {
-                              confirmPrivateRoomExists(privateRoomCode)
-                                .then((room) => {
-                                  setPrivateRoomPlayersCount(room.playersCount);
-                                  if (room.targetPlayers && [2, 3, 4].includes(room.targetPlayers)) {
-                                    setPrivateRoomTargetPlayers(room.targetPlayers as 2 | 3 | 4);
-                                  }
-                                  setPrivateRoomError('');
-                                })
-                                .catch((error) => {
-                                  setPrivateRoomError(error instanceof Error ? error.message : 'Room status check failed.');
-                                });
+                              setCurrentTab('pvp');
+                              setPvpSubMode('private');
                               return;
                             }
                             setShowRoomDisclaimer(true);
                           }}
                           className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
                         >
-                          Refresh Room Status
+                          Enter Room
                         </button>
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
-                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</span>
+                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
                           </div>
-                        </div>
-                      )}
-
-                      {privateRoomError && (
-                        <div className="flex items-center justify-between gap-2 bg-[#2a0d0d] border border-[#ff4b4b] px-2 py-1.5 text-[8px] text-[#ffb3b3] font-mono">
-                          <span>{privateRoomError}</span>
-                          <button
-                            type="button"
-                            onClick={() => setPrivateRoomError('')}
-                            className="shrink-0 px-2 py-1 bg-[#ffcc00] text-black font-black border border-black"
-                          >
-                            OK
-                          </button>
                         </div>
                       )}
                     </div>
