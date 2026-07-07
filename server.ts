@@ -1460,6 +1460,7 @@ app.post('/api/users/sync', (req, res) => {
   if (!resolved.userId) {
     return res.status(400).json({ error: 'Missing userId.' });
   }
+  const canIssueSessionToken = !!resolved.auth || resolved.userId.startsWith('guest:');
   const user = getUser(resolved.userId, walletAddress);
   if (resolved.auth) {
     applyTelegramAuth(user, resolved.auth);
@@ -1467,7 +1468,7 @@ app.post('/api/users/sync', (req, res) => {
   assignReferralIfNeeded(user, startParam || resolved.auth?.start_param);
   return res.json({
     telegramInitDataValid: !!resolved.auth,
-    sessionToken: resolved.auth ? createSessionToken(user.userId) : null,
+    sessionToken: canIssueSessionToken ? createSessionToken(user.userId) : null,
     ...buildBootstrapProfileResponse(user),
   });
 });

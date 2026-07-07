@@ -272,7 +272,9 @@ export function Web3Dashboard({
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
   const createRequestCounterRef = useRef(0);
-  const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
+  const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
+  const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
+  const bootstrapUserId = rawAddress || (telegramInitData ? (storedUserId || fallbackGuestUserId) : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId));
   const activeProfile = fullProfile ?? profile;
   const currentUserId = activeProfile?.userId || bootstrapUserId;
   const [heldTickets, setHeldTickets] = useState(0);
