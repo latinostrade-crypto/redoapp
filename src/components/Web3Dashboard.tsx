@@ -34,6 +34,7 @@ const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_f
 const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
 const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
+const APP_BUILD_ID = 'room-diagnostics-20260707-01';
 
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
   if (!profile?.userId) return null;
@@ -168,6 +169,15 @@ function waitForRegisteredPrivateRoom(roomCode: string, attempts = 5, delayMs = 
     });
   };
   return check(0);
+}
+
+async function confirmPrivateRoomExists(roomCode: string) {
+  try {
+    return await waitForRegisteredPrivateRoom(roomCode, 3, 500);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'unknown status error';
+    throw new Error(`Room ${roomCode} was not confirmed by server. ${detail}`);
+  }
 }
 
 function getTelegramStartParam() {
@@ -992,6 +1002,9 @@ export function Web3Dashboard({
             </div>
             <div className="text-[7px] text-slate-400">
               {bootstrapState === 'error' ? bootstrapError : authReady ? currentUserId : 'Waiting for backend/auth bootstrap'}
+            </div>
+            <div className="text-[6px] text-slate-600">
+              {APP_BUILD_ID}
             </div>
           </div>
         </div>
@@ -2040,9 +2053,10 @@ export function Web3Dashboard({
                                   }
                                 }
                                 const confirmedRoomCode = result.roomCode || roomCode;
+                                const confirmedRoom = await confirmPrivateRoomExists(confirmedRoomCode);
                                 setPrivateRoomCode(confirmedRoomCode);
-                                setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-                                setPrivateRoomPlayersCount(result.playersCount || 1);
+                                setPrivateRoomTargetPlayers(confirmedRoom.targetPlayers as 2 | 3 | 4);
+                                setPrivateRoomPlayersCount(confirmedRoom.playersCount || result.playersCount || 1);
                                 if (typeof result.availableTickets === 'number') {
                                   setGoldenTickets(result.availableTickets);
                                 }
@@ -2067,11 +2081,12 @@ export function Web3Dashboard({
                                   createRequestId,
                                 }),
                               });
+                              const confirmedRoom = await confirmPrivateRoomExists(result.roomCode);
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               setPrivateRoomCode(result.roomCode);
-                              setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-                              setPrivateRoomPlayersCount(1);
+                              setPrivateRoomTargetPlayers(confirmedRoom.targetPlayers as 2 | 3 | 4);
+                              setPrivateRoomPlayersCount(confirmedRoom.playersCount || 1);
                               setPrivateRoomStatus('waiting');
                               const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
                               setGeneratedLink(sharePayload.telegramLink);
@@ -2079,7 +2094,8 @@ export function Web3Dashboard({
                               setGeneratedLink('');
                               setPrivateRoomCode('');
                               setPrivateRoomStatus('idle');
-                              setPrivateRoomError(error instanceof Error ? error.message : 'Could not create room. Please try again.');
+                              const authContext = `build=${APP_BUILD_ID}; req=${createRequestId}; token=${getSessionToken() ? 'yes' : 'no'}; tg=${telegramInitData ? 'yes' : 'no'}`;
+                              setPrivateRoomError(`${error instanceof Error ? error.message : 'Could not create room.'} (${authContext})`);
                             } finally {
                               setCreatingPrivateRoom(false);
                             }
@@ -2090,7 +2106,25 @@ export function Web3Dashboard({
                           {creatingPrivateRoom ? 'Creating Room...' : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       ) : (
-                        <div className="space-y-2 text-[9px]">
+                        <div className="space-y-2 text-[9px] bg-[#07180f] border border-[#00ff66] p-2">
+                          <div className="bg-black border border-black p-2 text-center space-y-1">
+                            <div className="text-[#00ff66] font-black uppercase text-[9px]">
+                              Room created · you are inside
+                            </div>
+                            <div className="text-slate-350 text-[7px] leading-relaxed">
+                              Waiting for players. Share the code or link below.
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 pt-1">
+                              <div className="bg-[#10131a] border border-black p-1">
+                                <div className="text-[6px] text-slate-500 uppercase">Room code</div>
+                                <div className="text-[#00d2ff] font-black text-[12px]">{privateRoomCode || 'pending'}</div>
+                              </div>
+                              <div className="bg-[#10131a] border border-black p-1">
+                                <div className="text-[6px] text-slate-500 uppercase">Players</div>
+                                <div className="text-[#ffcc00] font-black text-[12px]">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</div>
+                              </div>
+                            </div>
+                          </div>
                           <div className="flex gap-1">
                             <input
                               type="text"
@@ -2132,18 +2166,27 @@ export function Web3Dashboard({
                             }
                             sound.playPop();
                             if (privateRoomStatus === 'waiting') {
-                              setCurrentTab('pvp');
-                              setPvpSubMode('private');
+                              confirmPrivateRoomExists(privateRoomCode)
+                                .then((room) => {
+                                  setPrivateRoomPlayersCount(room.playersCount);
+                                  if (room.targetPlayers && [2, 3, 4].includes(room.targetPlayers)) {
+                                    setPrivateRoomTargetPlayers(room.targetPlayers as 2 | 3 | 4);
+                                  }
+                                  setPrivateRoomError('');
+                                })
+                                .catch((error) => {
+                                  setPrivateRoomError(error instanceof Error ? error.message : 'Room status check failed.');
+                                });
                               return;
                             }
                             setShowRoomDisclaimer(true);
                           }}
                           className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
                         >
-                          Enter Room
+                          Refresh Room Status
                         </button>
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
-                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/4</span>
+                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</span>
                           </div>
                         </div>
                       )}

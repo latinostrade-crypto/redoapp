@@ -77,7 +77,8 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
         const rawBody = await response.text();
         const data = rawBody ? JSON.parse(rawBody) : null;
         if (!response.ok) {
-          throw new Error(data?.error || `Request failed with status ${response.status}`);
+          const serverMessage = data?.error || `Request failed with status ${response.status}`;
+          throw new Error(`${serverMessage} [${response.status} ${path}]`);
         }
         return data as T;
       })();
@@ -96,13 +97,13 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
         continue;
       }
       if (isTimeout) {
-        throw new Error('Server response timed out. Please try again.');
+        throw new Error(`Server response timed out. Please try again. [${path}]`);
       }
       if (error instanceof SyntaxError) {
-        throw new Error('Backend returned an invalid response.');
+        throw new Error(`Backend returned an invalid response. [${path}]`);
       }
       if (error instanceof TypeError) {
-        throw new Error('Connection was interrupted. Check your internet and try again.');
+        throw new Error(`Connection was interrupted. Check your internet and try again. [${path}]`);
       }
       throw error;
     } finally {
