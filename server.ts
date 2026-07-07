@@ -42,6 +42,8 @@ const REFERRED_REWARD_ENERGY = 2;
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_MS = 5_000;
+const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
+const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 
 // Authentication is token-based and the API does not use cookies. Reflecting the
 // caller origin is safe here and supports Telegram iOS WebViews that send `null`
@@ -1505,30 +1507,37 @@ app.post('/api/matchmaker/join', requireAuth, (req: AuthenticatedRequest, res) =
     walletAddress?: string;
   };
   const userId = getAuthenticatedUserId(req);
-  if (!stake || !mode) {
+  if (stake === undefined || stake === null || !mode) {
     return res.status(400).json({ error: 'Missing stake or mode.' });
+  }
+  const stakeAmount = Number(stake);
+  if (!Number.isFinite(stakeAmount) || stakeAmount < 0) {
+    return res.status(400).json({ error: 'Public match stake must be 0 or greater.' });
   }
 
   const user = getUser(userId, walletAddress);
-  try {
-    spendEnergy(user, 2, 'Online Match Energy');
-    updateQuestProgress(user.userId, 'spend_energy', 2);
-  } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
-  }
-  const stakeAmount = Number(stake);
-  if (user.availableTickets < stakeAmount) {
+  const energyCost = stakeAmount === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
+  if (stakeAmount > 0 && user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for stake.' });
   }
 
-  user.availableTickets = round2(user.availableTickets - stakeAmount);
-  user.heldTickets = round2(user.heldTickets + stakeAmount);
-  createLedgerEntry(user, {
-    event: `${mode === 'pvp' ? 'PVP Queue Hold' : 'Private Room Hold'}`,
-    value: `-${stakeAmount.toFixed(2)} TKT`,
-    type: 'stake_hold',
-    amount: -stakeAmount,
-  });
+  try {
+    spendEnergy(user, energyCost, stakeAmount === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
+    updateQuestProgress(user.userId, 'spend_energy', energyCost);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+  }
+
+  if (stakeAmount > 0) {
+    user.availableTickets = round2(user.availableTickets - stakeAmount);
+    user.heldTickets = round2(user.heldTickets + stakeAmount);
+    createLedgerEntry(user, {
+      event: `${mode === 'pvp' ? 'PVP Queue Hold' : 'Private Room Hold'}`,
+      value: `-${stakeAmount.toFixed(2)} TKT`,
+      type: 'stake_hold',
+      amount: -stakeAmount,
+    });
+  }
 
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   matchmakingQueue.push({
@@ -1981,14 +1990,16 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   if (player) {
     const user = getUser(player.userId);
-    user.heldTickets = round2(user.heldTickets - player.stake);
-    user.availableTickets = round2(user.availableTickets + player.stake);
-    createLedgerEntry(user, {
-      event: 'Stake Hold Released',
-      value: `+${player.stake.toFixed(2)} TKT`,
-      type: 'stake_release',
-      amount: player.stake,
-    });
+    if (player.stake > 0) {
+      user.heldTickets = round2(user.heldTickets - player.stake);
+      user.availableTickets = round2(user.availableTickets + player.stake);
+      createLedgerEntry(user, {
+        event: 'Stake Hold Released',
+        value: `+${player.stake.toFixed(2)} TKT`,
+        type: 'stake_release',
+        amount: player.stake,
+      });
+    }
     matchmakingQueue
       .filter(p => p.stake === player.stake && p.mode === player.mode)
       .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));

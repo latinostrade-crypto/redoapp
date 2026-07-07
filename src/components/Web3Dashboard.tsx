@@ -26,9 +26,11 @@ const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_SEC = 5;
+const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
+const PUBLIC_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
-type StakeOption = typeof STAKE_OPTIONS[number];
+type PublicStakeOption = typeof PUBLIC_STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
 const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
@@ -245,7 +247,7 @@ export function Web3Dashboard({
   });
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
 
-  const [selectedStake, setSelectedStake] = useState<StakeOption>(0.3);
+  const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'searching' | 'success'>('idle');
   const [matchmakingTimer, setMatchmakingTimer] = useState(MATCHMAKING_TIMEOUT_SEC);
   const [queueLength, setQueueLength] = useState(1);
@@ -283,6 +285,10 @@ export function Web3Dashboard({
   const displayCurrentLevelXp = effectiveXp % displayXpNeeded;
   const displayXpProgressPercentage = Math.min(100, Math.floor((displayCurrentLevelXp / displayXpNeeded) * 100));
   const energy = activeProfile?.energy ?? DEFAULT_ENERGY_STATE;
+  const updateProfileEnergy = (nextEnergy: PlayerProfile['energy']) => {
+    setProfile((prev) => prev ? { ...prev, energy: nextEnergy } : prev);
+    setFullProfile((prev) => prev ? { ...prev, energy: nextEnergy } : prev);
+  };
   const quests = fullProfile?.quests ?? [];
   const referralInvites = fullProfile?.referrals?.invitedUsers ?? [];
   const referralTicketEarnings = transactions
@@ -1503,28 +1509,7 @@ export function Web3Dashboard({
               {/* Sub Mode Content */}
               {pvpSubMode === 'public' && (
                 <>
-                  {!walletConnected ? (
-                    <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                      <div className="mx-auto w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-[#00d2ff]">
-                        <Wallet className="w-4 h-4" />
-                      </div>
-                      <div className="space-y-1">
-                        <h3 className="font-black text-[10px] text-slate-100 uppercase">
-                          Sync Wallet to Enter
-                        </h3>
-                        <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                          Real stake PVP battles require matching through TON wallet signatures to secure your tickets pool.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={connectWallet}
-                        className="w-full py-1.5 bg-[#00d2ff] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black"
-                      >
-                        Connect TON Wallet
-                      </button>
-                    </div>
-                  ) : matchmakingState === 'searching' ? (
+                  {matchmakingState === 'searching' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                       <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
                         <span className="text-[10px] font-black text-[#00d2ff]">{matchmakingTimer}S</span>
@@ -1564,22 +1549,28 @@ export function Web3Dashboard({
                         MATCH READY!
                       </h3>
                       <p className="text-[8px] text-slate-455">
-                        Match ready. Prize pool: {(selectedStake * Math.max(queueLength, MIN_MATCH_PLAYERS) * 0.96).toFixed(2)} TKT
+                        {selectedStake === 0
+                          ? 'Free public match ready. Energy has been spent.'
+                          : `Match ready. Prize pool: ${(selectedStake * Math.max(queueLength, MIN_MATCH_PLAYERS) * 0.96).toFixed(2)} TKT`}
                       </p>
                     </div>
                   ) : (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                       <div className="flex justify-between items-center text-[9px]">
                         <h3 className="font-black text-slate-100 uppercase">
-                          TON PVP ARENA
+                          PUBLIC PVP ARENA
                         </h3>
                         <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
-                          BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                          {selectedStake === 0 ? (
+                            <>ENG: <strong>{energy.energy}</strong> / {energy.maxEnergy}</>
+                          ) : (
+                            <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
+                          )}
                         </span>
                       </div>
 
                         <div className="grid grid-cols-3 gap-1">
-                        {STAKE_OPTIONS.map((stake) => (
+                        {PUBLIC_STAKE_OPTIONS.map((stake) => (
                           <button
                             key={stake}
                             type="button"
@@ -1593,16 +1584,25 @@ export function Web3Dashboard({
                                 : 'bg-black border-black text-slate-450'
                             }`}
                           >
-                            <span className="text-[9px] font-black">{stake}TKT</span>
-                            <span className="text-[6px] block mt-0.5">stake</span>
+                            <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
+                            <span className="text-[6px] block mt-0.5">{stake === 0 ? `${PUBLIC_FREE_MATCH_ENERGY_COST} energy` : 'stake'}</span>
                           </button>
                         ))}
                       </div>
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1.5 text-slate-450">
                         <div className="flex justify-between items-center text-slate-350">
-                          <span className="font-bold">Prize Pool:</span>
-                          <span className="text-[#00ff66] font-bold">{calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - {calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT</span>
+                          <span className="font-bold">{selectedStake === 0 ? 'Free Cost:' : 'Prize Pool:'}</span>
+                          <span className="text-[#00ff66] font-bold">
+                            {selectedStake === 0
+                              ? `${PUBLIC_FREE_MATCH_ENERGY_COST} energy / game`
+                              : `${calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - ${calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT`}
+                          </span>
                         </div>
+                        {selectedStake === 0 ? (
+                          <div className="text-[7px] text-slate-400">
+                            Public matchmaking without ticket stake. Rewards are XP and quest progress only.
+                          </div>
+                        ) : (
                         <div className="flex justify-end">
                           <button
                             type="button"
@@ -1615,7 +1615,8 @@ export function Web3Dashboard({
                             {showPayoutDetails ? 'Hide Payouts ▲' : 'Show Payouts ▼'}
                           </button>
                         </div>
-                        {showPayoutDetails && (
+                        )}
+                        {selectedStake > 0 && showPayoutDetails && (
                           <div className="space-y-1 pt-1.5 border-t border-slate-900 animate-fade-in text-[7.5px]">
                             <div className="flex justify-between">
                               <span>2 players:</span>
@@ -1635,6 +1636,7 @@ export function Web3Dashboard({
 
                       <div className="space-y-2">
                         {/* Deposit Row */}
+                        {selectedStake > 0 && (
                         <div className="flex gap-2">
                           <input
                             type="number"
@@ -1674,6 +1676,13 @@ export function Web3Dashboard({
                             </button>
                           )}
                         </div>
+                        )}
+
+                        {selectedStake > 0 && !walletConnected && (
+                          <div className="bg-[#08131f] border border-black p-2 text-[7.5px] text-slate-300 leading-relaxed">
+                            Connect TON wallet for ticket-stake public matches. FREE public uses energy only.
+                          </div>
+                        )}
 
                         {/* Matchmaking Queue Button */}
                         <button
@@ -1683,7 +1692,15 @@ export function Web3Dashboard({
                               alert('Session is still syncing with the backend. Try again in a moment.');
                               return;
                             }
-                            if (goldenTickets < selectedStake) {
+                            if (selectedStake > 0 && (!walletConnected || !rawAddress)) {
+                              alert('Connect wallet first for ticket-stake public matches.');
+                              return;
+                            }
+                            if (selectedStake === 0 && energy.energy < PUBLIC_FREE_MATCH_ENERGY_COST) {
+                              alert(`You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`);
+                              return;
+                            }
+                            if (selectedStake > 0 && goldenTickets < selectedStake) {
                               alert(`You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`);
                               return;
                             }
@@ -1691,6 +1708,7 @@ export function Web3Dashboard({
                             apiRequest<{
                               availableTickets: number;
                               heldTickets: number;
+                              energy?: PlayerProfile['energy'];
                               matchmaker?: {
                                 status: 'idle' | 'searching' | 'ready';
                                 queueLength?: number;
@@ -1711,6 +1729,9 @@ export function Web3Dashboard({
                             }).then((result) => {
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
+                              if (result.energy) {
+                                updateProfileEnergy(result.energy);
+                              }
                               setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
                               setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
                               if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
@@ -1733,7 +1754,7 @@ export function Web3Dashboard({
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          JOIN REAL QUEUE
+                          {selectedStake === 0 ? 'JOIN FREE PUBLIC' : 'JOIN REAL QUEUE'}
                         </button>
                       </div>
 
