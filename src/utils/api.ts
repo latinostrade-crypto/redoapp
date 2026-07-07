@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://redoapp-backend.onrender.com';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://yoapp-backend.onrender.com';
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
 // Render documents an approximately one-minute wake-up for idle free services.
 const API_REQUEST_TIMEOUT_MS = 90000;
