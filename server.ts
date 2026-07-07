@@ -857,6 +857,9 @@ function getAuthenticatedUserId(req: AuthenticatedRequest) {
 
 function getPrivateRoomUserId(req: AuthenticatedRequest, input: Record<string, unknown>) {
   if (req.authUserId) return req.authUserId;
+  const host = req.hostname || '';
+  const allowDevFallback = !TELEGRAM_BOT_TOKEN || host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (!allowDevFallback) return '';
   const bodyUserId = input.userId;
   if (typeof bodyUserId === 'string' && bodyUserId.trim()) {
     return bodyUserId.trim();
@@ -1655,8 +1658,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     return sendPrivateRoomCreateSuccess(req, res, {
       success: true,
       roomCode: existingWaitingRoom.roomCode,
+      telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
       stake: existingWaitingRoom.stake,
       targetPlayers: existingWaitingRoom.targetPlayers,
+      status: existingWaitingRoom.status,
       playersCount: existingWaitingRoom.players.length,
       availableTickets: existingUser.availableTickets,
       heldTickets: existingUser.heldTickets,
@@ -1672,8 +1677,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       return sendPrivateRoomCreateSuccess(req, res, {
         success: true,
         roomCode: existingRoom.roomCode,
+        telegramLink: buildTelegramMiniAppLink(`room_${existingRoom.roomCode}`),
         stake: existingRoom.stake,
         targetPlayers: existingRoom.targetPlayers,
+        status: existingRoom.status,
         playersCount: existingRoom.players.length,
         availableTickets: existingUser.availableTickets,
         heldTickets: existingUser.heldTickets,
@@ -1741,8 +1748,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   return sendPrivateRoomCreateSuccess(req, res, {
     success: true,
     roomCode,
+    telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
+    status: 'waiting',
     playersCount: 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
@@ -1775,6 +1784,7 @@ app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, re
     return res.json({
       success: true,
       roomCode: room.roomCode,
+      telegramLink: buildTelegramMiniAppLink(`room_${room.roomCode}`),
       targetPlayers: room.targetPlayers,
       playersCount: room.players.length,
       status: room.status,
@@ -1841,6 +1851,7 @@ app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, re
   return res.json({
     success: true,
     roomCode: room.roomCode,
+    telegramLink: buildTelegramMiniAppLink(`room_${room.roomCode}`),
     targetPlayers: room.targetPlayers,
     playersCount: room.players.length,
     status: room.status,

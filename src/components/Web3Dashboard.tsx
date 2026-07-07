@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
-import { apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken } from '../utils/api';
+import { apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken, wakeBackend } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -135,6 +135,18 @@ interface PendingDepositState {
 
 const PENDING_DEPOSIT_STORAGE_KEY = 'redoapp_pending_deposit';
 type BootstrapProfile = Pick<PlayerProfile, 'userId' | 'telegramUsername' | 'telegramPhotoUrl' | 'walletAddress' | 'availableTickets' | 'heldTickets' | 'xp' | 'energy' | 'referralCode' | 'referralLink'>;
+type PrivateRoomPlayer = { userId: string; username: string; avatarId: string; stake: number };
+type PrivateRoomResponse = {
+  roomCode: string;
+  telegramLink?: string;
+  playersCount: number;
+  targetPlayers?: number;
+  status: 'waiting' | 'started';
+  matchId?: string;
+  players?: PrivateRoomPlayer[];
+  availableTickets: number;
+  heldTickets: number;
+};
 
 export function Web3Dashboard({
   userName,
@@ -164,6 +176,7 @@ export function Web3Dashboard({
   }
   const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp' | 'rewards'>('profile');
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
+  const [showPayoutDetails, setShowPayoutDetails] = useState(false);
 
   const [tonConnectUI] = useTonConnectUI();
   const rawAddress = useTonAddress();
@@ -248,12 +261,15 @@ export function Web3Dashboard({
   const [privateRoomCode, setPrivateRoomCode] = useState('');
   const [privateJoinCode, setPrivateJoinCode] = useState(() => initialLaunchRoomCodeRef.current);
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
+  const [privateRoomCreateState, setPrivateRoomCreateState] = useState<'idle' | 'creating' | 'waiting' | 'error'>('idle');
+  const [privateRoomError, setPrivateRoomError] = useState('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
+  const createRequestCounterRef = useRef(0);
   const bootstrapUserId = rawAddress || localStorage.getItem('redoapp_current_user_id') || `guest:${userName.toLowerCase()}`;
   const activeProfile = fullProfile ?? profile;
   const currentUserId = activeProfile?.userId || bootstrapUserId;
@@ -373,14 +389,44 @@ export function Web3Dashboard({
       });
   };
 
+  const applyPrivateRoomJoin = (result: PrivateRoomResponse, roomCodeToUse: string) => {
+    setShowRoomDisclaimer(false);
+    setPrivateRoomError('');
+    setPrivateJoinCode(roomCodeToUse);
+    setPrivateRoomCode(result.roomCode);
+    setPrivateRoomPlayersCount(result.playersCount);
+    if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
+      setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+    }
+    setGoldenTickets(result.availableTickets);
+    setHeldTickets(result.heldTickets);
+    if (result.status === 'started' && result.matchId) {
+      localStorage.setItem('redoapp_active_match', JSON.stringify({
+        matchId: result.matchId,
+        mode: 'private',
+        stake: privateRoomStake,
+        currentUserId,
+        players: result.players || [],
+        createdAt: Date.now(),
+      }));
+      setPrivateRoomStatus('ready');
+      onStartGame('private', privateRoomStake);
+    } else {
+      setPrivateRoomStatus('waiting');
+      setPrivateRoomCreateState('waiting');
+    }
+  };
+
   const joinPrivateRoomByCode = (roomCodeInput?: string) => {
     const roomCodeToUse = (roomCodeInput || privateJoinCode || privateRoomCode).trim().toUpperCase();
     if (!roomCodeToUse) {
       alert('Enter or generate a room code first.');
       return Promise.resolve(false);
     }
-    return apiRequest<{ roomCode: string; playersCount: number; targetPlayers?: number; status: 'waiting' | 'started'; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>; availableTickets: number; heldTickets: number }>('/api/private-rooms/join', {
+    setPrivateRoomError('');
+    return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
+      retryOnNetworkError: true,
       body: JSON.stringify({
         roomCode: roomCodeToUse,
         userId: currentUserId,
@@ -389,33 +435,55 @@ export function Web3Dashboard({
         walletAddress: rawAddress || null,
       }),
     }).then((result) => {
-      setShowRoomDisclaimer(false);
-      setPrivateJoinCode(roomCodeToUse);
-      setPrivateRoomCode(result.roomCode);
-      setPrivateRoomPlayersCount(result.playersCount);
-      if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
-        setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-      }
-      setGoldenTickets(result.availableTickets);
-      setHeldTickets(result.heldTickets);
-      if (result.status === 'started' && result.matchId) {
-        localStorage.setItem('redoapp_active_match', JSON.stringify({
-          matchId: result.matchId,
-          mode: 'private',
-          stake: privateRoomStake,
-          currentUserId,
-          players: result.players || [],
-          createdAt: Date.now(),
-        }));
-        setPrivateRoomStatus('ready');
-        onStartGame('private', privateRoomStake);
-      } else {
-        setPrivateRoomStatus('waiting');
-      }
+      applyPrivateRoomJoin(result, roomCodeToUse);
       return true;
     }).catch((error) => {
-      alert(error.message);
+      const message = error instanceof Error ? error.message : 'Failed to join private room.';
+      setPrivateRoomError(message);
+      alert(message);
       return false;
+    });
+  };
+
+  const createPrivateRoom = () => {
+    if (privateRoomCreateState === 'creating') return;
+    if (privateStakeRequiresWallet && !walletConnected) {
+      connectWallet();
+      return;
+    }
+    sound.playShuffle();
+    wakeBackend();
+    const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
+    setPrivateRoomCreateState('creating');
+    setPrivateRoomError('');
+    apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
+      method: 'POST',
+      retryOnNetworkError: true,
+      body: JSON.stringify({
+        userId: currentUserId,
+        username: userName,
+        avatarId: selectedAvatar,
+        walletAddress: rawAddress || null,
+        stake: privateRoomStake,
+        targetPlayers: privateRoomTargetPlayers,
+        createRequestId,
+      }),
+    }).then((result) => {
+      setGoldenTickets(result.availableTickets);
+      setHeldTickets(result.heldTickets);
+      setPrivateRoomCode(result.roomCode);
+      setPrivateJoinCode(result.roomCode);
+      setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
+      setPrivateRoomPlayersCount(result.playersCount || 1);
+      setPrivateRoomStatus('waiting');
+      setPrivateRoomCreateState('waiting');
+      const fallbackPayload = buildPrivateRoomSharePayload(result.roomCode);
+      setGeneratedLink(result.telegramLink || fallbackPayload.telegramLink);
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : 'Failed to create private room.';
+      setPrivateRoomCreateState('error');
+      setPrivateRoomError(message);
+      alert(message);
     });
   };
 
@@ -767,16 +835,18 @@ export function Web3Dashboard({
 
   useEffect(() => {
     const incomingRoomCode = initialLaunchRoomCodeRef.current.trim().toUpperCase();
-    if (launchRoomConsumedRef.current || !incomingRoomCode || privateRoomStatus !== 'idle') return;
+    if (launchRoomConsumedRef.current || !incomingRoomCode || privateRoomStatus !== 'idle' || !authReady) return;
     launchRoomConsumedRef.current = true;
     setCurrentTab('pvp');
     setPvpSubMode('private');
+    setPrivateJoinCode(incomingRoomCode);
+    setPrivateRoomError('');
     joinPrivateRoomByCode(incomingRoomCode).then((joined) => {
       if (!joined) {
-        setBootstrapError(`Failed to auto-join private room ${incomingRoomCode}.`);
+        setPrivateRoomError(`Failed to auto-join private room ${incomingRoomCode}.`);
       }
     }).catch(() => undefined);
-  }, [privateRoomStatus, currentUserId]);
+  }, [privateRoomStatus, currentUserId, authReady]);
 
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
@@ -1003,11 +1073,11 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="space-y-3"
             >
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
                 
                 {/* Profile Read-Only Info */}
-                <div className="flex items-center gap-3 border-b border-black pb-3">
-                  <div className="w-12 h-12 bg-slate-950 border border-black flex items-center justify-center relative overflow-hidden">
+                <div className="flex items-center gap-3 border-b border-black pb-2">
+                  <div className="w-10 h-10 bg-slate-950 border border-black flex items-center justify-center relative overflow-hidden flex-shrink-0">
                     {tgPhotoUrl && !tgPhotoFailed ? (
                       <img 
                         src={tgPhotoUrl} 
@@ -1020,27 +1090,27 @@ export function Web3Dashboard({
                       />
                     ) : (
                       <div className="flex items-center justify-center w-full h-full">
-                        <Avatar id={selectedAvatar} emotion="happy" isActive={false} size={32} />
+                        <Avatar id={selectedAvatar} emotion="happy" isActive={false} size={28} />
                       </div>
                     )}
                   </div>
-                  <div className="text-left font-mono">
-                    <span className="block text-[7px] text-slate-400 uppercase">Telegram Profile</span>
-                    <span className="text-xs font-black text-[#00ff66]">
+                  <div className="text-left font-mono leading-tight">
+                    <span className="block text-[6.5px] text-slate-400 uppercase">Telegram Profile</span>
+                    <span className="text-[10px] font-black text-[#00ff66] truncate block max-w-[180px]">
                       {tgProfileName ? `@${tgProfileName}` : 'guest'}
                     </span>
-                    <span className="block text-[7px] text-slate-500 mt-1">
+                    <span className="block text-[6.5px] text-slate-500 mt-0.5">
                       ID: {currentUserId}
                     </span>
                   </div>
                 </div>
 
-                <div className="space-y-1 bg-black p-2 border border-black">
-                  <div className="flex justify-between items-center text-[8px] font-bold">
-                    <span className="text-slate-455">XP PROGRESS</span>
+                <div className="space-y-1 bg-black p-1.5 border border-black">
+                  <div className="flex justify-between items-center text-[7.5px] font-bold">
+                    <span className="text-slate-400">XP PROGRESS</span>
                     <span className="text-[#00d2ff]">{displayCurrentLevelXp} / {displayXpNeeded} XP</span>
                   </div>
-                  <div className="w-full bg-slate-900 h-3 border border-black overflow-hidden relative">
+                  <div className="w-full bg-slate-900 h-2 border border-black overflow-hidden relative">
                     <div
                       className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
                       style={{ width: `${displayXpProgressPercentage}%` }}
@@ -1048,43 +1118,43 @@ export function Web3Dashboard({
                   </div>
                 </div>
 
-                <div className="bg-black p-2 border border-black space-y-1">
-                  <div className="flex justify-between items-center text-[8px] font-bold">
-                    <span className="text-slate-455">ENERGY</span>
+                <div className="bg-black p-1.5 border border-black space-y-1">
+                  <div className="flex justify-between items-center text-[7.5px] font-bold">
+                    <span className="text-slate-400">ENERGY</span>
                     <span className="text-[#00ff66]">{energy.energy} / {energy.maxEnergy}</span>
                   </div>
-                  <div className="w-full bg-slate-900 h-3 border border-black overflow-hidden relative">
+                  <div className="w-full bg-slate-900 h-2 border border-black overflow-hidden relative">
                     <div
                       className="bg-[#00ff66] h-full transition-all duration-500 ease-out"
                       style={{ width: `${Math.round((energy.energy / energy.maxEnergy) * 100)}%` }}
                     ></div>
                   </div>
-                  <div className="text-[7px] text-slate-500">
+                  <div className="text-[6.5px] text-slate-550 text-left">
                     {energy.nextEnergyAt ? `Next +1 in ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Energy full'}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-1 text-left text-[9px]">
-                  <div className="bg-black p-2 border border-black">
-                    <span className="block text-slate-500 text-[7px] uppercase font-bold">MATCHES</span>
-                    <span className="text-xs font-black text-white">{stats.gamesPlayed}</span>
+                <div className="grid grid-cols-2 gap-1.5 text-left text-[8.5px]">
+                  <div className="bg-black p-1.5 border border-black">
+                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">MATCHES</span>
+                    <span className="text-[10px] font-black text-white">{stats.gamesPlayed}</span>
                   </div>
-                  <div className="bg-black p-2 border border-black">
-                    <span className="block text-slate-500 text-[7px] uppercase font-bold">WIN RATE</span>
-                    <span className="text-xs font-black text-[#00d2ff]">{winRate}%</span>
+                  <div className="bg-black p-1.5 border border-black">
+                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">WIN RATE</span>
+                    <span className="text-[10px] font-black text-[#00d2ff]">{winRate}%</span>
                   </div>
-                  <div className="bg-black p-2 border border-black">
-                    <span className="block text-slate-500 text-[7px] uppercase font-bold">WINS</span>
-                    <span className="text-xs font-black text-[#00ff66]">{stats.gamesWon}</span>
+                  <div className="bg-black p-1.5 border border-black">
+                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">WINS</span>
+                    <span className="text-[10px] font-black text-[#00ff66]">{stats.gamesWon}</span>
                   </div>
-                  <div className="bg-black p-2 border border-black">
-                    <span className="block text-slate-500 text-[7px] uppercase font-bold">REAL PVP WINS</span>
-                    <span className="text-xs font-black text-[#ffcc00]">{stats.realPvpGamesWon}</span>
+                  <div className="bg-black p-1.5 border border-black">
+                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">REAL PVP</span>
+                    <span className="text-[10px] font-black text-[#ffcc00]">{stats.realPvpGamesWon}</span>
                   </div>
                 </div>
 
-                <div className="bg-black p-2 border border-black space-y-2">
-                  <div className="flex justify-between items-center">
+                <div className="bg-black p-2 border border-black space-y-1.5">
+                  <div className="flex justify-between items-center text-left">
                     <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
                     <span className="text-[8px] font-black text-[#ffcc00]">{fullProfile?.referrals?.referralsActivated ?? 0} active</span>
                   </div>
@@ -1094,36 +1164,46 @@ export function Web3Dashboard({
                       onClick={() => {
                         fetchFullProfile().catch(() => undefined);
                       }}
-                      className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase"
+                      className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer"
                     >
                       {fullProfileLoading ? 'Loading Details...' : 'Load Referrals & Quests'}
                     </button>
                   )}
-                  <div className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
+                  <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
                     <span className="text-slate-400 uppercase">Referral Earnings</span>
                     <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
                   </div>
-                  <div className="text-[8px] text-slate-300 break-all">{activeProfile?.referralLink || 'Sync Telegram to generate invite link'}</div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!activeProfile?.referralLink) return;
-                      navigator.clipboard.writeText(activeProfile.referralLink);
-                      alert('Referral link copied.');
-                    }}
-                    className="w-full py-1.5 bg-[#ffcc00] text-black border border-black text-[8px] font-black uppercase"
-                  >
-                    Copy Referral Link
-                  </button>
-                  <div className="space-y-1 max-h-[96px] overflow-y-auto custom-scroll pr-0.5">
+                  
+                  {activeProfile?.referralLink ? (
+                    <div className="flex gap-2">
+                      <div className="flex-1 bg-slate-950 border border-black px-2 py-0.5 text-[7px] text-slate-400 truncate flex items-center leading-none min-w-0">
+                        {activeProfile.referralLink}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(activeProfile.referralLink);
+                          sound.playPop();
+                          alert('Referral link copied.');
+                        }}
+                        className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-[7px] text-slate-500 text-left">Sync Telegram to generate invite link</div>
+                  )}
+
+                  <div className="space-y-1 max-h-[60px] overflow-y-auto custom-scroll pr-0.5">
                     {fullProfileLoading && !fullProfile ? (
-                      <div className="text-[8px] text-slate-500">Loading referrals...</div>
+                      <div className="text-[7.5px] text-slate-500 text-left">Loading referrals...</div>
                     ) : referralInvites.length === 0 ? (
-                      <div className="text-[8px] text-slate-500">No referrals yet.</div>
+                      <div className="text-[7.5px] text-slate-500 text-left">No referrals yet.</div>
                     ) : (
                       referralInvites.map((invite) => (
-                        <div key={invite.userId} className="flex justify-between items-center text-[8px] bg-slate-950 border border-black px-2 py-1">
-                          <span className="text-slate-200">{invite.username}</span>
+                        <div key={invite.userId} className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
+                          <span className="text-slate-200 truncate max-w-[120px]">{invite.username}</span>
                           <span className={invite.status === 'activated' ? 'text-[#00ff66] font-black' : 'text-[#ffcc00] font-black'}>
                             {invite.status}
                           </span>
@@ -1133,24 +1213,24 @@ export function Web3Dashboard({
                   </div>
                 </div>
 
-                <div className="bg-black p-2 border border-black space-y-1">
-                  <div className="text-[7px] uppercase font-bold text-slate-400">Quests</div>
-                  <div className="space-y-1 max-h-[140px] overflow-y-auto custom-scroll pr-0.5">
+                <div className="bg-black p-2 border border-black space-y-1.5">
+                  <div className="text-[7px] uppercase font-bold text-slate-400 text-left">Quests</div>
+                  <div className="space-y-1 max-h-[90px] overflow-y-auto custom-scroll pr-0.5">
                     {fullProfileLoading && !fullProfile ? (
-                      <div className="text-[8px] text-slate-500">Loading quests...</div>
+                      <div className="text-[7.5px] text-slate-500 text-left">Loading quests...</div>
                     ) : quests.length === 0 ? (
-                      <div className="text-[8px] text-slate-500">No quests loaded.</div>
+                      <div className="text-[7.5px] text-slate-500 text-left">No quests loaded.</div>
                     ) : (
                       quests.map((quest) => (
-                        <div key={quest.id} className="border border-black bg-slate-950 p-2">
-                          <div className="flex justify-between gap-2 text-[8px]">
-                            <span className="font-black text-slate-100">{quest.title}</span>
+                        <div key={quest.id} className="border border-black bg-slate-950 p-1.5 text-left font-mono">
+                          <div className="flex justify-between items-center gap-2 text-[7.5px]">
+                            <span className="font-black text-slate-100 truncate max-w-[180px]">{quest.title}</span>
                             <span className={quest.claimed ? 'text-[#00ff66]' : quest.completed ? 'text-[#ffcc00]' : 'text-slate-400'}>
                               {quest.progress}/{quest.target}
                             </span>
                           </div>
-                          <div className="text-[7px] text-slate-500 mt-1">{quest.description}</div>
-                          <div className="text-[7px] mt-1 text-[#00d2ff]">+{quest.rewardXp} XP / +{quest.rewardEnergy} ENG</div>
+                          <div className="text-[6.5px] text-slate-500 mt-0.5 leading-tight">{quest.description}</div>
+                          <div className="text-[6.5px] mt-0.5 text-[#00d2ff]">+{quest.rewardXp} XP / +{quest.rewardEnergy} ENG</div>
                         </div>
                       ))
                     )}
@@ -1158,12 +1238,12 @@ export function Web3Dashboard({
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2 pt-2">
+              <div className="flex flex-col gap-1.5 pt-1.5">
                 <button
                   type="button"
                   onClick={connectWallet}
                   disabled={isConnecting}
-                  className={`w-full py-2 border-2 border-black pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono ${
+                  className={`w-full py-1.5 border-2 border-black pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono cursor-pointer ${
                     isConnecting
                       ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                       : walletConnected
@@ -1182,7 +1262,7 @@ export function Web3Dashboard({
                       resetStats();
                     }
                   }}
-                  className="w-full py-2 bg-[#ff4b4b]/10 text-[#ff4b4b]/70 hover:text-[#ff4b4b] border border-black/40 pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono"
+                  className="w-full py-1.5 bg-[#ff4b4b]/10 text-[#ff4b4b]/70 hover:text-[#ff4b4b] border border-black/40 pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono cursor-pointer"
                 >
                   Hard Reset Progress
                 </button>
@@ -1198,52 +1278,55 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="space-y-3 h-full flex flex-col justify-between py-2 text-left"
             >
-              {/* Daily XP Check-in */}
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-3.5 text-center space-y-3 font-mono">
-                <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#00ff66] animate-bounce-subtle">
-                  <Gift className="w-5 h-5" />
+              {/* Compact Daily XP Check-in */}
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-2 flex items-center gap-3 font-mono">
+                <div className="flex-shrink-0 w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-[#00ff66] animate-bounce-subtle">
+                  <Gift className="w-4 h-4" />
                 </div>
-                <div className="space-y-1">
-                  <h3 className="font-black text-xs text-slate-100 uppercase">
-                    Daily XP Check-in
+                <div className="flex-1 leading-tight text-left">
+                  <h3 className="font-black text-[9px] text-slate-100 uppercase">
+                    Daily Check-in
                   </h3>
-                  <p className="text-[9px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                    Claim one daily check-in reward worth 20 XP. Tickets are no longer granted for free.
+                  <p className="text-[7.5px] text-slate-400 font-sans mt-0.5">
+                    Claim 20 XP daily.
                   </p>
                 </div>
-
-                {!walletConnected ? (
-                  <div className="text-[8.5px] text-[#ff4b4b] bg-black p-2 border border-black uppercase font-bold">
-                    Connect wallet to claim daily XP
-                  </div>
-                ) : dailyXpClaimedToday ? (
-                  <div className="w-full py-2 bg-slate-950 text-[#00ff66] border border-black/40 text-[10px] font-black uppercase font-mono flex items-center justify-center gap-1.5">
-                    <Check className="w-4 h-4 text-[#00ff66]" />
-                    DAILY XP CLAIMED
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={claimDailyXp}
-                    className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-                  >
-                    Claim +20 XP
-                  </button>
-                )}
+                <div className="flex-shrink-0">
+                  {!walletConnected ? (
+                    <span className="text-[6.5px] text-[#ff4b4b] bg-black px-1.5 py-1 border border-black uppercase font-bold block">
+                      No Wallet
+                    </span>
+                  ) : dailyXpClaimedToday ? (
+                    <span className="text-[7px] text-[#00ff66] bg-slate-950 px-1.5 py-1 border border-black/40 uppercase font-black block">
+                      Claimed
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={claimDailyXp}
+                      className="px-2 py-1 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                    >
+                      +20 XP
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                <div className="flex justify-between text-[9px]">
-                  <span className="text-slate-400 uppercase">Available</span>
-                  <span className="text-[#ffcc00] font-black">{goldenTickets.toFixed(2)} TKT</span>
-                </div>
-                <div className="flex justify-between text-[9px]">
-                  <span className="text-slate-400 uppercase">Held in queue</span>
-                  <span className="text-[#00d2ff] font-black">{heldTickets.toFixed(2)} TKT</span>
+              {/* Compressed Balance and Withdraw */}
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
+                <div className="grid grid-cols-2 gap-2 text-[8px]">
+                  <div className="bg-black/40 border border-black p-1.5 flex justify-between items-center">
+                    <span className="text-slate-400 uppercase">Free:</span>
+                    <span className="text-[#ffcc00] font-black">{goldenTickets.toFixed(2)} TKT</span>
+                  </div>
+                  <div className="bg-black/40 border border-black p-1.5 flex justify-between items-center">
+                    <span className="text-slate-400 uppercase">Held:</span>
+                    <span className="text-[#00d2ff] font-black">{heldTickets.toFixed(2)} TKT</span>
+                  </div>
                 </div>
 
-                <div className="pt-2 border-t border-black space-y-2">
-                  <div className="text-[8px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
+                <div className="pt-2 border-t border-black space-y-1.5">
+                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -1251,7 +1334,8 @@ export function Web3Dashboard({
                       step="0.1"
                       value={withdrawAmount}
                       onChange={(e) => setWithdrawAmount(e.target.value)}
-                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono"
+                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
+                      placeholder="Amount"
                     />
                     <button
                       type="button"
@@ -1281,30 +1365,30 @@ export function Web3Dashboard({
                           alert(error.message);
                         });
                       }}
-                      className="px-3 py-1.5 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase"
+                      className="px-3 py-1.5 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer"
                     >
                       Withdraw
                     </button>
                   </div>
-                  <div className="text-[7px] text-slate-500">
-                    Withdraw any positive amount. Final on-chain payout will use the configured marketing wallet later.
+                  <div className="text-[6.5px] text-slate-500 text-left">
+                    * Payouts require marketing wallet confirmation.
                   </div>
                 </div>
               </div>
 
               {/* Activity & Payouts Log */}
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-1.5 font-mono text-[9px] flex-1 flex flex-col">
-                <div className="flex justify-between items-center uppercase font-bold text-slate-400 pb-1 border-b border-black">
-                  <span className="flex items-center gap-1.5">
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-1.5 font-mono text-[9px] flex-1 flex flex-col min-h-0">
+                <div className="flex justify-between items-center uppercase font-bold text-slate-450 pb-1 border-b border-black">
+                  <span className="flex items-center gap-1.5 text-[8.5px]">
                     <History className="w-3.5 h-3.5 text-[#00d2ff]" />
-                    Activity & Payouts Log
+                    Activity Log
                   </span>
-                  <Globe className="w-3 h-3 text-slate-600" />
+                  <Globe className="w-3 h-3 text-slate-655" />
                 </div>
 
-                <div className="space-y-1 overflow-y-auto custom-scroll flex-1 max-h-[140px] pr-0.5">
+                <div className="space-y-1 overflow-y-auto custom-scroll flex-1 max-h-[100px] pr-0.5">
                   {transactions.length === 0 ? (
-                    <div className="text-center py-6 text-slate-600 text-[8px] uppercase">
+                    <div className="text-center py-4 text-slate-600 text-[8px] uppercase">
                       No activity recorded yet
                     </div>
                   ) : (
@@ -1319,7 +1403,7 @@ export function Web3Dashboard({
                                 : 'bg-[#ff4b4b]'
                           }`}></span>
                           <div>
-                            <span className="text-slate-355 block">{tx.event}</span>
+                            <span className="text-slate-300 block">{tx.event}</span>
                             <span className="text-slate-500 text-[7px]">
                               {tx.time || (tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}
                             </span>
@@ -1505,64 +1589,84 @@ export function Web3Dashboard({
                           </button>
                         ))}
                       </div>
-
-                      <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-450">
-                        <div className="flex justify-between text-slate-350">
-                          <span>Total rewards:</span>
+                      <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1.5 text-slate-450">
+                        <div className="flex justify-between items-center text-slate-350">
+                          <span className="font-bold">Prize Pool:</span>
                           <span className="text-[#00ff66] font-bold">{calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - {calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>2 players:</span>
-                          <span>{formatPayoutRow(selectedStake, 2)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>3 players:</span>
-                          <span>{formatPayoutRow(selectedStake, 3)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>4 players:</span>
-                          <span>{formatPayoutRow(selectedStake, 4)}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <input
-                          type="number"
-                          min="0.01"
-                          step="0.1"
-                          value={depositAmount}
-                          onChange={(e) => setDepositAmount(e.target.value)}
-                          className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono"
-                          placeholder="Deposit tickets"
-                        />
-                        <button
-                          type="button"
-                          onClick={buyTicketsWithTon}
-                          disabled={buyingTickets || !authReady}
-                          className="flex-1 py-1.5 bg-black text-slate-300 border border-black text-[9px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {buyingTickets ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <>
-                              <span>DEPOSIT</span>
-                              <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
-                            </>
-                          )}
-                        </button>
-                        {depositFlowStatus === 'failed' && readPendingDeposit() && (
+                        <div className="flex justify-end">
                           <button
                             type="button"
                             onClick={() => {
-                              const pending = readPendingDeposit();
-                              if (!pending) return;
-                              confirmPendingDeposit(pending).catch(() => undefined);
+                              sound.playPop();
+                              setShowPayoutDetails(!showPayoutDetails);
                             }}
-                            className="py-1.5 px-2 bg-[#3a1200] text-[#ffcc99] border border-black text-[8px] font-black uppercase"
+                            className="text-[7px] text-[#00d2ff] hover:underline uppercase font-bold focus:outline-none cursor-pointer"
                           >
-                            RETRY
+                            {showPayoutDetails ? 'Hide Payouts ▲' : 'Show Payouts ▼'}
                           </button>
+                        </div>
+                        {showPayoutDetails && (
+                          <div className="space-y-1 pt-1.5 border-t border-slate-900 animate-fade-in text-[7.5px]">
+                            <div className="flex justify-between">
+                              <span>2 players:</span>
+                              <span className="text-slate-300">{formatPayoutRow(selectedStake, 2)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>3 players:</span>
+                              <span className="text-slate-300">{formatPayoutRow(selectedStake, 3)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>4 players:</span>
+                              <span className="text-slate-300">{formatPayoutRow(selectedStake, 4)}</span>
+                            </div>
+                          </div>
                         )}
+                      </div>
+
+                      <div className="space-y-2">
+                        {/* Deposit Row */}
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.1"
+                            value={depositAmount}
+                            onChange={(e) => setDepositAmount(e.target.value)}
+                            className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono min-w-0"
+                            placeholder="Deposit tickets"
+                          />
+                          <button
+                            type="button"
+                            onClick={buyTicketsWithTon}
+                            disabled={buyingTickets || !authReady}
+                            className="flex-1 py-1.5 bg-black text-slate-300 border border-black text-[9px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {buyingTickets ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <>
+                                <span>DEPOSIT</span>
+                                <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
+                              </>
+                            )}
+                          </button>
+                          {depositFlowStatus === 'failed' && readPendingDeposit() && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const pending = readPendingDeposit();
+                                if (!pending) return;
+                                confirmPendingDeposit(pending).catch(() => undefined);
+                              }}
+                              className="py-1.5 px-2 bg-[#3a1200] text-[#ffcc99] border border-black text-[8px] font-black uppercase"
+                            >
+                              RETRY
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Matchmaking Queue Button */}
                         <button
                           type="button"
                           onClick={() => {
@@ -1618,10 +1722,10 @@ export function Web3Dashboard({
                               alert(error.message);
                             });
                           }}
-                          className="flex-1 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           JOIN REAL QUEUE
-                          </button>
+                        </button>
                       </div>
 
                       {depositFlowStatus !== 'idle' && depositStatusMessage && (
@@ -1774,6 +1878,8 @@ export function Web3Dashboard({
                                 setGeneratedLink('');
                                 setPrivateRoomCode('');
                                 setPrivateRoomStatus('idle');
+                                setPrivateRoomCreateState('idle');
+                                setPrivateRoomError('');
                                 setPrivateRoomPlayersCount(0);
                               }}
                               className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
@@ -1802,6 +1908,8 @@ export function Web3Dashboard({
                                 setGeneratedLink('');
                                 setPrivateRoomCode('');
                                 setPrivateRoomStatus('idle');
+                                setPrivateRoomCreateState('idle');
+                                setPrivateRoomError('');
                                 setPrivateRoomPlayersCount(0);
                               }}
                               className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
@@ -1866,41 +1974,22 @@ export function Web3Dashboard({
                         Join By Code
                       </button>
 
+                      {privateRoomError && (
+                        <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
+                          {privateRoomError}
+                        </div>
+                      )}
+
                       {!generatedLink ? (
                         <button
                           type="button"
-                          onClick={() => {
-                            if (privateStakeRequiresWallet && !walletConnected) {
-                              connectWallet();
-                              return;
-                            }
-                            sound.playShuffle();
-                            apiRequest<{ roomCode: string; targetPlayers: number; playersCount?: number; availableTickets: number; heldTickets: number }>('/api/private-rooms/create', {
-                              method: 'POST',
-                              body: JSON.stringify({
-                                userId: currentUserId,
-                                username: userName,
-                                avatarId: selectedAvatar,
-                                walletAddress: rawAddress || null,
-                                stake: privateRoomStake,
-                                targetPlayers: privateRoomTargetPlayers,
-                              }),
-                            }).then((result) => {
-                              setGoldenTickets(result.availableTickets);
-                              setHeldTickets(result.heldTickets);
-                              setPrivateRoomCode(result.roomCode);
-                              setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-                              setPrivateRoomPlayersCount(result.playersCount || 1);
-                              setPrivateRoomStatus('waiting');
-                              const sharePayload = buildPrivateRoomSharePayload(result.roomCode);
-                              setGeneratedLink(sharePayload.telegramLink);
-                            }).catch((error) => {
-                              alert(error.message);
-                            });
-                          }}
+                          onClick={createPrivateRoom}
+                          disabled={privateRoomCreateState === 'creating'}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
+                          {privateRoomCreateState === 'creating'
+                            ? 'Creating Room...'
+                            : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       ) : (
                         <div className="space-y-2 text-[9px]">

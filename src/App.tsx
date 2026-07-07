@@ -349,8 +349,8 @@ export default function App() {
   }, [gameState]);
 
   return (
-    <div className={`w-full bg-[#0c0f12] text-[#f8fafc] flex flex-col items-center relative select-none overflow-hidden ${
-      gameState.phase === 'setup' ? 'min-h-screen justify-end pb-8 sm:pb-12' : 'h-screen max-h-screen justify-start'
+    <div className={`w-full bg-[#0c0f12] text-[#f8fafc] flex flex-col items-center relative select-none ${
+      gameState.phase === 'setup' ? 'min-h-screen justify-start overflow-y-auto pb-8 sm:pb-12' : 'h-screen max-h-screen justify-start overflow-hidden'
     }`}>
       
       {/* Pixelated grid background in setup mode */}
@@ -424,7 +424,7 @@ export default function App() {
 
       {/* LOBBY / SETUP SCREEN */}
       {gameState.phase === 'setup' && (
-        <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-end">
+        <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-start">
 
           {/* Lobby Banner */}
           <div className="w-full border-4 border-black overflow-hidden bg-slate-950 shadow-[4px_4px_0_#000] aspect-[3/1] mb-4 relative">
