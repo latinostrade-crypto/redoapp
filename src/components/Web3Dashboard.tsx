@@ -767,7 +767,7 @@ export function Web3Dashboard({
 
   useEffect(() => {
     const incomingRoomCode = initialLaunchRoomCodeRef.current.trim().toUpperCase();
-    if (!authReady || launchRoomConsumedRef.current || !incomingRoomCode || privateRoomStatus !== 'idle') return;
+    if (launchRoomConsumedRef.current || !incomingRoomCode || privateRoomStatus !== 'idle') return;
     launchRoomConsumedRef.current = true;
     setCurrentTab('pvp');
     setPvpSubMode('private');
@@ -776,7 +776,7 @@ export function Web3Dashboard({
         setBootstrapError(`Failed to auto-join private room ${incomingRoomCode}.`);
       }
     }).catch(() => undefined);
-  }, [authReady, privateRoomStatus, currentUserId]);
+  }, [privateRoomStatus, currentUserId]);
 
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
@@ -1852,10 +1852,6 @@ export function Web3Dashboard({
                       <button
                         type="button"
                         onClick={() => {
-                          if (!authReady) {
-                            alert('Session is still syncing with the backend. Try again in a moment.');
-                            return;
-                          }
                           const normalizedCode = privateJoinCode.trim().toUpperCase();
                           if (!normalizedCode) {
                             alert('Enter a room code first.');
@@ -1874,10 +1870,6 @@ export function Web3Dashboard({
                         <button
                           type="button"
                           onClick={() => {
-                            if (!authReady) {
-                              alert('Session is still syncing with the backend. Try again in a moment.');
-                              return;
-                            }
                             if (privateStakeRequiresWallet && !walletConnected) {
                               connectWallet();
                               return;

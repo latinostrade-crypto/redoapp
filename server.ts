@@ -788,6 +788,21 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
   return next();
 }
 
+function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const session = verifySessionToken(extractSessionToken(req));
+  if (session) {
+    req.authUserId = session.userId;
+    return next();
+  }
+  const auth = verifyTelegramInitData(extractTelegramInitData(req));
+  if (auth) {
+    req.authUserId = `tg:${auth.id}`;
+    const user = getUser(req.authUserId);
+    applyTelegramAuth(user, auth);
+  }
+  return next();
+}
+
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!ADMIN_API_KEY) {
     return res.status(503).json({ error: 'Admin API key is not configured.' });
@@ -838,6 +853,15 @@ function getAuthenticatedUserId(req: AuthenticatedRequest) {
     throw new Error('Authentication required.');
   }
   return req.authUserId;
+}
+
+function getPrivateRoomUserId(req: AuthenticatedRequest, input: Record<string, unknown>) {
+  if (req.authUserId) return req.authUserId;
+  const bodyUserId = input.userId;
+  if (typeof bodyUserId === 'string' && bodyUserId.trim()) {
+    return bodyUserId.trim();
+  }
+  return '';
 }
 
 function assignReferralIfNeeded(user: UserState, startParam?: string) {
@@ -1590,7 +1614,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     createRequestId?: string;
     requestedRoomCode?: string;
   };
-  const userId = getAuthenticatedUserId(req);
+  const userId = getPrivateRoomUserId(req, input);
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing room creator user id.' });
+  }
   if (!username || !avatarId || stake === undefined || stake === null) {
     return res.status(400).json({ error: 'Missing room creator data.' });
   }
@@ -1723,17 +1750,21 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   });
 }
 
-app.post('/api/private-rooms/create', requireAuth, handlePrivateRoomCreate);
-app.get('/api/private-rooms/create-beacon', requireAuth, handlePrivateRoomCreate);
+app.post('/api/private-rooms/create', optionalAuth, handlePrivateRoomCreate);
+app.get('/api/private-rooms/create-beacon', optionalAuth, handlePrivateRoomCreate);
 
-app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, res) => {
   const { roomCode, username, avatarId, walletAddress } = req.body as {
     roomCode: string;
+    userId?: string;
     username: string;
     avatarId: string;
     walletAddress?: string;
   };
-  const userId = getAuthenticatedUserId(req);
+  const userId = getPrivateRoomUserId(req, req.body as Record<string, unknown>);
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing private room user id.' });
+  }
 
   const room = privateRooms.get(String(roomCode).toUpperCase());
   if (!room) {
@@ -1820,7 +1851,7 @@ app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res
   });
 });
 
-app.get('/api/private-rooms/status/:roomCode', requireAuth, (req, res) => {
+app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
   const room = privateRooms.get(String(req.params.roomCode).toUpperCase());
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
@@ -1839,7 +1870,7 @@ app.get('/api/private-rooms/status/:roomCode', requireAuth, (req, res) => {
   });
 });
 
-app.get('/api/private-rooms/stream/:roomCode', requireAuth, (req, res) => {
+app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   const roomCode = String(req.params.roomCode).toUpperCase();
   const room = privateRooms.get(roomCode);
   if (!room) {
