@@ -1993,32 +1993,62 @@ export function Web3Dashboard({
                             try {
                               if (privateRoomStake === 0) {
                                 const roomCode = createOptimisticRoomCode();
-                                let result: { roomCode: string; targetPlayers: number; playersCount?: number };
+                                let result: { roomCode: string; targetPlayers: number; playersCount?: number; availableTickets?: number; heldTickets?: number };
                                 try {
-                                  result = await registerRoomViaForm<{ roomCode: string; targetPlayers: number; playersCount?: number }>(buildAuthenticatedUrl('/api/private-rooms/create'), {
-                                    username: userName,
-                                    avatarId: selectedAvatar,
-                                    stake: '0',
-                                    targetPlayers: String(privateRoomTargetPlayers),
-                                    createRequestId,
-                                    requestedRoomCode: roomCode,
-                                  }, createRequestId);
-                                } catch (registrationError) {
+                                  result = await apiRequest<{ roomCode: string; targetPlayers: number; playersCount?: number; availableTickets?: number; heldTickets?: number }>('/api/private-rooms/create', {
+                                    method: 'POST',
+                                    retryOnNetworkError: true,
+                                    timeoutMs: 90000,
+                                    body: JSON.stringify({
+                                      userId: currentUserId,
+                                      username: userName,
+                                      avatarId: selectedAvatar,
+                                      walletAddress: rawAddress || null,
+                                      stake: 0,
+                                      targetPlayers: privateRoomTargetPlayers,
+                                      createRequestId,
+                                      requestedRoomCode: roomCode,
+                                    }),
+                                  });
+                                } catch (primaryError) {
                                   try {
-                                    const recoveredRoom = await waitForRegisteredPrivateRoom(roomCode);
-                                    result = {
-                                      roomCode: recoveredRoom.roomCode,
-                                      targetPlayers: recoveredRoom.targetPlayers,
-                                      playersCount: recoveredRoom.playersCount,
-                                    };
+                                    result = await apiRequest<{ roomCode: string; targetPlayers: number; playersCount?: number; availableTickets?: number; heldTickets?: number }>('/api/private-rooms/create', {
+                                      method: 'POST',
+                                      retryOnNetworkError: true,
+                                      timeoutMs: 90000,
+                                      body: JSON.stringify({
+                                        userId: currentUserId,
+                                        username: userName,
+                                        avatarId: selectedAvatar,
+                                        walletAddress: rawAddress || null,
+                                        stake: 0,
+                                        targetPlayers: privateRoomTargetPlayers,
+                                        createRequestId,
+                                      }),
+                                    });
                                   } catch {
-                                    throw registrationError;
+                                    try {
+                                      const recoveredRoom = await waitForRegisteredPrivateRoom(roomCode, 10, 1000);
+                                      result = {
+                                        roomCode: recoveredRoom.roomCode,
+                                        targetPlayers: recoveredRoom.targetPlayers,
+                                        playersCount: recoveredRoom.playersCount,
+                                      };
+                                    } catch {
+                                      throw primaryError;
+                                    }
                                   }
                                 }
                                 const confirmedRoomCode = result.roomCode || roomCode;
                                 setPrivateRoomCode(confirmedRoomCode);
                                 setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
                                 setPrivateRoomPlayersCount(result.playersCount || 1);
+                                if (typeof result.availableTickets === 'number') {
+                                  setGoldenTickets(result.availableTickets);
+                                }
+                                if (typeof result.heldTickets === 'number') {
+                                  setHeldTickets(result.heldTickets);
+                                }
                                 setPrivateRoomStatus('waiting');
                                 setGeneratedLink(buildPrivateRoomSharePayload(confirmedRoomCode).telegramLink);
                                 return;

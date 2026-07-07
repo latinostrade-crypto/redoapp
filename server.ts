@@ -1421,6 +1421,7 @@ app.get('/api/health', (req, res) => {
     status: 'healthy',
     time: new Date().toISOString(),
     service: 'redoapp-backend',
+    privateRoomsVersion: 'json-create-free-room-v5',
   });
 });
 
@@ -1658,11 +1659,13 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   if (user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
   }
-  try {
-    spendEnergy(user, 1, 'Private Room Energy');
-    updateQuestProgress(user.userId, 'spend_energy', 1);
-  } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+  if (stakeAmount > 0) {
+    try {
+      spendEnergy(user, 1, 'Private Room Energy');
+      updateQuestProgress(user.userId, 'spend_energy', 1);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+    }
   }
 
   if (stakeAmount > 0) {
@@ -1759,11 +1762,13 @@ app.post('/api/private-rooms/join', requireAuth, (req: AuthenticatedRequest, res
   }
 
   const user = getUser(userId, walletAddress);
-  try {
-    spendEnergy(user, 1, 'Private Room Energy');
-    updateQuestProgress(user.userId, 'spend_energy', 1);
-  } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+  if (room.stake > 0) {
+    try {
+      spendEnergy(user, 1, 'Private Room Energy');
+      updateQuestProgress(user.userId, 'spend_energy', 1);
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
+    }
   }
   if (user.availableTickets < room.stake) {
     return res.status(400).json({ error: 'Insufficient available tickets for this private room.' });
