@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
 import {
@@ -460,17 +460,11 @@ export function Web3Dashboard({
       });
   };
 
-  const applyPrivateRoomJoin = (result: PrivateRoomResponse, roomCodeToUse: string) => {
-    setShowRoomDisclaimer(false);
-    setPrivateRoomError('');
-    setPrivateJoinCode(roomCodeToUse);
-    setPrivateRoomCode(result.roomCode);
+  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string | null; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
     setPrivateRoomPlayersCount(result.playersCount);
     if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
     }
-    setGoldenTickets(result.availableTickets);
-    setHeldTickets(result.heldTickets);
     if (result.status === 'started' && result.matchId) {
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
@@ -482,7 +476,18 @@ export function Web3Dashboard({
       }));
       setPrivateRoomStatus('ready');
       onStartGame('private', privateRoomStake);
-    } else {
+    }
+  }, [privateRoomStake, currentUserId, onStartGame]);
+
+  const applyPrivateRoomJoin = (result: PrivateRoomResponse, roomCodeToUse: string) => {
+    setShowRoomDisclaimer(false);
+    setPrivateRoomError('');
+    setPrivateJoinCode(roomCodeToUse);
+    setPrivateRoomCode(result.roomCode);
+    setGoldenTickets(result.availableTickets);
+    setHeldTickets(result.heldTickets);
+    applyPrivateRoomState(result);
+    if (result.status !== 'started') {
       setPrivateRoomStatus('waiting');
       setPrivateRoomCreateState('waiting');
     }
@@ -770,6 +775,33 @@ export function Web3Dashboard({
         setFullProfileLoading(false);
       });
   };
+
+  // Synchronize room and match state when the user resumes (focus / foreground)
+  useEffect(() => {
+    const handleResume = () => {
+      console.log('App focused/visible. Re-syncing status...');
+      fetchFullProfile().catch(() => undefined);
+      if (privateRoomStatus === 'waiting' && privateRoomCode) {
+        apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode))
+          .then(applyPrivateRoomState)
+          .catch(() => undefined);
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        handleResume();
+      }
+    };
+
+    window.addEventListener('focus', handleResume);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleResume);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [privateRoomStatus, privateRoomCode, fetchFullProfile, applyPrivateRoomState]);
 
   useEffect(() => {
     localStorage.setItem('redoapp_current_user_id', currentUserId);
@@ -1122,24 +1154,7 @@ export function Web3Dashboard({
     const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
     privateRoomStreamRef.current = stream;
 
-    const applyPrivateRoomState = (result: { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string | null; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
-      setPrivateRoomPlayersCount(result.playersCount);
-      if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
-        setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-      }
-      if (result.status === 'started' && result.matchId) {
-        localStorage.setItem('redoapp_active_match', JSON.stringify({
-          matchId: result.matchId,
-          mode: 'private',
-          stake: privateRoomStake,
-          currentUserId,
-          players: result.players || [],
-          createdAt: Date.now(),
-        }));
-        setPrivateRoomStatus('ready');
-        onStartGame('private', privateRoomStake);
-      }
-    };
+
 
     stream.addEventListener('private-room', (event) => {
       const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
@@ -1163,7 +1178,7 @@ export function Web3Dashboard({
         privateRoomStreamRef.current = null;
       }
     };
-  }, [currentUserId, onStartGame, privateRoomCode, privateRoomStake, privateRoomStatus]);
+  }, [currentUserId, onStartGame, privateRoomCode, privateRoomStake, privateRoomStatus, applyPrivateRoomState]);
 
   useEffect(() => {
     return () => {
