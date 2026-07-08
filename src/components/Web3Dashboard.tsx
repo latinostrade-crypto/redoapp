@@ -488,6 +488,53 @@ export function Web3Dashboard({
     });
   };
 
+  const createPrivateRoomViaBridge = (payload: {
+    userId: string;
+    username: string;
+    avatarId: string;
+    walletAddress: string | null;
+    stake: number;
+    targetPlayers: number;
+    createRequestId: string;
+  }) => {
+    return new Promise<PrivateRoomResponse>((resolve, reject) => {
+      const bridgeRequestId = `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const params = new URLSearchParams({
+        ...Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value ?? '')])),
+        responseMode: 'iframe',
+        bridgeRequestId,
+      });
+      const iframe = document.createElement('iframe');
+      iframe.hidden = true;
+      iframe.src = buildAuthenticatedUrl(`/api/private-rooms/create-beacon?${params.toString()}`);
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Private room bridge timed out.'));
+      }, 45000);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        iframe.remove();
+      };
+      const onMessage = (event: MessageEvent) => {
+        const data = event.data as { source?: string; requestId?: string; payload?: PrivateRoomResponse; error?: string };
+        if (data?.source !== 'redoapp-room-bridge' || data.requestId !== bridgeRequestId) return;
+        cleanup();
+        if (data.payload) {
+          resolve(data.payload);
+        } else {
+          reject(new Error(data.error || 'Private room bridge failed.'));
+        }
+      };
+      iframe.addEventListener('error', () => {
+        cleanup();
+        reject(new Error('Private room bridge failed to load.'));
+      }, { once: true });
+      window.addEventListener('message', onMessage);
+      document.body.appendChild(iframe);
+    });
+  };
+
   const createPrivateRoom = () => {
     if (privateRoomCreateState === 'creating') return;
     if (!authReady) {
@@ -501,22 +548,16 @@ export function Web3Dashboard({
     sound.playShuffle();
     wakeBackend();
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
-    setPrivateRoomCreateState('creating');
-    setPrivateRoomError('Creating room: request sent to backend...');
-    apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
-      method: 'POST',
-      retryOnNetworkError: true,
-      timeoutMs: 45000,
-      body: JSON.stringify({
-        userId: currentUserId,
-        username: userName,
-        avatarId: selectedAvatar,
-        walletAddress: rawAddress || null,
-        stake: privateRoomStake,
-        targetPlayers: privateRoomTargetPlayers,
-        createRequestId,
-      }),
-    }).then((result) => {
+    const createPayload = {
+      userId: currentUserId,
+      username: userName,
+      avatarId: selectedAvatar,
+      walletAddress: rawAddress || null,
+      stake: privateRoomStake,
+      targetPlayers: privateRoomTargetPlayers,
+      createRequestId,
+    };
+    const applyCreatedRoom = (result: PrivateRoomResponse) => {
       setGoldenTickets(result.availableTickets);
       setHeldTickets(result.heldTickets);
       setPrivateRoomCode(result.roomCode);
@@ -528,6 +569,19 @@ export function Web3Dashboard({
       setPrivateRoomError('');
       const fallbackPayload = buildPrivateRoomSharePayload(result.roomCode);
       setGeneratedLink(result.telegramLink || fallbackPayload.telegramLink);
+    };
+    setPrivateRoomCreateState('creating');
+    setPrivateRoomError('Creating room: request sent to backend...');
+    apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
+      method: 'POST',
+      retryOnNetworkError: true,
+      timeoutMs: 12000,
+      body: JSON.stringify(createPayload),
+    }).then((result) => {
+      applyCreatedRoom(result);
+    }).catch(() => {
+      setPrivateRoomError('Primary API did not finish. Trying no-preflight bridge...');
+      return createPrivateRoomViaBridge(createPayload).then(applyCreatedRoom);
     }).catch((error) => {
       const message = error instanceof Error ? error.message : 'Failed to create private room.';
       setPrivateRoomCreateState('error');

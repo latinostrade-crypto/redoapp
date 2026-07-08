@@ -1600,10 +1600,11 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
 });
 
 function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
-  if (req.body?.responseMode === 'iframe') {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  if (input?.responseMode === 'iframe') {
     const message = JSON.stringify({
       source: 'redoapp-room-bridge',
-      requestId: String(req.body.bridgeRequestId || ''),
+      requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
     res.setHeader('Cache-Control', 'no-store');
