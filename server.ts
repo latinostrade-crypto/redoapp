@@ -1913,11 +1913,20 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   if (normalizedRequestedCode && !/^[A-Z0-9]{8}$/.test(normalizedRequestedCode)) {
     return res.status(400).json({ error: 'Requested room code is invalid.' });
   }
+
+  const hostPlayer: QueuePlayer = {
+    userId,
+    username,
+    avatarId,
+    stake: stakeAmount,
+    mode: 'private',
+    joinedAt: Date.now(),
+  };
   const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
     room.hostUserId === userId &&
-    room.status === 'waiting' &&
     room.stake === stakeAmount &&
-    room.targetPlayers === targetPlayersCount);
+    room.targetPlayers === targetPlayersCount &&
+    (room.status === 'waiting' || room.status === 'started'));
   if (existingWaitingRoom) {
     if (normalizedRequestedCode && existingWaitingRoom.roomCode !== normalizedRequestedCode) {
       const collision = privateRooms.get(normalizedRequestedCode);
@@ -1929,6 +1938,27 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       privateRooms.set(normalizedRequestedCode, existingWaitingRoom);
       schedulePersist();
     }
+
+    // Upgrade legacy waiting status to started and provision match with placeholders
+    if (!existingWaitingRoom.matchId) {
+      const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      existingWaitingRoom.matchId = matchId;
+      existingWaitingRoom.status = 'started';
+      
+      const matchPlayers: QueuePlayer[] = [hostPlayer];
+      for (let i = 1; i < targetPlayersCount; i++) {
+        matchPlayers.push({
+          userId: `waiting_for_player_${i}`,
+          username: 'Waiting...',
+          avatarId: 'koala',
+          stake: stakeAmount,
+          mode: 'private',
+          joinedAt: Date.now(),
+        });
+      }
+      activateMatch(matchId, 'private', matchPlayers, stakeAmount);
+    }
+
     const existingUser = getUser(userId, walletAddress);
     return sendPrivateRoomCreateSuccess(req, res, {
       success: true,
@@ -1936,8 +1966,8 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
       stake: existingWaitingRoom.stake,
       targetPlayers: existingWaitingRoom.targetPlayers,
-      status: existingWaitingRoom.status,
-      matchId: existingWaitingRoom.matchId || null,
+      status: 'started',
+      matchId: existingWaitingRoom.matchId,
       playersCount: existingWaitingRoom.players.length,
       availableTickets: existingUser.availableTickets,
       heldTickets: existingUser.heldTickets,
@@ -1990,14 +2020,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     });
   }
 
-  const hostPlayer: QueuePlayer = {
-    userId,
-    username,
-    avatarId,
-    stake: stakeAmount,
-    mode: 'private',
-    joinedAt: Date.now(),
-  };
+
 
   let roomCode = normalizedRequestedCode;
   if (roomCode && privateRooms.has(roomCode)) {
