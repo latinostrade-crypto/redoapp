@@ -165,16 +165,20 @@ export function useUnoGame() {
       return true;
     } catch (error) {
       console.error('Remote match state sync failed', error);
-      localStorage.removeItem('redoapp_active_match');
-      remoteMatchIdRef.current = null;
-      remoteUserIdRef.current = null;
-      setRemoteSessionActive(false);
-      setGameState((prev) => ({
-        ...prev,
-        phase: 'setup',
-        players: [],
-        winnerId: null,
-      }));
+      const errorMsg = error instanceof Error ? error.message : '';
+      const isFatal = errorMsg.includes('[404') || errorMsg.includes('[403') || errorMsg.includes('[400') || errorMsg.includes('Forbidden') || errorMsg.includes('Not found');
+      if (isFatal) {
+        localStorage.removeItem('redoapp_active_match');
+        remoteMatchIdRef.current = null;
+        remoteUserIdRef.current = null;
+        setRemoteSessionActive(false);
+        setGameState((prev) => ({
+          ...prev,
+          phase: 'setup',
+          players: [],
+          winnerId: null,
+        }));
+      }
       return false;
     }
   }, []);

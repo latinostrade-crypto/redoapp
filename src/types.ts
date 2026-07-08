@@ -145,6 +145,12 @@ export interface PlayerProfile {
   dailyStreak?: number;
   lootboxClaimedAt?: number | null;
   lootboxAvailable?: boolean;
+  activeMatch?: {
+    matchId: string;
+    mode: 'pvp' | 'private';
+    stake: number;
+    players: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+  } | null;
 }
 
 export interface PendingDepositView {

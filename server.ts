@@ -503,6 +503,25 @@ function isLootboxAvailable(user: UserState): boolean {
 }
 
 function buildBootstrapProfileResponse(user: UserState) {
+  const activeMatchId = activeMatchByUser.get(user.userId);
+  let activeMatchInfo = null;
+  if (activeMatchId) {
+    const match = activeMatches.get(activeMatchId);
+    if (match) {
+      activeMatchInfo = {
+        matchId: match.matchId,
+        mode: match.mode,
+        stake: match.stake,
+        players: match.players.map(p => ({
+          userId: p.userId,
+          username: p.username,
+          avatarId: p.avatarId,
+          stake: p.stake
+        })),
+      };
+    }
+  }
+
   return {
     userId: user.userId,
     telegramUsername: user.telegramUsername || null,
@@ -517,6 +536,7 @@ function buildBootstrapProfileResponse(user: UserState) {
     dailyStreak: user.dailyStreak || 0,
     lootboxClaimedAt: user.lootboxClaimedAt || null,
     lootboxAvailable: isLootboxAvailable(user),
+    activeMatch: activeMatchInfo,
   };
 }
 
@@ -1609,26 +1629,17 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
   user.lastDailyXpAt = now;
 
   const rewards = [
-    { xp: 10, tickets: 0, energy: 0 },
-    { xp: 15, tickets: 0.1, energy: 0 },
-    { xp: 20, tickets: 0.2, energy: 0 },
-    { xp: 25, tickets: 0.3, energy: 0 },
-    { xp: 30, tickets: 0.4, energy: 0 },
-    { xp: 40, tickets: 0.5, energy: 0 },
-    { xp: 50, tickets: 1.0, energy: 3 },
+    { xp: 10, tickets: 0, energy: 1 },
+    { xp: 15, tickets: 0, energy: 1 },
+    { xp: 20, tickets: 0, energy: 2 },
+    { xp: 25, tickets: 0, energy: 2 },
+    { xp: 30, tickets: 0, energy: 3 },
+    { xp: 40, tickets: 0, energy: 3 },
+    { xp: 50, tickets: 0, energy: 5 },
   ];
   const reward = rewards[Math.min(6, Math.max(0, streak - 1))];
 
   rewardXp(user, reward.xp, `Daily Check-in (Day ${streak})`);
-  if (reward.tickets > 0) {
-    user.availableTickets = round2(user.availableTickets + reward.tickets);
-    createLedgerEntry(user, {
-      event: `Daily Streak Day ${streak} Reward`,
-      value: `+${reward.tickets.toFixed(2)} TKT`,
-      type: 'reward',
-      amount: reward.tickets,
-    });
-  }
   if (reward.energy > 0) {
     rewardEnergy(user, reward.energy, `Daily Streak Day ${streak} Refill`);
   }
@@ -1681,22 +1692,16 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   }
 
   const roll = Math.random();
-  let rewardType: 'tickets' | 'energy' | 'jackpot' = 'tickets';
-  let rewardTicketsAmount = 0;
+  let rewardType: 'xp' | 'energy' | 'jackpot' = 'xp';
+  let rewardXpAmount = 0;
   let rewardEnergyAmount = 0;
   let message = '';
 
   if (roll < 0.60) {
-    rewardType = 'tickets';
-    rewardTicketsAmount = round2(0.5 + Math.random() * 2.0);
-    user.availableTickets = round2(user.availableTickets + rewardTicketsAmount);
-    createLedgerEntry(user, {
-      event: 'Daily Lootbox Tickets Reward',
-      value: `+${rewardTicketsAmount.toFixed(2)} TKT`,
-      type: 'reward',
-      amount: rewardTicketsAmount,
-    });
-    message = `🎁 You opened today's lootbox and found +${rewardTicketsAmount.toFixed(2)} Tickets!`;
+    rewardType = 'xp';
+    rewardXpAmount = Math.floor(50 + Math.random() * 101);
+    rewardXp(user, rewardXpAmount, 'Daily Lootbox XP Reward');
+    message = `🎁 You opened today's lootbox and found +${rewardXpAmount} XP!`;
   } else if (roll < 0.95) {
     rewardType = 'energy';
     rewardEnergyAmount = Math.floor(2 + Math.random() * 5);
@@ -1705,17 +1710,11 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
     message = `🎁 You opened today's lootbox and found +${rewardEnergyAmount} Energy!`;
   } else {
     rewardType = 'jackpot';
-    rewardTicketsAmount = 5.0;
-    rewardEnergyAmount = 5;
-    user.availableTickets = round2(user.availableTickets + rewardTicketsAmount);
-    createLedgerEntry(user, {
-      event: 'Daily Lootbox JACKPOT Reward',
-      value: `+${rewardTicketsAmount.toFixed(2)} TKT`,
-      type: 'reward',
-      amount: rewardTicketsAmount,
-    });
-    rewardEnergy(user, rewardEnergyAmount, 'Daily Lootbox Jackpot Energy Refill');
-    message = `🎉 JACKPOT! You opened today's lootbox and found +5.00 Tickets and +5 Energy!`;
+    rewardXpAmount = 300;
+    rewardEnergyAmount = 10;
+    rewardXp(user, rewardXpAmount, 'Daily Lootbox JACKPOT XP Reward');
+    rewardEnergy(user, rewardEnergyAmount, 'Daily Lootbox JACKPOT Energy Reward');
+    message = `🎉 JACKPOT! You opened today's lootbox and found +300 XP and +10 Energy!`;
   }
 
   user.lootboxClaimedAt = now;
@@ -1724,8 +1723,9 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   return res.json({
     success: true,
     rewardType,
-    rewardTickets: rewardTicketsAmount,
+    rewardTickets: 0,
     rewardEnergy: rewardEnergyAmount,
+    rewardXp: rewardXpAmount,
     message,
     availableTickets: user.availableTickets,
     energy: getEnergyState(user),

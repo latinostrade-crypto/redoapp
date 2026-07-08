@@ -353,11 +353,15 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   }
 
   function registerRoutes(app: Express) {
-    app.get('/api/tickets/balance/:userId', (req: Request, res: Response) => {
-      if (getRequestUserId(req) !== req.params.userId) {
+    app.get(['/api/tickets/balance', '/api/tickets/balance/:userId'], (req: Request, res: Response) => {
+      const userId = req.params.userId || getRequestUserId(req);
+      if (!userId) {
         return res.status(403).json({ error: 'Forbidden.' });
       }
-      const user = deps.getUser(req.params.userId);
+      if (req.params.userId && getRequestUserId(req) !== req.params.userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
+      const user = deps.getUser(userId);
       return res.json({
         availableTickets: user.availableTickets,
         heldTickets: user.heldTickets,
@@ -365,20 +369,28 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       });
     });
 
-    app.get('/api/tickets/ledger/:userId', (req: Request, res: Response) => {
-      if (getRequestUserId(req) !== req.params.userId) {
+    app.get(['/api/tickets/ledger', '/api/tickets/ledger/:userId'], (req: Request, res: Response) => {
+      const userId = req.params.userId || getRequestUserId(req);
+      if (!userId) {
         return res.status(403).json({ error: 'Forbidden.' });
       }
-      const user = deps.getUser(req.params.userId);
+      if (req.params.userId && getRequestUserId(req) !== req.params.userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
+      const user = deps.getUser(userId);
       return res.json({ transactions: user.transactions });
     });
 
-    app.get('/api/tickets/pending/:userId', (req: Request, res: Response) => {
-      if (getRequestUserId(req) !== req.params.userId) {
+    app.get(['/api/tickets/pending', '/api/tickets/pending/:userId'], (req: Request, res: Response) => {
+      const userId = req.params.userId || getRequestUserId(req);
+      if (!userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
+      if (req.params.userId && getRequestUserId(req) !== req.params.userId) {
         return res.status(403).json({ error: 'Forbidden.' });
       }
       const pending = Array.from(deps.depositIntents.values())
-        .filter((intent) => intent.userId === req.params.userId && intent.status === 'pending')
+        .filter((intent) => intent.userId === userId && intent.status === 'pending')
         .sort((a, b) => b.createdAt - a.createdAt)
         .map(buildPendingDepositView);
       return res.json({ deposits: pending });

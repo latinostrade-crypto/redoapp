@@ -302,7 +302,7 @@ export function Web3Dashboard({
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
-  const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; message: string } | null>(null);
+  const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
@@ -449,7 +449,7 @@ export function Web3Dashboard({
       setPendingDeposits([]);
       return Promise.resolve([] as PendingDepositView[]);
     }
-    return apiRequest<{ deposits: PendingDepositView[] }>('/api/tickets/pending/' + encodeURIComponent(currentUserId))
+    return apiRequest<{ deposits: PendingDepositView[] }>('/api/tickets/pending')
       .then((result) => {
         setPendingDeposits(result.deposits);
         return result.deposits;
@@ -686,7 +686,7 @@ export function Web3Dashboard({
         }),
       });
       setGoldenTickets(confirmed.availableTickets);
-      const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
+      const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger');
       setTransactions(ledger.transactions);
       await refreshPendingDeposits();
       clearPendingDeposit();
@@ -734,6 +734,23 @@ export function Web3Dashboard({
     }, 15000);
     return () => window.clearInterval(timer);
   }, [currentUserId, activeProfile]);
+
+  // Auto-recover active match if server reports the player is already in one
+  useEffect(() => {
+    if (activeProfile?.activeMatch) {
+      const match = activeProfile.activeMatch;
+      console.log('Server reported active match. Auto-recovering...', match);
+      localStorage.setItem('redoapp_active_match', JSON.stringify({
+        matchId: match.matchId,
+        mode: match.mode,
+        stake: match.stake,
+        currentUserId,
+        players: match.players,
+        createdAt: Date.now(),
+      }));
+      onStartGame(match.mode, match.stake);
+    }
+  }, [activeProfile?.activeMatch, currentUserId, onStartGame]);
 
   const fetchFullProfile = () => {
     if (fullProfileLoading || !getSessionToken()) {
@@ -798,7 +815,7 @@ export function Web3Dashboard({
       // hydration are optional follow-ups and must not block room actions.
       setBootstrapState('ready');
       const followUps = await Promise.allSettled([
-        apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(synced.userId)),
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger'),
         (synced.sessionToken || telegramInitData)
           ? apiRequest<PlayerProfile>('/api/me')
           : Promise.resolve(null),
@@ -921,6 +938,7 @@ export function Web3Dashboard({
       rewardType: string;
       rewardTickets: number;
       rewardEnergy: number;
+      rewardXp?: number;
       message: string;
       availableTickets: number;
       energy: any;
@@ -936,17 +954,18 @@ export function Web3Dashboard({
         type: result.rewardType,
         tickets: result.rewardTickets,
         energy: result.rewardEnergy,
+        xp: result.rewardXp,
         message: result.message,
       });
 
       const newTx = {
         id: `tx-chest-${Date.now()}`,
         event: 'Chest Claimed',
-        value: result.rewardType === 'tickets' 
-          ? `+${result.rewardTickets.toFixed(2)} TKT` 
+        value: result.rewardType === 'xp' 
+          ? `+${result.rewardXp} XP` 
           : result.rewardType === 'energy' 
             ? `+${result.rewardEnergy} ENG` 
-            : `+${result.rewardTickets.toFixed(2)}T / +${result.rewardEnergy}E`,
+            : `+${result.rewardXp}XP / +${result.rewardEnergy}E`,
         time: 'Just now',
         type: 'claim'
       };
@@ -1581,7 +1600,7 @@ export function Web3Dashboard({
                       Daily Check-in
                     </h3>
                     <p className="text-[7.5px] text-slate-400 font-sans mt-0.5">
-                      Check in daily to build your streak and get Tickets + Energy!
+                      Check in daily to build your streak and get XP + Energy!
                     </p>
                   </div>
                   <div className="flex-shrink-0">
@@ -1617,9 +1636,10 @@ export function Web3Dashboard({
                       const isCompleted = day < currentStreak || (day === currentStreak && dailyXpClaimedToday);
                       const isCurrent = day === currentStreak && !dailyXpClaimedToday;
                       let dayRewardText = '';
-                      if (day === 1) dayRewardText = '10 XP';
-                      else if (day === 7) dayRewardText = '50 XP + 1 TKT + ENG';
-                      else dayRewardText = `${10 + (day - 1) * 5} XP + 0.${day - 1} TKT`;
+                      if (day === 1 || day === 2) dayRewardText = `${day === 1 ? 10 : 15} XP + 1 ENG`;
+                      else if (day === 3 || day === 4) dayRewardText = `${day === 3 ? 20 : 25} XP + 2 ENG`;
+                      else if (day === 5 || day === 6) dayRewardText = `${day === 5 ? 30 : 40} XP + 3 ENG`;
+                      else dayRewardText = '50 XP + 5 ENG';
                       
                       return (
                         <div
@@ -1634,7 +1654,7 @@ export function Web3Dashboard({
                         >
                           <div className="text-[7px] font-black leading-none">DAY {day}</div>
                           <div className="text-[5.5px] font-extrabold leading-none mt-1 scale-90 origin-center truncate text-slate-400" title={dayRewardText}>
-                            {day === 7 ? '🎁 MAX' : `+0.${day - 1}T`}
+                            {day === 7 ? '⚡ MAX' : `+${day === 1 || day === 2 ? 1 : day === 3 || day === 4 ? 2 : 3}E`}
                           </div>
                         </div>
                       );
@@ -1684,11 +1704,11 @@ export function Web3Dashboard({
                             ticketAmount: amount,
                           }),
                         }).then(() => {
-                          return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(currentUserId));
+                          return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
                         }).then((balance) => {
                           setGoldenTickets(balance.availableTickets);
                           setHeldTickets(balance.heldTickets);
-                          return apiRequest<{ transactions: any[] }>('/api/tickets/ledger/' + encodeURIComponent(currentUserId));
+                          return apiRequest<{ transactions: any[] }>('/api/tickets/ledger');
                         }).then((ledger) => {
                           setTransactions(ledger.transactions);
                           alert('Withdrawal request created.');
@@ -1850,7 +1870,7 @@ export function Web3Dashboard({
                             method: 'POST',
                             body: JSON.stringify({ userId: currentUserId }),
                           }).then(() => {
-                            return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance/' + encodeURIComponent(currentUserId));
+                            return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
                           }).then((balance) => {
                             setGoldenTickets(balance.availableTickets);
                             setHeldTickets(balance.heldTickets);
@@ -2570,7 +2590,7 @@ export function Web3Dashboard({
               </div>
 
               <div className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#ffcc00] relative overflow-hidden text-2xl animate-bounce mt-2">
-                {lootboxReward.type === 'jackpot' ? '👑' : lootboxReward.type === 'energy' ? '⚡' : '🎫'}
+                {lootboxReward.type === 'jackpot' ? '👑' : lootboxReward.type === 'energy' ? '⚡' : '⭐'}
               </div>
 
               <div className="space-y-2">
