@@ -861,7 +861,7 @@ export function useUnoGame() {
       const drawnCard = deck.pop();
       if (!drawnCard) return prev;
 
-      // Under UNO rules: if the drawn card is playable immediately,
+      // Under REDOapp rules: if the drawn card is playable immediately,
       // it can be played! Let's check if playable
       const playable = drawnCard.color === 'wild' || isValidMove(drawnCard, prev.activeColor, prev.activeValue);
       if (playable) {
@@ -897,7 +897,7 @@ export function useUnoGame() {
       // if they just drew a card, standard rules state they get to skip if they don't play.
       // To simplify: if they drew a card and can't play, we advance the turn!
       // If it's playable, we still let them choose? Or if not playable, auto-skip.
-      // Standard UNO: you draw once. If playable, you can play it immediately or pass.
+      // Standard REDOapp: you draw once. If playable, you can play it immediately or pass.
       // To make it very streamlined and prevent stuck situations:
       // If they cannot play the drawn card, we immediately pass the turn!
       if (!playable) {

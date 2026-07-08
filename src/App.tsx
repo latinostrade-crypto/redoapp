@@ -426,7 +426,7 @@ export default function App() {
           <div className="w-full border-4 border-black overflow-hidden bg-slate-950 shadow-[4px_4px_0_#000] aspect-[3/1] mb-4 relative">
             <img
               src="/banner.png"
-              alt="YO PIXEL UNO Banner"
+              alt="YO PIXEL REDOapp Banner"
               className="w-full h-full object-cover select-none pointer-events-none"
               style={{ imageRendering: 'pixelated' }}
             />

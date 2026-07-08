@@ -2381,7 +2381,7 @@ export function Web3Dashboard({
                               onClick={() => {
                                 sound.playPop();
                                 const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
-                                const text = encodeURIComponent("Join my private UNO room! 🎮🃏");
+                                const text = encodeURIComponent("Join my private REDOapp room! 🎮🃏");
                                 const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
                                 const tg = (window as any).Telegram?.WebApp;
                                 if (tg?.openTelegramLink) {
@@ -2390,9 +2390,9 @@ export function Web3Dashboard({
                                   window.open(shareUrl, '_blank');
                                 }
                               }}
-                              className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black flex items-center justify-center gap-0.5"
+                              className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black flex items-center justify-center gap-0.5 shadow-[2px_2px_0_#000]"
                             >
-                              Позвать друга ➔
+                              INVITE FRIEND ➔
                             </button>
                             <button
                               type="button"

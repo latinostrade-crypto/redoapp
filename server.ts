@@ -234,6 +234,7 @@ const questProgressByUser = new Map<string, UserQuestProgress[]>();
 const telegramNotifications: TelegramNotification[] = [];
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
+const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
@@ -2163,6 +2164,22 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   const userId = getPrivateRoomUserId(req, req.query);
   res.locals.userId = userId;
 
+  // Clear cleanup timer for this room/player if they reconnected
+  if (room.hostUserId === userId) {
+    const hostTimer = privateRoomCleanupTimers.get(roomCode);
+    if (hostTimer) {
+      clearTimeout(hostTimer);
+      privateRoomCleanupTimers.delete(roomCode);
+    }
+  } else {
+    const playerTimerKey = `${roomCode}_${userId}`;
+    const playerTimer = privateRoomCleanupTimers.get(playerTimerKey);
+    if (playerTimer) {
+      clearTimeout(playerTimer);
+      privateRoomCleanupTimers.delete(playerTimerKey);
+    }
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -2176,43 +2193,67 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
     if (currentRoom && currentRoom.status === 'waiting') {
       const activeSubs = privateRoomSubscribers.get(roomCode);
       const isStillConnected = !!activeSubs && Array.from(activeSubs).some(
-        (sub) => sub.locals.userId === userId
+        (sub) => sub.locals.userId === userId && sub !== res
       );
 
       if (!isStillConnected) {
         const playerInRoom = currentRoom.players.find((p) => p.userId === userId);
         if (playerInRoom) {
-          currentRoom.players = currentRoom.players.filter((p) => p.userId !== userId);
-          if (playerInRoom.stake > 0) {
-            const user = getUser(userId);
-            user.heldTickets = round2(user.heldTickets - playerInRoom.stake);
-            user.availableTickets = round2(user.availableTickets + playerInRoom.stake);
-            createLedgerEntry(user, {
-              event: 'Private Room Leave Release',
-              value: `+${playerInRoom.stake.toFixed(2)} TKT`,
-              type: 'stake_release',
-              amount: playerInRoom.stake,
-            });
+          if (currentRoom.hostUserId === userId) {
+            // Schedule disbanding after 60 seconds
+            if (!privateRoomCleanupTimers.has(roomCode)) {
+              const timer = setTimeout(() => {
+                const roomToDisband = privateRooms.get(roomCode);
+                if (roomToDisband && roomToDisband.status === 'waiting') {
+                  roomToDisband.players.forEach(p => {
+                    if (p.stake > 0) {
+                      const user = getUser(p.userId);
+                      user.heldTickets = round2(user.heldTickets - p.stake);
+                      user.availableTickets = round2(user.availableTickets + p.stake);
+                      createLedgerEntry(user, {
+                        event: 'Private Room Host Leave Release',
+                        value: `+${p.stake.toFixed(2)} TKT`,
+                        type: 'stake_release',
+                        amount: p.stake,
+                      });
+                    }
+                  });
+                  privateRooms.delete(roomCode);
+                  privateRoomCleanupTimers.delete(roomCode);
+                  broadcastPrivateRoom(roomCode);
+                }
+              }, 60000); // 60 seconds grace period
+              privateRoomCleanupTimers.set(roomCode, timer);
+            }
+          } else {
+            // Schedule player boot after 60 seconds
+            const playerTimerKey = `${roomCode}_${userId}`;
+            if (!privateRoomCleanupTimers.has(playerTimerKey)) {
+              const timer = setTimeout(() => {
+                const roomToUpdate = privateRooms.get(roomCode);
+                if (roomToUpdate && roomToUpdate.status === 'waiting') {
+                  const playerToBoot = roomToUpdate.players.find(p => p.userId === userId);
+                  if (playerToBoot) {
+                    roomToUpdate.players = roomToUpdate.players.filter(p => p.userId !== userId);
+                    if (playerToBoot.stake > 0) {
+                      const user = getUser(userId);
+                      user.heldTickets = round2(user.heldTickets - playerToBoot.stake);
+                      user.availableTickets = round2(user.availableTickets + playerToBoot.stake);
+                      createLedgerEntry(user, {
+                        event: 'Private Room Leave Release',
+                        value: `+${playerToBoot.stake.toFixed(2)} TKT`,
+                        type: 'stake_release',
+                        amount: playerToBoot.stake,
+                      });
+                    }
+                    broadcastPrivateRoom(roomCode);
+                  }
+                }
+                privateRoomCleanupTimers.delete(playerTimerKey);
+              }, 60000);
+              privateRoomCleanupTimers.set(playerTimerKey, timer);
+            }
           }
-
-          if (currentRoom.players.length === 0 || currentRoom.hostUserId === userId) {
-            currentRoom.players.forEach(p => {
-              if (p.stake > 0) {
-                const user = getUser(p.userId);
-                user.heldTickets = round2(user.heldTickets - p.stake);
-                user.availableTickets = round2(user.availableTickets + p.stake);
-                createLedgerEntry(user, {
-                  event: 'Private Room Host Leave Release',
-                  value: `+${p.stake.toFixed(2)} TKT`,
-                  type: 'stake_release',
-                  amount: p.stake,
-                });
-              }
-            });
-            privateRooms.delete(roomCode);
-          }
-          schedulePersist();
-          broadcastPrivateRoom(roomCode);
         }
       }
     }
