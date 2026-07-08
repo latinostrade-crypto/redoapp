@@ -508,10 +508,12 @@ function buildBootstrapProfileResponse(user: UserState) {
   if (activeMatchId) {
     const match = activeMatches.get(activeMatchId);
     if (match) {
+      const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
       activeMatchInfo = {
         matchId: match.matchId,
         mode: match.mode,
         stake: match.stake,
+        roomCode: associatedRoom ? associatedRoom.roomCode : null,
         players: match.players.map(p => ({
           userId: p.userId,
           username: p.username,
@@ -2005,6 +2007,23 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     } while (privateRooms.has(roomCode));
   }
 
+  const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  
+  // Set up match players with placeholders
+  const matchPlayers: QueuePlayer[] = [hostPlayer];
+  for (let i = 1; i < targetPlayersCount; i++) {
+    matchPlayers.push({
+      userId: `waiting_for_player_${i}`,
+      username: 'Waiting...',
+      avatarId: 'koala',
+      stake: stakeAmount,
+      mode: 'private',
+      joinedAt: Date.now(),
+    });
+  }
+
+  activateMatch(matchId, 'private', matchPlayers, stakeAmount);
+
   privateRooms.set(roomCode, {
     roomCode,
     createRequestId: normalizedRequestId || undefined,
@@ -2013,7 +2032,8 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     hostUserId: userId,
     players: [hostPlayer],
     createdAt: Date.now(),
-    status: 'waiting',
+    status: 'started',
+    matchId,
   });
   schedulePersist();
   broadcastPrivateRoom(roomCode);
@@ -2024,7 +2044,8 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
-    status: 'waiting',
+    status: 'started',
+    matchId,
     playersCount: 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
@@ -2068,10 +2089,14 @@ app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, re
       energy: getEnergyState(user),
     });
   }
-  if (room.status === 'started') {
+  // Find the match to check for placeholders
+  const match = room.matchId ? activeMatches.get(room.matchId) : null;
+  const hasPlaceholders = !!match && match.players.some(p => p.userId.startsWith('waiting_for_player_'));
+
+  if (room.status === 'started' && !hasPlaceholders) {
     return res.status(400).json({ error: 'Private room has already started.' });
   }
-  if (room.players.length >= MAX_MATCH_PLAYERS) {
+  if (room.players.length >= room.targetPlayers) {
     return res.status(400).json({ error: 'Private room is already full.' });
   }
 
@@ -2099,26 +2124,46 @@ app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, re
     });
   }
 
-  room.players.push({
+  const newPlayer: QueuePlayer = {
     userId,
     username,
     avatarId,
     stake: room.stake,
     mode: 'private',
     joinedAt: Date.now(),
-  });
+  };
 
-  if (room.players.length >= room.targetPlayers) {
-    const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    activateMatch(matchId, 'private', room.players, room.stake);
-    room.status = 'started';
-    room.matchId = matchId;
-  } else {
-    room.status = 'waiting';
+  room.players.push(newPlayer);
+
+  if (match) {
+    // Replace the first placeholder in match.players
+    const placeholderIdx = match.players.findIndex(p => p.userId.startsWith('waiting_for_player_'));
+    if (placeholderIdx !== -1) {
+      const placeholderUserId = match.players[placeholderIdx].userId;
+      match.players[placeholderIdx] = newPlayer;
+      
+      // Also replace in match.gameState.players
+      const gsPlayerIdx = match.gameState.players.findIndex(p => p.userId === placeholderUserId);
+      if (gsPlayerIdx !== -1) {
+        match.gameState.players[gsPlayerIdx].userId = userId;
+        match.gameState.players[gsPlayerIdx].username = username;
+        match.gameState.players[gsPlayerIdx].avatarId = avatarId;
+      }
+
+      activeMatchByUser.set(userId, match.matchId);
+
+      const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
+      if (!anyLeft) {
+        match.gameState.turnStartedAt = Date.now();
+      }
+    }
   }
 
   privateRooms.set(room.roomCode, room);
   schedulePersist();
+  if (match) {
+    broadcastMatch(match.matchId);
+  }
   broadcastPrivateRoom(room.roomCode);
 
   return res.json({
@@ -2504,6 +2549,17 @@ setInterval(() => {
     if (match.gameState.phase !== 'playing') continue;
 
     const state = match.gameState;
+    const hasPlaceholders = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
+
+    if (hasPlaceholders) {
+      state.turnStartedAt = Date.now();
+      state.players.forEach((player) => {
+        player.isConnected = true;
+        player.disconnectedAt = null;
+      });
+      continue;
+    }
+
     const isNewMatch = (now - match.createdAt) < 15000;
 
     // Evaluate connection status

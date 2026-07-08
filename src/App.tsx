@@ -497,6 +497,75 @@ export default function App() {
               ))}
             </AnimatePresence>
           </div>
+
+          {/* WAITING FOR OPPONENT IN PRIVATE ROOM OVERLAY */}
+          {gameState.players.some((p) => p.name === 'Waiting...') && (
+            <div className="absolute inset-0 bg-[#0c0f12]/85 backdrop-blur-md z-30 flex items-center justify-center p-4 select-none font-mono">
+              <div className="w-full max-w-xs bg-slate-950 border-4 border-black p-5 text-center shadow-[4px_4px_0_#000] pixel-box-sm flex flex-col gap-4 relative overflow-hidden">
+                <div className="absolute inset-0 pointer-events-none bg-radial from-transparent to-black/20 opacity-30"></div>
+                
+                <div className="w-12 h-12 mx-auto bg-slate-900 border-2 border-black flex items-center justify-center animate-pulse">
+                  <span className="text-xl">⏳</span>
+                </div>
+                
+                <h3 className="text-[11px] font-black text-[#ffcc00] uppercase tracking-widest leading-none">
+                  Waiting for Opponent...
+                </h3>
+                
+                <p className="text-[8px] text-slate-400 font-sans leading-normal px-2">
+                  Share the link or code with your friend. The game table is ready and waiting for them.
+                </p>
+
+                {(() => {
+                  const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+                  if (activeMatchRaw) {
+                    try {
+                      const activeMatch = JSON.parse(activeMatchRaw);
+                      if (activeMatch.roomCode) {
+                        return (
+                          <div className="bg-slate-900 border border-slate-800 p-1.5 font-mono text-[9px] text-[#00ff66] break-all select-all">
+                            CODE: <span className="font-bold text-white text-[10px]">{activeMatch.roomCode}</span>
+                          </div>
+                        );
+                      }
+                    } catch (e) {}
+                  }
+                  return null;
+                })()}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+                    if (activeMatchRaw) {
+                      try {
+                        const activeMatch = JSON.parse(activeMatchRaw);
+                        if (activeMatch.roomCode) {
+                          const tgBotUsername = 'redo_appbot';
+                          const appShortName = 'app';
+                          const link = `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${tgBotUsername}/${appShortName}?startapp=room_${activeMatch.roomCode}`)}&text=${encodeURIComponent('Join my REDOapp match! Let’s play! 🎴')}`;
+                          const tg = (window as any).Telegram?.WebApp;
+                          if (tg?.openTelegramLink) {
+                            tg.openTelegramLink(link);
+                          } else {
+                            window.open(link, '_blank');
+                          }
+                        } else {
+                          alert('Room code not found in session.');
+                        }
+                      } catch (e) {
+                        console.error(e);
+                      }
+                    }
+                  }}
+                  className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border-2 border-black cursor-pointer shadow-[3px_3px_0_#000] hover:translate-y-0.5 hover:shadow-[1px_1px_0_#000] transition-all"
+                >
+                  Invite Friend ➔
+                </button>
+              </div>
+            </div>
+          )}
           
           {/* TOP ZONE: AI PLAYER 2 */}
           <section className="w-full flex justify-center items-center py-1">
