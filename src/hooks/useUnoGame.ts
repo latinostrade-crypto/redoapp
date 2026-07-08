@@ -219,7 +219,8 @@ export function useUnoGame() {
         
         if (entry.playerId === 'player') {
           if (gameMode === 'offline') {
-            xpGained = Math.round(12 + (rank === 1 ? 18 : rank === 2 ? 8 : rank === 3 ? 4 : 2) + (cardsPlayedThisRound * 1.5) + (cardsDrawnThisRound * 0.5));
+            const stakeLevelBaseXp = 30 + (rank === 1 ? 55 : rank === 2 ? 30 : rank === 3 ? 18 : 10) + (cardsPlayedThisRound * 2);
+            xpGained = Math.max(5, Math.round(stakeLevelBaseXp / 3));
           } else if (gameMode === 'pvp') {
             const baseXp = 30 + (rank === 1 ? 55 : rank === 2 ? 30 : rank === 3 ? 18 : 10) + (cardsPlayedThisRound * 2);
             const stakeMultiplier = activeStake >= 30 ? 1.35 : activeStake >= 10 ? 1.2 : activeStake >= 5 ? 1.1 : 1;

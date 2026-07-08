@@ -576,7 +576,7 @@ function spendEnergy(user: UserState, amount: number, reason: string) {
   user.energyUpdatedAt = Date.now();
   createLedgerEntry(user, {
     event: reason,
-    value: `-${amount} ENG`,
+    value: `-⚡ ${amount}`,
     type: 'reward',
     amount: -amount,
   });
@@ -588,7 +588,7 @@ function rewardEnergy(user: UserState, amount: number, reason: string) {
   user.energyUpdatedAt = Date.now();
   createLedgerEntry(user, {
     event: reason,
-    value: `+${amount} ENG`,
+    value: `+⚡ ${amount}`,
     type: 'reward',
     amount,
   });

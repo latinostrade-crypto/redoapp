@@ -5,7 +5,6 @@ import {
   Wallet,
   Coins,
   Sparkles,
-  Check,
   Loader2,
   Gift,
   Play,
@@ -13,6 +12,7 @@ import {
   Globe,
   Trophy,
   Ticket,
+  Zap,
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
@@ -31,9 +31,12 @@ const PUBLIC_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 type PublicStakeOption = typeof PUBLIC_STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
+const NFT_COLLECTION_ADDRESS = 'EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi';
+const NFT_COLLECTION_URL = `https://getgems.io/collection/${NFT_COLLECTION_ADDRESS}`;
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
 const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
 const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
+const NFT_EVENT_VERIFICATION_STORAGE_KEY = 'redoapp_nft_event_verifications';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
   if (!profile?.userId) return null;
@@ -104,6 +107,18 @@ async function copyTextSafely(text: string) {
     }
     return copied;
   }
+}
+
+function readNftEventVerifications(): Record<string, true> {
+  try {
+    return JSON.parse(localStorage.getItem(NFT_EVENT_VERIFICATION_STORAGE_KEY) || '{}') as Record<string, true>;
+  } catch {
+    return {};
+  }
+}
+
+function formatEnergyValue(amount: number) {
+  return `⚡ ${amount}`;
 }
 
 function getTelegramStartParam() {
@@ -212,12 +227,10 @@ export function Web3Dashboard({
 
   const [tonConnectUI] = useTonConnectUI();
   const rawAddress = useTonAddress();
+  const rawWalletAddress = useTonAddress(false);
   const walletConnected = !!rawAddress;
   const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
   
-  const walletAddress = walletConnected 
-    ? `${rawAddress.substring(0, 6)}...${rawAddress.substring(rawAddress.length - 4)}` 
-    : '';
   const [profile, setProfile] = useState<PlayerProfile | null>(() => {
     try {
       return normalizeProfile(JSON.parse(localStorage.getItem(PROFILE_CACHE_STORAGE_KEY) || 'null'));
@@ -302,6 +315,11 @@ export function Web3Dashboard({
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
+  const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
+    const stored = readNftEventVerifications();
+    return rawAddress && stored[rawAddress] ? 'verified' : 'idle';
+  });
+  const [nftCheckMessage, setNftCheckMessage] = useState('');
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
@@ -380,6 +398,22 @@ export function Web3Dashboard({
       setShowConnectModal(true);
     }
   }, [walletConnected]);
+
+  useEffect(() => {
+    if (!rawAddress) {
+      setNftCheckState('idle');
+      setNftCheckMessage('');
+      return;
+    }
+    const stored = readNftEventVerifications();
+    if (stored[rawAddress]) {
+      setNftCheckState('verified');
+      setNftCheckMessage('Sticker holder verified.');
+    } else {
+      setNftCheckState('idle');
+      setNftCheckMessage('');
+    }
+  }, [rawAddress]);
 
   useEffect(() => {
     if (!activeProfile) return;
@@ -940,7 +974,7 @@ export function Web3Dashboard({
       setDailyXpClaimedToday(true);
       localStorage.setItem('redoapp_last_daily_xp_checkin', Date.now().toString());
       
-      const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${result.rewardEnergy} ENG` : ''}`;
+      const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
       const newTx = {
         id: `tx-${Date.now()}`,
         event: `Check-in Day ${result.streak || 1}`,
@@ -1001,8 +1035,8 @@ export function Web3Dashboard({
         value: result.rewardType === 'xp' 
           ? `+${result.rewardXp} XP` 
           : result.rewardType === 'energy' 
-            ? `+${result.rewardEnergy} ENG` 
-            : `+${result.rewardXp}XP / +${result.rewardEnergy}E`,
+            ? `+${formatEnergyValue(result.rewardEnergy)}` 
+            : `+${result.rewardXp}XP / +${formatEnergyValue(result.rewardEnergy)}`,
         time: 'Just now',
         type: 'claim'
       };
@@ -1013,6 +1047,53 @@ export function Web3Dashboard({
     }).finally(() => {
       setIsOpeningLootbox(false);
     });
+  };
+
+  const verifyNftEventEligibility = async () => {
+    if (!walletConnected || !rawAddress) {
+      setShowConnectModal(true);
+      return;
+    }
+
+    setNftCheckMessage('');
+    try {
+      sound.playPop();
+      setNftCheckState('signing');
+      await tonConnectUI.signData({
+        type: 'text',
+        text: `REDOapp NFT event check\nWallet: ${rawAddress}\nCollection: ${NFT_COLLECTION_ADDRESS}\nTime: ${new Date().toISOString()}`,
+        network: '-239',
+        from: rawWalletAddress || undefined,
+      } as any);
+
+      setNftCheckState('checking');
+      const response = await fetch(
+        `https://tonapi.io/v2/accounts/${encodeURIComponent(rawAddress)}/nfts?collection=${encodeURIComponent(NFT_COLLECTION_ADDRESS)}&limit=1`,
+        { headers: { Accept: 'application/json' } }
+      );
+
+      if (!response.ok) {
+        throw new Error('NFT check service is unavailable. Try again later.');
+      }
+
+      const payload = await response.json() as { nft_items?: unknown[]; items?: unknown[] };
+      const nftItems = Array.isArray(payload.nft_items) ? payload.nft_items : Array.isArray(payload.items) ? payload.items : [];
+
+      if (nftItems.length > 0) {
+        const stored = readNftEventVerifications();
+        stored[rawAddress] = true;
+        localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
+        setNftCheckState('verified');
+        setNftCheckMessage('Sticker holder verified.');
+        return;
+      }
+
+      setNftCheckState('missing');
+      setNftCheckMessage('No sticker NFT from this collection was found on this wallet.');
+    } catch (error) {
+      setNftCheckState('error');
+      setNftCheckMessage(error instanceof Error ? error.message : 'NFT verification failed.');
+    }
   };
 
   const buyTicketsWithTon = async () => {
@@ -1289,8 +1370,7 @@ export function Web3Dashboard({
               </>
             ) : walletConnected ? (
               <>
-                <Check className="w-3 h-3 text-black" />
-                {walletAddress}
+                <Wallet className="w-3.5 h-3.5 text-black drop-shadow-[0_0_4px_rgba(0,255,102,0.95)]" />
               </>
             ) : (
               <>
@@ -1320,7 +1400,8 @@ export function Web3Dashboard({
 
 
 
-      {/* 3. Grid statistics (XP instead of TON Points) */}
+      {/* 3. Compact account totals for non-profile tabs */}
+      {currentTab !== 'profile' && (
       <div className="grid grid-cols-3 gap-2">
         <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
           <span className="text-[7px] uppercase font-bold text-slate-400">
@@ -1349,6 +1430,7 @@ export function Web3Dashboard({
           </span>
         </div>
       </div>
+      )}
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-between">
@@ -1384,60 +1466,70 @@ export function Web3Dashboard({
                   </div>
                   <div className="text-left font-mono leading-tight">
                     <span className="block text-[6.5px] text-slate-400 uppercase">Telegram Profile</span>
-                    <span className="text-[10px] font-black text-[#00ff66] truncate block max-w-[180px]">
-                      {tgProfileName ? `@${tgProfileName}` : 'guest'}
-                    </span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-[10px] font-black text-[#00ff66] truncate block max-w-[150px]">
+                        {tgProfileName ? `@${tgProfileName}` : 'guest'}
+                      </span>
+                      {walletConnected && (
+                        <span className="w-5 h-5 bg-[#00ff66] text-black border border-black flex items-center justify-center shadow-[0_0_10px_rgba(0,255,102,0.65)]" title="Wallet connected">
+                          <Wallet className="w-3 h-3" />
+                        </span>
+                      )}
+                      {nftCheckState === 'verified' && (
+                        <span className="w-5 h-5 bg-[#ffcc00] text-black border border-black flex items-center justify-center shadow-[0_0_10px_rgba(255,204,0,0.75)]" title="NFT holder verified">
+                          <Trophy className="w-3 h-3" />
+                        </span>
+                      )}
+                    </div>
                     <span className="block text-[6.5px] text-slate-500 mt-0.5">
                       ID: {currentUserId}
                     </span>
                   </div>
                 </div>
 
-                <div className="space-y-1 bg-black p-1.5 border border-black">
-                  <div className="flex justify-between items-center text-[7.5px] font-bold">
-                    <span className="text-slate-400">XP PROGRESS</span>
-                    <span className="text-[#00d2ff]">{displayCurrentLevelXp} / {displayXpNeeded} XP</span>
+                <div className="bg-black p-2 border border-black space-y-1.5">
+                  <div className="grid grid-cols-4 gap-1 text-left font-mono">
+                    <div className="bg-slate-950 border border-black px-1.5 py-1">
+                      <span className="block text-[6px] uppercase font-bold text-slate-500">XP</span>
+                      <span className="text-[9px] font-black text-[#00d2ff]">{effectiveXp}</span>
+                    </div>
+                    <div className="bg-slate-950 border border-black px-1.5 py-1">
+                      <span className="block text-[6px] uppercase font-bold text-slate-500">TKT</span>
+                      <span className="text-[9px] font-black text-[#ffcc00]">{goldenTickets}</span>
+                    </div>
+                    <div className="bg-slate-950 border border-black px-1.5 py-1">
+                      <span className="block text-[6px] uppercase font-bold text-slate-500">LVL</span>
+                      <span className="text-[9px] font-black text-[#ec4899]">{displayLevel}</span>
+                    </div>
+                    <div className="bg-slate-950 border border-black px-1.5 py-1">
+                      <span className="block text-[6px] uppercase font-bold text-slate-500">POWER</span>
+                      <span className="text-[9px] font-black text-[#00ff66] flex items-center gap-0.5">
+                        <Zap className="w-2.5 h-2.5 fill-[#00ff66]" /> {energy.energy}/{energy.maxEnergy}
+                      </span>
+                    </div>
                   </div>
-                  <div className="w-full bg-slate-900 h-2 border border-black overflow-hidden relative">
-                    <div
-                      className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
-                      style={{ width: `${displayXpProgressPercentage}%` }}
-                    ></div>
-                  </div>
-                </div>
 
-                <div className="bg-black p-1.5 border border-black space-y-1">
-                  <div className="flex justify-between items-center text-[7.5px] font-bold">
-                    <span className="text-slate-400">ENERGY</span>
-                    <span className="text-[#00ff66]">{energy.energy} / {energy.maxEnergy}</span>
+                  <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
+                    <div className="space-y-0.5">
+                      <div className="flex justify-between items-center text-[6.5px] font-bold">
+                        <span className="text-slate-500 uppercase">XP Progress</span>
+                        <span className="text-[#00d2ff]">{displayCurrentLevelXp}/{displayXpNeeded}</span>
+                      </div>
+                      <div className="w-full bg-slate-900 h-1.5 border border-black overflow-hidden">
+                        <div
+                          className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
+                          style={{ width: `${displayXpProgressPercentage}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                    <div className="text-right text-[6.5px] leading-tight font-mono">
+                      <div className="text-slate-400">M {stats.gamesPlayed} · W {stats.gamesWon}</div>
+                      <div className="text-[#ffcc00]">WR {winRate}% · PVP {stats.realPvpGamesWon}</div>
+                    </div>
                   </div>
-                  <div className="w-full bg-slate-900 h-2 border border-black overflow-hidden relative">
-                    <div
-                      className="bg-[#00ff66] h-full transition-all duration-500 ease-out"
-                      style={{ width: `${Math.round((energy.energy / energy.maxEnergy) * 100)}%` }}
-                    ></div>
-                  </div>
+
                   <div className="text-[6.5px] text-slate-550 text-left">
-                    {energy.nextEnergyAt ? `Next +1 in ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Energy full'}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5 text-left text-[8.5px]">
-                  <div className="bg-black p-1.5 border border-black">
-                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">MATCHES</span>
-                    <span className="text-[10px] font-black text-white">{stats.gamesPlayed}</span>
-                  </div>
-                  <div className="bg-black p-1.5 border border-black">
-                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">WIN RATE</span>
-                    <span className="text-[10px] font-black text-[#00d2ff]">{winRate}%</span>
-                  </div>
-                  <div className="bg-black p-1.5 border border-black">
-                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">WINS</span>
-                    <span className="text-[10px] font-black text-[#00ff66]">{stats.gamesWon}</span>
-                  </div>
-                  <div className="bg-black p-1.5 border border-black">
-                    <span className="block text-slate-500 text-[6.5px] uppercase font-bold">REAL PVP</span>
-                    <span className="text-[10px] font-black text-[#ffcc00]">{stats.realPvpGamesWon}</span>
+                    {energy.nextEnergyAt ? `Next +1 ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Power full'}
                   </div>
                 </div>
 
@@ -1541,7 +1633,7 @@ export function Web3Dashboard({
                             </span>
                           </div>
                           <div className="text-[6.5px] text-slate-500 mt-0.5 leading-tight">{quest.description}</div>
-                          <div className="text-[6.5px] mt-0.5 text-[#00d2ff]">+{quest.rewardXp} XP / +{quest.rewardEnergy} ENG</div>
+                          <div className="text-[6.5px] mt-0.5 text-[#00d2ff]">+{quest.rewardXp} XP / +{formatEnergyValue(quest.rewardEnergy)}</div>
                         </div>
                       ))
                     )}
@@ -1636,10 +1728,10 @@ export function Web3Dashboard({
                       const isCompleted = day < currentStreak || (day === currentStreak && dailyXpClaimedToday);
                       const isCurrent = day === currentStreak && !dailyXpClaimedToday;
                       let dayRewardText = '';
-                      if (day === 1 || day === 2) dayRewardText = `${day === 1 ? 10 : 15} XP + 1 ENG`;
-                      else if (day === 3 || day === 4) dayRewardText = `${day === 3 ? 20 : 25} XP + 2 ENG`;
-                      else if (day === 5 || day === 6) dayRewardText = `${day === 5 ? 30 : 40} XP + 3 ENG`;
-                      else dayRewardText = '50 XP + 5 ENG';
+                      if (day === 1 || day === 2) dayRewardText = `${day === 1 ? 10 : 15} XP + ⚡ 1`;
+                      else if (day === 3 || day === 4) dayRewardText = `${day === 3 ? 20 : 25} XP + ⚡ 2`;
+                      else if (day === 5 || day === 6) dayRewardText = `${day === 5 ? 30 : 40} XP + ⚡ 3`;
+                      else dayRewardText = '50 XP + ⚡ 5';
                       
                       return (
                         <div
@@ -1760,7 +1852,7 @@ export function Web3Dashboard({
                             </span>
                           </div>
                         </div>
-                        <span className="font-extrabold text-slate-200">{tx.value}</span>
+                        <span className="font-extrabold text-slate-200">{String(tx.value).replace(/ENG/g, '⚡')}</span>
                       </div>
                     ))
                   )}
@@ -1815,21 +1907,47 @@ export function Web3Dashboard({
                   <div className="pt-1 border-t border-slate-800 break-all leading-relaxed">
                     <span className="text-slate-500">Collection:</span>
                     <span className="block text-[#00d2ff] font-bold">
-                      EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi
+                      {NFT_COLLECTION_ADDRESS}
                     </span>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playPop();
-                    window.open('https://getgems.io/collection/EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi', '_blank', 'noopener,noreferrer');
-                  }}
-                  className="w-full py-2 bg-[#00d2ff] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono"
-                >
-                  View Collection
-                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={verifyNftEventEligibility}
+                    disabled={nftCheckState === 'signing' || nftCheckState === 'checking'}
+                    className={`py-2 text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono disabled:opacity-60 disabled:cursor-not-allowed ${
+                      nftCheckState === 'verified' ? 'bg-[#00ff66]' : 'bg-[#ffcc00]'
+                    }`}
+                  >
+                    {nftCheckState === 'signing'
+                      ? 'Sign...'
+                      : nftCheckState === 'checking'
+                      ? 'Checking...'
+                      : nftCheckState === 'verified'
+                      ? 'Verified'
+                      : 'Check Me'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playPop();
+                      window.open(NFT_COLLECTION_URL, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="py-2 bg-[#00d2ff] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono"
+                  >
+                    Collection
+                  </button>
+                </div>
+
+                {nftCheckMessage && (
+                  <div className={`bg-black border border-black px-2 py-1.5 text-[7.5px] leading-relaxed font-mono text-left ${
+                    nftCheckState === 'verified' ? 'text-[#00ff66]' : nftCheckState === 'missing' ? 'text-[#ffcc00]' : 'text-[#ffb3b3]'
+                  }`}>
+                    {nftCheckMessage}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -1924,7 +2042,7 @@ export function Web3Dashboard({
                         </h3>
                         <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
                           {selectedStake === 0 ? (
-                            <>ENG: <strong>{energy.energy}</strong> / {energy.maxEnergy}</>
+                            <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#ffcc00]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
                           ) : (
                             <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
                           )}
@@ -1948,7 +2066,7 @@ export function Web3Dashboard({
                             }`}
                           >
                             <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
-                            <span className="text-[6px] block mt-0.5">{stake === 0 ? `${PUBLIC_FREE_MATCH_ENERGY_COST} energy` : 'stake'}</span>
+                            <span className="text-[6px] block mt-0.5">{stake === 0 ? formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST) : 'stake'}</span>
                           </button>
                         ))}
                       </div>
@@ -1957,7 +2075,7 @@ export function Web3Dashboard({
                           <span className="font-bold">{selectedStake === 0 ? 'Free Cost:' : 'Prize Pool:'}</span>
                           <span className="text-[#00ff66] font-bold">
                             {selectedStake === 0
-                              ? `${PUBLIC_FREE_MATCH_ENERGY_COST} energy / game`
+                              ? `${formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST)} / game`
                               : `${calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - ${calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT`}
                           </span>
                         </div>
