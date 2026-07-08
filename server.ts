@@ -2504,12 +2504,16 @@ setInterval(() => {
     if (match.gameState.phase !== 'playing') continue;
 
     const state = match.gameState;
-    const currentPlayerIndex = state.currentPlayerIndex;
-    const currentPlayer = state.players[currentPlayerIndex];
-    if (!currentPlayer) continue;
+    const isNewMatch = (now - match.createdAt) < 15000;
 
     // Evaluate connection status
     state.players.forEach((player) => {
+      if (isNewMatch) {
+        player.isConnected = true;
+        player.disconnectedAt = null;
+        return;
+      }
+
       const subscribers = matchSubscribers.get(matchId);
       const isConnected = !!subscribers && Array.from(subscribers).some(
         (res) => res.locals.userId === player.userId
@@ -2531,6 +2535,15 @@ setInterval(() => {
         }
       }
     });
+
+    if (isNewMatch) {
+      state.turnStartedAt = now;
+      continue;
+    }
+
+    const currentPlayerIndex = state.currentPlayerIndex;
+    const currentPlayer = state.players[currentPlayerIndex];
+    if (!currentPlayer) continue;
 
     if (!state.turnStartedAt) {
       state.turnStartedAt = now;

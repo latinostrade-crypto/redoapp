@@ -1300,25 +1300,7 @@ export function Web3Dashboard({
         </div>
       )}
 
-      {apiTrace && (
-        <div className={`border border-black px-2 py-1.5 text-[7px] leading-relaxed font-mono ${
-          apiTrace.stage === 'error'
-            ? 'bg-[#2a0d0d] text-[#ffb3b3]'
-            : apiTrace.stage === 'success'
-              ? 'bg-[#062b12] text-[#8dffaf]'
-              : apiTrace.stage === 'retry'
-                ? 'bg-[#2b2106] text-[#ffe08a]'
-                : 'bg-[#08131f] text-[#9ed8ff]'
-        }`}>
-          <div className="flex justify-between gap-2">
-            <span className="font-black uppercase">API {apiTrace.stage}</span>
-            <span>{apiTrace.status ? `${apiTrace.status} ` : ''}{apiTrace.durationMs ?? (apiTrace.stage === 'start' ? `${apiTraceElapsedSec}s` : '')}</span>
-          </div>
-          <div className="truncate">{apiTrace.method} {apiTrace.path}</div>
-          <div className="truncate text-slate-400">{apiTraceHost} · attempt {apiTrace.attempt}/{apiTrace.attempts}</div>
-          {apiTrace.message && <div className="text-[#ffcc00]">{apiTrace.message}</div>}
-        </div>
-      )}
+
 
       {/* 3. Grid statistics (XP instead of TON Points) */}
       <div className="grid grid-cols-3 gap-2">
