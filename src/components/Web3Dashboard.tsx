@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
-import { apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken, wakeBackend } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken, wakeBackend } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -206,6 +206,8 @@ export function Web3Dashboard({
   const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [bootstrapError, setBootstrapError] = useState('');
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
+  const [apiTrace, setApiTrace] = useState<ApiTraceDetail | null>(null);
+  const [apiTraceNow, setApiTraceNow] = useState(() => Date.now());
   const [tgPhotoFailed, setTgPhotoFailed] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(false);
@@ -303,6 +305,14 @@ export function Web3Dashboard({
   const privateStakeRequiresWallet = privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
   const authReady = bootstrapState === 'ready';
+  const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((apiTraceNow - apiTrace.startedAt) / 1000)) : 0;
+  const apiTraceHost = (() => {
+    try {
+      return new URL(API_BASE_URL).host;
+    } catch {
+      return API_BASE_URL || 'same-origin';
+    }
+  })();
   const formatPlaceLabel = (place: number) => (place === 1 ? '1st' : place === 2 ? '2nd' : place === 3 ? '3rd' : `${place}th`);
   const formatPayoutRow = (stake: number, playersCount: 2 | 3 | 4) => {
     const { payouts } = calculateTicketPayouts(stake, playersCount);
@@ -310,6 +320,25 @@ export function Web3Dashboard({
       .map((payout, index) => `${formatPlaceLabel(index + 1)} ${payout.toFixed(2)} TKT`)
       .join(' · ');
   };
+
+  useEffect(() => {
+    const handleApiTrace = (event: Event) => {
+      const detail = (event as CustomEvent<ApiTraceDetail>).detail;
+      setApiTrace(detail);
+      setApiTraceNow(Date.now());
+    };
+    window.addEventListener('redoapp:api-trace', handleApiTrace as EventListener);
+    return () => {
+      window.removeEventListener('redoapp:api-trace', handleApiTrace as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!apiTrace || apiTrace.stage !== 'start') return;
+    setApiTraceNow(Date.now());
+    const timer = window.setInterval(() => setApiTraceNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [apiTrace]);
 
   useEffect(() => {
     if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
@@ -473,10 +502,11 @@ export function Web3Dashboard({
     wakeBackend();
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
     setPrivateRoomCreateState('creating');
-    setPrivateRoomError('');
+    setPrivateRoomError('Creating room: request sent to backend...');
     apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
       method: 'POST',
       retryOnNetworkError: true,
+      timeoutMs: 45000,
       body: JSON.stringify({
         userId: currentUserId,
         username: userName,
@@ -495,6 +525,7 @@ export function Web3Dashboard({
       setPrivateRoomPlayersCount(result.playersCount || 1);
       setPrivateRoomStatus('waiting');
       setPrivateRoomCreateState('waiting');
+      setPrivateRoomError('');
       const fallbackPayload = buildPrivateRoomSharePayload(result.roomCode);
       setGeneratedLink(result.telegramLink || fallbackPayload.telegramLink);
     }).catch((error) => {
@@ -1048,6 +1079,26 @@ export function Web3Dashboard({
           >
             Retry
           </button>
+        </div>
+      )}
+
+      {apiTrace && (
+        <div className={`border border-black px-2 py-1.5 text-[7px] leading-relaxed font-mono ${
+          apiTrace.stage === 'error'
+            ? 'bg-[#2a0d0d] text-[#ffb3b3]'
+            : apiTrace.stage === 'success'
+              ? 'bg-[#062b12] text-[#8dffaf]'
+              : apiTrace.stage === 'retry'
+                ? 'bg-[#2b2106] text-[#ffe08a]'
+                : 'bg-[#08131f] text-[#9ed8ff]'
+        }`}>
+          <div className="flex justify-between gap-2">
+            <span className="font-black uppercase">API {apiTrace.stage}</span>
+            <span>{apiTrace.status ? `${apiTrace.status} ` : ''}{apiTrace.durationMs ?? (apiTrace.stage === 'start' ? `${apiTraceElapsedSec}s` : '')}</span>
+          </div>
+          <div className="truncate">{apiTrace.method} {apiTrace.path}</div>
+          <div className="truncate text-slate-400">{apiTraceHost} · attempt {apiTrace.attempt}/{apiTrace.attempts}</div>
+          {apiTrace.message && <div className="text-[#ffcc00]">{apiTrace.message}</div>}
         </div>
       )}
 
@@ -1740,6 +1791,7 @@ export function Web3Dashboard({
                             }>('/api/matchmaker/join', {
                               method: 'POST',
                               retryOnNetworkError: true,
+                              timeoutMs: 45000,
                               body: JSON.stringify({
                                 userId: currentUserId,
                                 username: userName,
