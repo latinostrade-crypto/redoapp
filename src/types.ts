@@ -33,6 +33,8 @@ export interface Player {
   // Emotion indicator to make the game hilarious and cartoonish!
   emotion: 'happy' | 'thinking' | 'worried' | 'angry' | 'celebrating';
   activeBubble?: string;
+  isConnected?: boolean;
+  disconnectedAt?: number | null;
 }
 
 export type GamePhase = 'setup' | 'playing' | 'choosing_color' | 'game_over';
@@ -60,6 +62,7 @@ export interface GameState {
   dealerId: PlayerId;
   consecutiveDraws: number; // Tracks draws in current turn
   accusablePlayers: PlayerId[]; // Players with 1 card who haven't declared UNO and can be caught
+  turnStartedAt?: number;
 }
 
 export interface GameStats {

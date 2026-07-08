@@ -49,14 +49,10 @@ export default function App() {
     setGameMode,
     activeStake,
     returnToLobby,
+    turnTimeLeft,
   } = useUnoGame();
 
   const getDisplayName = (p: any) => {
-    if (gameMode !== 'pvp') return p.name;
-    if (p.id === 'player') return p.name;
-    if (p.id === 'ai1') return 'Player 2';
-    if (p.id === 'ai2') return 'Player 3';
-    if (p.id === 'ai3') return 'Player 4';
     return p.name;
   };
 
@@ -508,17 +504,26 @@ export default function App() {
               const pandaPlayer = gameState.players[2];
               if (!pandaPlayer) return null;
               const isActive = gameState.currentPlayerIndex === 2;
+              const isOffline = gameMode !== 'offline' && !pandaPlayer.isConnected;
+              const isBot = gameMode !== 'offline' && pandaPlayer.isAi;
+              const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
               return (
                 <div className="flex flex-col items-center relative gap-1">
-                  <div style={{ filter: gameMode === 'pvp' ? 'blur(4.5px)' : 'none' }}>
+                  <div style={{ filter: avatarFilter }}>
                     <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={38} />
                   </div>
                   
-                  <div className="bg-black text-white px-2 py-0.5 border border-black text-[9px] font-mono flex items-center gap-1.5 shadow-[2px_2px_0_#000] max-w-[150px] truncate">
+                  <div className="bg-black text-white px-2 py-0.5 border border-black text-[9px] font-mono flex items-center gap-1.5 shadow-[2px_2px_0_#000] max-w-[170px] truncate">
                     <span className="truncate">{getDisplayName(pandaPlayer)}</span>
                     <span className="bg-[#ff4b4b] text-black px-1 border border-black text-[8px] font-black">
                       🎴 {pandaPlayer.hand.length}
                     </span>
+                    {isOffline && (
+                      <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse">🔌 OFF</span>
+                    )}
+                    {isBot && (
+                      <span className="text-[#ffcc00] font-black text-[7px]">🤖 BOT</span>
+                    )}
                   </div>
                 </div>
               );
@@ -534,15 +539,24 @@ export default function App() {
                 const leftPlayer = gameState.players[1];
                 if (!leftPlayer) return null;
                 const isActive = gameState.currentPlayerIndex === 1;
+                const isOffline = gameMode !== 'offline' && !leftPlayer.isConnected;
+                const isBot = gameMode !== 'offline' && leftPlayer.isAi;
+                const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
                 return (
                   <div className="flex flex-col items-center relative gap-1 text-center">
-                    <div style={{ filter: gameMode === 'pvp' ? 'blur(4.5px)' : 'none' }}>
+                    <div style={{ filter: avatarFilter }}>
                       <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={36} />
                     </div>
                     
-                    <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000]">
-                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{getDisplayName(leftPlayer)}</span>
+                    <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000] max-w-[85px] truncate">
+                      <span className="max-w-[80px] truncate text-center">{getDisplayName(leftPlayer)}</span>
                       <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {leftPlayer.hand.length} CARDS</span>
+                      {isOffline && (
+                        <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">🔌 OFF</span>
+                      )}
+                      {isBot && (
+                        <span className="text-[#ffcc00] font-black text-[7px] mt-0.5">🤖 BOT</span>
+                      )}
                     </div>
                   </div>
                 );
@@ -554,6 +568,20 @@ export default function App() {
               
               {/* Play Mat Felt Grid Background */}
               <div className="absolute inset-0 border border-dashed border-[#2e3846] opacity-60"></div>
+
+              {/* DYNAMIC TURN TIMER BADGE */}
+              {gameState.phase === 'playing' && (
+                <div className="absolute top-0.5 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none">
+                  <div className={`px-2 py-0.5 border border-black font-mono font-black text-[9px] min-[370px]:text-[10px] sm:text-[11px] shadow-[1px_1px_0_#000] text-center transition-all ${
+                    turnTimeLeft <= 6 && isHumanTurn
+                      ? 'bg-[#ff4b4b] text-white animate-bounce shadow-[0_0_8px_#ff4b4b]'
+                      : 'bg-[#ffcc00] text-black'
+                  }`}>
+                    {isHumanTurn ? '⏱️ YOUR TURN: ' : `⏱️ ${currentActivePlayer?.name || 'Turn'}: `}
+                    <span className="font-extrabold">{turnTimeLeft}s</span>
+                  </div>
+                </div>
+              )}
 
               {/* SOFT PIXELATED DIRECTION CIRCLE */}
               <div className="absolute w-[95px] h-[95px] min-[370px]:w-[115px] min-[370px]:h-[115px] sm:w-[155px] sm:h-[155px] flex items-center justify-center pointer-events-none">
@@ -654,15 +682,24 @@ export default function App() {
                 const rightPlayer = gameState.players[3];
                 if (!rightPlayer) return null;
                 const isActive = gameState.currentPlayerIndex === 3;
+                const isOffline = gameMode !== 'offline' && !rightPlayer.isConnected;
+                const isBot = gameMode !== 'offline' && rightPlayer.isAi;
+                const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
                 return (
                   <div className="flex flex-col items-center relative gap-1 text-center">
-                    <div style={{ filter: gameMode === 'pvp' ? 'blur(4.5px)' : 'none' }}>
+                    <div style={{ filter: avatarFilter }}>
                       <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={36} />
                     </div>
                     
-                    <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000]">
-                      <span className="max-w-[50px] min-[370px]:max-w-[65px] truncate text-center">{getDisplayName(rightPlayer)}</span>
+                    <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000] max-w-[85px] truncate">
+                      <span className="max-w-[80px] truncate text-center">{getDisplayName(rightPlayer)}</span>
                       <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {rightPlayer.hand.length} CARDS</span>
+                      {isOffline && (
+                        <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">🔌 OFF</span>
+                      )}
+                      {isBot && (
+                        <span className="text-[#ffcc00] font-black text-[7px] mt-0.5">🤖 BOT</span>
+                      )}
                     </div>
                   </div>
                 );

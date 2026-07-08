@@ -86,6 +86,7 @@ export function useUnoGame() {
     if (saved) return JSON.parse(saved);
     return [];
   });
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(20);
   const remoteMatchIdRef = useRef<string | null>(null);
   const remoteUserIdRef = useRef<string | null>(null);
   const [remoteSessionActive, setRemoteSessionActive] = useState(false);
@@ -164,7 +165,16 @@ export function useUnoGame() {
       return true;
     } catch (error) {
       console.error('Remote match state sync failed', error);
+      localStorage.removeItem('redoapp_active_match');
+      remoteMatchIdRef.current = null;
+      remoteUserIdRef.current = null;
       setRemoteSessionActive(false);
+      setGameState((prev) => ({
+        ...prev,
+        phase: 'setup',
+        players: [],
+        winnerId: null,
+      }));
       return false;
     }
   }, []);
@@ -1031,6 +1041,91 @@ export function useUnoGame() {
     };
   }, [gameState.currentPlayerIndex, gameState.phase, gameState.activeColor, gameState.activeValue, drawCard, playCard, triggerBubble, changeEmotion, gameState.players]);
 
+  const handleAutoPlayTimeout = useCallback(() => {
+    const human = gameState.players.find((p) => p.id === 'player');
+    if (!human) return;
+
+    const playableCards = human.hand.filter((card) =>
+      card.color === 'wild' || isValidMove(card, gameState.activeColor, gameState.activeValue)
+    );
+
+    if (playableCards.length > 0) {
+      const selectedCard = playableCards[0];
+      let chosenColor: CardColor = 'red';
+      if (selectedCard.color === 'wild') {
+        chosenColor = getBestColorForAi(human.hand);
+      }
+      initiatePlayCard(selectedCard, chosenColor);
+    } else {
+      const drawn = drawCard('player');
+      if (drawn) {
+        let chosenColor: CardColor = 'red';
+        if (drawn.color === 'wild') {
+          chosenColor = getBestColorForAi(human.hand);
+        }
+        initiatePlayCard(drawn, chosenColor);
+      }
+    }
+  }, [gameState.players, gameState.activeColor, gameState.activeValue, initiatePlayCard, drawCard]);
+
+  // Countdown timer and warning beep triggers
+  useEffect(() => {
+    if (gameState.phase !== 'playing') {
+      return;
+    }
+
+    const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
+    const isHumanTurn = currentActivePlayer?.id === 'player';
+
+    let initialTime = 20;
+    if (gameMode !== 'offline' && gameState.turnStartedAt) {
+      const elapsed = Math.floor((Date.now() - gameState.turnStartedAt) / 1000);
+      initialTime = Math.max(0, 20 - elapsed);
+    }
+    setTurnTimeLeft(initialTime);
+
+    const interval = setInterval(() => {
+      setTurnTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          if (gameMode === 'offline' && isHumanTurn) {
+            handleAutoPlayTimeout();
+          }
+          return 0;
+        }
+        if (prev <= 7 && isHumanTurn) {
+          sound.playWarning();
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState.currentPlayerIndex, gameState.discardPile.length, gameState.phase, gameMode, gameState.turnStartedAt, handleAutoPlayTimeout]);
+
+  // Auto-rejoin active match on mount
+  useEffect(() => {
+    const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+    if (activeMatchRaw) {
+      try {
+        const activeMatch = JSON.parse(activeMatchRaw);
+        if (activeMatch.matchId) {
+          setGameMode(activeMatch.mode || 'pvp');
+          setActiveStake(activeMatch.stake || 0);
+          setGameState((prev) => ({
+            ...prev,
+            phase: 'playing',
+            logs: [createLog('Reconnecting to active match...', 'info')],
+          }));
+          setRemoteSessionActive(true);
+          syncRemoteMatchState();
+        }
+      } catch (e) {
+        console.error('Error parsing active match on mount', e);
+      }
+    }
+  }, [syncRemoteMatchState]);
+
   // Clean-up hooks on dismount
   useEffect(() => {
     return () => {
@@ -1102,5 +1197,6 @@ export function useUnoGame() {
     setGameMode,
     activeStake,
     returnToLobby,
+    turnTimeLeft,
   };
 }

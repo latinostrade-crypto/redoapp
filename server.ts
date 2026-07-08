@@ -82,6 +82,8 @@ interface ServerGamePlayer {
   isAi: boolean;
   unoDeclared: boolean;
   emotion: 'happy' | 'thinking' | 'worried' | 'angry' | 'celebrating';
+  isConnected?: boolean;
+  disconnectedAt?: number | null;
 }
 
 interface ServerGameState {
@@ -91,11 +93,12 @@ interface ServerGameState {
   currentPlayerIndex: number;
   direction: 1 | -1;
   activeColor: CardColor;
-  activeValue: CardValue;
+  activeValue: ServerCard['value'];
   phase: 'playing' | 'game_over';
   winnerUserId: string | null;
   logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'play' | 'draw' | 'action' | 'win' }>;
   consecutiveDraws: number;
+  turnStartedAt?: number;
 }
 
 interface UserState {
@@ -1139,12 +1142,14 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
 
     return {
       id: localId,
-      name: offset === 0 ? sourcePlayer.username : `Player ${offset + 1}`,
+      name: sourcePlayer.username,
       avatar: sourcePlayer.avatarId,
       hand: visibleHand,
-      isAi: offset !== 0,
+      isAi: sourcePlayer.isAi,
       unoDeclared: sourcePlayer.unoDeclared,
       emotion: sourcePlayer.emotion,
+      isConnected: sourcePlayer.isConnected !== false,
+      disconnectedAt: sourcePlayer.disconnectedAt || null,
     };
   });
 
@@ -1181,6 +1186,7 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       dealerId: 'ai1',
       consecutiveDraws: match.gameState.consecutiveDraws,
       accusablePlayers: [],
+      turnStartedAt: match.gameState.turnStartedAt,
     },
   };
 }
@@ -1247,6 +1253,7 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
   const colorLabel = card.color === 'wild' ? `wild -> ${finalColor}` : `${card.color} ${card.value}`;
   nextState.logs = [createServerLog(`${currentPlayer.username} played ${colorLabel}`, card.color === 'wild' || card.value === 'skip' || card.value === 'reverse' || card.value === 'draw2' ? 'action' : 'play'), ...nextState.logs].slice(0, 50);
   match.gameState = advanceServerTurn(nextState, skipCount);
+  match.gameState.turnStartedAt = Date.now();
   schedulePersist();
 }
 
@@ -1274,6 +1281,7 @@ function applyDrawAction(match: ActiveMatch, userId: string) {
 
   const playable = isValidServerMove(drawnCard, nextState.activeColor, nextState.activeValue);
   match.gameState = playable ? nextState : advanceServerTurn(nextState);
+  match.gameState.turnStartedAt = Date.now();
   schedulePersist();
 }
 
@@ -1291,6 +1299,7 @@ function applyPassAction(match: ActiveMatch, userId: string) {
     logs: [createServerLog(`${currentPlayer.username} passed the turn.`, 'info'), ...state.logs].slice(0, 50),
   };
   match.gameState = advanceServerTurn(nextState);
+  match.gameState.turnStartedAt = Date.now();
   schedulePersist();
 }
 
@@ -1304,6 +1313,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     settled: false,
     gameState: createInitialMatchState(players),
   };
+  activeMatch.gameState.turnStartedAt = Date.now();
   activeMatches.set(matchId, activeMatch);
   players.forEach((queuedPlayer) => {
     activeMatchByUser.set(queuedPlayer.userId, matchId);
@@ -1311,6 +1321,66 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
   schedulePersist();
   broadcastMatch(matchId);
   return activeMatch;
+}
+
+function runServerAiTurn(match: ActiveMatch, playerIndex: number) {
+  try {
+    const state = match.gameState;
+    const player = state.players[playerIndex];
+    if (!player) return;
+
+    const playableCards = player.hand.filter((card) =>
+      card.color === 'wild' || isValidServerMove(card, state.activeColor, state.activeValue)
+    );
+
+    if (playableCards.length > 0) {
+      const actions = playableCards.filter((c) => c.value === 'wild_draw4' || c.value === 'draw2' || c.value === 'skip' || c.value === 'reverse');
+      let selectedCard = playableCards[0];
+      if (actions.length > 0) {
+        selectedCard = actions[Math.floor(Math.random() * actions.length)];
+      } else {
+        selectedCard = playableCards.reduce((max, c) => (c.score > max.score ? c : max), playableCards[0]);
+      }
+
+      let chosenColor: CardColor = 'red';
+      if (selectedCard.color === 'wild') {
+        const colors: CardColor[] = ['red', 'blue', 'yellow', 'green'];
+        const counts = colors.map(col => ({
+          color: col,
+          count: player.hand.filter(c => c.color === col).length
+        }));
+        counts.sort((a, b) => b.count - a.count);
+        chosenColor = counts[0].color;
+      }
+
+      applyPlayAction(match, player.userId, selectedCard.id, chosenColor);
+    } else {
+      applyDrawAction(match, player.userId);
+      if (match.gameState.currentPlayerIndex === playerIndex && match.gameState.phase === 'playing') {
+        const newlyDrawn = player.hand[player.hand.length - 1];
+        if (newlyDrawn && (newlyDrawn.color === 'wild' || isValidServerMove(newlyDrawn, match.gameState.activeColor, match.gameState.activeValue))) {
+          let chosenColor: CardColor = 'red';
+          if (newlyDrawn.color === 'wild') {
+            const colors: CardColor[] = ['red', 'blue', 'yellow', 'green'];
+            const counts = colors.map(col => ({
+              color: col,
+              count: player.hand.filter(c => c.color === col).length
+            }));
+            counts.sort((a, b) => b.count - a.count);
+            chosenColor = counts[0].color;
+          }
+          applyPlayAction(match, player.userId, newlyDrawn.id, chosenColor);
+        } else if (match.gameState.currentPlayerIndex === playerIndex && match.gameState.phase === 'playing') {
+          applyPassAction(match, player.userId);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('runServerAiTurn failed', err);
+    match.gameState = advanceServerTurn(match.gameState);
+    match.gameState.turnStartedAt = Date.now();
+    schedulePersist();
+  }
 }
 
 function buildRankOrder(playerCount: number): number[] {
@@ -1576,6 +1646,31 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
 
   subscribeToChannel(queueSubscribers, userId, res);
   sendSse(res, 'queue-status', buildQueuePayload(userId));
+
+  res.on('close', () => {
+    const activeSubs = queueSubscribers.get(userId);
+    if (!activeSubs || activeSubs.size === 0) {
+      const player = matchmakingQueue.find(p => p.userId === userId);
+      if (player) {
+        matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
+        const user = getUser(userId);
+        if (player.stake > 0) {
+          user.heldTickets = round2(user.heldTickets - player.stake);
+          user.availableTickets = round2(user.availableTickets + player.stake);
+          createLedgerEntry(user, {
+            event: 'Queue Timeout Release',
+            value: `+${player.stake.toFixed(2)} TKT`,
+            type: 'stake_release',
+            amount: player.stake,
+          });
+        }
+        schedulePersist();
+        matchmakingQueue
+          .filter(p => p.stake === player.stake && p.mode === player.mode)
+          .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
+      }
+    }
+  });
 });
 
 app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) => {
@@ -1899,6 +1994,8 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
   }
+  const userId = getPrivateRoomUserId(req, req.query);
+  res.locals.userId = userId;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1907,6 +2004,53 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
 
   subscribeToChannel(privateRoomSubscribers, roomCode, res);
   sendSse(res, 'private-room', buildPrivateRoomPayload(room));
+
+  res.on('close', () => {
+    const currentRoom = privateRooms.get(roomCode);
+    if (currentRoom && currentRoom.status === 'waiting') {
+      const activeSubs = privateRoomSubscribers.get(roomCode);
+      const isStillConnected = !!activeSubs && Array.from(activeSubs).some(
+        (sub) => sub.locals.userId === userId
+      );
+
+      if (!isStillConnected) {
+        const playerInRoom = currentRoom.players.find((p) => p.userId === userId);
+        if (playerInRoom) {
+          currentRoom.players = currentRoom.players.filter((p) => p.userId !== userId);
+          if (playerInRoom.stake > 0) {
+            const user = getUser(userId);
+            user.heldTickets = round2(user.heldTickets - playerInRoom.stake);
+            user.availableTickets = round2(user.availableTickets + playerInRoom.stake);
+            createLedgerEntry(user, {
+              event: 'Private Room Leave Release',
+              value: `+${playerInRoom.stake.toFixed(2)} TKT`,
+              type: 'stake_release',
+              amount: playerInRoom.stake,
+            });
+          }
+
+          if (currentRoom.players.length === 0 || currentRoom.hostUserId === userId) {
+            currentRoom.players.forEach(p => {
+              if (p.stake > 0) {
+                const user = getUser(p.userId);
+                user.heldTickets = round2(user.heldTickets - p.stake);
+                user.availableTickets = round2(user.availableTickets + p.stake);
+                createLedgerEntry(user, {
+                  event: 'Private Room Host Leave Release',
+                  value: `+${p.stake.toFixed(2)} TKT`,
+                  type: 'stake_release',
+                  amount: p.stake,
+                });
+              }
+            });
+            privateRooms.delete(roomCode);
+          }
+          schedulePersist();
+          broadcastPrivateRoom(roomCode);
+        }
+      }
+    }
+  });
 });
 
 app.get('/api/matches/state/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
@@ -1941,8 +2085,42 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   res.flushHeaders?.();
   res.locals.userId = userId;
 
+  // Mark player as connected immediately
+  const player = activeMatch.gameState.players.find(p => p.userId === userId);
+  if (player) {
+    const previouslyDisconnected = player.isConnected === false;
+    player.isConnected = true;
+    player.disconnectedAt = null;
+    if (previouslyDisconnected) {
+      activeMatch.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...activeMatch.gameState.logs].slice(0, 50);
+      schedulePersist();
+      setTimeout(() => broadcastMatch(matchId), 100);
+    }
+  }
+
   subscribeToChannel(matchSubscribers, matchId, res);
   sendSse(res, 'match-state', state);
+
+  res.on('close', () => {
+    const subscribers = matchSubscribers.get(matchId);
+    const isStillConnected = !!subscribers && Array.from(subscribers).some(
+      (sub) => sub.locals.userId === userId && sub !== res
+    );
+
+    if (!isStillConnected) {
+      const match = activeMatches.get(matchId);
+      if (match) {
+        const player = match.gameState.players.find(p => p.userId === userId);
+        if (player && player.isConnected !== false) {
+          player.isConnected = false;
+          player.disconnectedAt = Date.now();
+          match.gameState.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...match.gameState.logs].slice(0, 50);
+          schedulePersist();
+          broadcastMatch(matchId);
+        }
+      }
+    }
+  });
 });
 
 app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
@@ -2111,6 +2289,79 @@ setInterval(() => {
 setInterval(() => {
   const queuedUserIds = [...new Set(matchmakingQueue.map((player) => player.userId))];
   queuedUserIds.forEach((userId) => broadcastQueue(userId));
+}, 1000);
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [matchId, match] of activeMatches.entries()) {
+    if (match.gameState.phase !== 'playing') continue;
+
+    const state = match.gameState;
+    const currentPlayerIndex = state.currentPlayerIndex;
+    const currentPlayer = state.players[currentPlayerIndex];
+    if (!currentPlayer) continue;
+
+    // Evaluate connection status
+    state.players.forEach((player) => {
+      const subscribers = matchSubscribers.get(matchId);
+      const isConnected = !!subscribers && Array.from(subscribers).some(
+        (res) => res.locals.userId === player.userId
+      );
+
+      if (isConnected) {
+        if (player.isConnected === false) {
+          player.isConnected = true;
+          player.disconnectedAt = null;
+          state.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...state.logs].slice(0, 50);
+          broadcastMatch(matchId);
+        }
+      } else {
+        if (player.isConnected !== false && !player.isAi) {
+          player.isConnected = false;
+          player.disconnectedAt = now;
+          state.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...state.logs].slice(0, 50);
+          broadcastMatch(matchId);
+        }
+      }
+    });
+
+    if (!state.turnStartedAt) {
+      state.turnStartedAt = now;
+    }
+
+    const elapsedSec = Math.floor((now - state.turnStartedAt) / 1000);
+    const turnLimit = 20;
+    const disconnectedWaitDelay = 4;
+    const graceLimit = 30;
+
+    if (currentPlayer.isConnected !== false) {
+      if (elapsedSec >= turnLimit) {
+        state.logs = [createServerLog(`⏰ ${currentPlayer.username}'s turn timed out. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
+        runServerAiTurn(match, currentPlayerIndex);
+        broadcastMatch(matchId);
+        schedulePersist();
+      }
+    } else {
+      if (elapsedSec >= disconnectedWaitDelay) {
+        state.logs = [createServerLog(`🤖 ${currentPlayer.username} is offline. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
+        runServerAiTurn(match, currentPlayerIndex);
+        broadcastMatch(matchId);
+        schedulePersist();
+      }
+    }
+
+    state.players.forEach((player) => {
+      if (player.isConnected === false && !player.isAi && player.disconnectedAt) {
+        const secsDisconnected = (now - player.disconnectedAt) / 1000;
+        if (secsDisconnected >= graceLimit) {
+          player.isAi = true;
+          state.logs = [createServerLog(`🤖 ${player.username} has been permanently replaced by a bot.`, 'info'), ...state.logs].slice(0, 50);
+          broadcastMatch(matchId);
+          schedulePersist();
+        }
+      }
+    });
+  }
 }, 1000);
 
 async function flushAndExit(signal: string) {
