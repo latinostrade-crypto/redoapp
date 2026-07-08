@@ -386,6 +386,14 @@ export function useUnoGame() {
     }
 
     if ((mode === 'pvp' || mode === 'private') && localStorage.getItem('redoapp_active_match')) {
+      try {
+        const activeMatch = JSON.parse(localStorage.getItem('redoapp_active_match')!);
+        remoteMatchIdRef.current = activeMatch.matchId;
+        remoteUserIdRef.current = activeMatch.currentUserId;
+        setRemoteSessionActive(true);
+      } catch (e) {
+        console.error(e);
+      }
       setCardsPlayedThisRound(0);
       setCardsDrawnThisRound(0);
       setLeaderboard([]);

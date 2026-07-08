@@ -1147,9 +1147,7 @@ export function Web3Dashboard({
     });
 
     stream.onerror = () => {
-      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode))
-        .then(applyPrivateRoomState)
-        .catch(() => undefined);
+      // Handled by the 3-second polling timer
     };
 
     const pollTimer = window.setInterval(() => {
