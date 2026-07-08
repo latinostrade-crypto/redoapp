@@ -248,9 +248,10 @@ export function Web3Dashboard({
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
 
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
-  const [matchmakingState, setMatchmakingState] = useState<'idle' | 'searching' | 'success'>('idle');
+  const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
   const [matchmakingTimer, setMatchmakingTimer] = useState(MATCHMAKING_TIMEOUT_SEC);
   const [queueLength, setQueueLength] = useState(1);
+  const [publicQueueError, setPublicQueueError] = useState('');
   const [buyingTickets, setBuyingTickets] = useState(false);
   const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
   const [depositStatusMessage, setDepositStatusMessage] = useState('');
@@ -590,7 +591,7 @@ export function Web3Dashboard({
     if (rawAddress) {
       localStorage.setItem('redoapp_wallet_address', rawAddress);
     }
-    const requestKey = [rawAddress || '', telegramInitData || '', launchStartParam || '', bootstrapAttempt].join('|');
+    const requestKey = [bootstrapUserId, rawAddress || '', telegramInitData || '', launchStartParam || '', bootstrapAttempt].join('|');
     if (syncRequestKeyRef.current === requestKey) {
       return;
     }
@@ -605,6 +606,7 @@ export function Web3Dashboard({
       sessionToken: string | null;
     }>('/api/users/sync', {
       method: 'POST',
+      retryOnNetworkError: true,
       body: JSON.stringify({
         userId: bootstrapUserId,
         walletAddress: rawAddress || null,
@@ -1511,17 +1513,21 @@ export function Web3Dashboard({
               {/* Sub Mode Content */}
               {pvpSubMode === 'public' && (
                 <>
-                  {matchmakingState === 'searching' ? (
+                  {matchmakingState === 'joining' || matchmakingState === 'searching' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                       <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
-                        <span className="text-[10px] font-black text-[#00d2ff]">{matchmakingTimer}S</span>
+                        <span className="text-[10px] font-black text-[#00d2ff]">
+                          {matchmakingState === 'joining' ? '...' : `${matchmakingTimer}S`}
+                        </span>
                       </div>
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                          QUEUE ACTIVE
+                          {matchmakingState === 'joining' ? 'JOINING QUEUE' : 'QUEUE ACTIVE'}
                         </h3>
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                          Match launches instantly with 4 players, or after the timer with at least 2. Current queue: {queueLength}/{MAX_MATCH_PLAYERS}.
+                          {matchmakingState === 'joining'
+                            ? 'Waking backend and reserving your public queue spot. This can take a moment on free hosting.'
+                            : `Match launches instantly with 4 players, or after the timer with at least 2. Current queue: ${queueLength}/${MAX_MATCH_PLAYERS}.`}
                         </p>
                       </div>
                       <button
@@ -1538,6 +1544,7 @@ export function Web3Dashboard({
                             setHeldTickets(balance.heldTickets);
                           }).finally(() => {
                             setMatchmakingState('idle');
+                            setPublicQueueError('');
                           });
                         }}
                         className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive"
@@ -1579,6 +1586,7 @@ export function Web3Dashboard({
                             onClick={() => {
                               sound.playPop();
                               setSelectedStake(stake);
+                              setPublicQueueError('');
                             }}
                             className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
                               selectedStake === stake
@@ -1691,22 +1699,33 @@ export function Web3Dashboard({
                           type="button"
                           onClick={() => {
                             if (!authReady) {
-                              alert('Session is still syncing with the backend. Try again in a moment.');
+                              const message = 'Session is still syncing with the backend. Try again in a moment.';
+                              setPublicQueueError(message);
+                              alert(message);
                               return;
                             }
                             if (selectedStake > 0 && (!walletConnected || !rawAddress)) {
-                              alert('Connect wallet first for ticket-stake public matches.');
+                              const message = 'Connect wallet first for ticket-stake public matches.';
+                              setPublicQueueError(message);
+                              alert(message);
                               return;
                             }
                             if (selectedStake === 0 && energy.energy < PUBLIC_FREE_MATCH_ENERGY_COST) {
-                              alert(`You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`);
+                              const message = `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`;
+                              setPublicQueueError(message);
+                              alert(message);
                               return;
                             }
                             if (selectedStake > 0 && goldenTickets < selectedStake) {
-                              alert(`You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`);
+                              const message = `You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`;
+                              setPublicQueueError(message);
+                              alert(message);
                               return;
                             }
                             sound.playShuffle();
+                            wakeBackend();
+                            setPublicQueueError('');
+                            setMatchmakingState('joining');
                             apiRequest<{
                               availableTickets: number;
                               heldTickets: number;
@@ -1720,6 +1739,7 @@ export function Web3Dashboard({
                               };
                             }>('/api/matchmaker/join', {
                               method: 'POST',
+                              retryOnNetworkError: true,
                               body: JSON.stringify({
                                 userId: currentUserId,
                                 username: userName,
@@ -1751,13 +1771,22 @@ export function Web3Dashboard({
                               }
                               setMatchmakingState('searching');
                             }).catch((error) => {
-                              alert(error.message);
+                              const message = error instanceof Error ? error.message : 'Failed to join public queue.';
+                              setMatchmakingState('idle');
+                              setPublicQueueError(message);
+                              alert(message);
                             });
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {selectedStake === 0 ? 'JOIN FREE PUBLIC' : 'JOIN REAL QUEUE'}
                         </button>
+
+                        {publicQueueError && (
+                          <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
+                            {publicQueueError}
+                          </div>
+                        )}
                       </div>
 
                       {depositFlowStatus !== 'idle' && depositStatusMessage && (
@@ -2074,9 +2103,10 @@ export function Web3Dashboard({
                             }
                             setShowRoomDisclaimer(true);
                           }}
-                          className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive"
+                          disabled={privateRoomStatus === 'waiting'}
+                          className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                          Enter Room
+                          {privateRoomStatus === 'waiting' ? 'Waiting For Players' : 'Enter Room'}
                         </button>
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
                             Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</span>
