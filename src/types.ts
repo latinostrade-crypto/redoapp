@@ -142,6 +142,9 @@ export interface PlayerProfile {
   };
   quests: QuestView[];
   claimedQuestIds?: string[];
+  dailyStreak?: number;
+  lootboxClaimedAt?: number | null;
+  lootboxAvailable?: boolean;
 }
 
 export interface PendingDepositView {

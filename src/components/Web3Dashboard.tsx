@@ -76,6 +76,37 @@ function buildPrivateRoomSharePayload(roomCode: string) {
   };
 }
 
+function generatePrivateRoomCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const cryptoValues = new Uint32Array(8);
+  window.crypto?.getRandomValues?.(cryptoValues);
+  return Array.from({ length: 8 }, (_, index) => {
+    const value = cryptoValues[index] || Math.floor(Math.random() * alphabet.length);
+    return alphabet[value % alphabet.length];
+  }).join('');
+}
+
+async function copyTextSafely(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    textarea.remove();
+    if (!copied) {
+      window.prompt('Copy this link:', text);
+    }
+    return copied;
+  }
+}
+
 function getTelegramStartParam() {
   const params = new URLSearchParams(window.location.search);
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
@@ -146,8 +177,8 @@ type PrivateRoomResponse = {
   status: 'waiting' | 'started';
   matchId?: string;
   players?: PrivateRoomPlayer[];
-  availableTickets: number;
-  heldTickets: number;
+  availableTickets?: number;
+  heldTickets?: number;
 };
 
 export function Web3Dashboard({
@@ -270,6 +301,8 @@ export function Web3Dashboard({
   const [privateRoomError, setPrivateRoomError] = useState('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
+  const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; message: string } | null>(null);
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const queueStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
@@ -495,8 +528,9 @@ export function Web3Dashboard({
     walletAddress: string | null;
     stake: number;
     targetPlayers: number;
-    createRequestId: string;
-  }) => {
+  createRequestId: string;
+  requestedRoomCode?: string;
+}) => {
     return new Promise<PrivateRoomResponse>((resolve, reject) => {
       const bridgeRequestId = `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const params = new URLSearchParams({
@@ -535,6 +569,24 @@ export function Web3Dashboard({
     });
   };
 
+  const recoverPrivateRoomByCode = (roomCode: string) => {
+    let attempts = 0;
+    const run = (): Promise<PrivateRoomResponse> => {
+      attempts += 1;
+      return apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(roomCode), {
+        timeoutMs: 5000,
+      }).catch((error) => {
+        if (attempts >= 8) throw error;
+        return new Promise<PrivateRoomResponse>((resolve, reject) => {
+          window.setTimeout(() => {
+            run().then(resolve).catch(reject);
+          }, 1500);
+        });
+      });
+    };
+    return run();
+  };
+
   const createPrivateRoom = () => {
     if (privateRoomCreateState === 'creating') return;
     if (!authReady) {
@@ -548,6 +600,7 @@ export function Web3Dashboard({
     sound.playShuffle();
     wakeBackend();
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
+    const requestedRoomCode = generatePrivateRoomCode();
     const createPayload = {
       userId: currentUserId,
       username: userName,
@@ -556,10 +609,15 @@ export function Web3Dashboard({
       stake: privateRoomStake,
       targetPlayers: privateRoomTargetPlayers,
       createRequestId,
+      requestedRoomCode,
     };
     const applyCreatedRoom = (result: PrivateRoomResponse) => {
-      setGoldenTickets(result.availableTickets);
-      setHeldTickets(result.heldTickets);
+      if (typeof result.availableTickets === 'number') {
+        setGoldenTickets(result.availableTickets);
+      }
+      if (typeof result.heldTickets === 'number') {
+        setHeldTickets(result.heldTickets);
+      }
       setPrivateRoomCode(result.roomCode);
       setPrivateJoinCode(result.roomCode);
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
@@ -571,23 +629,48 @@ export function Web3Dashboard({
       setGeneratedLink(result.telegramLink || fallbackPayload.telegramLink);
     };
     setPrivateRoomCreateState('creating');
-    setPrivateRoomError('Creating room: request sent to backend...');
+    setPrivateRoomCode(requestedRoomCode);
+    setPrivateJoinCode(requestedRoomCode);
+    setPrivateRoomError(`Creating room ${requestedRoomCode}: request sent to backend...`);
+    let createSettled = false;
+    const finishCreate = (result: PrivateRoomResponse) => {
+      if (createSettled) return;
+      createSettled = true;
+      applyCreatedRoom(result);
+    };
+    const failCreate = (error: unknown) => {
+      if (createSettled) return;
+      createSettled = true;
+      const message = error instanceof Error ? error.message : 'Failed to create private room.';
+      setPrivateRoomCreateState('error');
+      setPrivateRoomError(message);
+      alert(message);
+    };
+
     apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
       method: 'POST',
       retryOnNetworkError: true,
       timeoutMs: 12000,
       body: JSON.stringify(createPayload),
     }).then((result) => {
-      applyCreatedRoom(result);
-    }).catch(() => {
-      setPrivateRoomError('Primary API did not finish. Trying no-preflight bridge...');
-      return createPrivateRoomViaBridge(createPayload).then(applyCreatedRoom);
-    }).catch((error) => {
-      const message = error instanceof Error ? error.message : 'Failed to create private room.';
-      setPrivateRoomCreateState('error');
-      setPrivateRoomError(message);
-      alert(message);
-    });
+      finishCreate(result);
+    }).catch(() => undefined);
+
+    window.setTimeout(() => {
+      if (createSettled) return;
+      setPrivateRoomError(`Recovering room ${requestedRoomCode} from backend status...`);
+      recoverPrivateRoomByCode(requestedRoomCode)
+        .then(finishCreate)
+        .catch(() => undefined);
+    }, 1200);
+
+    window.setTimeout(() => {
+      if (createSettled) return;
+      setPrivateRoomError(`Trying no-preflight bridge for room ${requestedRoomCode}...`);
+      createPrivateRoomViaBridge(createPayload)
+        .then(finishCreate)
+        .catch(failCreate);
+    }, 9000);
   };
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
@@ -782,7 +865,15 @@ export function Web3Dashboard({
   const claimDailyXp = () => {
     if (dailyXpClaimedToday) return;
     sound.playShuffle();
-    apiRequest<{ success: boolean }>('/api/xp/daily-checkin', {
+    apiRequest<{
+      success: boolean;
+      xpAwarded: number;
+      streak: number;
+      rewardTickets: number;
+      rewardEnergy: number;
+      energy: any;
+      claimedQuestIds?: string[];
+    }>('/api/xp/daily-checkin', {
       method: 'POST',
       body: JSON.stringify({
         userId: currentUserId,
@@ -794,14 +885,21 @@ export function Web3Dashboard({
       setLastDailyCheckIn(Date.now());
       setDailyXpClaimedToday(true);
       localStorage.setItem('redoapp_last_daily_xp_checkin', Date.now().toString());
+      
+      const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${result.rewardEnergy} ENG` : ''}`;
       const newTx = {
         id: `tx-${Date.now()}`,
-        event: 'Daily Check-in',
-        value: '+20 XP',
+        event: `Check-in Day ${result.streak || 1}`,
+        value: rewardVal,
         time: 'Just now',
         type: 'claim'
       };
       setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      
+      if (result.energy) {
+        updateProfileEnergy(result.energy);
+      }
+
       return apiRequest<PlayerProfile>('/api/me').then((me) => {
         const normalized = normalizeProfile(me);
         setProfile(normalized);
@@ -811,6 +909,53 @@ export function Web3Dashboard({
       });
     }).catch((error) => {
       alert(error.message);
+    });
+  };
+
+  const openLootboxChest = () => {
+    if (isOpeningLootbox) return;
+    sound.playShuffle();
+    setIsOpeningLootbox(true);
+    apiRequest<{
+      success: boolean;
+      rewardType: string;
+      rewardTickets: number;
+      rewardEnergy: number;
+      message: string;
+      availableTickets: number;
+      energy: any;
+    }>('/api/quests/claim-lootbox', {
+      method: 'POST',
+      body: JSON.stringify({ userId: currentUserId }),
+    }).then((result) => {
+      setGoldenTickets(result.availableTickets);
+      if (result.energy) {
+        updateProfileEnergy(result.energy);
+      }
+      setLootboxReward({
+        type: result.rewardType,
+        tickets: result.rewardTickets,
+        energy: result.rewardEnergy,
+        message: result.message,
+      });
+
+      const newTx = {
+        id: `tx-chest-${Date.now()}`,
+        event: 'Chest Claimed',
+        value: result.rewardType === 'tickets' 
+          ? `+${result.rewardTickets.toFixed(2)} TKT` 
+          : result.rewardType === 'energy' 
+            ? `+${result.rewardEnergy} ENG` 
+            : `+${result.rewardTickets.toFixed(2)}T / +${result.rewardEnergy}E`,
+        time: 'Just now',
+        type: 'claim'
+      };
+      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      fetchFullProfile().catch(() => undefined);
+    }).catch((error) => {
+      alert(error.message || 'Failed to open lootbox.');
+    }).finally(() => {
+      setIsOpeningLootbox(false);
     });
   };
 
@@ -1339,6 +1484,29 @@ export function Web3Dashboard({
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
                   <div className="text-[7px] uppercase font-bold text-slate-400 text-left">Quests</div>
+                  
+                  {activeProfile?.lootboxAvailable && (
+                    <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 flex items-center justify-between font-mono animate-pulse-soft">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-xl select-none animate-bounce-subtle">
+                          🎁
+                        </div>
+                        <div className="text-left leading-none">
+                          <span className="text-[8px] font-black text-[#ffcc00] uppercase">CHEST READY!</span>
+                          <p className="text-[5.5px] text-slate-450 mt-0.5 leading-none">Open for bonus Tickets + Energy!</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isOpeningLootbox}
+                        onClick={openLootboxChest}
+                        className="px-2 py-1 bg-[#9b51e0] hover:bg-[#8540cc] text-white border border-black text-[7.5px] font-black uppercase pixel-btn-interactive"
+                      >
+                        {isOpeningLootbox ? 'Open...' : 'CLAIM'}
+                      </button>
+                    </div>
+                  )}
+
                   <div className="space-y-1 max-h-[90px] overflow-y-auto custom-scroll pr-0.5">
                     {fullProfileLoading && !fullProfile ? (
                       <div className="text-[7.5px] text-slate-500 text-left">Loading quests...</div>
@@ -1402,37 +1570,76 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="space-y-3 h-full flex flex-col justify-between py-2 text-left"
             >
-              {/* Compact Daily XP Check-in */}
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-2 flex items-center gap-3 font-mono">
-                <div className="flex-shrink-0 w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-[#00ff66] animate-bounce-subtle">
-                  <Gift className="w-4 h-4" />
+              {/* Daily check-in & Streak Reward widget */}
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0 w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-[#00ff66] animate-bounce-subtle">
+                    <Gift className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 leading-tight text-left">
+                    <h3 className="font-black text-[9px] text-slate-100 uppercase">
+                      Daily Check-in
+                    </h3>
+                    <p className="text-[7.5px] text-slate-400 font-sans mt-0.5">
+                      Check in daily to build your streak and get Tickets + Energy!
+                    </p>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {!walletConnected ? (
+                      <span className="text-[6.5px] text-[#ff4b4b] bg-black px-1.5 py-1 border border-black uppercase font-bold block">
+                        No Wallet
+                      </span>
+                    ) : dailyXpClaimedToday ? (
+                      <span className="text-[7px] text-[#00ff66] bg-slate-950 px-1.5 py-1 border border-black/40 uppercase font-black block">
+                        Claimed
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={claimDailyXp}
+                        className="px-2 py-1 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                      >
+                        Check-in
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex-1 leading-tight text-left">
-                  <h3 className="font-black text-[9px] text-slate-100 uppercase">
-                    Daily Check-in
-                  </h3>
-                  <p className="text-[7.5px] text-slate-400 font-sans mt-0.5">
-                    Claim 20 XP daily.
-                  </p>
-                </div>
-                <div className="flex-shrink-0">
-                  {!walletConnected ? (
-                    <span className="text-[6.5px] text-[#ff4b4b] bg-black px-1.5 py-1 border border-black uppercase font-bold block">
-                      No Wallet
-                    </span>
-                  ) : dailyXpClaimedToday ? (
-                    <span className="text-[7px] text-[#00ff66] bg-slate-950 px-1.5 py-1 border border-black/40 uppercase font-black block">
-                      Claimed
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={claimDailyXp}
-                      className="px-2 py-1 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black cursor-pointer"
-                    >
-                      +20 XP
-                    </button>
-                  )}
+
+                {/* Daily Streak Grid */}
+                <div className="bg-slate-950 p-2 border border-black font-mono space-y-1.5">
+                  <div className="flex justify-between items-center text-[7.5px] text-slate-400 font-black">
+                    <span>DAILY STREAK BOARD</span>
+                    <span className="text-[#00ff66]">CURRENT: {activeProfile?.dailyStreak || 0} DAYS</span>
+                  </div>
+                  <div className="grid grid-cols-7 gap-1">
+                    {[1, 2, 3, 4, 5, 6, 7].map((day) => {
+                      const currentStreak = activeProfile?.dailyStreak || 0;
+                      const isCompleted = day < currentStreak || (day === currentStreak && dailyXpClaimedToday);
+                      const isCurrent = day === currentStreak && !dailyXpClaimedToday;
+                      let dayRewardText = '';
+                      if (day === 1) dayRewardText = '10 XP';
+                      else if (day === 7) dayRewardText = '50 XP + 1 TKT + ENG';
+                      else dayRewardText = `${10 + (day - 1) * 5} XP + 0.${day - 1} TKT`;
+                      
+                      return (
+                        <div
+                          key={day}
+                          className={`border p-1 text-center transition-all ${
+                            isCompleted
+                              ? 'bg-[#00ff66]/15 border-[#00ff66] text-[#00ff66]'
+                              : isCurrent
+                              ? 'bg-[#ffcc00]/15 border-[#ffcc00] text-[#ffcc00] animate-pulse'
+                              : 'bg-black border-black text-slate-600'
+                          }`}
+                        >
+                          <div className="text-[7px] font-black leading-none">DAY {day}</div>
+                          <div className="text-[5.5px] font-extrabold leading-none mt-1 scale-90 origin-center truncate text-slate-400" title={dayRewardText}>
+                            {day === 7 ? '🎁 MAX' : `+0.${day - 1}T`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -2162,19 +2369,37 @@ export function Web3Dashboard({
                         </button>
                       ) : (
                         <div className="space-y-2 text-[9px]">
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 flex-wrap">
                             <input
                               type="text"
                               readOnly
                               value={generatedLink}
-                              className="flex-1 bg-black border border-black text-slate-350 px-2 py-1.5 text-[7px] font-mono focus:outline-none select-all"
+                              className="w-full bg-black border border-black text-slate-350 px-2 py-1.5 text-[7px] font-mono focus:outline-none select-all mb-1"
                             />
                             <button
                               type="button"
                               onClick={() => {
                                 sound.playPop();
-                                navigator.clipboard.writeText(generatedLink);
-                                alert("Link copied to clipboard!");
+                                const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
+                                const text = encodeURIComponent("Join my private UNO room! 🎮🃏");
+                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
+                                const tg = (window as any).Telegram?.WebApp;
+                                if (tg?.openTelegramLink) {
+                                  tg.openTelegramLink(shareUrl);
+                                } else {
+                                  window.open(shareUrl, '_blank');
+                                }
+                              }}
+                              className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black flex items-center justify-center gap-0.5"
+                            >
+                              Позвать друга ➔
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                sound.playPop();
+                                await copyTextSafely(generatedLink);
+                                alert('Link copied.');
                               }}
                               className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
                             >
@@ -2182,11 +2407,11 @@ export function Web3Dashboard({
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={async () => {
                                 if (!privateRoomCode) return;
                                 sound.playPop();
                                 const sharePayload = buildPrivateRoomSharePayload(privateRoomCode);
-                                navigator.clipboard.writeText(sharePayload.telegramSchemeLink);
+                                await copyTextSafely(sharePayload.telegramSchemeLink);
                                 alert('Telegram deep link copied.');
                               }}
                               className="px-2 py-1.5 bg-[#ffcc00] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
@@ -2318,6 +2543,55 @@ export function Web3Dashboard({
                   className="w-full py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 border border-black/40 pixel-btn-interactive text-[10px] font-bold uppercase font-mono"
                 >
                   Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* LOOTBOX CHEST OPENING MODAL */}
+      <AnimatePresence>
+        {lootboxReward && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-mono select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="w-full max-w-sm bg-[#1b122c] border-4 border-[#9b51e0] p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg flex flex-col gap-4 text-center"
+            >
+              <div className="absolute -top-3 left-6 bg-[#9b51e0] text-white text-[7px] font-black uppercase px-2 py-0.5 border-2 border-black">
+                REWARD OPENED
+              </div>
+
+              <div className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#ffcc00] relative overflow-hidden text-2xl animate-bounce mt-2">
+                {lootboxReward.type === 'jackpot' ? '👑' : lootboxReward.type === 'energy' ? '⚡' : '🎫'}
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wider">
+                  {lootboxReward.type === 'jackpot' ? '👑 JACKPOT CHEST! 👑' : 'Lootbox Rewards'}
+                </h3>
+                <p className="text-[9px] min-[370px]:text-[10px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
+                  {lootboxReward.message}
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    setLootboxReward(null);
+                  }}
+                  className="w-full py-2.5 bg-[#ffcc00] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+                >
+                  Collect Drops
                 </button>
               </div>
             </motion.div>

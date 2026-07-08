@@ -128,6 +128,8 @@ interface UserState {
   referralsActivated: number;
   completedQuestIds: string[];
   transactions: TicketLedgerEntry[];
+  dailyStreak?: number;
+  lootboxClaimedAt?: number | null;
 }
 
 interface QuestDefinition {
@@ -482,6 +484,23 @@ function getEnergyState(user: UserState) {
   };
 }
 
+function isLootboxAvailable(user: UserState): boolean {
+  const now = Date.now();
+  const todayStart = getStartOfUtcDay(now);
+  if (user.lootboxClaimedAt && getStartOfUtcDay(user.lootboxClaimedAt) === todayStart) {
+    return false;
+  }
+  const progressList = getQuestProgress(user.userId);
+  let completedDailyQuestsCount = 0;
+  for (const quest of QUEST_DEFINITIONS.filter(q => q.kind === 'daily')) {
+    const prog = progressList.find(p => p.questId === quest.id);
+    if (prog && getStartOfUtcDay(prog.updatedAt) === todayStart && prog.progress >= quest.target) {
+      completedDailyQuestsCount++;
+    }
+  }
+  return completedDailyQuestsCount >= 3;
+}
+
 function buildBootstrapProfileResponse(user: UserState) {
   return {
     userId: user.userId,
@@ -494,6 +513,9 @@ function buildBootstrapProfileResponse(user: UserState) {
     energy: getEnergyState(user),
     referralCode: user.referralCode,
     referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
+    dailyStreak: user.dailyStreak || 0,
+    lootboxClaimedAt: user.lootboxClaimedAt || null,
+    lootboxAvailable: isLootboxAvailable(user),
   };
 }
 
@@ -915,44 +937,63 @@ function maybeActivateReferral(user: UserState, matchId: string) {
 }
 
 function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
-  if (!user.referredByUserId || payoutAmount <= 0) {
+  if (payoutAmount <= 0) {
     return {
       inviterBonus: 0,
       netPayout: payoutAmount,
     };
   }
 
-  const inviter = users.get(user.referredByUserId);
-  if (!inviter || inviter.userId === user.userId) {
-    return {
-      inviterBonus: 0,
-      netPayout: payoutAmount,
-    };
+  let totalBonus = 0;
+  let inviterBonusL1 = 0;
+  let inviterBonusL2 = 0;
+
+  if (user.referredByUserId) {
+    const inviterL1 = users.get(user.referredByUserId);
+    if (inviterL1 && inviterL1.userId !== user.userId) {
+      inviterBonusL1 = round2(payoutAmount * 0.02); // 2% Level 1
+      if (inviterBonusL1 > 0) {
+        inviterL1.availableTickets = round2(inviterL1.availableTickets + inviterBonusL1);
+        createLedgerEntry(inviterL1, {
+          event: 'L1 Referral Match Bonus',
+          value: `+${inviterBonusL1.toFixed(2)} TKT`,
+          type: 'referral_bonus',
+          amount: inviterBonusL1,
+        });
+        queueTelegramNotification(
+          inviterL1,
+          `L1 Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} won a match. You received +${inviterBonusL1.toFixed(2)} TKT.`
+        );
+        totalBonus += inviterBonusL1;
+      }
+
+      if (inviterL1.referredByUserId) {
+        const inviterL2 = users.get(inviterL1.referredByUserId);
+        if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviterL1.userId) {
+          inviterBonusL2 = round2(payoutAmount * 0.01); // 1% Level 2
+          if (inviterBonusL2 > 0) {
+            inviterL2.availableTickets = round2(inviterL2.availableTickets + inviterBonusL2);
+            createLedgerEntry(inviterL2, {
+              event: 'L2 Referral Match Bonus',
+              value: `+${inviterBonusL2.toFixed(2)} TKT`,
+              type: 'referral_bonus',
+              amount: inviterBonusL2,
+            });
+            queueTelegramNotification(
+              inviterL2,
+              `L2 Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} (via L1 @${inviterL1.telegramUsername || inviterL1.userId}) won a match. You received +${inviterBonusL2.toFixed(2)} TKT.`
+            );
+            totalBonus += inviterBonusL2;
+          }
+        }
+      }
+    }
   }
 
-  const referralBonus = round2(payoutAmount * 0.01);
-  if (referralBonus <= 0) {
-    return {
-      inviterBonus: 0,
-      netPayout: payoutAmount,
-    };
-  }
-
-  const netPayout = round2(Math.max(0, payoutAmount - referralBonus));
-  inviter.availableTickets = round2(inviter.availableTickets + referralBonus);
-  createLedgerEntry(inviter, {
-    event: 'Referral Match Bonus',
-    value: `+${referralBonus.toFixed(2)} TKT`,
-    type: 'referral_bonus',
-    amount: referralBonus,
-  });
-  queueTelegramNotification(
-    inviter,
-    `Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} finished a public match. You received +${referralBonus.toFixed(2)} TKT.`
-  );
+  const netPayout = round2(Math.max(0, payoutAmount - totalBonus));
   schedulePersist();
   return {
-    inviterBonus: referralBonus,
+    inviterBonus: round2(totalBonus),
     netPayout,
   };
 }
@@ -1547,23 +1588,148 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
   const { walletAddress } = req.body;
   const user = getUser(getAuthenticatedUserId(req), walletAddress);
   const now = Date.now();
-  if (user.lastDailyXpAt && now - user.lastDailyXpAt < 24 * 60 * 60 * 1000) {
+
+  const lastDay = user.lastDailyXpAt ? getStartOfUtcDay(user.lastDailyXpAt) : 0;
+  const today = getStartOfUtcDay(now);
+  const oneDayMs = 24 * 60 * 60 * 1000;
+
+  let streak = user.dailyStreak || 0;
+  if (lastDay === 0) {
+    streak = 1;
+  } else if (today - lastDay === oneDayMs) {
+    streak = (streak % 7) + 1; // increase streak and cycle after 7 days
+  } else if (today - lastDay > oneDayMs) {
+    streak = 1; // reset streak
+  } else if (today === lastDay) {
     return res.json({ success: false, alreadyClaimed: true, xp: user.xp });
   }
+
+  user.dailyStreak = streak;
   user.lastDailyXpAt = now;
-  rewardXp(user, DAILY_XP_REWARD, 'Daily Check-in');
+
+  const rewards = [
+    { xp: 10, tickets: 0, energy: 0 },
+    { xp: 15, tickets: 0.1, energy: 0 },
+    { xp: 20, tickets: 0.2, energy: 0 },
+    { xp: 25, tickets: 0.3, energy: 0 },
+    { xp: 30, tickets: 0.4, energy: 0 },
+    { xp: 40, tickets: 0.5, energy: 0 },
+    { xp: 50, tickets: 1.0, energy: 3 },
+  ];
+  const reward = rewards[Math.min(6, Math.max(0, streak - 1))];
+
+  rewardXp(user, reward.xp, `Daily Check-in (Day ${streak})`);
+  if (reward.tickets > 0) {
+    user.availableTickets = round2(user.availableTickets + reward.tickets);
+    createLedgerEntry(user, {
+      event: `Daily Streak Day ${streak} Reward`,
+      value: `+${reward.tickets.toFixed(2)} TKT`,
+      type: 'reward',
+      amount: reward.tickets,
+    });
+  }
+  if (reward.energy > 0) {
+    rewardEnergy(user, reward.energy, `Daily Streak Day ${streak} Refill`);
+  }
+
   if (!user.lastDailyEnergyAt || now - user.lastDailyEnergyAt >= 24 * 60 * 60 * 1000) {
     user.lastDailyEnergyAt = now;
     rewardEnergy(user, DAILY_ENERGY_REWARD, 'Daily Energy Refill');
   }
+
   updateQuestProgress(user.userId, 'spend_energy', 0);
   const claimedQuestIds = claimCompletedQuests(user);
-  return res.json({ success: true, xpAwarded: DAILY_XP_REWARD, xp: user.xp, energy: getEnergyState(user), claimedQuestIds });
+
+  return res.json({
+    success: true,
+    xpAwarded: reward.xp,
+    xp: user.xp,
+    energy: getEnergyState(user),
+    claimedQuestIds,
+    streak,
+    rewardTickets: reward.tickets,
+    rewardEnergy: reward.energy,
+  });
 });
 
 app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
   const user = getUser(getAuthenticatedUserId(req));
   return res.json(buildProfileResponse(user));
+});
+
+app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, res) => {
+  const user = getUser(getAuthenticatedUserId(req));
+  const now = Date.now();
+  const todayStart = getStartOfUtcDay(now);
+
+  if (user.lootboxClaimedAt && getStartOfUtcDay(user.lootboxClaimedAt) === todayStart) {
+    return res.status(400).json({ error: "You have already claimed today's lootbox." });
+  }
+
+  const progressList = getQuestProgress(user.userId);
+  let completedDailyQuestsCount = 0;
+  for (const quest of QUEST_DEFINITIONS.filter(q => q.kind === 'daily')) {
+    const prog = progressList.find(p => p.questId === quest.id);
+    if (prog && getStartOfUtcDay(prog.updatedAt) === todayStart && prog.progress >= quest.target) {
+      completedDailyQuestsCount++;
+    }
+  }
+
+  if (completedDailyQuestsCount < 3) {
+    return res.status(400).json({ error: `You need to complete at least 3 daily quests. Currently completed: ${completedDailyQuestsCount}` });
+  }
+
+  const roll = Math.random();
+  let rewardType: 'tickets' | 'energy' | 'jackpot' = 'tickets';
+  let rewardTicketsAmount = 0;
+  let rewardEnergyAmount = 0;
+  let message = '';
+
+  if (roll < 0.60) {
+    rewardType = 'tickets';
+    rewardTicketsAmount = round2(0.5 + Math.random() * 2.0);
+    user.availableTickets = round2(user.availableTickets + rewardTicketsAmount);
+    createLedgerEntry(user, {
+      event: 'Daily Lootbox Tickets Reward',
+      value: `+${rewardTicketsAmount.toFixed(2)} TKT`,
+      type: 'reward',
+      amount: rewardTicketsAmount,
+    });
+    message = `🎁 You opened today's lootbox and found +${rewardTicketsAmount.toFixed(2)} Tickets!`;
+  } else if (roll < 0.95) {
+    rewardType = 'energy';
+    rewardEnergyAmount = Math.floor(2 + Math.random() * 5);
+    rewardEnergyAmount = Math.max(2, Math.min(6, rewardEnergyAmount));
+    rewardEnergy(user, rewardEnergyAmount, 'Daily Lootbox Energy Reward');
+    message = `🎁 You opened today's lootbox and found +${rewardEnergyAmount} Energy!`;
+  } else {
+    rewardType = 'jackpot';
+    rewardTicketsAmount = 5.0;
+    rewardEnergyAmount = 5;
+    user.availableTickets = round2(user.availableTickets + rewardTicketsAmount);
+    createLedgerEntry(user, {
+      event: 'Daily Lootbox JACKPOT Reward',
+      value: `+${rewardTicketsAmount.toFixed(2)} TKT`,
+      type: 'reward',
+      amount: rewardTicketsAmount,
+    });
+    rewardEnergy(user, rewardEnergyAmount, 'Daily Lootbox Jackpot Energy Refill');
+    message = `🎉 JACKPOT! You opened today's lootbox and found +5.00 Tickets and +5 Energy!`;
+  }
+
+  user.lootboxClaimedAt = now;
+  schedulePersist();
+
+  return res.json({
+    success: true,
+    rewardType,
+    rewardTickets: rewardTicketsAmount,
+    rewardEnergy: rewardEnergyAmount,
+    message,
+    availableTickets: user.availableTickets,
+    energy: getEnergyState(user),
+    lootboxClaimedAt: user.lootboxClaimedAt,
+  });
 });
 
 app.use('/api/tickets', requireAuth);
