@@ -58,10 +58,10 @@ export interface GameState {
   winnerId: PlayerId | null;
   logs: GameLog[];
   drawCountAccumulator: number; // For stacking draw cards (+2 or +4 stacking if selected in options, or direct count)
-  unoShoutCooldown: { [key in PlayerId]?: number }; // Timestamp tracking for UNO accusations
+  unoShoutCooldown: { [key in PlayerId]?: number }; // Timestamp tracking for final-card accusations
   dealerId: PlayerId;
   consecutiveDraws: number; // Tracks draws in current turn
-  accusablePlayers: PlayerId[]; // Players with 1 card who haven't declared UNO and can be caught
+  accusablePlayers: PlayerId[]; // Players with 1 card who have not declared final-card status and can be caught
   turnStartedAt?: number;
 }
 

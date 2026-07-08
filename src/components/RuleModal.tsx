@@ -40,7 +40,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
               :: Basic Match Goal
             </h3>
             <p>
-              Match the top discard card by <strong>color</strong> or <strong>value</strong>. Number cards match their number, action cards match their symbol, and wild cards can be played at any time.
+              Match the top discard card by <strong>suit</strong> or <strong>value</strong>. Number cards match their number, action cards match their symbol, and wild cards can be played at any time.
             </p>
           </div>
 
@@ -53,7 +53,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
                 <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#ff4b4b] font-bold font-mono">SKIP</span>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs">Skip Turn</h4>
-                  <p className="text-slate-400 text-[10px]">The next player loses their turn.</p>
+                  <p className="text-slate-400 text-[10px]">The next player misses their turn.</p>
                 </div>
               </div>
 
@@ -69,15 +69,15 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
                 <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#00ff66] font-bold font-mono">+2</span>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs">Draw Two (+2)</h4>
-                  <p className="text-slate-400 text-[10px]">The next player draws 2 cards and loses their turn.</p>
+                  <p className="text-slate-400 text-[10px]">The next player draws 2 cards and misses their turn.</p>
                 </div>
               </div>
 
               <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2.5 border-black text-left">
                 <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#ffcc00] font-bold font-mono">WILD</span>
                 <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Wild Color</h4>
-                  <p className="text-slate-400 text-[10px]">Playable anytime. Choose the next active color for the table.</p>
+                  <h4 className="font-bold text-slate-200 text-xs">Wild Suit</h4>
+                  <p className="text-slate-400 text-[10px]">Playable anytime. Choose the next active suit for the table.</p>
                 </div>
               </div>
 
@@ -85,7 +85,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
                 <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#ec4899] font-bold font-mono">+4</span>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs">Wild Draw Four (+4)</h4>
-                  <p className="text-slate-400 text-[10px]">The next player draws 4 cards, loses their turn, and you choose the next active color.</p>
+                  <p className="text-slate-400 text-[10px]">The next player draws 4 cards, misses their turn, and you choose the next active suit.</p>
                 </div>
               </div>
             </div>
@@ -93,13 +93,13 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
 
           <div className="pixel-box-sm bg-slate-950/50 p-3 border-black text-left">
             <h3 className="font-black text-slate-100 text-xs uppercase mb-1 font-mono">
-              :: Call UNO
+              :: Final Card Call
             </h3>
             <p className="mb-1">
-              When you play a card and drop to <strong>exactly 1 card</strong>, press the yellow <strong>UNO!</strong> button.
+              When a player drops to <strong>exactly 1 card</strong>, they must make the final-card call before the next action.
             </p>
             <p>
-              If you forget, other players and AI bots can catch you. Caught players draw 2 penalty cards.
+              If they miss it, other players and AI bots can catch them. Caught players draw 2 penalty cards.
             </p>
           </div>
 

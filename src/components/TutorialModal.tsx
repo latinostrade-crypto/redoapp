@@ -76,7 +76,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ isOpen, onClose, o
             </div>
             <div className="h-20 rounded-sm border-2 border-[#ffcc00] bg-[radial-gradient(circle_at_top,#ffcc0055,transparent_65%),#171205] px-2 py-3">
               <div className="text-[8px] font-black uppercase text-[#ffe385]">Wild</div>
-              <div className="mt-3 text-xl font-black text-white">UNO</div>
+              <div className="mt-3 text-xl font-black text-white">WILD</div>
             </div>
           </div>
 

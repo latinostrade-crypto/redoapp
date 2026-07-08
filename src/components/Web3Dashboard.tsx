@@ -11,7 +11,6 @@ import {
   Play,
   History,
   Globe,
-  Lock,
   Trophy,
   Ticket,
 } from 'lucide-react';
@@ -207,7 +206,7 @@ export function Web3Dashboard({
     const roomFromSearch = new URLSearchParams(window.location.search).get('room');
     initialLaunchRoomCodeRef.current = (roomFromSearch || (startApp?.startsWith('room_') ? startApp.replace('room_', '') : '')).toUpperCase();
   }
-  const [currentTab, setCurrentTab] = useState<'profile' | 'tournaments' | 'pvp' | 'rewards'>('profile');
+  const [currentTab, setCurrentTab] = useState<'profile' | 'events' | 'pvp' | 'rewards'>('profile');
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
 
@@ -1204,7 +1203,7 @@ export function Web3Dashboard({
       <div className="grid grid-cols-4 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
         {[
           { id: 'profile', label: 'ME' },
-          { id: 'tournaments', label: 'TOUR' },
+          { id: 'events', label: 'EVENTS' },
           { id: 'pvp', label: 'PVP' },
           { id: 'rewards', label: 'REWARDS' },
         ].map((tab) => {
@@ -1770,17 +1769,17 @@ export function Web3Dashboard({
             </motion.div>
           )}
 
-          {currentTab === 'tournaments' && (
+          {currentTab === 'events' && (
             <motion.div
-              key="tournaments"
+              key="events"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-4 h-full flex flex-col justify-center py-4"
+              className="space-y-3 h-full flex flex-col justify-center py-3"
             >
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-5 text-center space-y-4 relative">
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-slate-950 border border-black px-2 py-0.5 text-[#ffcc00] text-[8px] font-mono">
-                  <Lock className="w-2.5 h-2.5" /> COMING SOON
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 relative">
+                <div className="absolute top-2 right-2 flex items-center gap-1 bg-slate-950 border border-black px-2 py-0.5 text-[#00ff66] text-[8px] font-mono">
+                  <Sparkles className="w-2.5 h-2.5" /> SEASON EVENT
                 </div>
 
                 <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#ffcc00]">
@@ -1789,27 +1788,48 @@ export function Web3Dashboard({
 
                 <div className="space-y-1 font-mono">
                   <h3 className="font-black text-xs text-slate-100 uppercase">
-                    CHAMPIONSHIPS
+                    NFT HOLDER SEASON
                   </h3>
                   <p className="text-[9px] text-slate-455 leading-relaxed font-sans max-w-xs mx-auto">
-                    Compete in structured tournament leagues against fellow card players to share massive prize pools of TON tokens.
+                    A seasonal event is being prepared for wallets that hold at least one sticker NFT from the selected collection.
                   </p>
                 </div>
 
-                <div className="bg-black p-3 border border-black text-left text-[8px] font-mono space-y-1 text-slate-400">
+                <div className="bg-black p-3 border border-black text-left text-[8px] font-mono space-y-2 text-slate-400">
                   <div className="flex justify-between">
-                    <span>Pool:</span>
-                    <span className="text-[#00ff66] font-bold">100,000 TON</span>
+                    <span>Required:</span>
+                    <span className="text-[#00ff66] font-bold">1+ sticker NFT</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Min Tier:</span>
-                    <span>Level 3</span>
+                    <span>Snapshot 1:</span>
+                    <span>Season start</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Status:</span>
-                    <span className="text-[#00d2ff] font-bold">Deploying Contracts</span>
+                    <span>Snapshot 2:</span>
+                    <span>Secret time</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Snapshot 3:</span>
+                    <span>Season end</span>
+                  </div>
+                  <div className="pt-1 border-t border-slate-800 break-all leading-relaxed">
+                    <span className="text-slate-500">Collection:</span>
+                    <span className="block text-[#00d2ff] font-bold">
+                      EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi
+                    </span>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    window.open('https://getgems.io/collection/EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi', '_blank', 'noopener,noreferrer');
+                  }}
+                  className="w-full py-2 bg-[#00d2ff] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono"
+                >
+                  View Collection
+                </button>
               </div>
             </motion.div>
           )}

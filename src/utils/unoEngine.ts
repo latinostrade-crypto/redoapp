@@ -131,28 +131,27 @@ export const CARTOON_BUBBLES = {
     playing: ['Catch this ride!', 'Smooth carve, clean execute.', 'Card played successfully.'],
     worried: ['The tide is rising fast...', 'Water level getting tight...', 'Hope you do not hold a wild card.'],
     angry: ['Hey! Do not cut off my line!', 'Who triggered that wave?', 'Stop playing underhanded tactics.'],
-    celebrating: ['Excellent ride for everyone!', 'Unmatched execution this round!', 'Down to my last card! UNO!'],
+    celebrating: ['Excellent ride for everyone!', 'Unmatched execution this round!', 'Down to my final card!'],
   },
   fox: {
     thinking: ['Drafting my tactical line...', 'A true pro rider never reveals their hand...', 'Calculating the next break.'],
     playing: ['Surprise maneuver!', 'Total wipeout for you!', 'Wild card color shift.'],
     worried: ['That was not in the weather report...', 'Am I getting caught in the reef?', 'Avoid playing a draw four.'],
     angry: ['Hey! Snatching waves is my thing!', 'Totally off limits!', 'I see your alignment.'],
-    celebrating: ['Fantastic run!', 'UNO! Outriding the competition.', 'Surfer victory is within reach.'],
+    celebrating: ['Fantastic run!', 'Outriding the competition.', 'Surfer victory is within reach.'],
   },
   rabbit: {
     thinking: ['Sorting my board setups...', 'So many directions, so little time!', 'Quick, surfers decision!'],
     playing: ['Big launch!', 'Clean execution!', 'Maximum power.'],
     worried: ['My stance is getting shaky...', 'Do not pull me under!', 'Too many cards in hand.'],
     angry: ['Stomping the deck!', 'Not cool at all!', 'No skips on my turn.'],
-    celebrating: ['Stoked! UNO!', 'Best surf day ever!', 'Celebration at the beach tonight.'],
+    celebrating: ['Stoked! Final card!', 'Best surf day ever!', 'Celebration at the beach tonight.'],
   },
   panda: {
     thinking: ['Relaxing on the deck... Oh, my turn?', 'Watching the distant swells...', 'Is red or blue more optimal?'],
     playing: ['Heavy cutback!', 'Here we go, steady and smooth.', 'Rolling out the card.'],
     worried: ['Tension is building on the water...', 'Checking my exit route.', 'Are those penalty draws meant for me?'],
     angry: ['Ruining my session?', 'Surfer focus shattered.', 'Rude maneuver.'],
-    celebrating: ['UNO! Back to the shore!', 'Perfect session win!', 'Chilling on the beach.']
+    celebrating: ['Back to the shore!', 'Perfect session win!', 'Chilling on the beach.']
   }
 };
-
