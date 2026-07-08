@@ -628,8 +628,12 @@ export function Web3Dashboard({
       setPrivateJoinCode(result.roomCode);
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
       setPrivateRoomPlayersCount(result.playersCount || 1);
-      setPrivateRoomStatus('waiting');
-      setPrivateRoomCreateState('waiting');
+      if (result.status === 'started') {
+        applyPrivateRoomState(result);
+      } else {
+        setPrivateRoomStatus('waiting');
+        setPrivateRoomCreateState('waiting');
+      }
       setPrivateRoomError('');
       const fallbackPayload = buildPrivateRoomSharePayload(result.roomCode);
       setGeneratedLink(result.telegramLink || fallbackPayload.telegramLink);
