@@ -138,6 +138,9 @@ export interface PlayerProfile {
     status: string | null;
     activatedAt: number | null;
     referralsActivated: number;
+    totalInvited: number;
+    pendingInvited: number;
+    rejectedInvited: number;
     invitedUsers: ReferralInvite[];
   };
   quests: QuestView[];

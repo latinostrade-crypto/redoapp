@@ -56,6 +56,9 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
       status: profile.referrals?.status ?? null,
       activatedAt: profile.referrals?.activatedAt ?? null,
       referralsActivated: profile.referrals?.referralsActivated ?? 0,
+      totalInvited: profile.referrals?.totalInvited ?? profile.referrals?.invitedUsers?.length ?? 0,
+      pendingInvited: profile.referrals?.pendingInvited ?? profile.referrals?.invitedUsers?.filter((invite) => invite.status === 'pending').length ?? 0,
+      rejectedInvited: profile.referrals?.rejectedInvited ?? profile.referrals?.invitedUsers?.filter((invite) => invite.status === 'rejected').length ?? 0,
       invitedUsers: profile.referrals?.invitedUsers ?? [],
     },
     quests: profile.quests ?? [],
@@ -346,7 +349,7 @@ export function Web3Dashboard({
     setFullProfile((prev) => prev ? { ...prev, energy: nextEnergy } : prev);
   };
   const quests = fullProfile?.quests ?? [];
-  const referralInvites = fullProfile?.referrals?.invitedUsers ?? [];
+  const referralStats = fullProfile?.referrals;
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus')
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
@@ -1580,7 +1583,7 @@ export function Web3Dashboard({
                       }}
                       className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer"
                     >
-                      {fullProfileLoading ? 'Loading Details...' : 'Load Referrals & Quests'}
+                      {fullProfileLoading ? 'Loading Details...' : 'Load Profile & Quests'}
                     </button>
                   )}
                   <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
@@ -1609,20 +1612,32 @@ export function Web3Dashboard({
                     <div className="text-[7px] text-slate-500 text-left">Sync Telegram to generate invite link</div>
                   )}
 
-                  <div className="space-y-1 max-h-[60px] overflow-y-auto custom-scroll pr-0.5">
+                  <div className="space-y-1">
                     {fullProfileLoading && !fullProfile ? (
                       <div className="text-[7.5px] text-slate-500 text-left">Loading referrals...</div>
-                    ) : referralInvites.length === 0 ? (
+                    ) : !referralStats || referralStats.totalInvited === 0 ? (
                       <div className="text-[7.5px] text-slate-500 text-left">No referrals yet.</div>
                     ) : (
-                      referralInvites.map((invite) => (
-                        <div key={invite.userId} className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                          <span className="text-slate-200 truncate max-w-[120px]">{invite.username}</span>
-                          <span className={invite.status === 'activated' ? 'text-[#00ff66] font-black' : 'text-[#ffcc00] font-black'}>
-                            {invite.status}
-                          </span>
+                      <>
+                        <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
+                          <span className="text-slate-400 uppercase">Total Invited</span>
+                          <span className="text-slate-100 font-black">{referralStats.totalInvited}</span>
                         </div>
-                      ))
+                        <div className="grid grid-cols-3 gap-1 text-[7px]">
+                          <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
+                            <div className="text-slate-500 uppercase">Active</div>
+                            <div className="text-[#00ff66] font-black">{referralStats.referralsActivated}</div>
+                          </div>
+                          <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
+                            <div className="text-slate-500 uppercase">Pending</div>
+                            <div className="text-[#ffcc00] font-black">{referralStats.pendingInvited}</div>
+                          </div>
+                          <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
+                            <div className="text-slate-500 uppercase">Rejected</div>
+                            <div className="text-slate-300 font-black">{referralStats.rejectedInvited}</div>
+                          </div>
+                        </div>
+                      </>
                     )}
                   </div>
                 </div>

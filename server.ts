@@ -31,6 +31,7 @@ const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || TELEGRAM_BOT_TOKEN 
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
 const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
+const SUPABASE_PAGE_SIZE = 1000;
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
 const DEFAULT_MAX_ENERGY = 10;
@@ -221,6 +222,15 @@ interface UserQuestProgress {
   updatedAt: number;
 }
 
+type ReferralStatus = NonNullable<UserState['referralStatus']>;
+
+interface ReferralStats {
+  total: number;
+  pending: number;
+  activated: number;
+  rejected: number;
+}
+
 interface TelegramNotification {
   id: string;
   userId: string;
@@ -295,6 +305,11 @@ interface PersistedState {
   telegramNotifications?: TelegramNotification[];
 }
 
+type SupabaseStateRow = {
+  id: string;
+  payload: unknown;
+};
+
 const users = new Map<string, UserState>();
 const depositIntents = new Map<string, DepositIntent>();
 const withdrawalRequests = new Map<string, WithdrawalRequest>();
@@ -309,6 +324,7 @@ const privateRoomSubscribers = new Map<string, Set<Response>>();
 const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
 const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
+const referralStatsByInviter = new Map<string, ReferralStats>();
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -543,6 +559,78 @@ function schedulePersist(opts?: {
   }, 100);
 }
 
+async function loadSupabaseRowsByPrefix(prefix: string): Promise<SupabaseStateRow[]> {
+  if (!supabaseAdmin) return [];
+  const rows: SupabaseStateRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabaseAdmin
+      .from(SUPABASE_STATE_TABLE)
+      .select('id,payload')
+      .like('id', `${prefix}%`)
+      .order('id', { ascending: true })
+      .range(from, from + SUPABASE_PAGE_SIZE - 1);
+
+    if (error) {
+      throw error;
+    }
+    const page = (data || []) as SupabaseStateRow[];
+    rows.push(...page);
+    if (page.length < SUPABASE_PAGE_SIZE) {
+      break;
+    }
+    from += SUPABASE_PAGE_SIZE;
+  }
+
+  return rows;
+}
+
+function createEmptyReferralStats(): ReferralStats {
+  return {
+    total: 0,
+    pending: 0,
+    activated: 0,
+    rejected: 0,
+  };
+}
+
+function getReferralStats(inviterUserId: string): ReferralStats {
+  return referralStatsByInviter.get(inviterUserId) || createEmptyReferralStats();
+}
+
+function normalizeReferralStatus(status: UserState['referralStatus']): ReferralStatus {
+  return status || 'pending';
+}
+
+function adjustReferralStats(inviterUserId: string | undefined, fromStatus: UserState['referralStatus'] | null, toStatus: UserState['referralStatus'] | null) {
+  if (!inviterUserId || fromStatus === toStatus) return;
+  const stats = referralStatsByInviter.get(inviterUserId) || createEmptyReferralStats();
+
+  if (fromStatus) {
+    stats.total = Math.max(0, stats.total - 1);
+    stats[normalizeReferralStatus(fromStatus)] = Math.max(0, stats[normalizeReferralStatus(fromStatus)] - 1);
+  }
+  if (toStatus) {
+    stats.total += 1;
+    stats[normalizeReferralStatus(toStatus)] += 1;
+  }
+
+  if (stats.total === 0) {
+    referralStatsByInviter.delete(inviterUserId);
+    return;
+  }
+  referralStatsByInviter.set(inviterUserId, stats);
+}
+
+function rebuildReferralStats() {
+  referralStatsByInviter.clear();
+  users.forEach((user) => {
+    if (!user.referredByUserId) return;
+    adjustReferralStats(user.referredByUserId, null, normalizeReferralStatus(user.referralStatus));
+  });
+}
+
 function applySnapshot(snapshot: PersistedState) {
   users.clear();
   depositIntents.clear();
@@ -553,7 +641,10 @@ function applySnapshot(snapshot: PersistedState) {
   questProgressByUser.clear();
   telegramNotifications.splice(0, telegramNotifications.length);
 
-  snapshot.users?.forEach((user) => users.set(user.userId, user));
+  snapshot.users?.forEach((user) => {
+    hydrateUser(user);
+    users.set(user.userId, user);
+  });
   snapshot.depositIntents?.forEach((intent) => depositIntents.set(intent.id, intent));
   snapshot.withdrawalRequests?.forEach((request) => withdrawalRequests.set(request.id, request));
   matchmakingQueue = snapshot.matchmakingQueue || [];
@@ -562,6 +653,7 @@ function applySnapshot(snapshot: PersistedState) {
   snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
   snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
   snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
+  rebuildReferralStats();
 }
 
 async function loadPersistedState() {
@@ -591,86 +683,63 @@ async function loadPersistedState() {
         payload.telegramNotifications?.forEach((entry: any) => telegramNotifications.push(entry));
       }
 
-      // 2. Load users
-      const { data: usersData, error: usersError } = await supabaseAdmin
-        .from(SUPABASE_STATE_TABLE)
-        .select('payload')
-        .like('id', 'user:%');
+      // 2. Load users. Supabase paginates select results; read every page so
+      // referral scans are not silently limited to the first 1000 user rows.
+      const usersData = await loadSupabaseRowsByPrefix('user:');
+      if (usersData.length === 0) {
+        const { data: legacyData, error: legacyError } = await supabaseAdmin
+          .from(SUPABASE_STATE_TABLE)
+          .select('payload')
+          .eq('id', SUPABASE_STATE_ROW_ID)
+          .maybeSingle();
 
-      if (usersError) {
-        console.error('Failed to load users from Supabase', usersError);
-      } else if (usersData) {
-        usersData.forEach((row) => {
-          const user = row.payload as UserState;
-          users.set(user.userId, user);
-        });
+        if (legacyError) {
+          console.error('Failed to load legacy runtime state from Supabase', legacyError);
+        } else if (legacyData?.payload && Array.isArray((legacyData.payload as Partial<PersistedState>).users)) {
+          applySnapshot(legacyData.payload as PersistedState);
+          return;
+        }
       }
+      usersData.forEach((row) => {
+        const user = row.payload as UserState;
+        hydrateUser(user);
+        users.set(user.userId, user);
+      });
 
       // 3. Load active matches (non-settled)
-      const { data: matchesData, error: matchesError } = await supabaseAdmin
-        .from(SUPABASE_STATE_TABLE)
-        .select('payload')
-        .like('id', 'match:%');
-
-      if (matchesError) {
-        console.error('Failed to load active matches from Supabase', matchesError);
-      } else if (matchesData) {
-        matchesData.forEach((row) => {
-          const match = row.payload as ActiveMatch;
-          activeMatches.set(match.matchId, match);
-          match.players.forEach((p) => {
-            if (!match.settled) {
-              activeMatchByUser.set(p.userId, match.matchId);
-            }
-          });
+      const matchesData = await loadSupabaseRowsByPrefix('match:');
+      matchesData.forEach((row) => {
+        const match = row.payload as ActiveMatch;
+        activeMatches.set(match.matchId, match);
+        match.players.forEach((p) => {
+          if (!match.settled) {
+            activeMatchByUser.set(p.userId, match.matchId);
+          }
         });
-      }
+      });
 
       // 4. Load private rooms
-      const { data: roomsData, error: roomsError } = await supabaseAdmin
-        .from(SUPABASE_STATE_TABLE)
-        .select('payload')
-        .like('id', 'room:%');
-
-      if (roomsError) {
-        console.error('Failed to load private rooms from Supabase', roomsError);
-      } else if (roomsData) {
-        roomsData.forEach((row) => {
-          const room = row.payload as PrivateRoom;
-          privateRooms.set(room.roomCode, room);
-        });
-      }
+      const roomsData = await loadSupabaseRowsByPrefix('room:');
+      roomsData.forEach((row) => {
+        const room = row.payload as PrivateRoom;
+        privateRooms.set(room.roomCode, room);
+      });
 
       // 5. Load pending deposit intents
-      const { data: depositsData, error: depositsError } = await supabaseAdmin
-        .from(SUPABASE_STATE_TABLE)
-        .select('payload')
-        .like('id', 'deposit:%');
-
-      if (depositsError) {
-        console.error('Failed to load deposits from Supabase', depositsError);
-      } else if (depositsData) {
-        depositsData.forEach((row) => {
-          const intent = row.payload as DepositIntent;
-          depositIntents.set(intent.id, intent);
-        });
-      }
+      const depositsData = await loadSupabaseRowsByPrefix('deposit:');
+      depositsData.forEach((row) => {
+        const intent = row.payload as DepositIntent;
+        depositIntents.set(intent.id, intent);
+      });
 
       // 6. Load pending withdrawal requests
-      const { data: withdrawalsData, error: withdrawalsError } = await supabaseAdmin
-        .from(SUPABASE_STATE_TABLE)
-        .select('payload')
-        .like('id', 'withdrawal:%');
+      const withdrawalsData = await loadSupabaseRowsByPrefix('withdrawal:');
+      withdrawalsData.forEach((row) => {
+        const request = row.payload as WithdrawalRequest;
+        withdrawalRequests.set(request.id, request);
+      });
 
-      if (withdrawalsError) {
-        console.error('Failed to load withdrawals from Supabase', withdrawalsError);
-      } else if (withdrawalsData) {
-        withdrawalsData.forEach((row) => {
-          const request = row.payload as WithdrawalRequest;
-          withdrawalRequests.set(request.id, request);
-        });
-      }
-
+      rebuildReferralStats();
       return;
     } catch (e) {
       console.error('Error during loadPersistedState from Supabase', e);
@@ -695,7 +764,9 @@ function getUser(userId: string, walletAddress?: string): UserState {
       existing.walletAddress = walletAddress;
       schedulePersist({ userId: existing.userId });
     }
-    hydrateUser(existing);
+    if (hydrateUser(existing)) {
+      schedulePersist({ userId: existing.userId });
+    }
     return existing;
   }
 
@@ -710,7 +781,7 @@ function getUser(userId: string, walletAddress?: string): UserState {
     energy: DEFAULT_MAX_ENERGY,
     maxEnergy: DEFAULT_MAX_ENERGY,
     energyUpdatedAt: Date.now(),
-    referralCode: createReferralCode(),
+    referralCode: createUniqueReferralCode(),
     referralsActivated: 0,
     completedQuestIds: [],
     transactions: [],
@@ -724,14 +795,74 @@ function createReferralCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
-function hydrateUser(user: UserState) {
-  user.energy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
-  user.maxEnergy = Math.max(1, Number.isFinite(user.maxEnergy) ? user.maxEnergy : DEFAULT_MAX_ENERGY);
-  user.energyUpdatedAt = Number.isFinite(user.energyUpdatedAt) ? user.energyUpdatedAt : Date.now();
-  user.referralCode = user.referralCode || createReferralCode();
-  user.completedQuestIds = Array.isArray(user.completedQuestIds) ? user.completedQuestIds : [];
-  user.referralsActivated = Number.isFinite(user.referralsActivated) ? user.referralsActivated : 0;
-  user.lastDailyEnergyAt ??= null;
+function createUniqueReferralCode(ownerUserId?: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const code = createReferralCode();
+    const owner = findUserByReferralCode(code);
+    if (!owner || owner.userId === ownerUserId) {
+      return code;
+    }
+  }
+  return crypto.randomBytes(5).toString('hex').toUpperCase();
+}
+
+function hydrateUser(user: UserState): boolean {
+  let changed = false;
+  const setIfChanged = <K extends keyof UserState>(key: K, value: UserState[K]) => {
+    if (user[key] !== value) {
+      user[key] = value;
+      changed = true;
+    }
+  };
+
+  setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? user.availableTickets : 0);
+  setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? user.heldTickets : 0);
+  setIfChanged('xp', Number.isFinite(user.xp) ? user.xp : 0);
+  const hydratedEnergy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
+  if (user.energy !== hydratedEnergy) {
+    user.energy = hydratedEnergy;
+    changed = true;
+  }
+  const hydratedMaxEnergy = Math.max(1, Number.isFinite(user.maxEnergy) ? user.maxEnergy : DEFAULT_MAX_ENERGY);
+  if (user.maxEnergy !== hydratedMaxEnergy) {
+    user.maxEnergy = hydratedMaxEnergy;
+    changed = true;
+  }
+  const hydratedEnergyUpdatedAt = Number.isFinite(user.energyUpdatedAt) ? user.energyUpdatedAt : Date.now();
+  if (user.energyUpdatedAt !== hydratedEnergyUpdatedAt) {
+    user.energyUpdatedAt = hydratedEnergyUpdatedAt;
+    changed = true;
+  }
+  const rawReferralCode = typeof user.referralCode === 'string' ? user.referralCode.trim().toUpperCase() : '';
+  const referralCodeOwner = rawReferralCode ? findUserByReferralCode(rawReferralCode) : null;
+  if (!rawReferralCode || (referralCodeOwner?.userId && referralCodeOwner.userId !== user.userId)) {
+    user.referralCode = createUniqueReferralCode(user.userId);
+    changed = true;
+  } else if (user.referralCode !== rawReferralCode) {
+    user.referralCode = rawReferralCode;
+    changed = true;
+  }
+  if (!Array.isArray(user.completedQuestIds)) {
+    user.completedQuestIds = [];
+    changed = true;
+  }
+  if (!Array.isArray(user.transactions)) {
+    user.transactions = [];
+    changed = true;
+  }
+  if (!Number.isFinite(user.referralsActivated)) {
+    user.referralsActivated = 0;
+    changed = true;
+  }
+  if (user.lastDailyEnergyAt === undefined) {
+    user.lastDailyEnergyAt = null;
+    changed = true;
+  }
+  if (user.lastDailyXpAt === undefined) {
+    user.lastDailyXpAt = null;
+    changed = true;
+  }
+  return changed;
 }
 
 function getStartOfUtcDay(ts: number) {
@@ -841,23 +972,19 @@ function buildBootstrapProfileResponse(user: UserState) {
 
 function buildProfileResponse(user: UserState) {
   const claimedQuestIds = claimCompletedQuests(user);
+  const referralStats = getReferralStats(user.userId);
+  const referralsActivated = Math.max(user.referralsActivated, referralStats.activated);
   return {
     ...buildBootstrapProfileResponse(user),
     referrals: {
       referredByUserId: user.referredByUserId || null,
       status: user.referralStatus || null,
       activatedAt: user.referralActivatedAt || null,
-      referralsActivated: user.referralsActivated,
-      invitedUsers: Array.from(users.values())
-        .filter((entry) => entry.referredByUserId === user.userId)
-        .map((entry) => ({
-          userId: entry.userId,
-          username: entry.telegramUsername || entry.telegramFirstName || entry.userId,
-          photoUrl: entry.telegramPhotoUrl || null,
-          status: entry.referralStatus || 'pending',
-          assignedAt: entry.referralAssignedAt || null,
-          activatedAt: entry.referralActivatedAt || null,
-        })),
+      referralsActivated,
+      totalInvited: referralStats.total,
+      pendingInvited: referralStats.pending,
+      rejectedInvited: referralStats.rejected,
+      invitedUsers: [],
     },
     quests: buildQuestView(user.userId),
     claimedQuestIds,
@@ -1219,18 +1346,20 @@ function getPrivateRoomUserId(req: AuthenticatedRequest, input: Record<string, u
 }
 
 function assignReferralIfNeeded(user: UserState, startParam?: string) {
-  if (!startParam || user.referredByUserId || !startParam.startsWith('ref_')) {
+  if (!startParam || user.referredByUserId || !/^ref_/i.test(startParam)) {
     return;
   }
   const referralCode = startParam.replace(/^ref_/i, '').trim().toUpperCase();
   const inviter = findUserByReferralCode(referralCode);
   if (!inviter || inviter.userId === user.userId) {
     user.referralStatus = 'rejected';
+    schedulePersist({ userId: user.userId });
     return;
   }
   user.referredByUserId = inviter.userId;
   user.referralStatus = 'pending';
   user.referralAssignedAt = Date.now();
+  adjustReferralStats(inviter.userId, null, 'pending');
   schedulePersist({ userId: user.userId });
 }
 
@@ -1240,14 +1369,17 @@ function maybeActivateReferral(user: UserState, matchId: string) {
   }
   const inviter = users.get(user.referredByUserId);
   if (!inviter || inviter.userId === user.userId) {
+    adjustReferralStats(user.referredByUserId, user.referralStatus || 'pending', 'rejected');
     user.referralStatus = 'rejected';
+    schedulePersist({ userId: user.userId });
     return false;
   }
+  const previousStatus = user.referralStatus || 'pending';
   user.referralStatus = 'activated';
   user.referralActivatedAt = Date.now();
   user.referralActivationMatchId = matchId;
-  user.referralsActivated += 0;
   inviter.referralsActivated += 1;
+  adjustReferralStats(inviter.userId, previousStatus, 'activated');
   rewardXp(user, REFERRED_REWARD_XP, 'Referral Activated');
   rewardEnergy(user, REFERRED_REWARD_ENERGY, 'Referral Activated');
   rewardXp(inviter, REFERRER_REWARD_XP, 'Referral Reward');
@@ -1272,6 +1404,7 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
   let totalBonus = 0;
   let inviterBonusL1 = 0;
   let inviterBonusL2 = 0;
+  const bonusRecipientIds = new Set<string>();
 
   if (user.referredByUserId) {
     const inviterL1 = users.get(user.referredByUserId);
@@ -1290,6 +1423,7 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
           `L1 Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} won a match. You received +${inviterBonusL1.toFixed(2)} TKT.`
         );
         totalBonus += inviterBonusL1;
+        bonusRecipientIds.add(inviterL1.userId);
       }
 
       if (inviterL1.referredByUserId) {
@@ -1309,6 +1443,7 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
               `L2 Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} (via L1 @${inviterL1.telegramUsername || inviterL1.userId}) won a match. You received +${inviterBonusL2.toFixed(2)} TKT.`
             );
             totalBonus += inviterBonusL2;
+            bonusRecipientIds.add(inviterL2.userId);
           }
         }
       }
@@ -1316,7 +1451,7 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
   }
 
   const netPayout = round2(Math.max(0, payoutAmount - totalBonus));
-  schedulePersist();
+  bonusRecipientIds.forEach((userId) => schedulePersist({ userId }));
   return {
     inviterBonus: round2(totalBonus),
     netPayout,

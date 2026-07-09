@@ -54,5 +54,7 @@ services:
         sync: false
       - key: SUPABASE_STATE_TABLE
         value: app_state
+      - key: SUPABASE_STATE_ROW_ID
+        value: runtime-state
       - key: PORT
         value: 10000
