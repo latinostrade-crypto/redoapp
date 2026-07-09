@@ -190,3 +190,42 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
 
   throw new Error('Request failed.');
 }
+
+if (typeof window !== 'undefined') {
+  (window as any).redoappActiveLoads = [];
+  (window as any).redoappIsAppStarting = true;
+
+  window.addEventListener('redoapp:api-trace', (e: Event) => {
+    const detail = (e as CustomEvent<ApiTraceDetail>).detail;
+    const { id, path, stage } = detail;
+
+    const pathsWeCareAbout = [
+      '/api/users/sync',
+      '/api/matchmaker/join',
+      '/api/matchmaker/leave',
+      '/api/private-rooms/create',
+      '/api/private-rooms/join',
+    ];
+
+    const isMatchStateSync = path.startsWith('/api/matches/state/');
+    const shouldTrack = pathsWeCareAbout.includes(path) || isMatchStateSync;
+
+    if (!shouldTrack) return;
+
+    if (stage === 'start') {
+      const current = (window as any).redoappActiveLoads || [];
+      if (!current.includes(id)) {
+        (window as any).redoappActiveLoads = [...current, id];
+      }
+      window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
+    } else if (stage === 'success' || stage === 'error') {
+      const current = (window as any).redoappActiveLoads || [];
+      (window as any).redoappActiveLoads = current.filter((x: string) => x !== id);
+
+      if (path === '/api/users/sync' || path.startsWith('/api/matches/state/')) {
+        (window as any).redoappIsAppStarting = false;
+      }
+      window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
+    }
+  });
+}

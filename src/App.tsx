@@ -145,33 +145,17 @@ export default function App() {
   const settlementHandledRef = useRef<string | null>(null);
 
   // Fullscreen loading screen state & API request tracking (minimum 3-second display)
-  const [activeLoads, setActiveLoads] = useState<string[]>([]);
-  const [isAppStarting, setIsAppStarting] = useState(true);
+  const [activeLoads, setActiveLoads] = useState<string[]>(() => (window as any).redoappActiveLoads || []);
+  const [isAppStarting, setIsAppStarting] = useState<boolean>(() => (window as any).redoappIsAppStarting ?? true);
   const [showLoadingScreen, setShowLoadingScreen] = useState(true);
 
-  const activeLoadsRef = useRef<string[]>([]);
-  const isAppStartingRef = useRef<boolean>(true);
   const showLoadingScreenRef = useRef<boolean>(true);
-
   const loadingStartTimestampRef = useRef<number>(Date.now());
   const loadingTimeoutRef = useRef<number | null>(null);
 
   const setShowLoading = (val: boolean) => {
     showLoadingScreenRef.current = val;
     setShowLoadingScreen(val);
-  };
-
-  const setActiveLoadsState = (val: string[] | ((prev: string[]) => string[])) => {
-    setActiveLoads((prev) => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      activeLoadsRef.current = next;
-      return next;
-    });
-  };
-
-  const setIsAppStartingState = (val: boolean) => {
-    isAppStartingRef.current = val;
-    setIsAppStarting(val);
   };
 
   const updateLoadingVisibility = useCallback((isLoadingActive: boolean) => {
@@ -204,49 +188,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const handleApiTrace = (e: Event) => {
-      const detail = (e as CustomEvent<ApiTraceDetail>).detail;
-      const { id, path, stage } = detail;
+    const handleLoadingChange = () => {
+      const currentLoads = (window as any).redoappActiveLoads || [];
+      const currentStarting = (window as any).redoappIsAppStarting ?? true;
+      
+      setActiveLoads(currentLoads);
+      setIsAppStarting(currentStarting);
 
-      const pathsWeCareAbout = [
-        '/api/users/sync',
-        '/api/matchmaker/join',
-        '/api/matchmaker/leave',
-        '/api/private-rooms/create',
-        '/api/private-rooms/join',
-      ];
-
-      const isMatchStateSync = path.startsWith('/api/matches/state/');
-      const shouldTrack = pathsWeCareAbout.includes(path) || isMatchStateSync;
-
-      if (!shouldTrack) return;
-
-      if (stage === 'start') {
-        setActiveLoadsState((prev) => {
-          const next = prev.includes(id) ? prev : [...prev, id];
-          updateLoadingVisibility(true);
-          return next;
-        });
-      } else if (stage === 'success' || stage === 'error') {
-        let isSyncFinished = false;
-        if (path === '/api/users/sync') {
-          isSyncFinished = true;
-          setIsAppStartingState(false);
-        }
-
-        setActiveLoadsState((prev) => {
-          const next = prev.filter((x) => x !== id);
-          const isAppStillStarting = isSyncFinished ? false : isAppStartingRef.current;
-          const isLoadActive = isAppStillStarting || next.length > 0;
-          updateLoadingVisibility(isLoadActive);
-          return next;
-        });
-      }
+      const isLoadActive = currentStarting || currentLoads.length > 0;
+      updateLoadingVisibility(isLoadActive);
     };
 
-    window.addEventListener('redoapp:api-trace', handleApiTrace);
+    // Run once on mount to capture any early updates
+    handleLoadingChange();
+
+    window.addEventListener('redoapp:loading-change', handleLoadingChange);
     return () => {
-      window.removeEventListener('redoapp:api-trace', handleApiTrace);
+      window.removeEventListener('redoapp:loading-change', handleLoadingChange);
     };
   }, [updateLoadingVisibility]);
 
