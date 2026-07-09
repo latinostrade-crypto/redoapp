@@ -1313,27 +1313,38 @@ export function Web3Dashboard({
   const winRate = stats.gamesPlayed > 0 
     ? Math.round((stats.gamesWon / stats.gamesPlayed) * 100) 
     : 0;
+  const dashboardTabs = [
+    { id: 'profile', label: 'ME' },
+    { id: 'events', label: 'EVENTS' },
+    { id: 'pvp', label: 'PVP' },
+    { id: 'rewards', label: 'REWARDS' },
+  ] as const;
+  const selectDashboardTab = (tabId: typeof currentTab) => {
+    if (currentTab === tabId) return;
+    sound.playPop();
+    setCurrentTab(tabId);
+  };
 
   return (
     <div className="w-full bg-[#0c0f12] text-[#f8fafc] pixel-box-lg p-3 sm:p-5 relative overflow-hidden flex flex-col gap-4 select-none pixel-scanlines">
       
       {/* 1. Tabs (Swapped to the top of the card) */}
       <div className="grid grid-cols-4 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
-        {[
-          { id: 'profile', label: 'ME' },
-          { id: 'events', label: 'EVENTS' },
-          { id: 'pvp', label: 'PVP' },
-          { id: 'rewards', label: 'REWARDS' },
-        ].map((tab) => {
+        {dashboardTabs.map((tab) => {
           const active = currentTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => {
-                sound.playPop();
-                setCurrentTab(tab.id as any);
+              type="button"
+              onPointerDown={(event) => {
+                event.preventDefault();
+                selectDashboardTab(tab.id);
               }}
-              className={`text-center py-2 text-[8px] sm:text-[9px] font-black uppercase font-mono transition-all cursor-pointer border ${
+              onClick={() => {
+                selectDashboardTab(tab.id);
+              }}
+              style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
+              className={`text-center py-2 text-[8px] sm:text-[9px] font-black uppercase font-mono transition-all cursor-pointer border select-none ${
                 active
                   ? 'bg-[#00d2ff] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
                   : 'text-slate-400 border-transparent hover:text-slate-200'
