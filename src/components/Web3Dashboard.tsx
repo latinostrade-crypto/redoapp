@@ -1154,14 +1154,13 @@ export function Web3Dashboard({
     const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
     queueStreamRef.current = stream;
 
-    stream.addEventListener('queue-status', (event) => {
-      const result = JSON.parse((event as MessageEvent).data) as {
-        status: 'idle' | 'searching' | 'ready';
-        queueLength?: number;
-        countdownSec?: number;
-        matchId?: string;
-        players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      };
+    const handleQueueStatus = (result: {
+      status: 'idle' | 'searching' | 'ready';
+      queueLength?: number;
+      countdownSec?: number;
+      matchId?: string;
+      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+    }) => {
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
         setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
@@ -1179,6 +1178,15 @@ export function Web3Dashboard({
         setMatchmakingState('success');
         onStartGame('pvp', selectedStake);
       }
+      if (result.status === 'idle') {
+        setMatchmakingState('idle');
+        setPublicQueueError('Matchmaking connection lost or timed out. Please try joining again.');
+      }
+    };
+
+    stream.addEventListener('queue-status', (event) => {
+      const result = JSON.parse((event as MessageEvent).data);
+      handleQueueStatus(result);
     });
 
     stream.onerror = () => {
@@ -1189,29 +1197,24 @@ export function Web3Dashboard({
         matchId?: string;
         players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
       }>('/api/matchmaker/status')
-        .then((result) => {
-          if (result.status === 'searching') {
-            setQueueLength(result.queueLength || 1);
-            setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
-          }
-          if (result.status === 'ready' && result.matchId) {
-            setQueueLength(result.players?.length || 1);
-            localStorage.setItem('redoapp_active_match', JSON.stringify({
-              matchId: result.matchId,
-              mode: 'pvp',
-              stake: selectedStake,
-              currentUserId,
-              players: result.players || [],
-              createdAt: Date.now(),
-            }));
-            setMatchmakingState('success');
-            onStartGame('pvp', selectedStake);
-          }
-        })
+        .then(handleQueueStatus)
         .catch(() => undefined);
     };
 
+    const pollTimer = window.setInterval(() => {
+      apiRequest<{
+        status: 'idle' | 'searching' | 'ready';
+        queueLength?: number;
+        countdownSec?: number;
+        matchId?: string;
+        players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+      }>('/api/matchmaker/status', { timeoutMs: 5000 })
+        .then(handleQueueStatus)
+        .catch(() => undefined);
+    }, 3000);
+
     return () => {
+      window.clearInterval(pollTimer);
       stream.close();
       if (queueStreamRef.current === stream) {
         queueStreamRef.current = null;

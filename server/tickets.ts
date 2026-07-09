@@ -71,7 +71,15 @@ interface TicketingDeps {
   getUser: (userId: string, walletAddress?: string) => UserStateLike;
   requireAdmin: (req: Request, res: Response, next: NextFunction) => void;
   round2: (value: number) => number;
-  schedulePersist: () => void;
+  schedulePersist: (opts?: {
+    userId?: string;
+    matchId?: string;
+    roomCode?: string;
+    depositId?: string;
+    withdrawalId?: string;
+    deleteMatchId?: string;
+    deleteRoomCode?: string;
+  }) => void;
   withdrawalRequests: Map<string, WithdrawalRequest>;
 }
 
@@ -257,7 +265,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     intent.txHash = verification?.txHash || intent.txHash;
     intent.lastVerificationError = null;
     intent.lastVerificationAt = Date.now();
-    deps.schedulePersist();
+    deps.schedulePersist({ depositId: intent.id, userId: intent.userId });
 
     const user = deps.getUser(intent.userId, intent.walletAddress);
     user.availableTickets = deps.round2(user.availableTickets + intent.ticketAmount);
@@ -274,12 +282,12 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     intent.signedBoc = signedBoc;
     intent.confirmationAttempts = (intent.confirmationAttempts || 0) + 1;
     intent.lastVerificationAt = Date.now();
-    deps.schedulePersist();
+    deps.schedulePersist({ depositId: intent.id });
 
     const verification = await verifyTonDeposit(intent, signedBoc, config);
     if (!verification.ok) {
       intent.lastVerificationError = verification.reason || 'Transaction verification failed.';
-      deps.schedulePersist();
+      deps.schedulePersist({ depositId: intent.id });
       return {
         ok: false as const,
         verification,
@@ -288,7 +296,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
 
     if (hasDuplicateMessageHash(intent, verification.normalizedMessageHash)) {
       intent.lastVerificationError = 'This blockchain payment was already used for another deposit.';
-      deps.schedulePersist();
+      deps.schedulePersist({ depositId: intent.id });
       return {
         ok: false as const,
         verification: {
@@ -338,7 +346,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       } catch (error) {
         intent.lastVerificationError = error instanceof Error ? error.message : 'Background verification failed.';
         intent.lastVerificationAt = Date.now();
-        deps.schedulePersist();
+        deps.schedulePersist({ depositId: intent.id });
       }
     }
   }
@@ -417,7 +425,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         confirmationAttempts: 0,
       };
       deps.depositIntents.set(intent.id, intent);
-      deps.schedulePersist();
+      deps.schedulePersist({ depositId: intent.id, userId: intent.userId });
       return res.json({
         intentId: intent.id,
         marketingWallet: config.marketingWallet,
@@ -495,6 +503,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         createdAt: Date.now(),
       };
       deps.withdrawalRequests.set(request.id, request);
+      deps.schedulePersist({ withdrawalId: request.id, userId: user.userId });
       deps.createLedgerEntry(user, {
         event: 'Withdrawal Requested',
         value: `-${amount.toFixed(2)} TKT`,
@@ -511,7 +520,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         return res.status(404).json({ error: 'Withdrawal request not found.' });
       }
       request.status = 'completed';
-      deps.schedulePersist();
+      deps.schedulePersist({ withdrawalId: request.id, userId: request.userId });
       const user = deps.getUser(request.userId, request.walletAddress);
       deps.createLedgerEntry(user, {
         event: 'Withdrawal Completed',

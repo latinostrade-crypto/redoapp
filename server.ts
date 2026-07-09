@@ -188,6 +188,7 @@ interface ActiveMatch {
   createdAt: number;
   settled: boolean;
   gameState: ServerGameState;
+  payoutResult?: any;
 }
 
 interface PrivateRoom {
@@ -236,6 +237,7 @@ const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
+const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -312,26 +314,153 @@ function buildPersistedState(): PersistedState {
   };
 }
 
+const dirtyUsers = new Set<string>();
+const dirtyMatches = new Set<string>();
+const dirtyPrivateRooms = new Set<string>();
+const dirtyDeposits = new Set<string>();
+const dirtyWithdrawals = new Set<string>();
+const deletedMatches = new Set<string>();
+const deletedPrivateRooms = new Set<string>();
+
 async function persistStateNow() {
-  const snapshot = buildPersistedState();
   if (supabaseAdmin) {
-    const { error } = await supabaseAdmin
-      .from(SUPABASE_STATE_TABLE)
-      .upsert({
-        id: SUPABASE_STATE_ROW_ID,
-        payload: snapshot,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'id' });
-    if (error) {
-      throw new Error(`Supabase persist failed: ${error.message}`);
+    try {
+      // 1. Persist dirty users
+      for (const userId of dirtyUsers) {
+        const user = users.get(userId);
+        if (user) {
+          await supabaseAdmin
+            .from(SUPABASE_STATE_TABLE)
+            .upsert({
+              id: `user:${userId}`,
+              payload: user,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+        }
+      }
+      dirtyUsers.clear();
+
+      // 2. Persist dirty matches
+      for (const matchId of dirtyMatches) {
+        const match = activeMatches.get(matchId);
+        if (match) {
+          await supabaseAdmin
+            .from(SUPABASE_STATE_TABLE)
+            .upsert({
+              id: `match:${matchId}`,
+              payload: match,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+        }
+      }
+      dirtyMatches.clear();
+
+      // 3. Persist dirty private rooms
+      for (const roomCode of dirtyPrivateRooms) {
+        const room = privateRooms.get(roomCode);
+        if (room) {
+          await supabaseAdmin
+            .from(SUPABASE_STATE_TABLE)
+            .upsert({
+              id: `room:${roomCode}`,
+              payload: room,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+        }
+      }
+      dirtyPrivateRooms.clear();
+
+      // 4. Persist dirty deposits
+      for (const depositId of dirtyDeposits) {
+        const intent = depositIntents.get(depositId);
+        if (intent) {
+          await supabaseAdmin
+            .from(SUPABASE_STATE_TABLE)
+            .upsert({
+              id: `deposit:${depositId}`,
+              payload: intent,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+        }
+      }
+      dirtyDeposits.clear();
+
+      // 5. Persist dirty withdrawals
+      for (const withdrawalId of dirtyWithdrawals) {
+        const request = withdrawalRequests.get(withdrawalId);
+        if (request) {
+          await supabaseAdmin
+            .from(SUPABASE_STATE_TABLE)
+            .upsert({
+              id: `withdrawal:${withdrawalId}`,
+              payload: request,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'id' });
+        }
+      }
+      dirtyWithdrawals.clear();
+
+      // 6. Delete removed matches
+      for (const matchId of deletedMatches) {
+        await supabaseAdmin
+          .from(SUPABASE_STATE_TABLE)
+          .delete()
+          .eq('id', `match:${matchId}`);
+      }
+      deletedMatches.clear();
+
+      // 7. Delete removed private rooms
+      for (const roomCode of deletedPrivateRooms) {
+        await supabaseAdmin
+          .from(SUPABASE_STATE_TABLE)
+          .delete()
+          .eq('id', `room:${roomCode}`);
+      }
+      deletedPrivateRooms.clear();
+
+      // 8. Persist global state (queue, notifications)
+      const globalState = {
+        matchmakingQueue,
+        telegramNotifications,
+      };
+      await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .upsert({
+          id: 'global-state',
+          payload: globalState,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+    } catch (err) {
+      console.error('Supabase granular persist failed:', err);
     }
     return;
   }
+
+  // Fallback local persistence
+  const snapshot = buildPersistedState();
   mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(STATE_FILE, JSON.stringify(snapshot), 'utf8');
 }
 
-function schedulePersist() {
+function schedulePersist(opts?: {
+  userId?: string;
+  matchId?: string;
+  roomCode?: string;
+  depositId?: string;
+  withdrawalId?: string;
+  deleteMatchId?: string;
+  deleteRoomCode?: string;
+}) {
+  if (opts) {
+    if (opts.userId) dirtyUsers.add(opts.userId);
+    if (opts.matchId) dirtyMatches.add(opts.matchId);
+    if (opts.roomCode) dirtyPrivateRooms.add(opts.roomCode);
+    if (opts.depositId) dirtyDeposits.add(opts.depositId);
+    if (opts.withdrawalId) dirtyWithdrawals.add(opts.withdrawalId);
+    if (opts.deleteMatchId) deletedMatches.add(opts.deleteMatchId);
+    if (opts.deleteRoomCode) deletedPrivateRooms.add(opts.deleteRoomCode);
+  }
+
   if (persistTimer) {
     clearTimeout(persistTimer);
   }
@@ -344,45 +473,142 @@ function schedulePersist() {
 }
 
 function applySnapshot(snapshot: PersistedState) {
-    users.clear();
-    depositIntents.clear();
-    withdrawalRequests.clear();
-    activeMatches.clear();
-    activeMatchByUser.clear();
-    privateRooms.clear();
-    questProgressByUser.clear();
-    telegramNotifications.splice(0, telegramNotifications.length);
+  users.clear();
+  depositIntents.clear();
+  withdrawalRequests.clear();
+  activeMatches.clear();
+  activeMatchByUser.clear();
+  privateRooms.clear();
+  questProgressByUser.clear();
+  telegramNotifications.splice(0, telegramNotifications.length);
 
-    snapshot.users?.forEach((user) => users.set(user.userId, user));
-    snapshot.depositIntents?.forEach((intent) => depositIntents.set(intent.id, intent));
-    snapshot.withdrawalRequests?.forEach((request) => withdrawalRequests.set(request.id, request));
-    matchmakingQueue = snapshot.matchmakingQueue || [];
-    snapshot.activeMatches?.forEach((match) => activeMatches.set(match.matchId, match));
-    snapshot.activeMatchByUser?.forEach(([userId, matchId]) => activeMatchByUser.set(userId, matchId));
-    snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
-    snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
-    snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
+  snapshot.users?.forEach((user) => users.set(user.userId, user));
+  snapshot.depositIntents?.forEach((intent) => depositIntents.set(intent.id, intent));
+  snapshot.withdrawalRequests?.forEach((request) => withdrawalRequests.set(request.id, request));
+  matchmakingQueue = snapshot.matchmakingQueue || [];
+  snapshot.activeMatches?.forEach((match) => activeMatches.set(match.matchId, match));
+  snapshot.activeMatchByUser?.forEach(([userId, matchId]) => activeMatchByUser.set(userId, matchId));
+  snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
+  snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
+  snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
 }
 
 async function loadPersistedState() {
   if (supabaseAdmin) {
-    const { data, error } = await supabaseAdmin
-      .from(SUPABASE_STATE_TABLE)
-      .select('payload')
-      .eq('id', SUPABASE_STATE_ROW_ID)
-      .maybeSingle();
-    if (error) {
-      console.error('Failed to load runtime state from Supabase', error);
-    } else if (data?.payload) {
-      applySnapshot(data.payload as PersistedState);
+    try {
+      users.clear();
+      depositIntents.clear();
+      withdrawalRequests.clear();
+      activeMatches.clear();
+      activeMatchByUser.clear();
+      privateRooms.clear();
+      questProgressByUser.clear();
+      telegramNotifications.splice(0, telegramNotifications.length);
+
+      // 1. Load global state
+      const { data: globalData, error: globalError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .eq('id', 'global-state')
+        .maybeSingle();
+
+      if (globalError) {
+        console.error('Failed to load global state from Supabase', globalError);
+      } else if (globalData?.payload) {
+        const payload = globalData.payload as any;
+        matchmakingQueue = payload.matchmakingQueue || [];
+        payload.telegramNotifications?.forEach((entry: any) => telegramNotifications.push(entry));
+      }
+
+      // 2. Load users
+      const { data: usersData, error: usersError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .like('id', 'user:%');
+
+      if (usersError) {
+        console.error('Failed to load users from Supabase', usersError);
+      } else if (usersData) {
+        usersData.forEach((row) => {
+          const user = row.payload as UserState;
+          users.set(user.userId, user);
+        });
+      }
+
+      // 3. Load active matches (non-settled)
+      const { data: matchesData, error: matchesError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .like('id', 'match:%');
+
+      if (matchesError) {
+        console.error('Failed to load active matches from Supabase', matchesError);
+      } else if (matchesData) {
+        matchesData.forEach((row) => {
+          const match = row.payload as ActiveMatch;
+          activeMatches.set(match.matchId, match);
+          match.players.forEach((p) => {
+            if (!match.settled) {
+              activeMatchByUser.set(p.userId, match.matchId);
+            }
+          });
+        });
+      }
+
+      // 4. Load private rooms
+      const { data: roomsData, error: roomsError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .like('id', 'room:%');
+
+      if (roomsError) {
+        console.error('Failed to load private rooms from Supabase', roomsError);
+      } else if (roomsData) {
+        roomsData.forEach((row) => {
+          const room = row.payload as PrivateRoom;
+          privateRooms.set(room.roomCode, room);
+        });
+      }
+
+      // 5. Load pending deposit intents
+      const { data: depositsData, error: depositsError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .like('id', 'deposit:%');
+
+      if (depositsError) {
+        console.error('Failed to load deposits from Supabase', depositsError);
+      } else if (depositsData) {
+        depositsData.forEach((row) => {
+          const intent = row.payload as DepositIntent;
+          depositIntents.set(intent.id, intent);
+        });
+      }
+
+      // 6. Load pending withdrawal requests
+      const { data: withdrawalsData, error: withdrawalsError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .like('id', 'withdrawal:%');
+
+      if (withdrawalsError) {
+        console.error('Failed to load withdrawals from Supabase', withdrawalsError);
+      } else if (withdrawalsData) {
+        withdrawalsData.forEach((row) => {
+          const request = row.payload as WithdrawalRequest;
+          withdrawalRequests.set(request.id, request);
+        });
+      }
+
       return;
+    } catch (e) {
+      console.error('Error during loadPersistedState from Supabase', e);
     }
   }
 
   if (!existsSync(STATE_FILE)) {
     return;
   }
-
   try {
     const snapshot = JSON.parse(readFileSync(STATE_FILE, 'utf8')) as PersistedState;
     applySnapshot(snapshot);
@@ -396,7 +622,7 @@ function getUser(userId: string, walletAddress?: string): UserState {
   if (existing) {
     if (walletAddress && existing.walletAddress !== walletAddress) {
       existing.walletAddress = walletAddress;
-      schedulePersist();
+      schedulePersist({ userId: existing.userId });
     }
     hydrateUser(existing);
     return existing;
@@ -419,7 +645,7 @@ function getUser(userId: string, walletAddress?: string): UserState {
     transactions: [],
   };
   users.set(userId, created);
-  schedulePersist();
+  schedulePersist({ userId });
   return created;
 }
 
@@ -467,7 +693,7 @@ function recalculateEnergy(user: UserState, now = Date.now()) {
       user.energy = user.maxEnergy;
       user.energyUpdatedAt = now;
     }
-    schedulePersist();
+    schedulePersist({ userId: user.userId });
   }
   return user;
 }
@@ -630,7 +856,7 @@ function updateQuestProgress(userId: string, metric: QuestDefinition['metric'], 
     progress.progress = Math.min(quest.target, progress.progress + delta);
     progress.updatedAt = now;
   }
-  schedulePersist();
+  schedulePersist({ userId });
 }
 
 function claimCompletedQuests(user: UserState) {
@@ -648,7 +874,7 @@ function claimCompletedQuests(user: UserState) {
   }
   if (claimed.length) {
     user.completedQuestIds = Array.from(new Set([...user.completedQuestIds, ...claimed]));
-    schedulePersist();
+    schedulePersist({ userId: user.userId });
   }
   return claimed;
 }
@@ -880,7 +1106,7 @@ function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
   user.telegramPhotoUrl = auth.photo_url;
   user.telegramAuthAt = auth.auth_date;
   if (changed) {
-    schedulePersist();
+    schedulePersist({ userId: user.userId });
   }
 }
 
@@ -930,7 +1156,7 @@ function assignReferralIfNeeded(user: UserState, startParam?: string) {
   user.referredByUserId = inviter.userId;
   user.referralStatus = 'pending';
   user.referralAssignedAt = Date.now();
-  schedulePersist();
+  schedulePersist({ userId: user.userId });
 }
 
 function maybeActivateReferral(user: UserState, matchId: string) {
@@ -955,7 +1181,8 @@ function maybeActivateReferral(user: UserState, matchId: string) {
   claimCompletedQuests(inviter);
   queueTelegramNotification(inviter, `Referral activated: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId}. Rewards: +${REFERRER_REWARD_ENERGY} energy, +${REFERRER_REWARD_XP} XP.`);
   queueTelegramNotification(user, `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`);
-  schedulePersist();
+  schedulePersist({ userId: user.userId });
+  schedulePersist({ userId: inviter.userId });
   return true;
 }
 
@@ -1029,7 +1256,7 @@ function createLedgerEntry(user: UserState, entry: Omit<TicketLedgerEntry, 'id' 
     ...entry,
   };
   user.transactions = [ledgerEntry, ...user.transactions].slice(0, 50);
-  schedulePersist();
+  schedulePersist({ userId: user.userId });
   return ledgerEntry;
 }
 
@@ -1290,7 +1517,8 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
       logs: [createServerLog(`${currentPlayer.username} won the match.`, 'win'), ...nextState.logs].slice(0, 50),
     };
     match.gameState = nextState;
-    schedulePersist();
+    schedulePersist({ matchId: match.matchId });
+    settleMatchHelper(match);
     return;
   }
 
@@ -1318,7 +1546,7 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
   nextState.logs = [createServerLog(`${currentPlayer.username} played ${colorLabel}`, card.color === 'wild' || card.value === 'skip' || card.value === 'reverse' || card.value === 'draw2' ? 'action' : 'play'), ...nextState.logs].slice(0, 50);
   match.gameState = advanceServerTurn(nextState, skipCount);
   match.gameState.turnStartedAt = Date.now();
-  schedulePersist();
+  schedulePersist({ matchId: match.matchId });
 }
 
 function applyDrawAction(match: ActiveMatch, userId: string) {
@@ -1346,7 +1574,7 @@ function applyDrawAction(match: ActiveMatch, userId: string) {
   const playable = isValidServerMove(drawnCard, nextState.activeColor, nextState.activeValue);
   match.gameState = playable ? nextState : advanceServerTurn(nextState);
   match.gameState.turnStartedAt = Date.now();
-  schedulePersist();
+  schedulePersist({ matchId: match.matchId });
 }
 
 function applyPassAction(match: ActiveMatch, userId: string) {
@@ -1364,7 +1592,7 @@ function applyPassAction(match: ActiveMatch, userId: string) {
   };
   match.gameState = advanceServerTurn(nextState);
   match.gameState.turnStartedAt = Date.now();
-  schedulePersist();
+  schedulePersist({ matchId: match.matchId });
 }
 
 function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[], stake: number) {
@@ -1382,7 +1610,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
   players.forEach((queuedPlayer) => {
     activeMatchByUser.set(queuedPlayer.userId, matchId);
   });
-  schedulePersist();
+  schedulePersist({ matchId });
   broadcastMatch(matchId);
   return activeMatch;
 }
@@ -1443,7 +1671,7 @@ function runServerAiTurn(match: ActiveMatch, playerIndex: number) {
     console.error('runServerAiTurn failed', err);
     match.gameState = advanceServerTurn(match.gameState);
     match.gameState.turnStartedAt = Date.now();
-    schedulePersist();
+    schedulePersist({ matchId: match.matchId });
   }
 }
 
@@ -1482,28 +1710,13 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     return { status: 'idle' };
   }
 
-  const similarPlayers = matchmakingQueue
-    .filter((entry) => entry.stake === player.stake && entry.mode === player.mode)
-    .sort((a, b) => a.joinedAt - b.joinedAt);
-  const matchGroup = similarPlayers.slice(0, MAX_MATCH_PLAYERS);
-  const oldestJoinedAt = matchGroup[0]?.joinedAt ?? player.joinedAt;
-  const waitedMs = Date.now() - oldestJoinedAt;
-  const shouldStart = matchGroup.length >= MAX_MATCH_PLAYERS
-    || (matchGroup.length >= MIN_MATCH_PLAYERS && waitedMs >= MATCHMAKING_TIMEOUT_MS);
-
-  if (shouldStart) {
-    const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    activateMatch(matchId, player.mode, matchGroup, player.stake);
-    const matchUserIds = new Set(matchGroup.map((queuedPlayer) => queuedPlayer.userId));
-    matchmakingQueue = matchmakingQueue.filter((queuedPlayer) => !matchUserIds.has(queuedPlayer.userId));
-    schedulePersist();
-    matchGroup.forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
-    return {
-      status: 'ready',
-      matchId,
-      players: matchGroup,
-    };
-  }
+  const similarPlayers = matchmakingQueue.filter(
+    (entry) => entry.stake === player.stake && entry.mode === player.mode
+  );
+  // Sort by joinedAt ASC (oldest first)
+  similarPlayers.sort((a, b) => a.joinedAt - b.joinedAt);
+  const oldestPlayer = similarPlayers[0] ?? player;
+  const waitedMs = Date.now() - oldestPlayer.joinedAt;
 
   return {
     status: 'searching',
@@ -1511,6 +1724,61 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     playersNeeded: Math.max(0, MIN_MATCH_PLAYERS - similarPlayers.length),
     countdownSec: Math.max(0, Math.ceil((MATCHMAKING_TIMEOUT_MS - waitedMs) / 1000)),
   };
+}
+
+function runMatchmakingTick() {
+  if (matchmakingQueue.length < MIN_MATCH_PLAYERS) return;
+
+  const groups = new Map<string, QueuePlayer[]>();
+  for (const player of matchmakingQueue) {
+    const key = `${player.mode}_${player.stake}`;
+    const list = groups.get(key) || [];
+    list.push(player);
+    groups.set(key, list);
+  }
+
+  for (const [key, players] of groups.entries()) {
+    players.sort((a, b) => a.joinedAt - b.joinedAt);
+
+    let i = 0;
+    while (i < players.length) {
+      const remaining = players.length - i;
+      if (remaining < MIN_MATCH_PLAYERS) break;
+
+      const groupSlice = players.slice(i, i + MAX_MATCH_PLAYERS);
+      const oldestPlayer = groupSlice[0];
+      const waitedMs = Date.now() - oldestPlayer.joinedAt;
+
+      const shouldMatch = groupSlice.length >= MAX_MATCH_PLAYERS
+        || (groupSlice.length >= MIN_MATCH_PLAYERS && waitedMs >= MATCHMAKING_TIMEOUT_MS);
+
+      if (shouldMatch) {
+        const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const mode = oldestPlayer.mode;
+        const stake = oldestPlayer.stake;
+
+        activateMatch(matchId, mode, groupSlice, stake);
+
+        const matchUserIds = new Set(groupSlice.map(p => p.userId));
+        matchmakingQueue = matchmakingQueue.filter(p => !matchUserIds.has(p.userId));
+
+        schedulePersist();
+
+        groupSlice.forEach(p => {
+          const timer = matchmakerCleanupTimers.get(p.userId);
+          if (timer) {
+            clearTimeout(timer);
+            matchmakerCleanupTimers.delete(p.userId);
+          }
+          broadcastQueue(p.userId);
+        });
+
+        i += groupSlice.length;
+      } else {
+        break;
+      }
+    }
+  }
 }
 
 function sendSse(response: Response, event: string, payload: unknown) {
@@ -1779,6 +2047,12 @@ app.post('/api/matchmaker/join', requireAuth, (req: AuthenticatedRequest, res) =
     });
   }
 
+  const activeTimer = matchmakerCleanupTimers.get(userId);
+  if (activeTimer) {
+    clearTimeout(activeTimer);
+    matchmakerCleanupTimers.delete(userId);
+  }
+
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   matchmakingQueue.push({
     userId,
@@ -1788,6 +2062,8 @@ app.post('/api/matchmaker/join', requireAuth, (req: AuthenticatedRequest, res) =
     mode,
     joinedAt: Date.now(),
   });
+
+  runMatchmakingTick();
 
   matchmakingQueue
     .filter(p => p.stake === stakeAmount && p.mode === mode)
@@ -1813,30 +2089,43 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
+  const activeTimer = matchmakerCleanupTimers.get(userId);
+  if (activeTimer) {
+    clearTimeout(activeTimer);
+    matchmakerCleanupTimers.delete(userId);
+  }
+
   subscribeToChannel(queueSubscribers, userId, res);
   sendSse(res, 'queue-status', buildQueuePayload(userId));
 
   res.on('close', () => {
     const activeSubs = queueSubscribers.get(userId);
     if (!activeSubs || activeSubs.size === 0) {
-      const player = matchmakingQueue.find(p => p.userId === userId);
-      if (player) {
-        matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
-        const user = getUser(userId);
-        if (player.stake > 0) {
-          user.heldTickets = round2(user.heldTickets - player.stake);
-          user.availableTickets = round2(user.availableTickets + player.stake);
-          createLedgerEntry(user, {
-            event: 'Queue Timeout Release',
-            value: `+${player.stake.toFixed(2)} TKT`,
-            type: 'stake_release',
-            amount: player.stake,
-          });
-        }
-        schedulePersist();
-        matchmakingQueue
-          .filter(p => p.stake === player.stake && p.mode === player.mode)
-          .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
+      if (!matchmakerCleanupTimers.has(userId)) {
+        const timer = setTimeout(() => {
+          matchmakerCleanupTimers.delete(userId);
+          const stillNoSubs = !queueSubscribers.get(userId) || queueSubscribers.get(userId)!.size === 0;
+          const player = matchmakingQueue.find(p => p.userId === userId);
+          if (stillNoSubs && player) {
+            matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
+            const user = getUser(userId);
+            if (player.stake > 0) {
+              user.heldTickets = round2(user.heldTickets - player.stake);
+              user.availableTickets = round2(user.availableTickets + player.stake);
+              createLedgerEntry(user, {
+                event: 'Queue Timeout Release',
+                value: `+${player.stake.toFixed(2)} TKT`,
+                type: 'stake_release',
+                amount: player.stake,
+              });
+            }
+            schedulePersist();
+            matchmakingQueue
+              .filter(p => p.stake === player.stake && p.mode === player.mode)
+              .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
+          }
+        }, 15000); // 15 seconds grace period
+        matchmakerCleanupTimers.set(userId, timer);
       }
     }
   });
@@ -1844,6 +2133,13 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
 
 app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
+
+  const activeTimer = matchmakerCleanupTimers.get(userId);
+  if (activeTimer) {
+    clearTimeout(activeTimer);
+    matchmakerCleanupTimers.delete(userId);
+  }
+
   const activeMatchId = activeMatchByUser.get(userId);
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
@@ -1933,10 +2229,11 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       if (collision && collision.hostUserId !== userId) {
         return res.status(409).json({ error: 'Requested room code is already in use.' });
       }
-      privateRooms.delete(existingWaitingRoom.roomCode);
+      const oldRoomCode = existingWaitingRoom.roomCode;
+      privateRooms.delete(oldRoomCode);
       existingWaitingRoom.roomCode = normalizedRequestedCode;
       privateRooms.set(normalizedRequestedCode, existingWaitingRoom);
-      schedulePersist();
+      schedulePersist({ roomCode: normalizedRequestedCode, deleteRoomCode: oldRoomCode });
     }
 
     // Upgrade legacy waiting status to started and provision match with placeholders
@@ -2060,7 +2357,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     status: 'started',
     matchId,
   });
-  schedulePersist();
+  schedulePersist({ roomCode });
   broadcastPrivateRoom(roomCode);
 
   return sendPrivateRoomCreateSuccess(req, res, {
@@ -2185,7 +2482,7 @@ app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, re
   }
 
   privateRooms.set(room.roomCode, room);
-  schedulePersist();
+  schedulePersist({ roomCode: room.roomCode, matchId: room.matchId || undefined });
   if (match) {
     broadcastMatch(match.matchId);
   }
@@ -2290,6 +2587,7 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
                   });
                   privateRooms.delete(roomCode);
                   privateRoomCleanupTimers.delete(roomCode);
+                  schedulePersist({ deleteRoomCode: roomCode });
                   broadcastPrivateRoom(roomCode);
                 }
               }, 60000); // 60 seconds grace period
@@ -2305,6 +2603,7 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
                   const playerToBoot = roomToUpdate.players.find(p => p.userId === userId);
                   if (playerToBoot) {
                     roomToUpdate.players = roomToUpdate.players.filter(p => p.userId !== userId);
+                    schedulePersist({ roomCode });
                     if (playerToBoot.stake > 0) {
                       const user = getUser(userId);
                       user.heldTickets = round2(user.heldTickets - playerToBoot.stake);
@@ -2370,7 +2669,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     player.disconnectedAt = null;
     if (previouslyDisconnected) {
       activeMatch.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...activeMatch.gameState.logs].slice(0, 50);
-      schedulePersist();
+      schedulePersist({ matchId });
       setTimeout(() => broadcastMatch(matchId), 100);
     }
   }
@@ -2392,7 +2691,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
           player.isConnected = false;
           player.disconnectedAt = Date.now();
           match.gameState.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...match.gameState.logs].slice(0, 50);
-          schedulePersist();
+          schedulePersist({ matchId });
           broadcastMatch(matchId);
         }
       }
@@ -2466,32 +2765,25 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
   res.json({ success: true });
 });
 
-app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) => {
-  const { matchId } = req.body as { matchId: string };
+function scheduleMatchCleanup(matchId: string) {
+  setTimeout(() => {
+    activeMatches.delete(matchId);
+    if (supabaseAdmin) {
+      supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .delete()
+        .eq('id', `match:${matchId}`)
+        .then(({ error }) => {
+          if (error) console.error(`Failed to delete match ${matchId} from DB:`, error);
+        });
+    } else {
+      schedulePersist({ deleteMatchId: matchId });
+    }
+  }, 300000); // 5 minutes
+}
 
-  if (!matchId) {
-    return res.status(400).json({ error: 'Settlement requires matchId.' });
-  }
-
-  const requesterUserId = getAuthenticatedUserId(req);
-  const activeMatch = activeMatches.get(matchId);
-  if (!activeMatch) {
-    return res.status(404).json({ error: 'Match not found.' });
-  }
-  if (!activeMatch.players.some((player) => player.userId === requesterUserId)) {
-    return res.status(403).json({ error: 'User is not part of this match.' });
-  }
-  if (activeMatch.gameState.phase !== 'game_over' || !activeMatch.gameState.winnerUserId) {
-    return res.status(400).json({ error: 'Match is not ready for settlement.' });
-  }
-  if (activeMatch.settled) {
-    return res.json({
-      success: true,
-      matchId,
-      grossPot: activeMatch.stake * activeMatch.players.length,
-      alreadySettled: true,
-    });
-  }
+function settleMatchHelper(activeMatch: ActiveMatch) {
+  if (activeMatch.settled) return;
 
   const placements = [...activeMatch.gameState.players]
     .sort((a, b) => {
@@ -2532,7 +2824,7 @@ app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) =>
     if (rank === 1) {
       updateQuestProgress(user.userId, 'win_any', 1);
     }
-    maybeActivateReferral(user, matchId);
+    maybeActivateReferral(user, activeMatch.matchId);
     claimCompletedQuests(user);
   });
 
@@ -2540,11 +2832,45 @@ app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) =>
   activeMatch.players.forEach((player) => {
     activeMatchByUser.delete(player.userId);
   });
-  activeMatches.set(matchId, activeMatch);
-  schedulePersist();
+
+  activeMatch.payoutResult = {
+    grossPot,
+    seasonFund,
+    burnFund,
+    netPrizePool,
+    payoutByRank,
+  };
+
+  schedulePersist({ matchId: activeMatch.matchId });
   flushTelegramNotifications().catch((error) => {
     console.error('Telegram notification flush failed', error);
   });
+
+  scheduleMatchCleanup(activeMatch.matchId);
+}
+
+app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { matchId } = req.body as { matchId: string };
+
+  if (!matchId) {
+    return res.status(400).json({ error: 'Settlement requires matchId.' });
+  }
+
+  const requesterUserId = getAuthenticatedUserId(req);
+  const activeMatch = activeMatches.get(matchId);
+  if (!activeMatch) {
+    return res.status(404).json({ error: 'Match not found.' });
+  }
+  if (!activeMatch.players.some((player) => player.userId === requesterUserId)) {
+    return res.status(403).json({ error: 'User is not part of this match.' });
+  }
+  if (activeMatch.gameState.phase !== 'game_over' || !activeMatch.gameState.winnerUserId) {
+    return res.status(400).json({ error: 'Match is not ready for settlement.' });
+  }
+
+  settleMatchHelper(activeMatch);
+
+  const { grossPot, seasonFund, burnFund, netPrizePool, payoutByRank } = activeMatch.payoutResult;
 
   return res.json({
     success: true,
@@ -2564,6 +2890,7 @@ setInterval(() => {
 }, 15000);
 
 setInterval(() => {
+  runMatchmakingTick();
   const queuedUserIds = [...new Set(matchmakingQueue.map((player) => player.userId))];
   queuedUserIds.forEach((userId) => broadcastQueue(userId));
 }, 1000);
@@ -2640,14 +2967,14 @@ setInterval(() => {
         state.logs = [createServerLog(`⏰ ${currentPlayer.username}'s turn timed out. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
         runServerAiTurn(match, currentPlayerIndex);
         broadcastMatch(matchId);
-        schedulePersist();
+        schedulePersist({ matchId });
       }
     } else {
       if (elapsedSec >= disconnectedWaitDelay) {
         state.logs = [createServerLog(`🤖 ${currentPlayer.username} is offline. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
         runServerAiTurn(match, currentPlayerIndex);
         broadcastMatch(matchId);
-        schedulePersist();
+        schedulePersist({ matchId });
       }
     }
 
@@ -2658,7 +2985,7 @@ setInterval(() => {
           player.isAi = true;
           state.logs = [createServerLog(`🤖 ${player.username} has been permanently replaced by a bot.`, 'info'), ...state.logs].slice(0, 50);
           broadcastMatch(matchId);
-          schedulePersist();
+          schedulePersist({ matchId });
         }
       }
     });
