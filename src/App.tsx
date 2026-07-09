@@ -144,18 +144,64 @@ export default function App() {
   const prevGameStateRef = useRef<any>(null);
   const settlementHandledRef = useRef<string | null>(null);
 
-  // Retro loading screen state & API request tracking
+  // Fullscreen loading screen state & API request tracking (minimum 3-second display)
   const [activeLoads, setActiveLoads] = useState<string[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState<{ [key: string]: string }>({});
   const [isAppStarting, setIsAppStarting] = useState(true);
+  const [showLoadingScreen, setShowLoadingScreen] = useState(true);
 
-  const currentLoadingMessage = useMemo(() => {
-    if (activeLoads.length > 0) {
-      const latestId = activeLoads[activeLoads.length - 1];
-      return loadingMessages[latestId] || 'LOADING...';
+  const activeLoadsRef = useRef<string[]>([]);
+  const isAppStartingRef = useRef<boolean>(true);
+  const showLoadingScreenRef = useRef<boolean>(true);
+
+  const loadingStartTimestampRef = useRef<number>(Date.now());
+  const loadingTimeoutRef = useRef<number | null>(null);
+
+  const setShowLoading = (val: boolean) => {
+    showLoadingScreenRef.current = val;
+    setShowLoadingScreen(val);
+  };
+
+  const setActiveLoadsState = (val: string[] | ((prev: string[]) => string[])) => {
+    setActiveLoads((prev) => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      activeLoadsRef.current = next;
+      return next;
+    });
+  };
+
+  const setIsAppStartingState = (val: boolean) => {
+    isAppStartingRef.current = val;
+    setIsAppStarting(val);
+  };
+
+  const updateLoadingVisibility = useCallback((isLoadingActive: boolean) => {
+    if (isLoadingActive) {
+      if (loadingTimeoutRef.current) {
+        window.clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
+      if (!showLoadingScreenRef.current) {
+        loadingStartTimestampRef.current = Date.now();
+        setShowLoading(true);
+      }
+    } else {
+      const elapsed = Date.now() - loadingStartTimestampRef.current;
+      const minDuration = 3000; // 3 seconds minimum display time
+
+      if (elapsed < minDuration) {
+        const remaining = minDuration - elapsed;
+        if (loadingTimeoutRef.current) {
+          window.clearTimeout(loadingTimeoutRef.current);
+        }
+        loadingTimeoutRef.current = window.setTimeout(() => {
+          setShowLoading(false);
+          loadingTimeoutRef.current = null;
+        }, remaining);
+      } else {
+        setShowLoading(false);
+      }
     }
-    return 'SYNCING SESSION...';
-  }, [activeLoads, loadingMessages]);
+  }, []);
 
   useEffect(() => {
     const handleApiTrace = (e: Event) => {
@@ -176,27 +222,25 @@ export default function App() {
       if (!shouldTrack) return;
 
       if (stage === 'start') {
-        setActiveLoads((prev) => prev.includes(id) ? prev : [...prev, id]);
-        let msg = 'LOADING...';
-        if (path === '/api/users/sync') msg = 'SYNCING SESSION...';
-        else if (path === '/api/matchmaker/join') msg = 'JOINING ARENA...';
-        else if (path === '/api/matchmaker/leave') msg = 'LEAVING QUEUE...';
-        else if (path === '/api/private-rooms/create') msg = 'CREATING ROOM...';
-        else if (path === '/api/private-rooms/join') msg = 'JOINING ROOM...';
-        else if (isMatchStateSync) msg = 'CONNECTING TO GAME FELT...';
-
-        setLoadingMessages((prev) => ({ ...prev, [id]: msg }));
-      } else if (stage === 'success' || stage === 'error') {
-        setActiveLoads((prev) => prev.filter((x) => x !== id));
-        setLoadingMessages((prev) => {
-          const next = { ...prev };
-          delete next[id];
+        setActiveLoadsState((prev) => {
+          const next = prev.includes(id) ? prev : [...prev, id];
+          updateLoadingVisibility(true);
           return next;
         });
-
+      } else if (stage === 'success' || stage === 'error') {
+        let isSyncFinished = false;
         if (path === '/api/users/sync') {
-          setIsAppStarting(false);
+          isSyncFinished = true;
+          setIsAppStartingState(false);
         }
+
+        setActiveLoadsState((prev) => {
+          const next = prev.filter((x) => x !== id);
+          const isAppStillStarting = isSyncFinished ? false : isAppStartingRef.current;
+          const isLoadActive = isAppStillStarting || next.length > 0;
+          updateLoadingVisibility(isLoadActive);
+          return next;
+        });
       }
     };
 
@@ -204,7 +248,7 @@ export default function App() {
     return () => {
       window.removeEventListener('redoapp:api-trace', handleApiTrace);
     };
-  }, []);
+  }, [updateLoadingVisibility]);
 
   useEffect(() => {
     if (gameState.phase !== 'game_over' || gameMode === 'offline' || !leaderboard.length) {
@@ -411,8 +455,8 @@ export default function App() {
       gameState.phase === 'setup' ? 'min-h-screen justify-start overflow-y-auto pb-8 sm:pb-12' : 'h-screen max-h-screen justify-start overflow-hidden'
     }`}>
       
-      {(isAppStarting || activeLoads.length > 0) && (
-        <LoadingScreen message={currentLoadingMessage} />
+      {showLoadingScreen && (
+        <LoadingScreen />
       )}
       {/* Pixelated grid background in setup mode */}
       {gameState.phase === 'setup' && (
