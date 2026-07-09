@@ -12,7 +12,12 @@
   --animate-rotate-slow: rotate-slow 50s linear infinite;
   --animate-rotate-slow-reverse: rotate-slow-reverse 50s linear infinite;
   --animate-pulse-soft: pulse-soft 2.5s ease-in-out infinite;
+  --animate-loading-bar: loading-bar 2s infinite steps(10);
 
+  @keyframes loading-bar {
+    0% { width: 0%; }
+    100% { width: 100%; }
+  }
   @keyframes bounce-subtle {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-4px) scale(1.02); }

@@ -165,7 +165,6 @@ interface Web3DashboardProps {
   xpNeeded: number;
   xpProgressPercentage: number;
   playerXp: number;
-  resetStats: () => void;
   onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number) => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
@@ -211,7 +210,6 @@ export function Web3Dashboard({
   xpNeeded,
   xpProgressPercentage,
   playerXp,
-  resetStats,
   onStartGame,
   onNameChange,
   onAvatarSelect,
@@ -320,7 +318,6 @@ export function Web3Dashboard({
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
-  const [isClaimingDaily, setIsClaimingDaily] = useState(false);
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
     const stored = readNftEventVerifications();

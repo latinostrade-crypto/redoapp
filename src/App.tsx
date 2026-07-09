@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useUnoGame } from './hooks/useUnoGame';
 import { Avatar } from './components/Avatars';
 import { UnoCard } from './components/UnoCard';
 import { RuleModal } from './components/RuleModal';
 import { Web3Dashboard } from './components/Web3Dashboard';
+import { LoadingScreen } from './components/LoadingScreen';
 import { motion, AnimatePresence } from 'motion/react';
-import { apiRequest } from './utils/api';
+import { apiRequest, ApiTraceDetail } from './utils/api';
 import {
   Volume2,
   VolumeX,
@@ -36,7 +37,6 @@ export default function App() {
     playCard,
     drawCard,
     passTurn,
-    resetStats,
     selectWildColor,
     leaderboard,
     cardsPlayedThisRound,
@@ -143,6 +143,68 @@ export default function App() {
   const [visualTopCard, setVisualTopCard] = useState<any>(null);
   const prevGameStateRef = useRef<any>(null);
   const settlementHandledRef = useRef<string | null>(null);
+
+  // Retro loading screen state & API request tracking
+  const [activeLoads, setActiveLoads] = useState<string[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState<{ [key: string]: string }>({});
+  const [isAppStarting, setIsAppStarting] = useState(true);
+
+  const currentLoadingMessage = useMemo(() => {
+    if (activeLoads.length > 0) {
+      const latestId = activeLoads[activeLoads.length - 1];
+      return loadingMessages[latestId] || 'LOADING...';
+    }
+    return 'SYNCING SESSION...';
+  }, [activeLoads, loadingMessages]);
+
+  useEffect(() => {
+    const handleApiTrace = (e: Event) => {
+      const detail = (e as CustomEvent<ApiTraceDetail>).detail;
+      const { id, path, stage } = detail;
+
+      const pathsWeCareAbout = [
+        '/api/users/sync',
+        '/api/matchmaker/join',
+        '/api/matchmaker/leave',
+        '/api/private-rooms/create',
+        '/api/private-rooms/join',
+      ];
+
+      const isMatchStateSync = path.startsWith('/api/matches/state/');
+      const shouldTrack = pathsWeCareAbout.includes(path) || isMatchStateSync;
+
+      if (!shouldTrack) return;
+
+      if (stage === 'start') {
+        setActiveLoads((prev) => prev.includes(id) ? prev : [...prev, id]);
+        let msg = 'LOADING...';
+        if (path === '/api/users/sync') msg = 'SYNCING SESSION...';
+        else if (path === '/api/matchmaker/join') msg = 'JOINING ARENA...';
+        else if (path === '/api/matchmaker/leave') msg = 'LEAVING QUEUE...';
+        else if (path === '/api/private-rooms/create') msg = 'CREATING ROOM...';
+        else if (path === '/api/private-rooms/join') msg = 'JOINING ROOM...';
+        else if (isMatchStateSync) msg = 'CONNECTING TO GAME FELT...';
+
+        setLoadingMessages((prev) => ({ ...prev, [id]: msg }));
+      } else if (stage === 'success' || stage === 'error') {
+        setActiveLoads((prev) => prev.filter((x) => x !== id));
+        setLoadingMessages((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+
+        if (path === '/api/users/sync') {
+          setIsAppStarting(false);
+        }
+      }
+    };
+
+    window.addEventListener('redoapp:api-trace', handleApiTrace);
+    return () => {
+      window.removeEventListener('redoapp:api-trace', handleApiTrace);
+    };
+  }, []);
 
   useEffect(() => {
     if (gameState.phase !== 'game_over' || gameMode === 'offline' || !leaderboard.length) {
@@ -349,6 +411,9 @@ export default function App() {
       gameState.phase === 'setup' ? 'min-h-screen justify-start overflow-y-auto pb-8 sm:pb-12' : 'h-screen max-h-screen justify-start overflow-hidden'
     }`}>
       
+      {(isAppStarting || activeLoads.length > 0) && (
+        <LoadingScreen message={currentLoadingMessage} />
+      )}
       {/* Pixelated grid background in setup mode */}
       {gameState.phase === 'setup' && (
         <div className="absolute inset-0 bg-[#0c0f12] overflow-hidden pointer-events-none z-0">
@@ -444,7 +509,6 @@ export default function App() {
               xpNeeded={xpNeeded}
               xpProgressPercentage={xpProgressPercentage}
               playerXp={playerXp}
-              resetStats={resetStats}
               onStartGame={(mode, stake) => startGame(selectedAvatar, userName, mode, stake)}
               onNameChange={setUserName}
               onAvatarSelect={setSelectedAvatar}
