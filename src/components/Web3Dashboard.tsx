@@ -1009,33 +1009,8 @@ export function Web3Dashboard({
   };
 
   const claimDailyReward = () => {
-    if (isClaimingDaily) return;
-    sound.playPop();
-    setIsClaimingDaily(true);
-    apiRequest<{
-      success: boolean;
-      xpAwarded: number;
-      xp: number;
-      energy: any;
-      alreadyClaimed?: boolean;
-    }>('/api/quests/daily-claim', {
-      method: 'POST',
-      body: JSON.stringify({ userId: currentUserId }),
-    }).then((result) => {
-      if (result.alreadyClaimed) {
-        alert('You have already claimed your daily reward today.');
-        return;
-      }
-      if (result.energy) {
-        updateProfileEnergy(result.energy);
-      }
-      alert(`Successfully claimed! +${result.xpAwarded} XP`);
-      fetchFullProfile().catch(() => undefined);
-    }).catch((error) => {
-      alert(error.message || 'Failed to claim daily reward.');
-    }).finally(() => {
-      setIsClaimingDaily(false);
-    });
+    if (isClaimingDaily || dailyXpClaimedToday) return;
+    claimDailyXp();
   };
 
   const openLootboxChest = () => {
@@ -1660,7 +1635,7 @@ export function Web3Dashboard({
                 <div className="bg-black p-2 border border-black space-y-1.5">
                   <div className="text-[7px] uppercase font-bold text-slate-400 text-left">Quests</div>
 
-                  {/* Daily Reward Calendar */}
+                  {false && (
                   <div className="border border-black bg-slate-950 p-2 text-left font-mono space-y-1.5">
                     <div className="flex justify-between items-center">
                       <span className="text-[7px] font-bold text-slate-300">DAILY CHECK-IN</span>
@@ -1693,6 +1668,7 @@ export function Web3Dashboard({
                       })}
                     </div>
                   </div>
+                  )}
                   
                   {activeProfile?.lootboxAvailable && (
                     <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 flex items-center justify-between font-mono animate-pulse-soft">
@@ -1755,6 +1731,7 @@ export function Web3Dashboard({
                   {isConnecting ? 'SYNCING...' : walletConnected ? 'Disconnect Wallet' : 'Connect Wallet'}
                 </button>
 
+                {false && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1767,6 +1744,7 @@ export function Web3Dashboard({
                 >
                   Hard Reset Progress
                 </button>
+                )}
               </div>
             </motion.div>
           )}
