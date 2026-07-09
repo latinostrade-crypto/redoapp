@@ -56,7 +56,10 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
       status: profile.referrals?.status ?? null,
       activatedAt: profile.referrals?.activatedAt ?? null,
       referralsActivated: profile.referrals?.referralsActivated ?? 0,
-      totalInvited: profile.referrals?.totalInvited ?? profile.referrals?.invitedUsers?.length ?? 0,
+      totalInvited: Math.max(
+        profile.referrals?.totalInvited ?? profile.referrals?.invitedUsers?.length ?? 0,
+        profile.referrals?.referralsActivated ?? 0
+      ),
       pendingInvited: profile.referrals?.pendingInvited ?? profile.referrals?.invitedUsers?.filter((invite) => invite.status === 'pending').length ?? 0,
       rejectedInvited: profile.referrals?.rejectedInvited ?? profile.referrals?.invitedUsers?.filter((invite) => invite.status === 'rejected').length ?? 0,
       invitedUsers: profile.referrals?.invitedUsers ?? [],

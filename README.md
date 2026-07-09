@@ -173,6 +173,8 @@ The profile API no longer returns the full invited-user list by default. This is
 
 The frontend profile card displays the aggregate counts instead of rendering usernames. This keeps profile sync fast for high-volume inviters.
 
+For legacy users, `totalInvited` is never lower than the stored `referralsActivated` counter, so referrals that were already credited before detailed referral links were repaired still appear in aggregate profile stats.
+
 ### Referral Reliability Fixes
 
 The backend now protects referral state with:

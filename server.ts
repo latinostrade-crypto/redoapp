@@ -978,6 +978,7 @@ function buildProfileResponse(user: UserState) {
   const claimedQuestIds = claimCompletedQuests(user);
   const referralStats = getReferralStats(user.userId);
   const referralsActivated = Math.max(user.referralsActivated, referralStats.activated);
+  const totalInvited = Math.max(referralStats.total, referralsActivated);
   return {
     ...buildBootstrapProfileResponse(user),
     referrals: {
@@ -985,7 +986,7 @@ function buildProfileResponse(user: UserState) {
       status: user.referralStatus || null,
       activatedAt: user.referralActivatedAt || null,
       referralsActivated,
-      totalInvited: referralStats.total,
+      totalInvited,
       pendingInvited: referralStats.pending,
       rejectedInvited: referralStats.rejected,
       invitedUsers: [],
