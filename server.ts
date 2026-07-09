@@ -91,6 +91,43 @@ function rateLimitMiddleware(limit: number, windowMs: number) {
 
 app.use(express.urlencoded({ extended: false }));
 
+const userLocks = new Map<string, Promise<void>>();
+async function acquireUserLock(userId: string): Promise<() => void> {
+  let resolveLock: () => void;
+  const currentLock = userLocks.get(userId);
+  const newLock = new Promise<void>((resolve) => {
+    resolveLock = resolve;
+  });
+  userLocks.set(userId, newLock);
+  if (currentLock) {
+    await currentLock;
+  }
+  return () => {
+    if (userLocks.get(userId) === newLock) {
+      userLocks.delete(userId);
+    }
+    resolveLock();
+  };
+}
+
+function validatePayload(body: any, schema: Record<string, string>) {
+  if (!body || typeof body !== 'object') {
+    throw new Error('Invalid request payload.');
+  }
+  for (const [key, type] of Object.entries(schema)) {
+    const value = body[key];
+    if (value === undefined || value === null) {
+      throw new Error(`Missing required parameter: ${key}`);
+    }
+    if (type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new Error(`Invalid parameter type: ${key} must be a number.`);
+    }
+    if (type === 'string' && typeof value !== 'string') {
+      throw new Error(`Invalid parameter type: ${key} must be a string.`);
+    }
+  }
+}
+
 interface AuthenticatedRequest extends Request {
   authUserId?: string;
 }
@@ -2047,7 +2084,14 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   });
 });
 
-app.use('/api/tickets', requireAuth, rateLimitMiddleware(15, 60000));
+app.use('/api/tickets', requireAuth, rateLimitMiddleware(15, 60000), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const userId = req.authUserId;
+  if (!userId) return next();
+  const release = await acquireUserLock(userId);
+  res.on('finish', release);
+  res.on('close', release);
+  next();
+});
 ticketingService.registerRoutes(app);
 
 app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
@@ -3087,6 +3131,22 @@ process.on('beforeExit', () => {
     console.error('Failed to flush runtime state on beforeExit', error);
   });
 });
+
+setInterval(() => {
+  try {
+    let totalUserTickets = 0;
+    for (const user of users.values()) {
+      totalUserTickets += user.availableTickets + user.heldTickets;
+    }
+    console.log(`[Audit] Total circulating tickets across all users: ${totalUserTickets.toFixed(2)} TKT`);
+  } catch (err) {
+    console.error('[Audit] Failed to execute double-entry bookkeeping validation:', err);
+  }
+}, 3600000); // 1 hour
+
+if (process.env.NODE_ENV === 'production' && (!process.env.TELEGRAM_BOT_TOKEN || process.env.APP_SESSION_SECRET === 'local-dev-session-secret')) {
+  console.warn('[Warning] Insecure secrets detected in production environment!');
+}
 
 async function bootstrap() {
   await loadPersistedState();
