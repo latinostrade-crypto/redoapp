@@ -314,6 +314,7 @@ export function Web3Dashboard({
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
+  const [isClaimingDaily, setIsClaimingDaily] = useState(false);
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
     const stored = readNftEventVerifications();
@@ -1000,6 +1001,36 @@ export function Web3Dashboard({
     });
   };
 
+  const claimDailyReward = () => {
+    if (isClaimingDaily) return;
+    sound.playPop();
+    setIsClaimingDaily(true);
+    apiRequest<{
+      success: boolean;
+      xpAwarded: number;
+      xp: number;
+      energy: any;
+      alreadyClaimed?: boolean;
+    }>('/api/quests/daily-claim', {
+      method: 'POST',
+      body: JSON.stringify({ userId: currentUserId }),
+    }).then((result) => {
+      if (result.alreadyClaimed) {
+        alert('You have already claimed your daily reward today.');
+        return;
+      }
+      if (result.energy) {
+        updateProfileEnergy(result.energy);
+      }
+      alert(`Successfully claimed! +${result.xpAwarded} XP`);
+      fetchFullProfile().catch(() => undefined);
+    }).catch((error) => {
+      alert(error.message || 'Failed to claim daily reward.');
+    }).finally(() => {
+      setIsClaimingDaily(false);
+    });
+  };
+
   const openLootboxChest = () => {
     if (isOpeningLootbox) return;
     sound.playShuffle();
@@ -1598,6 +1629,40 @@ export function Web3Dashboard({
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
                   <div className="text-[7px] uppercase font-bold text-slate-400 text-left">Quests</div>
+
+                  {/* Daily Reward Calendar */}
+                  <div className="border border-black bg-slate-950 p-2 text-left font-mono space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[7px] font-bold text-slate-300">DAILY CHECK-IN</span>
+                      <span className="text-[6.5px] text-[#ffcc00]">STREAK: {activeProfile?.dailyStreak || 0}/7 DAYS</span>
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                      {Array.from({ length: 7 }, (_, i) => {
+                        const dayNum = i + 1;
+                        const isCurrentDay = dayNum === (activeProfile?.dailyStreak || 1);
+                        const isClaimedToday = activeProfile?.lastDailyXpAt && new Date(activeProfile.lastDailyXpAt).toDateString() === new Date().toDateString();
+                        const isDayClaimed = dayNum < (activeProfile?.dailyStreak || 1) || (isCurrentDay && isClaimedToday);
+                        const isActiveToClaim = isCurrentDay && !isClaimedToday;
+
+                        return (
+                          <div 
+                            key={dayNum} 
+                            onClick={isActiveToClaim ? claimDailyReward : undefined}
+                            className={`border text-center p-1 flex flex-col items-center justify-center transition-all ${
+                              isDayClaimed 
+                                ? 'bg-[#00ff66]/10 border-[#00ff66] text-[#00ff66] cursor-default' 
+                                : isActiveToClaim 
+                                  ? 'bg-[#ffcc00]/20 border-[#ffcc00] text-[#ffcc00] animate-pulse-soft cursor-pointer' 
+                                  : 'bg-slate-900 border-slate-800 text-slate-500 cursor-default'
+                            }`}
+                          >
+                            <span className="text-[6px] font-black leading-none">D{dayNum}</span>
+                            <span className="text-[5px] mt-0.5 leading-none">{isDayClaimed ? '✓' : '🎁'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                   
                   {activeProfile?.lootboxAvailable && (
                     <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 flex items-center justify-between font-mono animate-pulse-soft">

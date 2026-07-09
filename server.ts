@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import compression from 'compression';
 import type { Request, Response, NextFunction } from 'express';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -55,6 +56,33 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-session-token', 'x-telegram-init-data', 'x-admin-api-key'],
 }));
 app.use(express.json());
+app.use(compression({
+  filter: (req, res) => {
+    if (res.getHeader('Content-Type') === 'text/event-stream') {
+      return false;
+    }
+    return compression.filter(req, res);
+  }
+}));
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+function rateLimitMiddleware(limit: number, windowMs: number) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const key = req.ip || 'global';
+    const now = Date.now();
+    const client = rateLimitMap.get(key);
+    if (!client || now > client.resetAt) {
+      rateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    client.count++;
+    if (client.count > limit) {
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+    next();
+  };
+}
+
 app.use(express.urlencoded({ extended: false }));
 
 interface AuthenticatedRequest extends Request {
@@ -1558,6 +1586,9 @@ function applyDrawAction(match: ActiveMatch, userId: string) {
   if (!currentPlayer || currentPlayer.userId !== userId) {
     throw new Error('It is not your turn.');
   }
+  if (state.consecutiveDraws > 0) {
+    throw new Error('You have already drawn a card this turn.');
+  }
 
   let nextState = ensureServerDeck(state, 1);
   const drawnCard = nextState.deck.pop();
@@ -1585,6 +1616,9 @@ function applyPassAction(match: ActiveMatch, userId: string) {
   const currentPlayer = state.players[state.currentPlayerIndex];
   if (!currentPlayer || currentPlayer.userId !== userId) {
     throw new Error('It is not your turn.');
+  }
+  if (state.consecutiveDraws === 0) {
+    throw new Error('You must draw a card before passing.');
   }
   const nextState = {
     ...state,
@@ -2006,7 +2040,7 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
 app.use('/api/tickets', requireAuth);
 ticketingService.registerRoutes(app);
 
-app.post('/api/matchmaker/join', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
   const { username, avatarId, stake, mode, walletAddress } = req.body as {
     username: string;
     avatarId: string;
@@ -2375,10 +2409,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   });
 }
 
-app.post('/api/private-rooms/create', optionalAuth, handlePrivateRoomCreate);
+app.post('/api/private-rooms/create', optionalAuth, rateLimitMiddleware(10, 60000), handlePrivateRoomCreate);
 app.get('/api/private-rooms/create-beacon', optionalAuth, handlePrivateRoomCreate);
 
-app.post('/api/private-rooms/join', optionalAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
   const { roomCode, username, avatarId, walletAddress } = req.body as {
     roomCode: string;
     userId?: string;
