@@ -24,6 +24,9 @@ const TON_API_KEY = process.env.TON_API_KEY || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_APP_SHORT_NAME = process.env.TELEGRAM_APP_SHORT_NAME || 'app';
+const BACKEND_PUBLIC_URL = (process.env.BACKEND_PUBLIC_URL || 'https://yoapp-backend.onrender.com').replace(/\/$/, '');
+const WITHDRAWAL_OPERATOR_CHAT_ID = Number(process.env.WITHDRAWAL_OPERATOR_CHAT_ID || '152039743');
+const WITHDRAWAL_OPERATOR_USERNAME = process.env.WITHDRAWAL_OPERATOR_USERNAME || 'allin_gram';
 const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -236,6 +239,7 @@ interface TelegramNotification {
   userId: string;
   telegramChatId: number;
   message: string;
+  replyMarkup?: Record<string, unknown>;
   status: 'pending' | 'sent' | 'failed';
   createdAt: number;
   sentAt?: number;
@@ -1105,11 +1109,16 @@ function queueTelegramNotification(user: UserState, message: string) {
   if (!user.telegramChatId) {
     return;
   }
+  queueTelegramMessage(user.userId, user.telegramChatId, message);
+}
+
+function queueTelegramMessage(userId: string, telegramChatId: number, message: string, replyMarkup?: Record<string, unknown>) {
   telegramNotifications.push({
     id: `tg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    userId: user.userId,
-    telegramChatId: user.telegramChatId,
+    userId,
+    telegramChatId,
     message,
+    replyMarkup,
     status: 'pending',
     createdAt: Date.now(),
   });
@@ -1127,6 +1136,8 @@ async function flushTelegramNotifications() {
         body: JSON.stringify({
           chat_id: item.telegramChatId,
           text: item.message,
+          disable_web_page_preview: true,
+          ...(item.replyMarkup ? { reply_markup: item.replyMarkup } : {}),
         }),
       });
       if (!response.ok) {
@@ -1474,10 +1485,136 @@ function round2(value: number) {
   return Math.round(value * 100) / 100;
 }
 
+function createWithdrawalOperatorToken(action: 'complete' | 'reject', requestId: string) {
+  return crypto
+    .createHmac('sha256', APP_SESSION_SECRET)
+    .update(`withdrawal:${action}:${requestId}`)
+    .digest('base64url');
+}
+
+function verifyWithdrawalOperatorToken(action: 'complete' | 'reject', requestId: string, token: unknown) {
+  if (typeof token !== 'string' || !token) return false;
+  const expected = createWithdrawalOperatorToken(action, requestId);
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const providedBuffer = Buffer.from(token, 'utf8');
+  return expectedBuffer.length === providedBuffer.length && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
+function buildWithdrawalOperatorActionUrl(action: 'complete' | 'reject', requestId: string) {
+  const token = createWithdrawalOperatorToken(action, requestId);
+  return `${BACKEND_PUBLIC_URL}/api/admin/withdrawals/${encodeURIComponent(requestId)}/${action}?token=${encodeURIComponent(token)}`;
+}
+
+type WithdrawalReviewUser = Pick<UserState,
+  'userId'
+  | 'telegramUsername'
+  | 'telegramFirstName'
+  | 'telegramLastName'
+  | 'walletAddress'
+  | 'heldTickets'
+  | 'availableTickets'
+>;
+
+function formatUserForOperator(user: WithdrawalReviewUser) {
+  const telegramName = user.telegramUsername ? `@${user.telegramUsername}` : 'no username';
+  const fullName = [user.telegramFirstName, user.telegramLastName].filter(Boolean).join(' ') || 'no name';
+  return `${telegramName} / ${fullName} / ${user.userId}`;
+}
+
+function getWithdrawalReviewFlags(user: WithdrawalReviewUser, request: WithdrawalRequest, pendingRequests: WithdrawalRequest[]) {
+  const flags: string[] = [];
+  const activeMatchId = activeMatchByUser.get(user.userId);
+  const queued = matchmakingQueue.some((player) => player.userId === user.userId);
+  const waitingPrivateRoom = Array.from(privateRooms.values()).find((room) => (
+    room.status !== 'started' && room.players.some((player) => player.userId === user.userId)
+  ));
+
+  if (pendingRequests.length > 0) {
+    flags.push(`Duplicate pending requests before this one: ${pendingRequests.length}`);
+  }
+  if (request.walletAddress !== user.walletAddress) {
+    flags.push('Requested wallet differs from saved profile wallet');
+  }
+  if (user.heldTickets > 0) {
+    flags.push(`User has ${user.heldTickets.toFixed(2)} held TKT`);
+  }
+  if (activeMatchId) {
+    flags.push(`User is in active match ${activeMatchId}`);
+  }
+  if (queued) {
+    flags.push('User is in public matchmaking queue');
+  }
+  if (waitingPrivateRoom) {
+    flags.push(`User is in waiting private room ${waitingPrivateRoom.roomCode}`);
+  }
+  if (request.ticketAmount > 0 && request.ticketAmount > user.availableTickets + request.ticketAmount) {
+    flags.push('Requested amount is larger than pre-request available balance');
+  }
+
+  return flags.length ? flags : ['No blocking signals detected by server checks'];
+}
+
+function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: WithdrawalRequest) {
+  if (!WITHDRAWAL_OPERATOR_CHAT_ID || !Number.isFinite(WITHDRAWAL_OPERATOR_CHAT_ID)) {
+    console.warn(`Withdrawal ${request.id} created, but WITHDRAWAL_OPERATOR_CHAT_ID is not configured.`);
+    return;
+  }
+
+  const flags = request.reviewFlags?.length ? request.reviewFlags : ['No blocking signals detected by server checks'];
+  const createdAt = new Date(request.createdAt).toISOString();
+  const completeUrl = buildWithdrawalOperatorActionUrl('complete', request.id);
+  const rejectUrl = buildWithdrawalOperatorActionUrl('reject', request.id);
+  const message = [
+    'New withdrawal request',
+    '',
+    `Operator: @${WITHDRAWAL_OPERATOR_USERNAME} (${WITHDRAWAL_OPERATOR_CHAT_ID})`,
+    `Request: ${request.id}`,
+    `User: ${formatUserForOperator(user)}`,
+    `Tickets: ${request.ticketAmount.toFixed(2)} TKT`,
+    `TON to send: ${request.tonAmount.toFixed(2)} TON`,
+    `Wallet: ${request.walletAddress}`,
+    `Created: ${createdAt}`,
+    '',
+    'Server checks:',
+    ...flags.map((flag) => `- ${flag}`),
+    '',
+    'Flow:',
+    '1. Open Tonkeeper and send the transfer.',
+    '2. Tap Mark completed after the transfer is sent.',
+    '3. Tap Reject & refund only if the payout should not be sent.',
+  ].join('\n');
+
+  queueTelegramMessage('withdrawal-operator', WITHDRAWAL_OPERATOR_CHAT_ID, message, {
+    inline_keyboard: [
+      [
+        {
+          text: 'Open transfer in Tonkeeper',
+          url: request.operatorTransferLink,
+        },
+      ],
+      [
+        {
+          text: 'Mark completed',
+          url: completeUrl,
+        },
+        {
+          text: 'Reject & refund',
+          url: rejectUrl,
+        },
+      ],
+    ],
+  });
+  flushTelegramNotifications().catch((error) => {
+    console.error('Withdrawal operator notification flush failed', error);
+  });
+}
+
 const ticketingService = createTicketingService({
   createLedgerEntry,
   depositIntents,
+  getWithdrawalReviewFlags,
   getUser,
+  notifyWithdrawalRequest: notifyWithdrawalOperator,
   requireAdmin,
   round2,
   schedulePersist,
@@ -2228,6 +2365,74 @@ app.use('/api/tickets', requireAuth, rateLimitMiddleware(15, 60000), async (req:
   next();
 });
 ticketingService.registerRoutes(app);
+
+app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
+  const requestId = String(req.params.requestId || '');
+  if (!verifyWithdrawalOperatorToken('complete', requestId, req.query.token)) {
+    return res.status(403).send('Invalid or expired withdrawal operator link.');
+  }
+
+  const request = withdrawalRequests.get(requestId);
+  if (!request) {
+    return res.status(404).send('Withdrawal request not found.');
+  }
+  if (request.status === 'completed') {
+    return res.send(`Withdrawal ${request.id} is already completed.`);
+  }
+  if (request.status === 'rejected') {
+    return res.status(400).send(`Withdrawal ${request.id} was already rejected.`);
+  }
+
+  request.status = 'completed';
+  request.completedAt = Date.now();
+  request.completedTxHash = typeof req.query.txHash === 'string' && req.query.txHash.trim()
+    ? req.query.txHash.trim()
+    : null;
+  schedulePersist({ withdrawalId: request.id, userId: request.userId });
+
+  const user = getUser(request.userId, request.walletAddress);
+  createLedgerEntry(user, {
+    event: 'Withdrawal Completed',
+    value: `${request.ticketAmount.toFixed(2)} TKT`,
+    type: 'withdraw_completed',
+    amount: request.ticketAmount,
+  });
+  await persistStateNow();
+
+  return res.send(`Withdrawal ${request.id} marked completed. Sent ${request.tonAmount.toFixed(2)} TON to ${request.walletAddress}.`);
+});
+
+app.get('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
+  const requestId = String(req.params.requestId || '');
+  if (!verifyWithdrawalOperatorToken('reject', requestId, req.query.token)) {
+    return res.status(403).send('Invalid or expired withdrawal operator link.');
+  }
+
+  const request = withdrawalRequests.get(requestId);
+  if (!request) {
+    return res.status(404).send('Withdrawal request not found.');
+  }
+  if (request.status === 'completed') {
+    return res.status(400).send(`Withdrawal ${request.id} is already completed and cannot be rejected.`);
+  }
+  if (request.status === 'rejected') {
+    return res.send(`Withdrawal ${request.id} is already rejected.`);
+  }
+
+  request.status = 'rejected';
+  const user = getUser(request.userId, request.walletAddress);
+  user.availableTickets = round2(user.availableTickets + request.ticketAmount);
+  schedulePersist({ withdrawalId: request.id, userId: request.userId });
+  createLedgerEntry(user, {
+    event: 'Withdrawal Rejected',
+    value: `+${request.ticketAmount.toFixed(2)} TKT`,
+    type: 'withdraw_rejected',
+    amount: request.ticketAmount,
+  });
+  await persistStateNow();
+
+  return res.send(`Withdrawal ${request.id} rejected and ${request.ticketAmount.toFixed(2)} TKT refunded.`);
+});
 
 app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
   const { username, avatarId, stake, mode, walletAddress } = req.body as {

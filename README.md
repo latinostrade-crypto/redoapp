@@ -227,12 +227,14 @@ Current behavior:
 ### Withdrawal
 
 1. User submits a withdrawal request.
-2. Backend stores the request.
-3. Admin/backend marks the request complete later.
+2. Backend validates the authenticated user, saved wallet, available balance, duplicate pending requests, held funds, active matches, queues, and private rooms.
+3. Backend stores the request, reserves the requested tickets, and sends the configured operator a private Telegram message with the withdrawal details.
+4. The operator opens the inline Tonkeeper transfer button, sends the TON payout, and taps the signed `Mark completed` link.
+5. If the payout should not be sent, the operator can tap `Reject & refund` to return tickets to the user balance.
 
 Current limitation:
 
-- final automated on-chain withdrawal execution is not implemented yet
+- final automated on-chain withdrawal execution is not implemented yet; payouts are operator-assisted
 
 ## Authentication
 
@@ -319,6 +321,8 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - `GET /api/tickets/pending`
 - `POST /api/tickets/withdraw-request`
 - `POST /api/tickets/withdraw-complete`
+- `GET /api/admin/withdrawals/:requestId/complete`
+- `GET /api/admin/withdrawals/:requestId/reject`
 - `GET /api/tickets/balance`
 - `GET /api/tickets/ledger`
 - `POST /api/matchmaker/join`
@@ -343,6 +347,7 @@ This survives normal restarts, but it is not a replacement for a managed externa
 ### Backend
 
 - `PORT`
+- `BACKEND_PUBLIC_URL`
 - `MARKETING_WALLET`
 - `TICKET_PRICE_TON`
 - `ENABLE_CHAIN_VERIFICATION`
@@ -352,6 +357,8 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_BOT_USERNAME`
 - `TELEGRAM_APP_SHORT_NAME`
+- `WITHDRAWAL_OPERATOR_CHAT_ID`
+- `WITHDRAWAL_OPERATOR_USERNAME`
 - `TELEGRAM_INITDATA_MAX_AGE_SEC`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`

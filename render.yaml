@@ -24,6 +24,8 @@ services:
     buildCommand: npm install
     startCommand: npm run start
     envVars:
+      - key: BACKEND_PUBLIC_URL
+        value: https://yoapp-backend.onrender.com
       - key: MARKETING_WALLET
         value: UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj
       - key: TICKET_PRICE_TON
@@ -42,6 +44,10 @@ services:
         value: redo_appbot
       - key: TELEGRAM_APP_SHORT_NAME
         value: app
+      - key: WITHDRAWAL_OPERATOR_CHAT_ID
+        value: 152039743
+      - key: WITHDRAWAL_OPERATOR_USERNAME
+        value: allin_gram
       - key: TELEGRAM_INITDATA_MAX_AGE_SEC
         value: 86400
       - key: SUPABASE_URL

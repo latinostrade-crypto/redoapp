@@ -12,6 +12,7 @@ export type LedgerType =
   | 'fund_season'
   | 'fund_burn'
   | 'withdraw_pending'
+  | 'withdraw_rejected'
   | 'withdraw_completed';
 
 export interface TicketLedgerEntry {
@@ -45,12 +46,21 @@ export interface WithdrawalRequest {
   userId: string;
   walletAddress: string;
   ticketAmount: number;
-  status: 'pending' | 'completed';
+  tonAmount: number;
+  status: 'pending' | 'completed' | 'rejected';
   createdAt: number;
+  completedAt?: number;
+  completedTxHash?: string | null;
+  operatorTransferLink?: string;
+  reviewFlags?: string[];
 }
 
 interface UserStateLike {
   userId: string;
+  telegramId?: number;
+  telegramUsername?: string;
+  telegramFirstName?: string;
+  telegramLastName?: string;
   walletAddress?: string;
   availableTickets: number;
   heldTickets: number;
@@ -80,6 +90,8 @@ interface TicketingDeps {
     deleteMatchId?: string;
     deleteRoomCode?: string;
   }) => void;
+  getWithdrawalReviewFlags?: (user: UserStateLike, request: WithdrawalRequest, pendingRequests: WithdrawalRequest[]) => string[];
+  notifyWithdrawalRequest?: (user: UserStateLike, request: WithdrawalRequest) => void;
   withdrawalRequests: Map<string, WithdrawalRequest>;
 }
 
@@ -161,6 +173,19 @@ function getNormalizedExternalMessageHash(signedBoc: string) {
   } catch {
     return null;
   }
+}
+
+function normalizeWalletAddress(value: string) {
+  return String(value || '').trim();
+}
+
+function buildTonkeeperTransferLink(walletAddress: string, tonAmount: number, comment: string) {
+  const nanoAmount = Math.round(tonAmount * 1_000_000_000);
+  const params = new URLSearchParams({
+    amount: String(nanoAmount),
+    text: comment,
+  });
+  return `https://app.tonkeeper.com/transfer/${encodeURIComponent(walletAddress)}?${params.toString()}`;
 }
 
 function transactionMatchesIntent(transaction: Record<string, unknown>, intent: DepositIntent, config: TicketingConfig) {
@@ -482,6 +507,10 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (!userId || !walletAddress || !ticketAmount) {
         return res.status(400).json({ error: 'Withdrawal requires userId, walletAddress and ticketAmount.' });
       }
+      const normalizedWalletAddress = normalizeWalletAddress(walletAddress);
+      if (!normalizedWalletAddress) {
+        return res.status(400).json({ error: 'Withdrawal wallet address is required.' });
+      }
       const amount = Number(ticketAmount);
       if (!Number.isFinite(amount) || amount <= 0) {
         return res.status(400).json({ error: 'Withdrawal amount must be greater than 0.' });
@@ -489,19 +518,39 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (amount < config.minWithdrawTickets) {
         return res.status(400).json({ error: `Minimum withdrawal is ${config.minWithdrawTickets} tickets.` });
       }
-      const user = deps.getUser(userId, walletAddress);
+      const user = deps.getUser(userId);
+      if (user.walletAddress && user.walletAddress !== normalizedWalletAddress) {
+        return res.status(400).json({ error: 'Withdrawal wallet does not match the connected account on this profile.' });
+      }
+      if (!user.walletAddress) {
+        user.walletAddress = normalizedWalletAddress;
+      }
       if (user.availableTickets < amount) {
         return res.status(400).json({ error: 'Insufficient available tickets.' });
       }
+      const pendingRequests = Array.from(deps.withdrawalRequests.values()).filter((request) => (
+        request.userId === userId && request.status === 'pending'
+      ));
+      if (pendingRequests.length > 0) {
+        return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
+      }
+      const tonAmount = deps.round2(amount * config.ticketPriceTon);
       user.availableTickets = deps.round2(user.availableTickets - amount);
       const request: WithdrawalRequest = {
         id: `wd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         userId,
-        walletAddress,
+        walletAddress: normalizedWalletAddress,
         ticketAmount: amount,
+        tonAmount,
         status: 'pending',
         createdAt: Date.now(),
       };
+      request.operatorTransferLink = buildTonkeeperTransferLink(
+        request.walletAddress,
+        request.tonAmount,
+        `Redoapp withdrawal ${request.id}`
+      );
+      request.reviewFlags = deps.getWithdrawalReviewFlags?.(user, request, pendingRequests) || [];
       deps.withdrawalRequests.set(request.id, request);
       deps.schedulePersist({ withdrawalId: request.id, userId: user.userId });
       deps.createLedgerEntry(user, {
@@ -510,16 +559,30 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         type: 'withdraw_pending',
         amount: -amount,
       });
-      return res.json({ success: true, requestId: request.id, status: request.status });
+      deps.notifyWithdrawalRequest?.(user, request);
+      return res.json({
+        success: true,
+        requestId: request.id,
+        status: request.status,
+        tonAmount: request.tonAmount,
+      });
     });
 
     app.post('/api/tickets/withdraw-complete', deps.requireAdmin, (req: Request, res: Response) => {
-      const { requestId } = req.body;
+      const { requestId, txHash } = req.body;
       const request = deps.withdrawalRequests.get(requestId);
       if (!request) {
         return res.status(404).json({ error: 'Withdrawal request not found.' });
       }
+      if (request.status === 'completed') {
+        return res.json({ success: true, status: request.status });
+      }
+      if (request.status === 'rejected') {
+        return res.status(400).json({ error: 'Withdrawal request was already rejected.' });
+      }
       request.status = 'completed';
+      request.completedAt = Date.now();
+      request.completedTxHash = typeof txHash === 'string' && txHash.trim() ? txHash.trim() : null;
       deps.schedulePersist({ withdrawalId: request.id, userId: request.userId });
       const user = deps.getUser(request.userId, request.walletAddress);
       deps.createLedgerEntry(user, {

@@ -337,6 +337,7 @@ export function Web3Dashboard({
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
+  const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'submitting'>('idle');
   const [energyNow, setEnergyNow] = useState(() => Date.now());
   const effectiveXp = Math.max(activeProfile?.xp ?? 0, playerXp ?? 0);
   const displayXpNeeded = 400;
@@ -1882,10 +1883,10 @@ export function Web3Dashboard({
                           alert('Connect wallet first.');
                           return;
                         }
+                        setWithdrawRequestState('submitting');
                         apiRequest('/api/tickets/withdraw-request', {
                           method: 'POST',
                           body: JSON.stringify({
-                            userId: currentUserId,
                             walletAddress: rawAddress,
                             ticketAmount: amount,
                           }),
@@ -1897,18 +1898,21 @@ export function Web3Dashboard({
                           return apiRequest<{ transactions: any[] }>('/api/tickets/ledger');
                         }).then((ledger) => {
                           setTransactions(ledger.transactions);
-                          alert('Withdrawal request created.');
+                          alert('Withdrawal request created. Operator will review it and send the payout manually.');
                         }).catch((error) => {
                           alert(error.message);
+                        }).finally(() => {
+                          setWithdrawRequestState('idle');
                         });
                       }}
-                      className="px-3 py-1.5 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer"
+                      disabled={withdrawRequestState === 'submitting'}
+                      className="px-3 py-1.5 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      Withdraw
+                      {withdrawRequestState === 'submitting' ? 'Sending...' : 'Withdraw'}
                     </button>
                   </div>
                   <div className="text-[6.5px] text-slate-500 text-left">
-                    * Payouts require marketing wallet confirmation.
+                    * Operator reviews requests and sends TON payouts manually.
                   </div>
                 </div>
               </div>
