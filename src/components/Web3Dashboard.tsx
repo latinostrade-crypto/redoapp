@@ -1315,11 +1315,9 @@ export function Web3Dashboard({
             <button
               key={tab.id}
               type="button"
-              onPointerDown={(event) => {
+              aria-pressed={active}
+              onClick={(event) => {
                 event.preventDefault();
-                selectDashboardTab(tab.id);
-              }}
-              onClick={() => {
                 selectDashboardTab(tab.id);
               }}
               style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
@@ -1461,7 +1459,7 @@ export function Web3Dashboard({
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-between">
-        <AnimatePresence mode="wait">
+        <AnimatePresence initial={false}>
           {currentTab === 'profile' && (
             <motion.div
               key="profile"
