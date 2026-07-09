@@ -1458,7 +1458,7 @@ export function Web3Dashboard({
       )}
 
       {/* 4. Tab Content */}
-      <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-between">
+      <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
         <AnimatePresence initial={false}>
           {currentTab === 'profile' && (
             <motion.div
@@ -1753,7 +1753,7 @@ export function Web3Dashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3 h-full flex flex-col justify-between py-2 text-left"
+              className="space-y-3 py-2 text-left"
             >
               {/* Daily check-in & Streak Reward widget */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
@@ -1944,7 +1944,7 @@ export function Web3Dashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3 h-full flex flex-col justify-center py-3"
+              className="space-y-3 py-3"
             >
               <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 relative">
                 <div className="absolute top-2 right-2 flex items-center gap-1 bg-slate-950 border border-black px-2 py-0.5 text-[#00ff66] text-[8px] font-mono">
@@ -2035,7 +2035,7 @@ export function Web3Dashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3 h-full flex flex-col justify-center py-2 text-left"
+              className="space-y-3 py-2 text-left"
             >
               {/* Consolidated PVP Sub Mode selector */}
               <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
