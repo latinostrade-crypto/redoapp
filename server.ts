@@ -1040,6 +1040,10 @@ function verifySessionToken(token: string | null | undefined): SessionTokenPaylo
   }
   try {
     const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as SessionTokenPayload;
+    // Expiration check: 2 hours (7200000ms)
+    if (Date.now() - payload.issuedAt > 7200000) {
+      return null;
+    }
     return payload.userId ? payload : null;
   } catch {
     return null;
@@ -2037,7 +2041,7 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   });
 });
 
-app.use('/api/tickets', requireAuth);
+app.use('/api/tickets', requireAuth, rateLimitMiddleware(15, 60000));
 ticketingService.registerRoutes(app);
 
 app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
@@ -2412,6 +2416,8 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
 app.post('/api/private-rooms/create', optionalAuth, rateLimitMiddleware(10, 60000), handlePrivateRoomCreate);
 app.get('/api/private-rooms/create-beacon', optionalAuth, handlePrivateRoomCreate);
 
+const joinFailuresMap = new Map<string, { count: number; lockedUntil: number }>();
+
 app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
   const { roomCode, username, avatarId, walletAddress } = req.body as {
     roomCode: string;
@@ -2425,10 +2431,24 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000)
     return res.status(400).json({ error: 'Missing private room user id.' });
   }
 
+  const lockoutKey = req.ip || userId || 'global';
+  const failure = joinFailuresMap.get(lockoutKey);
+  if (failure && Date.now() < failure.lockedUntil) {
+    return res.status(403).json({ error: 'Too many failed attempts. Try again later.' });
+  }
+
   const room = privateRooms.get(String(roomCode).toUpperCase());
   if (!room) {
+    const cur = failure && Date.now() > failure.lockedUntil ? { count: 0, lockedUntil: 0 } : (failure || { count: 0, lockedUntil: 0 });
+    cur.count++;
+    if (cur.count >= 5) {
+      cur.lockedUntil = Date.now() + 900000; // 15 minutes lockout
+    }
+    joinFailuresMap.set(lockoutKey, cur);
     return res.status(404).json({ error: 'Private room not found.' });
   }
+
+  joinFailuresMap.delete(lockoutKey);
   if (room.players.some((player) => player.userId === userId)) {
     const user = getUser(userId, walletAddress);
     return res.json({
