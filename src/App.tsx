@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useUnoGame } from './hooks/useUnoGame';
 import { Avatar } from './components/Avatars';
 import { UnoCard } from './components/UnoCard';
@@ -50,6 +50,7 @@ export default function App() {
     activeStake,
     returnToLobby,
     turnTimeLeft,
+    resetStats,
   } = useUnoGame();
 
   const getDisplayName = (p: any) => {
@@ -519,6 +520,7 @@ export default function App() {
               setGoldenTickets={setGoldenTickets}
               transactions={transactions}
               setTransactions={setTransactions}
+              resetStats={resetStats}
             />
           </div>
         </main>

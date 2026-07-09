@@ -173,6 +173,7 @@ interface Web3DashboardProps {
   setGoldenTickets: React.Dispatch<React.SetStateAction<number>>;
   transactions: any[];
   setTransactions: React.Dispatch<React.SetStateAction<any[]>>;
+  resetStats?: () => void;
 }
 
 type DepositFlowStatus = 'idle' | 'creating' | 'awaiting_wallet' | 'waiting_chain' | 'confirmed' | 'failed';
@@ -218,6 +219,7 @@ export function Web3Dashboard({
   setGoldenTickets,
   transactions,
   setTransactions,
+  resetStats,
 }: Web3DashboardProps) {
   const initialLaunchRoomCodeRef = useRef('');
   if (!initialLaunchRoomCodeRef.current) {
@@ -250,6 +252,7 @@ export function Web3Dashboard({
     }
   });
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
+  const [isClaimingDaily, setIsClaimingDaily] = useState(false);
   const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [bootstrapError, setBootstrapError] = useState('');
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
@@ -958,6 +961,7 @@ export function Web3Dashboard({
   const claimDailyXp = () => {
     if (dailyXpClaimedToday) return;
     sound.playShuffle();
+    setIsClaimingDaily(true);
     apiRequest<{
       success: boolean;
       xpAwarded: number;
@@ -1002,6 +1006,8 @@ export function Web3Dashboard({
       });
     }).catch((error) => {
       alert(error.message);
+    }).finally(() => {
+      setIsClaimingDaily(false);
     });
   };
 
