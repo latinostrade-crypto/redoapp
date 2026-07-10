@@ -210,6 +210,18 @@ export default function App() {
   }, [updateLoadingVisibility]);
 
   useEffect(() => {
+    // A wallet disconnect can interrupt the bootstrap request in an embedded
+    // Telegram browser. Never leave the whole Mini App behind an unbounded
+    // splash screen; the dashboard exposes its own retry state.
+    const safetyTimeout = window.setTimeout(() => {
+      if (!(window as any).redoappIsAppStarting) return;
+      (window as any).redoappIsAppStarting = false;
+      window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
+    }, 15_000);
+    return () => window.clearTimeout(safetyTimeout);
+  }, []);
+
+  useEffect(() => {
     if (gameState.phase !== 'game_over' || gameMode === 'offline' || !leaderboard.length) {
       return;
     }

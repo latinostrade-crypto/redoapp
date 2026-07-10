@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
+import { beginCell } from '@ton/core';
 import {
   Wallet,
   Coins,
@@ -337,6 +338,7 @@ export function Web3Dashboard({
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
   const createRequestCounterRef = useRef(0);
+  const autoResumedDepositRef = useRef('');
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
   const bootstrapUserId = rawAddress || (telegramInitData ? (storedUserId || fallbackGuestUserId) : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId));
@@ -745,6 +747,11 @@ export function Web3Dashboard({
   };
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
+    if (!authReady || !getSessionToken()) {
+      setDepositFlowStatus('failed');
+      setDepositStatusMessage('Your session is reconnecting. Please retry the deposit once it is ready.');
+      return false;
+    }
     setBuyingTickets(true);
     setDepositFlowStatus('waiting_chain');
     setDepositStatusMessage(`Waiting for TON confirmation of ${pending.ticketAmount.toFixed(2)} tickets...`);
@@ -761,6 +768,7 @@ export function Web3Dashboard({
       setTransactions(ledger.transactions);
       await refreshPendingDeposits();
       clearPendingDeposit();
+      autoResumedDepositRef.current = '';
       setDepositFlowStatus('confirmed');
       setDepositStatusMessage(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
       if (!options?.silent) {
@@ -791,11 +799,13 @@ export function Web3Dashboard({
 
   useEffect(() => {
     const pending = readPendingDeposit();
-    if (!pending || !walletConnected || buyingTickets || !getSessionToken()) return;
+    if (!pending || !walletConnected || buyingTickets || !authReady || !getSessionToken()) return;
+    if (autoResumedDepositRef.current === pending.intentId) return;
+    autoResumedDepositRef.current = pending.intentId;
     setDepositFlowStatus('waiting_chain');
     setDepositStatusMessage(`Pending TON deposit found for ${pending.ticketAmount.toFixed(2)} tickets. Resuming confirmation...`);
     confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
-  }, [walletConnected, currentUserId, buyingTickets]);
+  }, [walletConnected, currentUserId, buyingTickets, authReady]);
 
   useEffect(() => {
     if (!activeProfile) return;
@@ -1179,10 +1189,16 @@ export function Web3Dashboard({
       setDepositFlowStatus('awaiting_wallet');
       setDepositStatusMessage(`Confirm ${intent.tonAmount.toFixed(2)} TON in your wallet for ${intent.ticketAmount.toFixed(2)} tickets.`);
       const transaction = await tonConnectUI.sendTransaction({
-        validUntil: Math.floor(Date.now() / 1000) + 360,
+        // TON Connect recommends an explicit mainnet request and a short
+        // validity window. The comment gives both wallets and support staff a
+        // human-readable, unique payment purpose.
+        validUntil: Math.floor(Date.now() / 1000) + 300,
+        network: '-239',
+        from: rawWalletAddress || undefined,
         messages: [{
           address: intent.marketingWallet,
           amount: Math.round(intent.tonAmount * 1_000_000_000).toString(),
+          payload: beginCell().storeUint(0, 32).storeStringTail(`Redoapp deposit ${intent.intentId}`).endCell().toBoc().toString('base64'),
         }]
       });
       const pending: PendingDepositState = {

@@ -86,9 +86,13 @@ app.use(compression({
 }));
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-function rateLimitMiddleware(limit: number, windowMs: number) {
+function rateLimitMiddleware(limit: number, windowMs: number, scope = 'ip') {
   return (req: Request, res: Response, next: NextFunction) => {
-    const key = req.ip || 'global';
+    const authenticatedUserId = (req as AuthenticatedRequest).authUserId;
+    // Ticket endpoints are authenticated. Limiting them by a shared mobile/NAT
+    // IP made one user's recovery polling block every other user on Telegram.
+    const subject = scope === 'user' && authenticatedUserId ? authenticatedUserId : (req.ip || 'global');
+    const key = `${scope}:${subject}`;
     const now = Date.now();
     const client = rateLimitMap.get(key);
     if (!client || now > client.resetAt) {
@@ -2376,7 +2380,7 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   });
 });
 
-app.use('/api/tickets', requireAuth, rateLimitMiddleware(15, 60000), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const userId = req.authUserId;
   if (!userId) return next();
   const release = await acquireUserLock(userId);

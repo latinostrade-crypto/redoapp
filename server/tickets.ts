@@ -359,10 +359,14 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   }
 
   async function recheckPendingDeposits() {
+    const now = Date.now();
     const pending = Array.from(deps.depositIntents.values()).filter((intent) => (
       intent.status === 'pending'
       && !!intent.signedBoc
       && !isIntentExpired(intent)
+      // TonAPI may need time to index a broadcast transaction. Retrying every
+      // 15 seconds multiplied provider calls and caused avoidable 429s.
+      && (!intent.lastVerificationAt || now - intent.lastVerificationAt >= 60_000)
     ));
 
     for (const intent of pending) {
@@ -465,6 +469,9 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       const intent = deps.depositIntents.get(intentId);
       if (!intent) {
         return res.status(404).json({ error: 'Deposit intent not found.' });
+      }
+      if (intent.userId !== getRequestUserId(req)) {
+        return res.status(403).json({ error: 'This deposit intent belongs to another account.' });
       }
       if (isIntentExpired(intent)) {
         return res.status(400).json({ error: 'Deposit intent expired. Please start a new purchase.' });
