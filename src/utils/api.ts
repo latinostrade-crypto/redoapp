@@ -1,4 +1,5 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://yoapp-backend.onrender.com';
+const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (isLocal ? 'http://localhost:10000' : 'https://redoapp-backend.onrender.com');
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
 // Render documents an approximately one-minute wake-up for idle free services.
 const API_REQUEST_TIMEOUT_MS = 90000;
@@ -52,7 +53,7 @@ export function buildAuthHeaders(init?: HeadersInit) {
   return {
     ...(init || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(!token && telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
+    ...(telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
   };
 }
 

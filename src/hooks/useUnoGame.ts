@@ -196,12 +196,14 @@ export function useUnoGame() {
         const isWinner = player.id === winnerId;
         // Winner gets 0 points. Rest of the players sum up the score value of their remaining cards
         const points = isWinner ? 0 : player.hand.reduce((sum, card) => sum + (card.score || 0), 0);
+        const cardsLeft = player.hand.length;
         
         return {
           playerId: player.id,
           name: player.name,
           avatar: player.avatar,
           points,
+          cardsLeft,
           rank: 1, // Will update
           xpGained: 0, // Will update
           isWinner,

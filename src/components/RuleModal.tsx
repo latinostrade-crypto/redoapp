@@ -49,43 +49,68 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
               :: Special Actions
             </h3>
             <div className="grid grid-cols-1 gap-2">
-              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2.5 border-black text-left">
-                <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#ff4b4b] font-bold font-mono">SKIP</span>
+              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
+                <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
+                  <img src="/cards/Rug red.jpeg" alt="Skip card" className="w-full h-full object-cover select-none" />
+                </div>
                 <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Skip Turn</h4>
-                  <p className="text-slate-400 text-[10px]">The next player misses their turn.</p>
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                    <span>Skip Turn</span>
+                    <span className="text-[7.5px] bg-[#ff4b4b] text-black px-1 border border-black font-black uppercase leading-tight">SKIP</span>
+                  </h4>
+                  <p className="text-slate-450 text-[9px] mt-0.5">The next player misses their turn.</p>
                 </div>
               </div>
 
-              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2.5 border-black text-left">
-                <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#00d2ff] font-bold font-mono">REV</span>
+              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
+                <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
+                  <img src="/cards/Flip red.jpeg" alt="Reverse card" className="w-full h-full object-cover select-none" />
+                </div>
                 <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Reverse Direction</h4>
-                  <p className="text-slate-400 text-[10px]">Changes play direction. In a 2-player match it behaves like a skip and gives you the next turn again.</p>
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                    <span>Reverse Direction</span>
+                    <span className="text-[7.5px] bg-[#00d2ff] text-black px-1 border border-black font-black uppercase leading-tight">REV</span>
+                  </h4>
+                  <p className="text-slate-450 text-[9px] mt-0.5">Changes play direction. In 2-player it acts like a skip.</p>
                 </div>
               </div>
 
-              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2.5 border-black text-left">
-                <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#00ff66] font-bold font-mono">+2</span>
+              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
+                <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
+                  <img src="/cards/plus2_red_v2.jpeg" alt="Draw Two card" className="w-full h-full object-cover select-none" />
+                </div>
                 <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Draw Two (+2)</h4>
-                  <p className="text-slate-400 text-[10px]">The next player draws 2 cards and misses their turn.</p>
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                    <span>Draw Two (+2)</span>
+                    <span className="text-[7.5px] bg-[#00ff66] text-black px-1 border border-black font-black uppercase leading-tight">+2</span>
+                  </h4>
+                  <p className="text-slate-450 text-[9px] mt-0.5">Next player draws 2 cards and misses their turn.</p>
                 </div>
               </div>
 
-              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2.5 border-black text-left">
-                <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#ffcc00] font-bold font-mono">WILD</span>
+              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
+                <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
+                  <img src="/cards/wild 1.jpeg" alt="Wild card" className="w-full h-full object-cover select-none" />
+                </div>
                 <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Wild Suit</h4>
-                  <p className="text-slate-400 text-[10px]">Playable anytime. Choose the next active suit for the table.</p>
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                    <span>Wild Suit</span>
+                    <span className="text-[7.5px] bg-[#ffcc00] text-black px-1 border border-black font-black uppercase leading-tight">WILD</span>
+                  </h4>
+                  <p className="text-slate-450 text-[9px] mt-0.5">Playable anytime. Choose the next active suit for the table.</p>
                 </div>
               </div>
 
-              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2.5 border-black text-left">
-                <span className="text-[9px] bg-slate-900 border border-black px-1.5 py-0.5 text-[#ec4899] font-bold font-mono">+4</span>
+              <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
+                <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
+                  <img src="/cards/plus4_red_v2.jpeg" alt="Wild Draw Four card" className="w-full h-full object-cover select-none" />
+                </div>
                 <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Wild Draw Four (+4)</h4>
-                  <p className="text-slate-400 text-[10px]">The next player draws 4 cards, misses their turn, and you choose the next active suit.</p>
+                  <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+                    <span>Wild Draw Four (+4)</span>
+                    <span className="text-[7.5px] bg-[#ec4899] text-black px-1 border border-black font-black uppercase leading-tight">+4</span>
+                  </h4>
+                  <p className="text-slate-450 text-[9px] mt-0.5">Next player draws 4 cards, misses turn, and you choose suit.</p>
                 </div>
               </div>
             </div>

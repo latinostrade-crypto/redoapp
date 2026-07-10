@@ -299,6 +299,8 @@ export function Web3Dashboard({
   });
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
 
+
+
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
   const [matchmakingTimer, setMatchmakingTimer] = useState(MATCHMAKING_TIMEOUT_SEC);
@@ -337,6 +339,19 @@ export function Web3Dashboard({
   const bootstrapUserId = rawAddress || (telegramInitData ? (storedUserId || fallbackGuestUserId) : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId));
   const activeProfile = fullProfile ?? profile;
   const currentUserId = activeProfile?.userId || bootstrapUserId;
+
+  useEffect(() => {
+    if (activeProfile?.lastDailyXpAt) {
+      const d1 = new Date(activeProfile.lastDailyXpAt);
+      const d2 = new Date();
+      const claimedToday = d1.getUTCFullYear() === d2.getUTCFullYear() &&
+                           d1.getUTCMonth() === d2.getUTCMonth() &&
+                           d1.getUTCDate() === d2.getUTCDate();
+      setDailyXpClaimedToday(claimedToday);
+    } else {
+      setDailyXpClaimedToday(false);
+    }
+  }, [activeProfile]);
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
@@ -955,6 +970,27 @@ export function Web3Dashboard({
       console.error(e);
     } finally {
       setIsConnecting(false);
+    }
+  };
+
+  const getStreakState = () => {
+    const streak = activeProfile?.dailyStreak || 0;
+    const lastXpAt = activeProfile?.lastDailyXpAt;
+    if (!lastXpAt) {
+      return { streak: 0, currentDay: 1, claimedToday: false };
+    }
+    const d1 = new Date(lastXpAt);
+    const d2 = new Date();
+    const utc1 = Date.UTC(d1.getUTCFullYear(), d1.getUTCMonth(), d1.getUTCDate());
+    const utc2 = Date.UTC(d2.getUTCFullYear(), d2.getUTCMonth(), d2.getUTCDate());
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const diffDays = Math.round((utc2 - utc1) / oneDayMs);
+    if (diffDays === 0) {
+      return { streak, currentDay: streak, claimedToday: true };
+    } else if (diffDays === 1) {
+      return { streak, currentDay: (streak % 7) + 1, claimedToday: false };
+    } else {
+      return { streak: 0, currentDay: 1, claimedToday: false };
     }
   };
 
@@ -1773,11 +1809,7 @@ export function Web3Dashboard({
                     </p>
                   </div>
                   <div className="flex-shrink-0">
-                    {!walletConnected ? (
-                      <span className="text-[6.5px] text-[#ff4b4b] bg-black px-1.5 py-1 border border-black uppercase font-bold block">
-                        No Wallet
-                      </span>
-                    ) : dailyXpClaimedToday ? (
+                    {dailyXpClaimedToday ? (
                       <span className="text-[7px] text-[#00ff66] bg-slate-950 px-1.5 py-1 border border-black/40 uppercase font-black block">
                         Claimed
                       </span>
@@ -1797,13 +1829,13 @@ export function Web3Dashboard({
                 <div className="bg-slate-950 p-2 border border-black font-mono space-y-1.5">
                   <div className="flex justify-between items-center text-[7.5px] text-slate-400 font-black">
                     <span>DAILY STREAK BOARD</span>
-                    <span className="text-[#00ff66]">CURRENT: {activeProfile?.dailyStreak || 0} DAYS</span>
+                    <span className="text-[#00ff66]">CURRENT: {getStreakState().claimedToday ? getStreakState().streak : 0} DAYS</span>
                   </div>
                   <div className="grid grid-cols-7 gap-1">
                     {[1, 2, 3, 4, 5, 6, 7].map((day) => {
-                      const currentStreak = activeProfile?.dailyStreak || 0;
-                      const isCompleted = day < currentStreak || (day === currentStreak && dailyXpClaimedToday);
-                      const isCurrent = day === currentStreak && !dailyXpClaimedToday;
+                      const { currentDay, claimedToday } = getStreakState();
+                      const isCompleted = day < currentDay || (day === currentDay && claimedToday);
+                      const isCurrent = day === currentDay && !claimedToday;
                       let dayRewardText = '';
                       if (day === 1 || day === 2) dayRewardText = `${day === 1 ? 10 : 15} XP + ⚡ 1`;
                       else if (day === 3 || day === 4) dayRewardText = `${day === 3 ? 20 : 25} XP + ⚡ 2`;

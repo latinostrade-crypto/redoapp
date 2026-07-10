@@ -434,12 +434,7 @@ export default function App() {
       {gameState.phase !== 'setup' && (
         <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
-              REDO
-            </span>
-            <h1 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
-              <span className="text-[#ffcc00]">APP</span>
-            </h1>
+            <img src="/text(logo).jpg" alt="Logo" className="h-6 w-auto object-contain select-none" />
           </div>
 
           {/* Global Controls */}
@@ -971,12 +966,7 @@ export default function App() {
           <div className="w-full max-w-md space-y-3">
             <div className="w-full px-3 py-2 flex justify-between items-center bg-[#18181c] border-4 border-black font-mono shadow-[6px_6px_0_#000]">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black transform rotate-[-2deg] shadow-[2px_2px_0_#000]">
-                  REDO
-                </span>
-                <h2 className="text-xs min-[370px]:text-sm font-black text-white tracking-tight">
-                  <span className="text-[#ffcc00]">APP</span>
-                </h2>
+                <img src="/text(logo).jpg" alt="Logo" className="h-6 w-auto object-contain select-none" />
               </div>
 
               <button
@@ -1036,7 +1026,7 @@ export default function App() {
                           {entry.name} {isUser && ' (You)'}
                         </span>
                         <span className="text-[8px] text-slate-550 font-mono">
-                          {entry.points} PTS LEFT
+                          {entry.cardsLeft || 0} {entry.cardsLeft === 1 ? 'CARD' : 'CARDS'} LEFT ({entry.points} PTS)
                         </span>
                       </div>
                     </div>

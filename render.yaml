@@ -6,7 +6,7 @@ services:
     publishPath: dist
     envVars:
       - key: VITE_API_BASE_URL
-        value: https://yoapp-backend.onrender.com
+        value: https://redoapp-backend.onrender.com
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
@@ -25,7 +25,7 @@ services:
     startCommand: npm run start
     envVars:
       - key: BACKEND_PUBLIC_URL
-        value: https://yoapp-backend.onrender.com
+        value: https://redoapp-backend.onrender.com
       - key: MARKETING_WALLET
         value: UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj
       - key: TICKET_PRICE_TON
