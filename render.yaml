@@ -31,9 +31,9 @@ services:
       - key: TICKET_PRICE_TON
         value: 1
       - key: ENABLE_CHAIN_VERIFICATION
-        value: false
+        value: true
       - key: TON_VERIFICATION_MODE
-        value: manual
+        value: tonapi
       - key: TON_API_BASE_URL
         value: https://tonapi.io/v2
       - key: TON_API_KEY

@@ -599,6 +599,7 @@ export function Web3Dashboard({
         ...Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value ?? '')])),
         responseMode: 'iframe',
         bridgeRequestId,
+        parentOrigin: window.location.origin,
       });
       const iframe = document.createElement('iframe');
       iframe.hidden = true;
@@ -613,6 +614,7 @@ export function Web3Dashboard({
         iframe.remove();
       };
       const onMessage = (event: MessageEvent) => {
+        if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
         const data = event.data as { source?: string; requestId?: string; payload?: PrivateRoomResponse; error?: string };
         if (data?.source !== 'redoapp-room-bridge' || data.requestId !== bridgeRequestId) return;
         cleanup();

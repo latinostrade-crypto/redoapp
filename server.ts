@@ -17,8 +17,8 @@ const PORT = process.env.PORT || 10000;
 const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj';
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
 const MIN_WITHDRAW_TICKETS = 5;
-const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION === 'true';
-const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'manual';
+const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION !== 'false';
+const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'tonapi';
 const TON_API_BASE_URL = process.env.TON_API_BASE_URL || 'https://tonapi.io/v2';
 const TON_API_KEY = process.env.TON_API_KEY || '';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -30,7 +30,8 @@ const WITHDRAWAL_OPERATOR_USERNAME = process.env.WITHDRAWAL_OPERATOR_USERNAME ||
 const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || TELEGRAM_BOT_TOKEN || SUPABASE_SERVICE_ROLE_KEY || 'local-dev-session-secret';
+// A dedicated session secret prevents compromise of another integration secret from minting sessions.
+const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(32).toString('base64url'));
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
 const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
@@ -61,11 +62,20 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'x-session-token', 'x-telegram-init-data', 'x-admin-api-key'],
 }));
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", 'https://telegram.org'],
+      connectSrc: ["'self'", 'https:', 'wss:'],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      frameAncestors: ["'none'"],
+    },
+  },
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: false,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '64kb' }));
 app.use(compression({
   filter: (req, res) => {
     if (res.getHeader('Content-Type') === 'text/event-stream') {
@@ -93,7 +103,7 @@ function rateLimitMiddleware(limit: number, windowMs: number) {
   };
 }
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 50 }));
 
 const userLocks = new Map<string, Promise<void>>();
 async function acquireUserLock(userId: string): Promise<() => void> {
@@ -1487,18 +1497,27 @@ function round2(value: number) {
 }
 
 function createWithdrawalOperatorToken(action: 'complete' | 'reject', requestId: string) {
-  return crypto
-    .createHmac('sha256', APP_SESSION_SECRET)
-    .update(`withdrawal:${action}:${requestId}`)
-    .digest('base64url');
+  const token = crypto.randomBytes(32).toString('base64url');
+  withdrawalOperatorTokens.set(crypto.createHash('sha256').update(token).digest('hex'), {
+    action,
+    requestId,
+    expiresAt: Date.now() + 15 * 60 * 1000,
+  });
+  return token;
 }
 
+const withdrawalOperatorTokens = new Map<string, { action: 'complete' | 'reject'; requestId: string; expiresAt: number }>();
 function verifyWithdrawalOperatorToken(action: 'complete' | 'reject', requestId: string, token: unknown) {
   if (typeof token !== 'string' || !token) return false;
-  const expected = createWithdrawalOperatorToken(action, requestId);
-  const expectedBuffer = Buffer.from(expected, 'utf8');
-  const providedBuffer = Buffer.from(token, 'utf8');
-  return expectedBuffer.length === providedBuffer.length && crypto.timingSafeEqual(expectedBuffer, providedBuffer);
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const record = withdrawalOperatorTokens.get(tokenHash);
+  return !!record && record.action === action && record.requestId === requestId && record.expiresAt > Date.now();
+}
+
+function consumeWithdrawalOperatorToken(action: 'complete' | 'reject', requestId: string, token: unknown) {
+  if (!verifyWithdrawalOperatorToken(action, requestId, token) || typeof token !== 'string') return false;
+  withdrawalOperatorTokens.delete(crypto.createHash('sha256').update(token).digest('hex'));
+  return true;
 }
 
 function buildWithdrawalOperatorActionUrl(action: 'complete' | 'reject', requestId: string) {
@@ -2372,6 +2391,8 @@ app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
   if (!verifyWithdrawalOperatorToken('complete', requestId, req.query.token)) {
     return res.status(403).send('Invalid or expired withdrawal operator link.');
   }
+  // The link is only a short-lived confirmation page; the state change requires POST.
+  return res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Confirm withdrawal</title><form method="post" action="/api/admin/withdrawals/${encodeURIComponent(requestId)}/complete"><input type="hidden" name="token" value="${String(req.query.token).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><button type="submit">Confirm withdrawal completion</button></form>`);
 
   const request = withdrawalRequests.get(requestId);
   if (!request) {
@@ -2386,8 +2407,9 @@ app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
 
   request.status = 'completed';
   request.completedAt = Date.now();
-  request.completedTxHash = typeof req.query.txHash === 'string' && req.query.txHash.trim()
-    ? req.query.txHash.trim()
+  const txHash = typeof req.query.txHash === 'string' ? String(req.query.txHash) : '';
+  request.completedTxHash = txHash.trim()
+    ? txHash.trim()
     : null;
   schedulePersist({ withdrawalId: request.id, userId: request.userId });
 
@@ -2408,6 +2430,8 @@ app.get('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
   if (!verifyWithdrawalOperatorToken('reject', requestId, req.query.token)) {
     return res.status(403).send('Invalid or expired withdrawal operator link.');
   }
+  // The link is only a short-lived confirmation page; the state change requires POST.
+  return res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Reject withdrawal</title><form method="post" action="/api/admin/withdrawals/${encodeURIComponent(requestId)}/reject"><input type="hidden" name="token" value="${String(req.query.token).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><button type="submit">Reject withdrawal and refund tickets</button></form>`);
 
   const request = withdrawalRequests.get(requestId);
   if (!request) {
@@ -2433,6 +2457,34 @@ app.get('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
   await persistStateNow();
 
   return res.send(`Withdrawal ${request.id} rejected and ${request.ticketAmount.toFixed(2)} TKT refunded.`);
+});
+
+app.post('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
+  const requestId = String(req.params.requestId || '');
+  if (!consumeWithdrawalOperatorToken('complete', requestId, req.body?.token)) return res.status(403).send('Invalid or expired withdrawal operator link.');
+  const request = withdrawalRequests.get(requestId);
+  if (!request || request.status !== 'pending') return res.status(400).send('Withdrawal cannot be completed.');
+  request.status = 'completed';
+  request.completedAt = Date.now();
+  schedulePersist({ withdrawalId: request.id, userId: request.userId });
+  const user = getUser(request.userId, request.walletAddress);
+  createLedgerEntry(user, { event: 'Withdrawal Completed', value: `${request.ticketAmount.toFixed(2)} TKT`, type: 'withdraw_completed', amount: request.ticketAmount });
+  await persistStateNow();
+  return res.send(`Withdrawal ${request.id} marked completed.`);
+});
+
+app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
+  const requestId = String(req.params.requestId || '');
+  if (!consumeWithdrawalOperatorToken('reject', requestId, req.body?.token)) return res.status(403).send('Invalid or expired withdrawal operator link.');
+  const request = withdrawalRequests.get(requestId);
+  if (!request || request.status !== 'pending') return res.status(400).send('Withdrawal cannot be rejected.');
+  request.status = 'rejected';
+  const user = getUser(request.userId, request.walletAddress);
+  user.availableTickets = round2(user.availableTickets + request.ticketAmount);
+  schedulePersist({ withdrawalId: request.id, userId: request.userId });
+  createLedgerEntry(user, { event: 'Withdrawal Rejected', value: `+${request.ticketAmount.toFixed(2)} TKT`, type: 'withdraw_rejected', amount: request.ticketAmount });
+  await persistStateNow();
+  return res.send(`Withdrawal ${request.id} rejected and refunded.`);
 });
 
 app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
@@ -2591,13 +2643,18 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
 function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   if (input?.responseMode === 'iframe') {
+    const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
+      ? input.parentOrigin
+      : '';
+    if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
     const message = JSON.stringify({
       source: 'redoapp-room-bridge',
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
     res.setHeader('Cache-Control', 'no-store');
-    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, '*')</script>`);
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
   }
   if (req.method === 'GET') {
     res.setHeader('Cache-Control', 'no-store');

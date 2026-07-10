@@ -229,20 +229,20 @@ async function pollTonApiTransactionByMessageHash(messageHash: string, intent: D
 }
 
 async function verifyTonDeposit(intent: DepositIntent, signedBoc: string, config: TicketingConfig): Promise<TonVerificationResult> {
+  // Never credit a deposit from client-supplied data alone: it must be checked on-chain.
+  if (!config.enableChainVerification || config.tonVerificationMode === 'manual') {
+    return {
+      ok: false,
+      provider: config.tonVerificationMode,
+      reason: 'On-chain deposit verification is required.',
+    };
+  }
   const normalizedMessageHash = getNormalizedExternalMessageHash(signedBoc);
   if (!normalizedMessageHash) {
     return {
       ok: false,
       provider: config.tonVerificationMode,
       reason: 'Missing or invalid signedBoc.',
-    };
-  }
-
-  if (config.tonVerificationMode === 'manual') {
-    return {
-      ok: true,
-      provider: 'manual',
-      normalizedMessageHash,
     };
   }
 
