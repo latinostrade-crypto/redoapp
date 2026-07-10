@@ -1,5 +1,5 @@
 const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (isLocal ? 'http://localhost:10000' : 'https://redoapp-backend.onrender.com');
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (isLocal ? 'http://localhost:10000' : 'https://yoapp-backend.onrender.com');
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
 // Render documents an approximately one-minute wake-up for idle free services.
 const API_REQUEST_TIMEOUT_MS = 90000;
@@ -73,11 +73,45 @@ export function buildAuthenticatedUrl(path: string) {
 
 type ApiRequestInit = RequestInit & {
   retryOnNetworkError?: boolean;
+  skipAuthRefresh?: boolean;
   timeoutMs?: number;
 };
 
+let sessionRefreshPromise: Promise<boolean> | null = null;
+
+function refreshApiSession(signal?: AbortSignal) {
+  if (sessionRefreshPromise) return sessionRefreshPromise;
+
+  sessionRefreshPromise = (async () => {
+    const telegramInitData = getTelegramInitData();
+    const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
+    const fallbackGuestUserId = storedUserId.startsWith('guest:') ? storedUserId : 'guest:guest';
+    const response = await fetch(`${API_BASE_URL}/api/users/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: telegramInitData ? (storedUserId || fallbackGuestUserId) : fallbackGuestUserId,
+        walletAddress: localStorage.getItem('redoapp_wallet_address') || null,
+        telegramInitData,
+        startParam: null,
+      }),
+      signal,
+    });
+    if (!response.ok) return false;
+    const synced = await response.json() as { userId?: string; sessionToken?: string | null };
+    if (!synced.sessionToken) return false;
+    setSessionToken(synced.sessionToken);
+    if (synced.userId) localStorage.setItem('redoapp_current_user_id', synced.userId);
+    return true;
+  })().catch(() => false).finally(() => {
+    sessionRefreshPromise = null;
+  });
+
+  return sessionRefreshPromise;
+}
+
 export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
-  const { retryOnNetworkError = false, timeoutMs = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
+  const { retryOnNetworkError = false, skipAuthRefresh = false, timeoutMs = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
   const attempts = retryOnNetworkError ? 2 : 1;
   const method = (requestInit.method || 'GET').toUpperCase();
   const url = `${API_BASE_URL}${path}`;
@@ -111,6 +145,22 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
         });
         const rawBody = await response.text();
         const data = rawBody ? JSON.parse(rawBody) : null;
+        if (response.status === 401 && !skipAuthRefresh && path !== '/api/users/sync') {
+          setSessionToken(null);
+          const refreshed = await refreshApiSession(controller.signal);
+          if (refreshed) {
+            // Close this trace before the retried request creates a new one;
+            // otherwise the fullscreen loader keeps a permanently active id.
+            emitApiTrace({
+              ...baseTrace,
+              stage: 'error',
+              status: 401,
+              durationMs: Date.now() - attemptStartedAt,
+              message: 'Session refreshed; retrying request.',
+            });
+            return apiRequest<T>(path, { ...(init || {}), skipAuthRefresh: true });
+          }
+        }
         if (!response.ok) {
           const serverMessage = data?.error || `Request failed with status ${response.status}`;
           emitApiTrace({

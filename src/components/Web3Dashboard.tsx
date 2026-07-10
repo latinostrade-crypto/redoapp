@@ -900,6 +900,7 @@ export function Web3Dashboard({
     }>('/api/users/sync', {
       method: 'POST',
       retryOnNetworkError: true,
+      timeoutMs: 20_000,
       body: JSON.stringify({
         userId: bootstrapUserId,
         walletAddress: rawAddress || null,

@@ -208,7 +208,14 @@ async function pollTonApiTransactionByMessageHash(messageHash: string, intent: D
   const delaysMs = [1000, 2000, 4000, 8000, 12000];
 
   for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
-    const response = await fetch(requestUrl, { headers });
+    let response = await fetch(requestUrl, { headers });
+
+    // TonAPI allows limited unauthenticated REST access. A stale/revoked key
+    // must not make every already-broadcast payment impossible to verify.
+    if (response.status === 401 && config.tonApiKey) {
+      console.warn('TonAPI rejected TON_API_KEY; retrying deposit verification without it.');
+      response = await fetch(requestUrl, { headers: { Accept: 'application/json' } });
+    }
 
     if (response.ok) {
       const payload = await response.json() as Record<string, unknown>;
@@ -216,6 +223,12 @@ async function pollTonApiTransactionByMessageHash(messageHash: string, intent: D
         throw new Error('TON transaction does not match the expected wallet or ticket amount.');
       }
       return payload as { hash: string };
+    }
+
+    if (response.status === 429) {
+      const retryAfterSeconds = Number(response.headers.get('retry-after') || '0');
+      await new Promise((resolve) => setTimeout(resolve, Math.max(delaysMs[attempt], retryAfterSeconds * 1000, 1100)));
+      continue;
     }
 
     if (response.status !== 404) {
