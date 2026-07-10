@@ -298,6 +298,9 @@ export function Web3Dashboard({
     return saved ? parseInt(saved, 10) : 0;
   });
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
+  const [showXpDetails, setShowXpDetails] = useState(false);
+  const [showReferralDetails, setShowReferralDetails] = useState(false);
+  const [showCollectionAddress, setShowCollectionAddress] = useState(false);
 
 
 
@@ -1376,24 +1379,7 @@ export function Web3Dashboard({
 
       {/* 2. Network Connectivity bar */}
       <div className="flex justify-between items-center bg-[#18181c] p-2.5 pixel-box-sm border-black">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2 w-2">
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-              bootstrapState === 'error' ? 'bg-[#ff4b4b]' : bootstrapState === 'loading' ? 'bg-[#ffcc00]' : 'bg-[#00ff66]'
-            }`}></span>
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${
-              bootstrapState === 'error' ? 'bg-[#ff4b4b]' : bootstrapState === 'loading' ? 'bg-[#ffcc00]' : 'bg-[#00ff66]'
-            }`}></span>
-          </span>
-          <div className="leading-none text-left">
-            <div className="text-[8px] font-black uppercase text-slate-200">
-              {bootstrapState === 'loading' ? 'Syncing session' : bootstrapState === 'error' ? 'Sync failed' : 'Session ready'}
-            </div>
-            <div className="text-[7px] text-slate-400">
-              {bootstrapState === 'error' ? bootstrapError : authReady ? currentUserId : 'Waiting for backend/auth bootstrap'}
-            </div>
-          </div>
-        </div>
+        <div></div>
 
         <div className="flex items-center gap-2">
           {onOpenRules && (
@@ -1575,28 +1561,42 @@ export function Web3Dashboard({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between items-center text-[6.5px] font-bold">
-                        <span className="text-slate-500 uppercase">XP Progress</span>
-                        <span className="text-[#00d2ff]">{displayCurrentLevelXp}/{displayXpNeeded}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playPop();
+                      setShowXpDetails(!showXpDetails);
+                    }}
+                    className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#00d2ff] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
+                  >
+                    <span>XP PROGRESS & STATS</span>
+                    <span className="text-[6px] text-slate-400">{showXpDetails ? '▲ COLLAPSE' : '▼ SHOW'}</span>
+                  </button>
+                  {showXpDetails && (
+                    <div className="space-y-2 p-1.5 bg-slate-950/40 border border-t-0 border-black animate-fade-in">
+                      <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
+                        <div className="space-y-0.5">
+                          <div className="flex justify-between items-center text-[6.5px] font-bold">
+                            <span className="text-slate-550 uppercase">XP Progress</span>
+                            <span className="text-[#00d2ff]">{displayCurrentLevelXp}/{displayXpNeeded}</span>
+                          </div>
+                          <div className="w-full bg-slate-900 h-1.5 border border-black overflow-hidden">
+                            <div
+                              className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
+                              style={{ width: `${displayXpProgressPercentage}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                        <div className="text-right text-[6.5px] leading-tight font-mono">
+                          <div className="text-slate-400">M {stats.gamesPlayed} · W {stats.gamesWon}</div>
+                          <div className="text-[#ffcc00]">WR {winRate}% · PVP {stats.realPvpGamesWon}</div>
+                        </div>
                       </div>
-                      <div className="w-full bg-slate-900 h-1.5 border border-black overflow-hidden">
-                        <div
-                          className="bg-[#00d2ff] h-full transition-all duration-500 ease-out"
-                          style={{ width: `${displayXpProgressPercentage}%` }}
-                        ></div>
+                      <div className="text-[6.5px] text-slate-550 text-left">
+                        {energy.nextEnergyAt ? `Next +1 ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Power full'}
                       </div>
                     </div>
-                    <div className="text-right text-[6.5px] leading-tight font-mono">
-                      <div className="text-slate-400">M {stats.gamesPlayed} · W {stats.gamesWon}</div>
-                      <div className="text-[#ffcc00]">WR {winRate}% · PVP {stats.realPvpGamesWon}</div>
-                    </div>
-                  </div>
-
-                  <div className="text-[6.5px] text-slate-550 text-left">
-                    {energy.nextEnergyAt ? `Next +1 ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Power full'}
-                  </div>
+                  )}
                 </div>
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
@@ -1604,71 +1604,86 @@ export function Web3Dashboard({
                     <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
                     <span className="text-[8px] font-black text-[#ffcc00]">{fullProfile?.referrals?.referralsActivated ?? 0} active</span>
                   </div>
-                  {!fullProfile && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        fetchFullProfile().catch(() => undefined);
-                      }}
-                      className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer"
-                    >
-                      {fullProfileLoading ? 'Loading Details...' : 'Load Profile & Quests'}
-                    </button>
-                  )}
-                  <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                    <span className="text-slate-400 uppercase">Referral Earnings</span>
-                    <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
-                  </div>
-                  
-                  {activeProfile?.referralLink ? (
-                    <div className="flex gap-2">
-                      <div className="flex-1 bg-slate-950 border border-black px-2 py-0.5 text-[7px] text-slate-400 truncate flex items-center leading-none min-w-0">
-                        {activeProfile.referralLink}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playPop();
+                      setShowReferralDetails(!showReferralDetails);
+                    }}
+                    className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#ffcc00] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
+                  >
+                    <span>INVITE LINK & STATS</span>
+                    <span className="text-[6px] text-slate-400">{showReferralDetails ? '▲ COLLAPSE' : '▼ SHOW'}</span>
+                  </button>
+                  {showReferralDetails && (
+                    <div className="space-y-1.5 p-1.5 bg-slate-950/40 border border-t-0 border-black animate-fade-in">
+                      {!fullProfile && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            fetchFullProfile().catch(() => undefined);
+                          }}
+                          className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer"
+                        >
+                          {fullProfileLoading ? 'Loading Details...' : 'Load Profile & Quests'}
+                        </button>
+                      )}
+                      <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
+                        <span className="text-slate-400 uppercase">Referral Earnings</span>
+                        <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(activeProfile.referralLink);
-                          sound.playPop();
-                          alert('Referral link copied.');
-                        }}
-                        className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-[7px] text-slate-500 text-left">Sync Telegram to generate invite link</div>
-                  )}
+                      
+                      {activeProfile?.referralLink ? (
+                        <div className="flex gap-2">
+                          <div className="flex-1 bg-slate-950 border border-black px-2 py-0.5 text-[7px] text-slate-400 truncate flex items-center leading-none min-w-0">
+                            {activeProfile.referralLink}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(activeProfile.referralLink);
+                              sound.playPop();
+                              alert('Referral link copied.');
+                            }}
+                            className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-[7px] text-slate-500 text-left">Sync Telegram to generate invite link</div>
+                      )}
 
-                  <div className="space-y-1">
-                    {fullProfileLoading && !fullProfile ? (
-                      <div className="text-[7.5px] text-slate-500 text-left">Loading referrals...</div>
-                    ) : !referralStats || referralStats.totalInvited === 0 ? (
-                      <div className="text-[7.5px] text-slate-500 text-left">No referrals yet.</div>
-                    ) : (
-                      <>
-                        <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                          <span className="text-slate-400 uppercase">Total Invited</span>
-                          <span className="text-slate-100 font-black">{referralStats.totalInvited}</span>
-                        </div>
-                        <div className="grid grid-cols-3 gap-1 text-[7px]">
-                          <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
-                            <div className="text-slate-500 uppercase">Active</div>
-                            <div className="text-[#00ff66] font-black">{referralStats.referralsActivated}</div>
-                          </div>
-                          <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
-                            <div className="text-slate-500 uppercase">Pending</div>
-                            <div className="text-[#ffcc00] font-black">{referralStats.pendingInvited}</div>
-                          </div>
-                          <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
-                            <div className="text-slate-500 uppercase">Rejected</div>
-                            <div className="text-slate-300 font-black">{referralStats.rejectedInvited}</div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
+                      <div className="space-y-1">
+                        {fullProfileLoading && !fullProfile ? (
+                          <div className="text-[7.5px] text-slate-500 text-left">Loading referrals...</div>
+                        ) : !referralStats || referralStats.totalInvited === 0 ? (
+                          <div className="text-[7.5px] text-slate-550 text-left">No referrals yet.</div>
+                        ) : (
+                          <>
+                            <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
+                              <span className="text-slate-400 uppercase">Total Invited</span>
+                              <span className="text-slate-100 font-black">{referralStats.totalInvited}</span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-1 text-[7px]">
+                              <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
+                                <div className="text-slate-500 uppercase">Active</div>
+                                <div className="text-[#00ff66] font-black">{referralStats.referralsActivated}</div>
+                              </div>
+                              <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
+                                <div className="text-slate-500 uppercase">Pending</div>
+                                <div className="text-[#ffcc00] font-black">{referralStats.pendingInvited}</div>
+                              </div>
+                              <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
+                                <div className="text-slate-550 uppercase">Rejected</div>
+                                <div className="text-slate-300 font-black">{referralStats.rejectedInvited}</div>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
@@ -1868,18 +1883,7 @@ export function Web3Dashboard({
 
               {/* Compressed Balance and Withdraw */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
-                <div className="grid grid-cols-2 gap-2 text-[8px]">
-                  <div className="bg-black/40 border border-black p-1.5 flex justify-between items-center">
-                    <span className="text-slate-400 uppercase">Free:</span>
-                    <span className="text-[#ffcc00] font-black">{goldenTickets.toFixed(2)} TKT</span>
-                  </div>
-                  <div className="bg-black/40 border border-black p-1.5 flex justify-between items-center">
-                    <span className="text-slate-400 uppercase">Held:</span>
-                    <span className="text-[#00d2ff] font-black">{heldTickets.toFixed(2)} TKT</span>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-black space-y-1.5">
+                <div className="space-y-1.5">
                   <div className="text-[7.5px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
                   <div className="flex gap-2">
                     <input
@@ -1922,15 +1926,106 @@ export function Web3Dashboard({
                         });
                       }}
                       disabled={withdrawRequestState === 'submitting'}
-                      className="px-3 py-1.5 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="px-3 py-1 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       {withdrawRequestState === 'submitting' ? 'Sending...' : 'Withdraw'}
                     </button>
                   </div>
-                  <div className="text-[6.5px] text-slate-500 text-left">
-                    * Operator reviews requests and sends TON payouts manually.
+                </div>
+
+                <div className="pt-2 border-t border-black space-y-1.5">
+                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">Deposit Tickets</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.1"
+                      value={depositAmount}
+                      onChange={(e) => setDepositAmount(e.target.value)}
+                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
+                      placeholder="Amount"
+                    />
+                    <button
+                      type="button"
+                      onClick={buyTicketsWithTon}
+                      disabled={buyingTickets || !authReady}
+                      className="flex-1 py-1 bg-black text-slate-350 border border-black text-[8px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {buyingTickets ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <>
+                          <span>DEPOSIT</span>
+                          <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
+
+                {depositFlowStatus !== 'idle' && depositStatusMessage && (
+                  <div className={`border border-black px-2 py-1.5 text-[7.5px] leading-relaxed ${
+                    depositFlowStatus === 'confirmed'
+                      ? 'bg-[#062b12] text-[#8dffaf]'
+                      : depositFlowStatus === 'failed'
+                        ? 'bg-[#2a0d0d] text-[#ff9a9a]'
+                        : 'bg-[#08131f] text-[#9ed8ff]'
+                  }`}>
+                    {depositStatusMessage}
+                  </div>
+                )}
+
+                {pendingDeposits.length > 0 && (
+                  <div className="bg-[#12091e] border border-black p-2 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[8px] font-black uppercase text-[#d8a8ff]">Pending blockchain deposits</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          refreshPendingDeposits().catch(() => undefined);
+                        }}
+                        className="text-[7px] uppercase text-[#9ed8ff]"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {pendingDeposits.map((deposit) => {
+                        const localPending = readPendingDeposit();
+                        const canResumeLocal = localPending?.intentId === deposit.id;
+                        return (
+                          <div key={deposit.id} className="border border-black bg-black/60 px-2 py-1.5 text-[7px] text-slate-250 space-y-1">
+                            <div className="flex justify-between gap-2">
+                              <span>{deposit.ticketAmount.toFixed(2)} TKT / {deposit.tonAmount.toFixed(2)} TON</span>
+                              <span className="text-[#ffcc99]">{deposit.confirmationAttempts} checks</span>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <span>Created: {new Date(deposit.createdAt).toLocaleTimeString()}</span>
+                              <span>Expires: {new Date(deposit.expiresAt).toLocaleTimeString()}</span>
+                            </div>
+                            {deposit.lastVerificationError && (
+                              <div className="text-[#ff9a9a]">{deposit.lastVerificationError}</div>
+                            )}
+                            <div className="flex gap-2">
+                              {canResumeLocal && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!localPending) return;
+                                    confirmPendingDeposit(localPending).catch(() => undefined);
+                                  }}
+                                  className="px-2 py-1 bg-[#17324d] border border-black text-[#9ed8ff] uppercase"
+                                >
+                                  Retry now
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Activity & Payouts Log */}
@@ -1984,9 +2079,7 @@ export function Web3Dashboard({
               className="space-y-3 py-3"
             >
               <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 relative">
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-slate-950 border border-black px-2 py-0.5 text-[#00ff66] text-[8px] font-mono">
-                  <Sparkles className="w-2.5 h-2.5" /> SEASON EVENT
-                </div>
+
 
                 <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#ffcc00]">
                   <Trophy className="w-5 h-5" />
@@ -2006,23 +2099,36 @@ export function Web3Dashboard({
                     <span>Required:</span>
                     <span className="text-[#00ff66] font-bold">1+ sticker NFT</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Snapshot 1:</span>
-                    <span>Season start</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Snapshot 2:</span>
-                    <span>Secret time</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Snapshot 3:</span>
-                    <span>Season end</span>
-                  </div>
-                  <div className="pt-1 border-t border-slate-800 break-all leading-relaxed">
-                    <span className="text-slate-500">Collection:</span>
-                    <span className="block text-[#00d2ff] font-bold">
-                      {NFT_COLLECTION_ADDRESS}
-                    </span>
+                  <div className="pt-1.5 border-t border-slate-800 space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sound.playPop();
+                        setShowCollectionAddress(!showCollectionAddress);
+                      }}
+                      className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#00d2ff] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
+                    >
+                      <span>COLLECTION CONTRACT</span>
+                      <span className="text-[6px] text-slate-400">{showCollectionAddress ? '▲ COLLAPSE' : '▼ SHOW'}</span>
+                    </button>
+                    {showCollectionAddress && (
+                      <div className="bg-slate-950 p-2 border border-black break-all leading-relaxed flex gap-2 items-center">
+                        <span className="flex-1 text-[#00d2ff] font-bold text-[7px] text-left leading-normal">
+                          {NFT_COLLECTION_ADDRESS}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(NFT_COLLECTION_ADDRESS);
+                            sound.playPop();
+                            alert('Collection address copied.');
+                          }}
+                          className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2724,11 +2830,8 @@ export function Web3Dashboard({
 
               {pvpSubMode === 'practice' && (
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                  <h3 className="font-black text-[10px] text-[#00ff66] uppercase tracking-wider">
-                    [ READY TO PRACTICE ]
-                  </h3>
                   <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
-                    Practice card matches against AI bots. Practice gives reduced XP and never touches your ticket balance.
+                    Practice card matches against bots. Practice gives reduced XP and never touches your ticket balance.
                   </p>
                   
                   <button
