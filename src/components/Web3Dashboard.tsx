@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
-import { beginCell } from '@ton/core';
 import {
   Wallet,
   Coins,
@@ -1189,16 +1188,15 @@ export function Web3Dashboard({
       setDepositFlowStatus('awaiting_wallet');
       setDepositStatusMessage(`Confirm ${intent.tonAmount.toFixed(2)} TON in your wallet for ${intent.ticketAmount.toFixed(2)} tickets.`);
       const transaction = await tonConnectUI.sendTransaction({
-        // TON Connect recommends an explicit mainnet request and a short
-        // validity window. The comment gives both wallets and support staff a
-        // human-readable, unique payment purpose.
+        // Keep this request browser-only: importing @ton/core into the Mini App
+        // bundle pulls in Node Buffer assumptions and can crash older Telegram
+        // WebViews before React mounts.
         validUntil: Math.floor(Date.now() / 1000) + 300,
         network: '-239',
         from: rawWalletAddress || undefined,
         messages: [{
           address: intent.marketingWallet,
           amount: Math.round(intent.tonAmount * 1_000_000_000).toString(),
-          payload: beginCell().storeUint(0, 32).storeStringTail(`Redoapp deposit ${intent.intentId}`).endCell().toBoc().toString('base64'),
         }]
       });
       const pending: PendingDepositState = {
