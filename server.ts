@@ -986,6 +986,7 @@ function buildBootstrapProfileResponse(user: UserState) {
     referralCode: user.referralCode,
     referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
     dailyStreak: user.dailyStreak || 0,
+    lastDailyXpAt: user.lastDailyXpAt,
     lootboxClaimedAt: user.lootboxClaimedAt || null,
     lootboxAvailable: isLootboxAvailable(user),
     activeMatch: activeMatchInfo,
@@ -2273,7 +2274,13 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
   } else if (today - lastDay > oneDayMs) {
     streak = 1; // reset streak
   } else if (today === lastDay) {
-    return res.json({ success: false, alreadyClaimed: true, xp: user.xp });
+    return res.json({
+      success: false,
+      alreadyClaimed: true,
+      xp: user.xp,
+      streak: user.dailyStreak || 0,
+      lastDailyXpAt: user.lastDailyXpAt,
+    });
   }
 
   user.dailyStreak = streak;
@@ -2310,6 +2317,7 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
     energy: getEnergyState(user),
     claimedQuestIds,
     streak,
+    lastDailyXpAt: user.lastDailyXpAt,
     rewardTickets: reward.tickets,
     rewardEnergy: reward.energy,
   });

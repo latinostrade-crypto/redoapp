@@ -146,6 +146,7 @@ export interface PlayerProfile {
   quests: QuestView[];
   claimedQuestIds?: string[];
   dailyStreak?: number;
+  lastDailyXpAt?: number | null;
   lootboxClaimedAt?: number | null;
   lootboxAvailable?: boolean;
   activeMatch?: {

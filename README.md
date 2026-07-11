@@ -321,6 +321,7 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - `POST /api/tickets/deposit-intent`
 - `POST /api/tickets/deposit-confirm`
 - `GET /api/tickets/pending`
+- `POST /api/tickets/recheck`
 - `POST /api/tickets/withdraw-request`
 - `POST /api/tickets/withdraw-complete`
 - `GET /api/admin/withdrawals/:requestId/complete`

@@ -68,6 +68,11 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     },
     quests: profile.quests ?? [],
     claimedQuestIds: profile.claimedQuestIds ?? [],
+    dailyStreak: profile.dailyStreak ?? 0,
+    lastDailyXpAt: profile.lastDailyXpAt ?? null,
+    lootboxClaimedAt: profile.lootboxClaimedAt ?? null,
+    lootboxAvailable: profile.lootboxAvailable ?? false,
+    activeMatch: profile.activeMatch ?? null,
   };
 }
 
@@ -262,7 +267,9 @@ export function Web3Dashboard({
   });
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
   const [isClaimingDaily, setIsClaimingDaily] = useState(false);
-  const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>(() => (
+    profile && getSessionToken() ? 'ready' : 'idle'
+  ));
   const [bootstrapError, setBootstrapError] = useState('');
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [apiTrace, setApiTrace] = useState<ApiTraceDetail | null>(null);
@@ -322,10 +329,6 @@ export function Web3Dashboard({
     prevConnectedRef.current = walletConnected;
   }, [walletConnected, setTransactions]);
 
-  const [lastDailyCheckIn, setLastDailyCheckIn] = useState<number>(() => {
-    const saved = localStorage.getItem('redoapp_last_daily_xp_checkin');
-    return saved ? parseInt(saved, 10) : 0;
-  });
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
   const [showXpDetails, setShowXpDetails] = useState(false);
   const [showReferralDetails, setShowReferralDetails] = useState(false);
@@ -394,6 +397,8 @@ export function Web3Dashboard({
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'submitting'>('idle');
+  const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
+  const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
   const [energyNow, setEnergyNow] = useState(() => Date.now());
   const effectiveXp = Math.max(activeProfile?.xp ?? 0, playerXp ?? 0);
   const displayXpNeeded = 400;
@@ -824,13 +829,6 @@ export function Web3Dashboard({
   };
 
   useEffect(() => {
-    if (lastDailyCheckIn) {
-      const hoursSinceClaim = (Date.now() - lastDailyCheckIn) / (1000 * 60 * 60);
-      setDailyXpClaimedToday(hoursSinceClaim < 24);
-    }
-  }, [lastDailyCheckIn]);
-
-  useEffect(() => {
     const pending = readPendingDeposit();
     if (!pending || !walletConnected || buyingTickets || !authReady || !getSessionToken()) return;
     if (autoResumedDepositRef.current === pending.intentId) return;
@@ -886,6 +884,54 @@ export function Web3Dashboard({
       });
   };
 
+  const updateAccountBalance = async () => {
+    if (accountRefreshState === 'refreshing') return;
+    setAccountRefreshState('refreshing');
+    setAccountRefreshMessage('Checking blockchain payments, balance and activity...');
+    try {
+      const result = await apiRequest<{
+        confirmedCount: number;
+        availableTickets: number;
+        heldTickets: number;
+        transactions: any[];
+        deposits: PendingDepositView[];
+      }>('/api/tickets/recheck', {
+        method: 'POST',
+        timeoutMs: 90_000,
+      });
+      setGoldenTickets(result.availableTickets);
+      setHeldTickets(result.heldTickets);
+      setTransactions(result.transactions);
+      setPendingDeposits(result.deposits);
+
+      const localPending = readPendingDeposit();
+      if (localPending && !result.deposits.some((deposit) => deposit.id === localPending.intentId)) {
+        clearPendingDeposit();
+      }
+
+      const me = await apiRequest<PlayerProfile>('/api/me');
+      const normalized = normalizeProfile(me);
+      setProfile(normalized);
+      setFullProfile(normalized);
+      setGoldenTickets(me.availableTickets);
+      setHeldTickets(me.heldTickets);
+
+      setAccountRefreshState('success');
+      setAccountRefreshMessage(
+        result.confirmedCount > 0
+          ? `Payment confirmed. +${result.confirmedCount} deposit credited; balance and activity updated.`
+          : 'Balance, activity and daily streak are up to date.'
+      );
+      if (result.confirmedCount > 0) {
+        setDepositFlowStatus('confirmed');
+        setDepositStatusMessage('Blockchain payment confirmed and tickets credited.');
+      }
+    } catch (error) {
+      setAccountRefreshState('error');
+      setAccountRefreshMessage(error instanceof Error ? error.message : 'Could not update account data.');
+    }
+  };
+
   // Synchronize room and match state when the user resumes (focus / foreground)
   useEffect(() => {
     const handleResume = () => {
@@ -937,7 +983,7 @@ export function Web3Dashboard({
     }>('/api/users/sync', {
       method: 'POST',
       retryOnNetworkError: true,
-      timeoutMs: 20_000,
+      timeoutMs: 90_000,
       body: JSON.stringify({
         userId: bootstrapUserId,
         walletAddress: rawAddress || null,
@@ -1070,9 +1116,7 @@ export function Web3Dashboard({
       }),
     }).then((result) => {
       if (!result.success) return;
-      setLastDailyCheckIn(Date.now());
       setDailyXpClaimedToday(true);
-      localStorage.setItem('redoapp_last_daily_xp_checkin', Date.now().toString());
       
       const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
       const newTx = {
@@ -1541,14 +1585,13 @@ export function Web3Dashboard({
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
-        <AnimatePresence initial={false}>
           {currentTab === 'profile' && (
             <motion.div
               key="profile"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3"
+              className="w-full space-y-3"
             >
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
                 
@@ -1864,8 +1907,31 @@ export function Web3Dashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3 py-2 text-left"
+              className="w-full space-y-3 py-2 text-left"
             >
+              <div className="bg-[#18181c] border border-black pixel-box-sm p-2 font-mono space-y-1.5">
+                <button
+                  type="button"
+                  onClick={updateAccountBalance}
+                  disabled={accountRefreshState === 'refreshing' || !authReady}
+                  className="w-full py-1.5 bg-[#00d2ff] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {accountRefreshState === 'refreshing' && <Loader2 className="w-3 h-3 animate-spin" />}
+                  {accountRefreshState === 'refreshing' ? 'Updating Account...' : 'Update Balance & Activity'}
+                </button>
+                {accountRefreshMessage && (
+                  <div className={`text-[7px] leading-relaxed ${
+                    accountRefreshState === 'error'
+                      ? 'text-[#ff9a9a]'
+                      : accountRefreshState === 'success'
+                        ? 'text-[#8dffaf]'
+                        : 'text-[#9ed8ff]'
+                  }`}>
+                    {accountRefreshMessage}
+                  </div>
+                )}
+              </div>
+
               {/* Daily check-in & Streak Reward widget */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
                 <div className="flex items-center gap-3">
@@ -1901,7 +1967,7 @@ export function Web3Dashboard({
                 <div className="bg-slate-950 p-2 border border-black font-mono space-y-1.5">
                   <div className="flex justify-between items-center text-[7.5px] text-slate-400 font-black">
                     <span>DAILY STREAK BOARD</span>
-                    <span className="text-[#00ff66]">CURRENT: {getStreakState().claimedToday ? getStreakState().streak : 0} DAYS</span>
+                    <span className="text-[#00ff66]">CURRENT: {getStreakState().streak} DAYS</span>
                   </div>
                   <div className="grid grid-cols-7 gap-1">
                     {[1, 2, 3, 4, 5, 6, 7].map((day) => {
@@ -2131,7 +2197,7 @@ export function Web3Dashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3 py-3"
+              className="w-full space-y-3 py-3"
             >
               <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 relative">
 
@@ -2233,7 +2299,7 @@ export function Web3Dashboard({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="space-y-3 py-2 text-left"
+              className="w-full space-y-3 py-2 text-left"
             >
               {/* Consolidated PVP Sub Mode selector */}
               <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
@@ -2904,7 +2970,6 @@ export function Web3Dashboard({
               )}
             </motion.div>
           )}
-        </AnimatePresence>
       </div>
 
       {/* WALLET CONNECT OVERLAY MODAL */}

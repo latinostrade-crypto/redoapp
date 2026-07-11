@@ -1,5 +1,5 @@
 import type { Express, NextFunction, Request, Response } from 'express';
-import { Cell, beginCell, loadMessage } from '@ton/core';
+import { Address, Cell, beginCell, loadMessage } from '@ton/core';
 
 export type LedgerType =
   | 'wallet'
@@ -148,6 +148,21 @@ function extractNanoAmount(candidate: unknown): bigint | null {
   return null;
 }
 
+function canonicalTonAddress(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    return Address.parse(value).toRawString().toLowerCase();
+  } catch {
+    return String(value).trim().toLowerCase() || null;
+  }
+}
+
+function tonAddressesEqual(left: string | null | undefined, right: string | null | undefined) {
+  const canonicalLeft = canonicalTonAddress(left);
+  const canonicalRight = canonicalTonAddress(right);
+  return !!canonicalLeft && canonicalLeft === canonicalRight;
+}
+
 function getNormalizedExternalMessageHash(signedBoc: string) {
   const normalizedBoc = String(signedBoc || '').trim();
   if (!normalizedBoc) return null;
@@ -191,13 +206,31 @@ function buildTonkeeperTransferLink(walletAddress: string, tonAmount: number, co
 function transactionMatchesIntent(transaction: Record<string, unknown>, intent: DepositIntent, config: TicketingConfig) {
   const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
   const expectedNano = toNano(intent.tonAmount);
-
-  return outMessages.some((message) => {
+  const transactionAccount = extractAddress(transaction.account);
+  const senderTransactionMatches = tonAddressesEqual(transactionAccount, intent.walletAddress) && outMessages.some((message) => {
     const record = (message || {}) as Record<string, unknown>;
     const destination = extractAddress(record.destination) || extractAddress(record.dest);
     const value = extractNanoAmount(record.value);
-    return destination === config.marketingWallet && value === expectedNano;
+    return tonAddressesEqual(destination, config.marketingWallet) && value === expectedNano;
   });
+
+  if (senderTransactionMatches) return true;
+
+  // Depending on the indexed message direction, TonAPI may return the
+  // recipient transaction instead of the sender-wallet transaction.
+  const inMessage = transaction.in_msg && typeof transaction.in_msg === 'object'
+    ? transaction.in_msg as Record<string, unknown>
+    : null;
+  if (!inMessage) return false;
+  const source = extractAddress(inMessage.source) || extractAddress(inMessage.src);
+  const destination = extractAddress(inMessage.destination) || extractAddress(inMessage.dest);
+  const value = extractNanoAmount(inMessage.value);
+  return (
+    tonAddressesEqual(transactionAccount, config.marketingWallet)
+    && tonAddressesEqual(source, intent.walletAddress)
+    && tonAddressesEqual(destination, config.marketingWallet)
+    && value === expectedNano
+  );
 }
 
 async function pollTonApiTransactionByMessageHash(messageHash: string, intent: DepositIntent, config: TicketingConfig) {
@@ -278,10 +311,15 @@ async function verifyTonDeposit(intent: DepositIntent, signedBoc: string, config
 
 export function createTicketingService(deps: TicketingDeps, config: TicketingConfig) {
   let backgroundTimer: NodeJS.Timeout | null = null;
+  const signedDepositRecoveryTtlMs = 7 * 24 * 60 * 60 * 1000;
   const getRequestUserId = (req: Request) => (req as Request & { authUserId?: string }).authUserId;
 
   function isIntentExpired(intent: DepositIntent) {
     return Date.now() - intent.createdAt > config.depositIntentTtlMs;
+  }
+
+  function canRecoverSignedIntent(intent: DepositIntent) {
+    return !!intent.signedBoc && Date.now() - intent.createdAt <= signedDepositRecoveryTtlMs;
   }
 
   function hasDuplicateMessageHash(intent: DepositIntent, normalizedMessageHash?: string) {
@@ -354,7 +392,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   }
 
   function buildPendingDepositView(intent: DepositIntent): PendingDepositView {
-    const expiresAt = intent.createdAt + config.depositIntentTtlMs;
+    const expiresAt = intent.createdAt + (intent.signedBoc ? signedDepositRecoveryTtlMs : config.depositIntentTtlMs);
     return {
       id: intent.id,
       ticketAmount: intent.ticketAmount,
@@ -367,30 +405,36 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       lastVerificationAt: intent.lastVerificationAt || null,
       confirmationAttempts: intent.confirmationAttempts || 0,
       expiresAt,
-      canRetry: intent.status === 'pending' && !!intent.signedBoc && Date.now() < expiresAt,
+      canRetry: intent.status === 'pending' && canRecoverSignedIntent(intent),
     };
   }
 
-  async function recheckPendingDeposits() {
+  async function recheckPendingDepositsForUser(userId?: string, minimumIntervalMs = 60_000) {
     const now = Date.now();
     const pending = Array.from(deps.depositIntents.values()).filter((intent) => (
       intent.status === 'pending'
       && !!intent.signedBoc
-      && !isIntentExpired(intent)
-      // TonAPI may need time to index a broadcast transaction. Retrying every
-      // 15 seconds multiplied provider calls and caused avoidable 429s.
-      && (!intent.lastVerificationAt || now - intent.lastVerificationAt >= 60_000)
+      && canRecoverSignedIntent(intent)
+      && (!userId || intent.userId === userId)
+      && (!intent.lastVerificationAt || now - intent.lastVerificationAt >= minimumIntervalMs)
     ));
 
+    let confirmedCount = 0;
     for (const intent of pending) {
       try {
-        await attemptDepositConfirmation(intent, intent.signedBoc!);
+        const result = await attemptDepositConfirmation(intent, intent.signedBoc!);
+        if (result.ok) confirmedCount += 1;
       } catch (error) {
         intent.lastVerificationError = error instanceof Error ? error.message : 'Background verification failed.';
         intent.lastVerificationAt = Date.now();
         deps.schedulePersist({ depositId: intent.id });
       }
     }
+    return confirmedCount;
+  }
+
+  async function recheckPendingDeposits() {
+    return recheckPendingDepositsForUser(undefined, 60_000);
   }
 
   function startBackgroundDepositRecheck() {
@@ -444,6 +488,26 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         .sort((a, b) => b.createdAt - a.createdAt)
         .map(buildPendingDepositView);
       return res.json({ deposits: pending });
+    });
+
+    app.post('/api/tickets/recheck', async (req: Request, res: Response) => {
+      const userId = getRequestUserId(req);
+      if (!userId) {
+        return res.status(403).json({ error: 'Forbidden.' });
+      }
+      const confirmedCount = await recheckPendingDepositsForUser(userId, 5_000);
+      const user = deps.getUser(userId);
+      const deposits = Array.from(deps.depositIntents.values())
+        .filter((intent) => intent.userId === userId && intent.status === 'pending')
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .map(buildPendingDepositView);
+      return res.json({
+        confirmedCount,
+        availableTickets: user.availableTickets,
+        heldTickets: user.heldTickets,
+        transactions: user.transactions,
+        deposits,
+      });
     });
 
     app.post('/api/tickets/deposit-intent', (req: Request, res: Response) => {
@@ -505,7 +569,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (intent.userId !== getRequestUserId(req)) {
         return res.status(403).json({ error: 'This deposit intent belongs to another account.' });
       }
-      if (isIntentExpired(intent)) {
+      if (isIntentExpired(intent) && !signedBoc && !canRecoverSignedIntent(intent)) {
         return res.status(400).json({ error: 'Deposit intent expired. Please start a new purchase.' });
       }
       if (config.enableChainVerification && !signedBoc && !intent.signedBoc) {
