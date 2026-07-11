@@ -605,7 +605,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     });
 
     app.post('/api/tickets/withdraw-request', (req: Request, res: Response) => {
-      const { walletAddress, ticketAmount } = req.body;
+      const { walletAddress, ticketAmount, requestId: clientRequestId } = req.body;
       const userId = getRequestUserId(req);
       if (!userId || !walletAddress || !ticketAmount) {
         return res.status(400).json({ error: 'Withdrawal requires userId, walletAddress and ticketAmount.' });
@@ -620,6 +620,28 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       }
       if (amount < config.minWithdrawTickets) {
         return res.status(400).json({ error: `Minimum withdrawal is ${config.minWithdrawTickets} tickets.` });
+      }
+      const normalizedRequestId = typeof clientRequestId === 'string' && /^wd-client-[a-zA-Z0-9_-]{8,80}$/.test(clientRequestId)
+        ? clientRequestId
+        : '';
+      if (normalizedRequestId) {
+        const existingRequest = deps.withdrawalRequests.get(normalizedRequestId);
+        if (existingRequest) {
+          if (
+            existingRequest.userId !== userId ||
+            existingRequest.walletAddress !== normalizedWalletAddress ||
+            existingRequest.ticketAmount !== amount
+          ) {
+            return res.status(409).json({ error: 'Withdrawal request key conflicts with another request.' });
+          }
+          return res.json({
+            success: true,
+            requestId: existingRequest.id,
+            status: existingRequest.status,
+            tonAmount: existingRequest.tonAmount,
+            replayed: true,
+          });
+        }
       }
       const user = deps.getUser(userId);
       if (user.walletAddress && user.walletAddress !== normalizedWalletAddress) {
@@ -640,7 +662,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       const tonAmount = deps.round2(amount * config.ticketPriceTon);
       user.availableTickets = deps.round2(user.availableTickets - amount);
       const request: WithdrawalRequest = {
-        id: `wd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: normalizedRequestId || `wd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         userId,
         walletAddress: normalizedWalletAddress,
         ticketAmount: amount,

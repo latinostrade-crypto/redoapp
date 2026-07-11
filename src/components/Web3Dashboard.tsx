@@ -396,7 +396,9 @@ export function Web3Dashboard({
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('5');
-  const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'submitting'>('idle');
+  const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
+  const [withdrawRequestId, setWithdrawRequestId] = useState('');
+  const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
   const [showAccountRefresh, setShowAccountRefresh] = useState(() => Boolean(localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY)));
@@ -1306,6 +1308,66 @@ export function Web3Dashboard({
     }
   };
 
+  const prepareWithdrawal = () => {
+    const amount = Number(withdrawAmount);
+    setWithdrawStatusMessage('');
+    if (!walletConnected || !rawAddress) {
+      setWithdrawStatusMessage('Connect wallet first.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 5) {
+      setWithdrawStatusMessage('Minimum withdrawal is 5 tickets.');
+      return;
+    }
+    if (amount > goldenTickets) {
+      setWithdrawStatusMessage('Insufficient available tickets.');
+      return;
+    }
+    const suffix = typeof crypto?.randomUUID === 'function'
+      ? crypto.randomUUID().replace(/-/g, '')
+      : `${Date.now()}${Math.random().toString(36).slice(2)}`;
+    setWithdrawRequestId(`wd-client-${suffix}`);
+    setWithdrawRequestState('confirming');
+  };
+
+  const confirmWithdrawal = async () => {
+    const amount = Number(withdrawAmount);
+    if (withdrawRequestState !== 'confirming' || !withdrawRequestId || !rawAddress) return;
+    setShowAccountRefresh(true);
+    setWithdrawRequestState('submitting');
+    setWithdrawStatusMessage('Processing withdrawal request...');
+    try {
+      await apiRequest('/api/tickets/withdraw-request', {
+        method: 'POST',
+        body: JSON.stringify({
+          requestId: withdrawRequestId,
+          walletAddress: rawAddress,
+          ticketAmount: amount,
+        }),
+        retryOnNetworkError: true,
+        timeoutMs: 60_000,
+      });
+      setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
+      setWithdrawStatusMessage('Withdrawal request confirmed. The operator will review and process it.');
+      setWithdrawRequestState('idle');
+      setWithdrawRequestId('');
+      Promise.all([
+        apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance', { timeoutMs: 60_000 }),
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { timeoutMs: 60_000 }),
+      ]).then(([balance, ledger]) => {
+        setGoldenTickets(balance.availableTickets);
+        setHeldTickets(balance.heldTickets);
+        setTransactions(ledger.transactions);
+      }).catch(() => {
+        // The request is already server-authoritative; the manual refresh button
+        // remains available if Telegram interrupts the follow-up synchronization.
+      });
+    } catch (error) {
+      setWithdrawRequestState('confirming');
+      setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not create withdrawal request.');
+    }
+  };
+
   useEffect(() => {
     if (matchmakingState !== 'searching') return;
     queueStreamRef.current?.close();
@@ -1977,54 +2039,70 @@ export function Web3Dashboard({
                   <div className="flex gap-2">
                     <input
                       type="number"
-                      min="0.01"
+                      min="5"
                       step="0.1"
                       value={withdrawAmount}
-                      onChange={(e) => setWithdrawAmount(e.target.value)}
+                      onChange={(e) => {
+                        setWithdrawAmount(e.target.value);
+                        if (withdrawRequestState === 'confirming') {
+                          setWithdrawRequestState('idle');
+                          setWithdrawRequestId('');
+                        }
+                        setWithdrawStatusMessage('');
+                      }}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
                       placeholder="Amount"
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        const amount = Number(withdrawAmount);
-                        if (!walletConnected || !rawAddress) {
-                          alert('Connect wallet first.');
-                          return;
-                        }
-                        if (!Number.isFinite(amount) || amount <= 0) {
-                          alert('Enter a withdrawal amount greater than 0.');
-                          return;
-                        }
-                        setShowAccountRefresh(true);
-                        setWithdrawRequestState('submitting');
-                        apiRequest('/api/tickets/withdraw-request', {
-                          method: 'POST',
-                          body: JSON.stringify({
-                            walletAddress: rawAddress,
-                            ticketAmount: amount,
-                          }),
-                        }).then(() => {
-                          return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
-                        }).then((balance) => {
-                          setGoldenTickets(balance.availableTickets);
-                          setHeldTickets(balance.heldTickets);
-                          return apiRequest<{ transactions: any[] }>('/api/tickets/ledger');
-                        }).then((ledger) => {
-                          setTransactions(ledger.transactions);
-                          alert('Withdrawal request created. Operator will review it and send the payout manually.');
-                        }).catch((error) => {
-                          alert(error.message);
-                        }).finally(() => {
-                          setWithdrawRequestState('idle');
-                        });
-                      }}
+                      onClick={prepareWithdrawal}
                       disabled={withdrawRequestState === 'submitting'}
                       className="px-3 py-1 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      {withdrawRequestState === 'submitting' ? 'Sending...' : 'Withdraw'}
+                      Withdraw
                     </button>
                   </div>
+                  {withdrawRequestState === 'confirming' && (
+                    <div className="space-y-1.5 border border-[#ffcc00] bg-[#231b05] p-2 text-[7px] text-[#ffe680]">
+                      <div>
+                        Confirm withdrawal of <strong>{Number(withdrawAmount).toFixed(2)} TKT</strong> to the connected wallet?
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setWithdrawRequestState('idle');
+                            setWithdrawRequestId('');
+                            setWithdrawStatusMessage('');
+                          }}
+                          className="border border-black bg-slate-800 py-1 text-[7px] font-black uppercase text-slate-200 pixel-btn-interactive"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={confirmWithdrawal}
+                          className="border border-black bg-[#ffcc00] py-1 text-[7px] font-black uppercase text-black pixel-btn-interactive"
+                        >
+                          Confirm withdrawal
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {withdrawRequestState === 'submitting' && (
+                    <div className="border border-[#00d2ff] bg-[#061923] p-2 text-[7px] text-[#9eeaff]">
+                      Processing withdrawal request…
+                    </div>
+                  )}
+                  {withdrawStatusMessage && withdrawRequestState !== 'submitting' && (
+                    <div className={`border border-black p-2 text-[7px] ${
+                      withdrawStatusMessage.startsWith('Withdrawal request confirmed')
+                        ? 'bg-[#072313] text-[#8dffaf]'
+                        : 'bg-[#2a0d0d] text-[#ff9a9a]'
+                    }`}>
+                      {withdrawStatusMessage}
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-2 border-t border-black space-y-1.5">
