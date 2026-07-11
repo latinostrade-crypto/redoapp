@@ -1266,7 +1266,7 @@ export function Web3Dashboard({
     setDepositFlowStatus('creating');
     setDepositStatusMessage('Preparing deposit request...');
     try {
-      const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number; ticketAmount: number }>('/api/tickets/deposit-intent', {
+      const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number; ticketAmount: number; paymentPayload: string }>('/api/tickets/deposit-intent', {
         method: 'POST',
         body: JSON.stringify({
           userId: currentUserId,
@@ -1286,6 +1286,7 @@ export function Web3Dashboard({
         messages: [{
           address: intent.marketingWallet,
           amount: Math.round(intent.tonAmount * 1_000_000_000).toString(),
+          payload: intent.paymentPayload,
         }]
       });
       const pending: PendingDepositState = {

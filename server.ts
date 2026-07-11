@@ -347,6 +347,7 @@ const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
 const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
 const referralStatsByInviter = new Map<string, ReferralStats>();
+const localDepositPaymentClaims = new Map<string, string>();
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
@@ -579,6 +580,37 @@ function schedulePersist(opts?: {
       console.error('Failed to persist runtime state', error);
     });
   }, 100);
+}
+
+async function claimDepositPayment(claimKey: string, intentId: string) {
+  const normalizedKey = claimKey.trim().toLowerCase();
+  if (!normalizedKey || !intentId) throw new Error('Deposit payment claim requires a key and intent id.');
+
+  if (supabaseAdmin) {
+    const rowId = `payment-claim:${crypto.createHash('sha256').update(normalizedKey).digest('hex')}`;
+    const { error } = await supabaseAdmin.from(SUPABASE_STATE_TABLE).insert({
+      id: rowId,
+      payload: { claimKey: normalizedKey, intentId, createdAt: Date.now() },
+      updated_at: new Date().toISOString(),
+    });
+    if (!error) return { claimed: true, ownerIntentId: intentId };
+    if (error.code !== '23505') {
+      throw new Error(`Could not atomically reserve TON payment: ${error.message}`);
+    }
+    const { data, error: lookupError } = await supabaseAdmin
+      .from(SUPABASE_STATE_TABLE)
+      .select('payload')
+      .eq('id', rowId)
+      .single();
+    if (lookupError) throw new Error(`Could not read existing TON payment claim: ${lookupError.message}`);
+    const payload = data?.payload as { intentId?: string } | undefined;
+    return { claimed: false, ownerIntentId: payload?.intentId || 'unknown' };
+  }
+
+  const existing = localDepositPaymentClaims.get(normalizedKey);
+  if (existing) return { claimed: false, ownerIntentId: existing };
+  localDepositPaymentClaims.set(normalizedKey, intentId);
+  return { claimed: true, ownerIntentId: intentId };
 }
 
 async function loadSupabaseRowsByPrefix(prefix: string): Promise<SupabaseStateRow[]> {
@@ -1639,6 +1671,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
 }
 
 const ticketingService = createTicketingService({
+  claimDepositPayment,
   createLedgerEntry,
   depositIntents,
   getWithdrawalReviewFlags,
