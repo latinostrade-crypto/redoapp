@@ -16,7 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj';
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
-const MIN_WITHDRAW_TICKETS = 5;
+const MIN_WITHDRAW_TICKETS = 0.5;
 const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION !== 'false';
 const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'tonapi';
 const TON_API_BASE_URL = process.env.TON_API_BASE_URL || 'https://tonapi.io/v2';

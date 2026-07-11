@@ -44,6 +44,8 @@ export interface DepositIntent {
   paymentPayload?: string;
   creditReversedAt?: number;
   duplicateOfIntentId?: string;
+  paymentMessageHash?: string;
+  lastCreditAuditAt?: number;
 }
 
 export interface WithdrawalRequest {
@@ -78,6 +80,7 @@ interface TonVerificationResult {
   reason?: string;
   normalizedMessageHash?: string;
   txHash?: string;
+  paymentMessageHash?: string;
 }
 
 interface TicketingDeps {
@@ -247,12 +250,12 @@ function transactionSucceeded(transaction: Record<string, unknown>) {
     && action?.success !== false;
 }
 
-function transactionMatchesIntent(transaction: Record<string, unknown>, intent: DepositIntent, config: TicketingConfig) {
-  if (!transactionSucceeded(transaction)) return false;
+function findMatchingPaymentMessage(transaction: Record<string, unknown>, intent: DepositIntent, config: TicketingConfig) {
+  if (!transactionSucceeded(transaction)) return null;
   const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
   const expectedNano = toNano(intent.tonAmount);
   const transactionAccount = extractAddress(transaction.account);
-  const senderTransactionMatches = tonAddressesEqual(transactionAccount, intent.walletAddress) && outMessages.some((message) => {
+  const senderPaymentMessage = tonAddressesEqual(transactionAccount, intent.walletAddress) && outMessages.find((message) => {
     const record = (message || {}) as Record<string, unknown>;
     const destination = extractAddress(record.destination) || extractAddress(record.dest);
     const value = extractNanoAmount(record.value);
@@ -261,14 +264,14 @@ function transactionMatchesIntent(transaction: Record<string, unknown>, intent: 
       && messageMatchesPaymentReference(record, intent);
   });
 
-  if (senderTransactionMatches) return true;
+  if (senderPaymentMessage) return senderPaymentMessage as Record<string, unknown>;
 
   // Depending on the indexed message direction, TonAPI may return the
   // recipient transaction instead of the sender-wallet transaction.
   const inMessage = transaction.in_msg && typeof transaction.in_msg === 'object'
     ? transaction.in_msg as Record<string, unknown>
     : null;
-  if (!inMessage) return false;
+  if (!inMessage) return null;
   const source = extractAddress(inMessage.source) || extractAddress(inMessage.src);
   const destination = extractAddress(inMessage.destination) || extractAddress(inMessage.dest);
   const value = extractNanoAmount(inMessage.value);
@@ -278,7 +281,7 @@ function transactionMatchesIntent(transaction: Record<string, unknown>, intent: 
     && tonAddressesEqual(destination, config.marketingWallet)
     && value === expectedNano
     && messageMatchesPaymentReference(inMessage, intent)
-  );
+  ) ? inMessage : null;
 }
 
 async function pollTonApiTransactionByMessageHash(messageHash: string, intent: DepositIntent, config: TicketingConfig) {
@@ -300,13 +303,18 @@ async function pollTonApiTransactionByMessageHash(messageHash: string, intent: D
 
     if (response.ok) {
       const payload = await response.json() as Record<string, unknown>;
-      if (!transactionMatchesIntent(payload, intent, config)) {
+      const paymentMessage = findMatchingPaymentMessage(payload, intent, config);
+      if (!paymentMessage) {
         throw new Error('TON transaction does not match the expected wallet or ticket amount.');
       }
       if (typeof payload.hash !== 'string' || !payload.hash.trim()) {
         throw new Error('TonAPI returned a transaction without a canonical hash.');
       }
-      return payload as { hash: string };
+      const paymentMessageHash = typeof paymentMessage.hash === 'string' ? paymentMessage.hash.trim() : '';
+      if (!paymentMessageHash) {
+        throw new Error('TonAPI returned a payment message without a canonical hash.');
+      }
+      return { hash: payload.hash, paymentMessageHash } as { hash: string; paymentMessageHash: string };
     }
 
     if (response.status === 429) {
@@ -350,6 +358,7 @@ async function verifyTonDeposit(intent: DepositIntent, signedBoc: string, config
       provider: config.tonVerificationMode,
       normalizedMessageHash,
       txHash: transaction.hash,
+      paymentMessageHash: transaction.paymentMessageHash,
     };
   } catch (error) {
     return {
@@ -363,6 +372,7 @@ async function verifyTonDeposit(intent: DepositIntent, signedBoc: string, config
 export function createTicketingService(deps: TicketingDeps, config: TicketingConfig) {
   let backgroundTimer: NodeJS.Timeout | null = null;
   let confirmationClaimQueue: Promise<void> = Promise.resolve();
+  let depositReconciliationPromise: Promise<void> | null = null;
   const signedDepositRecoveryTtlMs = 7 * 24 * 60 * 60 * 1000;
   const getRequestUserId = (req: Request) => (req as Request & { authUserId?: string }).authUserId;
 
@@ -390,6 +400,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       && !entry.creditReversedAt
       && (
         (!!verification.txHash && entry.txHash === verification.txHash)
+        || (!!verification.paymentMessageHash && entry.paymentMessageHash === verification.paymentMessageHash)
         || (!!verification.normalizedMessageHash && entry.normalizedMessageHash === verification.normalizedMessageHash)
       )
     ));
@@ -422,13 +433,30 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     deps.schedulePersist({ depositId: intent.id, userId: intent.userId });
   }
 
-  async function reconcileDuplicateDepositCredits() {
+  async function performDuplicateDepositReconciliation() {
+    const unaudited = Array.from(deps.depositIntents.values()).filter((intent) => (
+      intent.status === 'confirmed'
+      && !intent.creditReversedAt
+      && !intent.paymentMessageHash
+      && !!intent.signedBoc
+    ));
+    for (const intent of unaudited) {
+      const verification = await verifyTonDeposit(intent, intent.signedBoc!, config);
+      intent.lastCreditAuditAt = Date.now();
+      if (verification.ok && verification.paymentMessageHash) {
+        intent.paymentMessageHash = verification.paymentMessageHash;
+        intent.txHash = verification.txHash || intent.txHash;
+        intent.normalizedMessageHash = verification.normalizedMessageHash || intent.normalizedMessageHash;
+      }
+      deps.schedulePersist({ depositId: intent.id });
+    }
+
     const confirmed = Array.from(deps.depositIntents.values())
       .filter((intent) => intent.status === 'confirmed' && !intent.creditReversedAt)
       .sort((left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id));
     const owners = new Map<string, DepositIntent>();
     for (const intent of confirmed) {
-      const keys = [intent.txHash && `tx:${intent.txHash}`, intent.normalizedMessageHash && `msg:${intent.normalizedMessageHash}`]
+      const keys = [intent.paymentMessageHash && `payment-msg:${intent.paymentMessageHash}`, intent.txHash && `tx:${intent.txHash}`, intent.normalizedMessageHash && `msg:${intent.normalizedMessageHash}`]
         .filter(Boolean) as string[];
       const canonical = keys.map((key) => owners.get(key)).find((entry): entry is DepositIntent => !!entry);
       if (canonical) {
@@ -436,11 +464,47 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         continue;
       }
       keys.forEach((key) => owners.set(key, intent));
-      if (intent.txHash && deps.claimDepositPayment) {
-        const claim = await deps.claimDepositPayment(`tx:${intent.txHash}`, intent.id);
+      const durableClaimKey = intent.paymentMessageHash ? `payment-msg:${intent.paymentMessageHash}` : intent.txHash ? `tx:${intent.txHash}` : '';
+      if (durableClaimKey && deps.claimDepositPayment) {
+        const claim = await deps.claimDepositPayment(durableClaimKey, intent.id);
         if (!claim.claimed && claim.ownerIntentId !== intent.id) reverseDuplicateCredit(intent, claim.ownerIntentId);
       }
     }
+
+    const intentsByUser = new Map<string, DepositIntent[]>();
+    for (const intent of deps.depositIntents.values()) {
+      const entries = intentsByUser.get(intent.userId) || [];
+      entries.push(intent);
+      intentsByUser.set(intent.userId, entries);
+    }
+    for (const [userId, intents] of intentsByUser) {
+      const user = deps.getUser(userId, intents[0]?.walletAddress);
+      const expectedDepositCredit = deps.round2(intents
+        .filter((intent) => intent.status === 'confirmed' && !intent.creditReversedAt)
+        .reduce((sum, intent) => sum + intent.ticketAmount, 0));
+      const ledgerDepositCredit = deps.round2(user.transactions
+        .filter((entry) => entry.type === 'purchase' || entry.type === 'deposit_reversal')
+        .reduce((sum, entry) => sum + entry.amount, 0));
+      const excessCredit = deps.round2(ledgerDepositCredit - expectedDepositCredit);
+      if (excessCredit > 0) {
+        user.availableTickets = deps.round2(user.availableTickets - excessCredit);
+        deps.createLedgerEntry(user, {
+          event: 'Deposit Ledger Reconciled',
+          value: `-${excessCredit.toFixed(2)} TKT`,
+          type: 'deposit_reversal',
+          amount: -excessCredit,
+        });
+        deps.schedulePersist({ userId });
+      }
+    }
+  }
+
+  function reconcileDuplicateDepositCredits() {
+    if (depositReconciliationPromise) return depositReconciliationPromise;
+    depositReconciliationPromise = performDuplicateDepositReconciliation().finally(() => {
+      depositReconciliationPromise = null;
+    });
+    return depositReconciliationPromise;
   }
 
   function finalizeConfirmedIntent(intent: DepositIntent, verification: TonVerificationResult | null) {
@@ -451,6 +515,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     intent.status = 'confirmed';
     intent.normalizedMessageHash = verification?.normalizedMessageHash || intent.normalizedMessageHash;
     intent.txHash = verification?.txHash || intent.txHash;
+    intent.paymentMessageHash = verification?.paymentMessageHash || intent.paymentMessageHash;
     intent.lastVerificationError = null;
     intent.lastVerificationAt = Date.now();
     deps.schedulePersist({ depositId: intent.id, userId: intent.userId });
@@ -492,8 +557,8 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
           verification: { ok: false, provider: verification.provider, reason: intent.lastVerificationError },
         };
       }
-      if (!verification.txHash) {
-        intent.lastVerificationError = 'Verified TON transaction is missing its transaction hash.';
+      if (!verification.txHash || !verification.paymentMessageHash) {
+        intent.lastVerificationError = 'Verified TON payment is missing a canonical transaction or message hash.';
         deps.schedulePersist({ depositId: intent.id });
         return {
           ok: false as const,
@@ -501,7 +566,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         };
       }
       if (deps.claimDepositPayment) {
-        const claim = await deps.claimDepositPayment(`tx:${verification.txHash}`, intent.id);
+        const claim = await deps.claimDepositPayment(`payment-msg:${verification.paymentMessageHash}`, intent.id);
         if (!claim.claimed && claim.ownerIntentId !== intent.id) {
           intent.lastVerificationError = 'This on-chain transaction was already credited.';
           deps.schedulePersist({ depositId: intent.id });

@@ -395,7 +395,7 @@ export function Web3Dashboard({
   }, [activeProfile]);
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
-  const [withdrawAmount, setWithdrawAmount] = useState('5');
+  const [withdrawAmount, setWithdrawAmount] = useState('0.5');
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
   const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
@@ -1316,8 +1316,8 @@ export function Web3Dashboard({
       setWithdrawStatusMessage('Connect wallet first.');
       return;
     }
-    if (!Number.isFinite(amount) || amount < 5) {
-      setWithdrawStatusMessage('Minimum withdrawal is 5 tickets.');
+    if (!Number.isFinite(amount) || amount < 0.5) {
+      setWithdrawStatusMessage('Minimum withdrawal is 0.5 tickets.');
       return;
     }
     if (amount > goldenTickets) {
@@ -2040,7 +2040,7 @@ export function Web3Dashboard({
                   <div className="flex gap-2">
                     <input
                       type="number"
-                      min="5"
+                      min="0.5"
                       step="0.1"
                       value={withdrawAmount}
                       onChange={(e) => {
