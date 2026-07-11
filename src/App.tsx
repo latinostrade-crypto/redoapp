@@ -1107,8 +1107,7 @@ export default function App() {
                   onClick={() => {
                     localStorage.setItem(firstFreeGameWalletPromptKey, '1');
                     sound.playPop();
-                    startGame(selectedAvatar, userName);
-                    window.location.reload();
+                    returnToLobby();
                   }}
                   className="mt-3 w-full py-2 bg-[#00d2ff] text-black font-black text-[10px] uppercase border-2 border-black shadow-[2px_2px_0_#000]"
                 >

@@ -251,15 +251,16 @@ if (typeof window !== 'undefined') {
     const { id, path, stage } = detail;
 
     const pathsWeCareAbout = [
-      '/api/users/sync',
       '/api/matchmaker/join',
       '/api/matchmaker/leave',
       '/api/private-rooms/create',
       '/api/private-rooms/join',
     ];
 
+    const isInitialUserSync = path === '/api/users/sync' && ((window as any).redoappIsAppStarting ?? true);
     const isMatchStateSync = path.startsWith('/api/matches/state/');
-    const shouldTrack = pathsWeCareAbout.includes(path) || isMatchStateSync;
+    const isAlreadyTracked = ((window as any).redoappActiveLoads || []).includes(id);
+    const shouldTrack = pathsWeCareAbout.includes(path) || isInitialUserSync || isMatchStateSync || isAlreadyTracked;
 
     if (!shouldTrack) return;
 

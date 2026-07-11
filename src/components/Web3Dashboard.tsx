@@ -37,7 +37,9 @@ const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_f
 const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
 const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
 const NFT_EVENT_VERIFICATION_STORAGE_KEY = 'redoapp_nft_event_verifications';
+const DASHBOARD_TAB_STORAGE_KEY = 'redoapp_dashboard_tab';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
+type DashboardTab = 'profile' | 'events' | 'pvp' | 'rewards';
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
   if (!profile?.userId) return null;
   return {
@@ -227,9 +229,16 @@ export function Web3Dashboard({
     const roomFromSearch = new URLSearchParams(window.location.search).get('room');
     initialLaunchRoomCodeRef.current = (roomFromSearch || (startApp?.startsWith('room_') ? startApp.replace('room_', '') : '')).toUpperCase();
   }
-  const [currentTab, setCurrentTab] = useState<'profile' | 'events' | 'pvp' | 'rewards'>('profile');
+  const [currentTab, setCurrentTab] = useState<DashboardTab>(() => {
+    const savedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
+    return savedTab === 'events' || savedTab === 'pvp' || savedTab === 'rewards' ? savedTab : 'profile';
+  });
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
+
+  useEffect(() => {
+    sessionStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, currentTab);
+  }, [currentTab]);
 
   const [tonConnectUI] = useTonConnectUI();
   const rawAddress = useTonAddress();
@@ -360,7 +369,12 @@ export function Web3Dashboard({
   const autoResumedDepositRef = useRef('');
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
-  const bootstrapUserId = rawAddress || (telegramInitData ? (storedUserId || fallbackGuestUserId) : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId));
+  // Wallet connection is account metadata, never application identity.
+  // Keeping the user id stable prevents a connect/disconnect from resetting
+  // the Telegram profile and the currently selected dashboard tab.
+  const bootstrapUserId = telegramInitData
+    ? (storedUserId || fallbackGuestUserId)
+    : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId);
   const activeProfile = fullProfile ?? profile;
   const currentUserId = activeProfile?.userId || bootstrapUserId;
 
@@ -909,7 +923,10 @@ export function Web3Dashboard({
       return;
     }
     syncRequestKeyRef.current = requestKey;
-    setBootstrapState('loading');
+    // Initial launch blocks authenticated actions. Later wallet metadata syncs
+    // run in the background and must not put an already usable page back into
+    // a global "syncing" state.
+    setBootstrapState((current) => current === 'ready' ? current : 'loading');
     setBootstrapError('');
 
     let cancelled = false;
@@ -965,7 +982,7 @@ export function Web3Dashboard({
       }
     }).catch((error) => {
       if (cancelled) return;
-      setBootstrapState('error');
+      setBootstrapState((current) => current === 'ready' ? current : 'error');
       setBootstrapError(error instanceof Error ? error.message : 'Failed to initialize the Telegram session.');
     });
 
