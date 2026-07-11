@@ -29,14 +29,14 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
     if (color === 'wild') {
       const hash = getDeterministicHash(id || 'wild');
       const index = (hash % 4) + 1;
-      return `/cards/wild ${index}.jpeg`;
+      return `/card-thumbs/wild ${index}.jpeg`;
     } else {
       let colorName = '';
       if (color === 'red') colorName = 'red';
       else if (color === 'blue') colorName = 'blue';
       else if (color === 'yellow') colorName = 'gold';
       else if (color === 'green') colorName = 'purp';
-      return `/cards/wild ${colorName}.jpeg`;
+      return `/card-thumbs/wild ${colorName}.jpeg`;
     }
   }
 
@@ -52,7 +52,7 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
       else if (color === 'yellow') colorName = 'gold';
       else if (color === 'green') colorName = 'purp';
     }
-    return `/cards/plus4_${colorName}_v2.jpeg`;
+    return `/card-thumbs/plus4_${colorName}_v2.jpeg`;
   }
 
   // Regular color cards
@@ -73,23 +73,23 @@ function getCardImageUrl(color: CardColor, value: CardValue, id: string): string
   }
 
   if (value === 'draw2') {
-    return `/cards/plus2_${colorName}_v2.jpeg`;
+    return `/card-thumbs/plus2_${colorName}_v2.jpeg`;
   }
 
   if (value === 'skip') {
     const skipWord = color === 'green' ? 'rug' : 'Rug';
-    return `/cards/${skipWord} ${colorName}.jpeg`;
+    return `/card-thumbs/${skipWord} ${colorName}.jpeg`;
   }
 
   if (value === 'reverse') {
-    return `/cards/Flip ${colorName}.jpeg`;
+    return `/card-thumbs/Flip ${colorName}.jpeg`;
   }
 
   if (value >= '0' && value <= '9') {
     if (value === '3' && color === 'yellow') {
-      return `/cards/3gold.jpeg`;
+      return `/card-thumbs/3gold.jpeg`;
     }
-    return `/cards/${value} ${colorName}.jpeg`;
+    return `/card-thumbs/${value} ${colorName}.jpeg`;
   }
 
   return '';
@@ -259,7 +259,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
         className={`relative ${sizeClasses.card} select-none bg-[#ff4b4b] text-white flex items-center justify-center overflow-hidden rounded-[8px] transition-transform active:scale-95 shadow-[4px_4px_0_#000000]`}
       >
         <img
-          src="/face-20260701.png"
+          src="/card-thumbs/back.jpeg"
           alt="Card Back"
           className="w-full h-full object-cover select-none pointer-events-none"
           style={{ imageRendering: 'pixelated' }}
@@ -291,7 +291,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
               setImgError(true);
             }}
             className="w-full h-full object-cover select-none pointer-events-none"
-            style={{ imageRendering: 'pixelated', transform: 'scale(1.06)' }}
+            style={{ imageRendering: 'pixelated' }}
           />
           {/* Subtle neon filter overlay if playable */}
           {isPlayable && (

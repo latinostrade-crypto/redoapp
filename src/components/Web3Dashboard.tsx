@@ -1479,10 +1479,29 @@ export function Web3Dashboard({
       </div>
 
       {/* 2. Network Connectivity bar */}
-      <div className="flex justify-between items-center bg-[#18181c] p-2.5 pixel-box-sm border-black">
-        <div></div>
+      <div className="flex items-stretch gap-1.5 bg-[#18181c] p-2 pixel-box-sm border-black">
+        <div className="grid min-w-0 flex-1 grid-cols-4 gap-0.5 font-mono text-left">
+          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
+            <span className="block truncate text-[5px] font-bold text-slate-500">XP</span>
+            <span className="block truncate text-[8px] font-black text-[#00d2ff]">{effectiveXp}</span>
+          </div>
+          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
+            <span className="block truncate text-[5px] font-bold text-slate-500">TKT</span>
+            <span className="block truncate text-[8px] font-black text-[#ffcc00]">{goldenTickets}</span>
+          </div>
+          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
+            <span className="block truncate text-[5px] font-bold text-slate-500">LVL</span>
+            <span className="block truncate text-[8px] font-black text-[#ec4899]">{displayLevel}</span>
+          </div>
+          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
+            <span className="block truncate text-[5px] font-bold text-slate-500">PWR</span>
+            <span className="flex items-center truncate text-[8px] font-black text-[#00ff66]">
+              <Zap className="w-2 h-2 shrink-0 fill-[#00ff66]" />{energy.energy}/{energy.maxEnergy}
+            </span>
+          </div>
+        </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5">
           {onOpenRules && (
             <button
               type="button"
@@ -1552,45 +1571,6 @@ export function Web3Dashboard({
       )}
 
 
-
-      {/* 3. Account totals stay in the same place on every dashboard tab. */}
-      <div className="grid grid-cols-4 gap-1">
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            XP POINTS
-          </span>
-          <span className="block text-xs font-black text-[#00d2ff] mt-1">
-            {effectiveXp} XP
-          </span>
-        </div>
-
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            TICKETS
-          </span>
-          <span className="block text-xs font-black text-[#ffcc00] mt-1">
-            {goldenTickets} TKT
-          </span>
-        </div>
-
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            RANK
-          </span>
-          <span className="block text-xs font-black text-[#ec4899] mt-1">
-            LVL {displayLevel}
-          </span>
-        </div>
-
-        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
-          <span className="text-[7px] uppercase font-bold text-slate-400">
-            POWER
-          </span>
-          <span className="flex items-center gap-0.5 text-xs font-black text-[#00ff66] mt-1">
-            <Zap className="w-3 h-3 fill-[#00ff66]" /> {energy.energy}/{energy.maxEnergy}
-          </span>
-        </div>
-      </div>
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">

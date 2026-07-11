@@ -51,7 +51,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
             <div className="grid grid-cols-1 gap-2">
               <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
                 <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
-                  <img src="/cards/Rug red.jpeg" alt="Skip card" className="w-full h-full object-cover scale-[1.14] select-none" />
+                  <img src="/card-thumbs/Rug red.jpeg" alt="Skip card" className="w-full h-full object-cover select-none" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
@@ -64,7 +64,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
                 <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
-                  <img src="/cards/Flip red.jpeg" alt="Reverse card" className="w-full h-full object-cover scale-[1.14] select-none" />
+                  <img src="/card-thumbs/Flip red.jpeg" alt="Reverse card" className="w-full h-full object-cover select-none" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
@@ -77,7 +77,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
                 <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
-                  <img src="/cards/plus2_red_v2.jpeg" alt="Draw Two card" className="w-full h-full object-cover scale-[1.14] select-none" />
+                  <img src="/card-thumbs/plus2_red_v2.jpeg" alt="Draw Two card" className="w-full h-full object-cover select-none" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
@@ -90,7 +90,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
                 <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
-                  <img src="/cards/wild 1.jpeg" alt="Wild card" className="w-full h-full object-cover scale-[1.14] select-none" />
+                  <img src="/card-thumbs/wild 1.jpeg" alt="Wild card" className="w-full h-full object-cover select-none" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
@@ -103,7 +103,7 @@ export const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose }) => {
 
               <div className="flex gap-3 items-center pixel-box-sm bg-slate-950/50 p-2 border-black text-left">
                 <div className="w-8 h-12 bg-black border border-black flex-shrink-0 overflow-hidden flex items-center justify-center shadow-[1px_1px_0_#000]">
-                  <img src="/cards/plus4_red_v2.jpeg" alt="Wild Draw Four card" className="w-full h-full object-cover scale-[1.14] select-none" />
+                  <img src="/card-thumbs/plus4_red_v2.jpeg" alt="Wild Draw Four card" className="w-full h-full object-cover select-none" />
                 </div>
                 <div>
                   <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
