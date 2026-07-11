@@ -52,7 +52,7 @@ services:
       - key: TELEGRAM_APP_SHORT_NAME
         value: app
       - key: WITHDRAWAL_OPERATOR_CHAT_ID
-        value: 152039743
+        value: 5152039743
       - key: WITHDRAWAL_OPERATOR_USERNAME
         value: allin_gram
       - key: TELEGRAM_INITDATA_MAX_AGE_SEC

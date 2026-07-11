@@ -25,7 +25,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_APP_SHORT_NAME = process.env.TELEGRAM_APP_SHORT_NAME || 'app';
 const BACKEND_PUBLIC_URL = (process.env.BACKEND_PUBLIC_URL || 'https://yoapp-backend.onrender.com').replace(/\/$/, '');
-const WITHDRAWAL_OPERATOR_CHAT_ID = Number(process.env.WITHDRAWAL_OPERATOR_CHAT_ID || '152039743');
+const WITHDRAWAL_OPERATOR_CHAT_ID = Number(process.env.WITHDRAWAL_OPERATOR_CHAT_ID || '5152039743');
 const WITHDRAWAL_OPERATOR_USERNAME = process.env.WITHDRAWAL_OPERATOR_USERNAME || 'allin_gram';
 const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
@@ -262,6 +262,8 @@ interface TelegramNotification {
   createdAt: number;
   sentAt?: number;
   error?: string;
+  attempts?: number;
+  nextAttemptAt?: number;
 }
 
 interface TelegramAuthPayload {
@@ -347,6 +349,7 @@ const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
 const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
 const referralStatsByInviter = new Map<string, ReferralStats>();
+let telegramFlushPromise: Promise<void> | null = null;
 const localDepositPaymentClaims = new Map<string, string>();
 let persistTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
@@ -1173,15 +1176,23 @@ function queueTelegramMessage(userId: string, telegramChatId: number, message: s
     replyMarkup,
     status: 'pending',
     createdAt: Date.now(),
+    attempts: 0,
+    nextAttemptAt: Date.now(),
   });
   schedulePersist();
 }
 
-async function flushTelegramNotifications() {
+async function performTelegramNotificationFlush() {
   if (!TELEGRAM_BOT_TOKEN) return;
-  const pending = telegramNotifications.filter((item) => item.status === 'pending').slice(0, 5);
+  const now = Date.now();
+  const pending = telegramNotifications.filter((item) => (
+    (item.status === 'pending' || item.status === 'failed')
+    && (item.attempts || 0) < 8
+    && (item.nextAttemptAt || 0) <= now
+  )).slice(0, 5);
   for (const item of pending) {
     try {
+      item.attempts = (item.attempts || 0) + 1;
       const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1191,21 +1202,44 @@ async function flushTelegramNotifications() {
           disable_web_page_preview: true,
           ...(item.replyMarkup ? { reply_markup: item.replyMarkup } : {}),
         }),
+        signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) {
         const payload = await response.text();
         item.status = 'failed';
         item.error = payload;
+        let retryAfterSeconds = 0;
+        try {
+          retryAfterSeconds = Number(JSON.parse(payload)?.parameters?.retry_after || 0);
+        } catch {
+          // Telegram sometimes returns a plain-text proxy error.
+        }
+        const backoffMs = Math.min(15 * 60_000, 15_000 * (2 ** Math.max(0, (item.attempts || 1) - 1)));
+        item.nextAttemptAt = Date.now() + Math.max(backoffMs, retryAfterSeconds * 1000);
+        console.error(`Telegram notification ${item.id} failed (attempt ${item.attempts}): ${payload}`);
       } else {
         item.status = 'sent';
         item.sentAt = Date.now();
+        item.error = undefined;
+        item.nextAttemptAt = undefined;
       }
     } catch (error) {
       item.status = 'failed';
       item.error = error instanceof Error ? error.message : 'Notification failed';
+      const backoffMs = Math.min(15 * 60_000, 15_000 * (2 ** Math.max(0, (item.attempts || 1) - 1)));
+      item.nextAttemptAt = Date.now() + backoffMs;
+      console.error(`Telegram notification ${item.id} transport error (attempt ${item.attempts}):`, error);
     }
   }
   schedulePersist();
+}
+
+function flushTelegramNotifications() {
+  if (telegramFlushPromise) return telegramFlushPromise;
+  telegramFlushPromise = performTelegramNotificationFlush().finally(() => {
+    telegramFlushPromise = null;
+  });
+  return telegramFlushPromise;
 }
 
 function verifyTelegramInitData(initData: string): TelegramAuthPayload | null {
@@ -1645,7 +1679,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
     '3. Tap Reject & refund only if the payout should not be sent.',
   ].join('\n');
 
-  queueTelegramMessage('withdrawal-operator', WITHDRAWAL_OPERATOR_CHAT_ID, message, {
+  queueTelegramMessage(`withdrawal:${request.id}`, WITHDRAWAL_OPERATOR_CHAT_ID, message, {
     inline_keyboard: [
       [
         {
@@ -1668,6 +1702,22 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
   flushTelegramNotifications().catch((error) => {
     console.error('Withdrawal operator notification flush failed', error);
   });
+}
+
+function recoverPendingWithdrawalNotifications() {
+  for (const request of withdrawalRequests.values()) {
+    if (request.status !== 'pending') continue;
+    const notificationKey = `withdrawal:${request.id}`;
+    const hasCurrentDelivery = telegramNotifications.some((item) => (
+      item.userId === notificationKey
+      && item.telegramChatId === WITHDRAWAL_OPERATOR_CHAT_ID
+      && (item.status === 'sent' || item.status === 'pending' || (item.status === 'failed' && (item.attempts || 0) < 8))
+    ));
+    if (!hasCurrentDelivery) {
+      const user = getUser(request.userId, request.walletAddress);
+      notifyWithdrawalOperator(user, request);
+    }
+  }
 }
 
 const ticketingService = createTicketingService({
@@ -3597,6 +3647,10 @@ if (process.env.NODE_ENV === 'production' && (!process.env.TELEGRAM_BOT_TOKEN ||
 
 async function bootstrap() {
   await loadPersistedState();
+  recoverPendingWithdrawalNotifications();
+  flushTelegramNotifications().catch((error) => {
+    console.error('Initial withdrawal notification flush failed', error);
+  });
   ticketingService.startBackgroundDepositRecheck();
   ticketingService.recheckPendingDeposits().catch((error) => {
     console.error('Initial pending deposit recheck failed', error);

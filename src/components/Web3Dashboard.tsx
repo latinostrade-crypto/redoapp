@@ -1349,7 +1349,7 @@ export function Web3Dashboard({
         timeoutMs: 60_000,
       });
       setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
-      setWithdrawStatusMessage('Withdrawal request confirmed. The operator will review and process it.');
+      setWithdrawStatusMessage('Successful');
       setWithdrawRequestState('idle');
       setWithdrawRequestId('');
       Promise.all([
@@ -2097,7 +2097,7 @@ export function Web3Dashboard({
                   )}
                   {withdrawStatusMessage && withdrawRequestState !== 'submitting' && (
                     <div className={`border border-black p-2 text-[7px] ${
-                      withdrawStatusMessage.startsWith('Withdrawal request confirmed')
+                      withdrawStatusMessage === 'Successful'
                         ? 'bg-[#072313] text-[#8dffaf]'
                         : 'bg-[#2a0d0d] text-[#ff9a9a]'
                     }`}>
