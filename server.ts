@@ -92,7 +92,10 @@ function rateLimitMiddleware(limit: number, windowMs: number, scope = 'ip') {
     // Ticket endpoints are authenticated. Limiting them by a shared mobile/NAT
     // IP made one user's recovery polling block every other user on Telegram.
     const subject = scope === 'user' && authenticatedUserId ? authenticatedUserId : (req.ip || 'global');
-    const key = `${scope}:${subject}`;
+    // Keep independent endpoint budgets. Read-side ticket polling must never
+    // consume the budget for a user-initiated deposit or withdrawal.
+    const routeKey = `${req.method}:${req.baseUrl}${req.path}`;
+    const key = `${scope}:${subject}:${routeKey}`;
     const now = Date.now();
     const client = rateLimitMap.get(key);
     if (!client || now > client.resetAt) {
@@ -101,6 +104,7 @@ function rateLimitMiddleware(limit: number, windowMs: number, scope = 'ip') {
     }
     client.count++;
     if (client.count > limit) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((client.resetAt - now) / 1000))));
       return res.status(429).json({ error: 'Too many requests. Please try again later.' });
     }
     next();

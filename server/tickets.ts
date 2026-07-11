@@ -454,11 +454,30 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         return res.status(400).json({ error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
       }
       deps.getUser(userId, walletAddress);
+      const roundedTicketAmount = deps.round2(amount);
+      const reusableIntent = Array.from(deps.depositIntents.values()).find((entry) => (
+        entry.userId === userId
+        && entry.walletAddress === walletAddress
+        && entry.ticketAmount === roundedTicketAmount
+        && entry.status === 'pending'
+        && !entry.signedBoc
+        && !isIntentExpired(entry)
+      ));
+      if (reusableIntent) {
+        return res.json({
+          intentId: reusableIntent.id,
+          marketingWallet: config.marketingWallet,
+          ticketAmount: reusableIntent.ticketAmount,
+          tonAmount: reusableIntent.tonAmount,
+          status: reusableIntent.status,
+          reused: true,
+        });
+      }
       const intent: DepositIntent = {
         id: `dep-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         userId,
         walletAddress,
-        ticketAmount: deps.round2(amount),
+        ticketAmount: roundedTicketAmount,
         tonAmount: deps.round2(amount * config.ticketPriceTon),
         status: 'pending',
         createdAt: Date.now(),

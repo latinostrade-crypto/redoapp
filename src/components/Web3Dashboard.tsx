@@ -262,6 +262,26 @@ export function Web3Dashboard({
 
   const [isConnecting, setIsConnecting] = useState(false);
 
+  useEffect(() => {
+    const stopStatusListener = tonConnectUI.onStatusChange(
+      () => setIsConnecting(false),
+      () => setIsConnecting(false)
+    );
+    const stopModalListener = tonConnectUI.onModalStateChange(() => {
+      // openModal resolves after the picker opens, but some embedded clients
+      // lose that resolution while switching to an external wallet. Modal and
+      // wallet status events are the authoritative lifecycle signals.
+      setIsConnecting(false);
+    });
+    tonConnectUI.connectionRestored.finally(() => setIsConnecting(false));
+    const safetyTimer = window.setTimeout(() => setIsConnecting(false), 8_000);
+    return () => {
+      stopStatusListener();
+      stopModalListener();
+      window.clearTimeout(safetyTimer);
+    };
+  }, [tonConnectUI]);
+
   // Track wallet connection changes to add transaction logs
   const prevConnectedRef = useRef(walletConnected);
   useEffect(() => {
@@ -980,7 +1000,10 @@ export function Web3Dashboard({
     setIsConnecting(true);
     try {
       sound.playPop();
-      await tonConnectUI.openModal();
+      await Promise.race([
+        tonConnectUI.openModal(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 8_000)),
+      ]);
     } catch (e) {
       console.error(e);
     } finally {
