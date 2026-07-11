@@ -399,6 +399,7 @@ export function Web3Dashboard({
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'submitting'>('idle');
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
+  const [showAccountRefresh, setShowAccountRefresh] = useState(() => Boolean(localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY)));
   const [energyNow, setEnergyNow] = useState(() => Date.now());
   const effectiveXp = Math.max(activeProfile?.xp ?? 0, playerXp ?? 0);
   const displayXpNeeded = 400;
@@ -1258,6 +1259,7 @@ export function Web3Dashboard({
       return;
     }
     sound.playPop();
+    setShowAccountRefresh(true);
     setBuyingTickets(true);
     setDepositFlowStatus('creating');
     setDepositStatusMessage('Preparing deposit request...');
@@ -1439,7 +1441,7 @@ export function Web3Dashboard({
     { id: 'profile', label: 'ME' },
     { id: 'events', label: 'EVENTS' },
     { id: 'pvp', label: 'PVP' },
-    { id: 'rewards', label: 'REWARDS' },
+    { id: 'rewards', label: 'SHOP' },
   ] as const;
   const selectDashboardTab = (tabId: typeof currentTab) => {
     if (currentTab === tabId) return;
@@ -1551,9 +1553,8 @@ export function Web3Dashboard({
 
 
 
-      {/* 3. Compact account totals for non-profile tabs */}
-      {currentTab !== 'profile' && (
-      <div className="grid grid-cols-3 gap-2">
+      {/* 3. Account totals stay in the same place on every dashboard tab. */}
+      <div className="grid grid-cols-4 gap-1">
         <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
           <span className="text-[7px] uppercase font-bold text-slate-400">
             XP POINTS
@@ -1580,8 +1581,16 @@ export function Web3Dashboard({
             LVL {displayLevel}
           </span>
         </div>
+
+        <div className="bg-slate-950 p-2 border border-black pixel-box-sm flex flex-col justify-between text-left font-mono">
+          <span className="text-[7px] uppercase font-bold text-slate-400">
+            POWER
+          </span>
+          <span className="flex items-center gap-0.5 text-xs font-black text-[#00ff66] mt-1">
+            <Zap className="w-3 h-3 fill-[#00ff66]" /> {energy.energy}/{energy.maxEnergy}
+          </span>
+        </div>
       </div>
-      )}
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
@@ -1638,27 +1647,6 @@ export function Web3Dashboard({
                 </div>
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
-                  <div className="grid grid-cols-4 gap-1 text-left font-mono">
-                    <div className="bg-slate-950 border border-black px-1.5 py-1">
-                      <span className="block text-[6px] uppercase font-bold text-slate-500">XP</span>
-                      <span className="text-[9px] font-black text-[#00d2ff]">{effectiveXp}</span>
-                    </div>
-                    <div className="bg-slate-950 border border-black px-1.5 py-1">
-                      <span className="block text-[6px] uppercase font-bold text-slate-500">TKT</span>
-                      <span className="text-[9px] font-black text-[#ffcc00]">{goldenTickets}</span>
-                    </div>
-                    <div className="bg-slate-950 border border-black px-1.5 py-1">
-                      <span className="block text-[6px] uppercase font-bold text-slate-500">LVL</span>
-                      <span className="text-[9px] font-black text-[#ec4899]">{displayLevel}</span>
-                    </div>
-                    <div className="bg-slate-950 border border-black px-1.5 py-1">
-                      <span className="block text-[6px] uppercase font-bold text-slate-500">POWER</span>
-                      <span className="text-[9px] font-black text-[#00ff66] flex items-center gap-0.5">
-                        <Zap className="w-2.5 h-2.5 fill-[#00ff66]" /> {energy.energy}/{energy.maxEnergy}
-                      </span>
-                    </div>
-                  </div>
-
                   <button
                     type="button"
                     onClick={() => {
@@ -1909,7 +1897,7 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="w-full space-y-3 py-2 text-left"
             >
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-2 font-mono space-y-1.5">
+              {showAccountRefresh && <div className="bg-[#18181c] border border-black pixel-box-sm p-2 font-mono space-y-1.5">
                 <button
                   type="button"
                   onClick={updateAccountBalance}
@@ -1930,7 +1918,7 @@ export function Web3Dashboard({
                     {accountRefreshMessage}
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Daily check-in & Streak Reward widget */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
@@ -2024,6 +2012,11 @@ export function Web3Dashboard({
                           alert('Connect wallet first.');
                           return;
                         }
+                        if (!Number.isFinite(amount) || amount <= 0) {
+                          alert('Enter a withdrawal amount greater than 0.');
+                          return;
+                        }
+                        setShowAccountRefresh(true);
                         setWithdrawRequestState('submitting');
                         apiRequest('/api/tickets/withdraw-request', {
                           method: 'POST',
