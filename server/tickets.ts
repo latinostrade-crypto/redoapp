@@ -453,7 +453,10 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     const expectedNano = toNano(request.tonAmount);
     // Requests created before payoutComment was introduced keep their original
     // comment so already-issued operator buttons remain verifiable.
-    const expectedComment = request.payoutComment || `Redoapp withdrawal ${request.id}`;
+    const expectedComments = request.payoutComment
+      ? [request.payoutComment]
+      : [`Redoapp withdrawal ${request.id}`, `Redoapp+withdrawal+${request.id}`];
+    const commentMatches = (message: Record<string, unknown>) => expectedComments.includes(extractTextComment(message) || '');
     const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
     const outboundMatch = outMessages.find((message) => {
       const record = (message || {}) as Record<string, unknown>;
@@ -461,7 +464,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       const value = extractNanoAmount(record.value);
       return tonAddressesEqual(destination, request.walletAddress)
         && value === expectedNano
-        && extractTextComment(record) === expectedComment;
+        && commentMatches(record);
     }) as Record<string, unknown> | undefined;
     if (outboundMatch) return outboundMatch;
 
@@ -476,7 +479,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     const destination = extractAddress(inbound.destination) || extractAddress(inbound.dest) || account;
     return tonAddressesEqual(destination, request.walletAddress)
       && extractNanoAmount(inbound.value) === expectedNano
-      && extractTextComment(inbound) === expectedComment
+      && commentMatches(inbound)
       ? inbound
       : null;
   }
@@ -492,13 +495,20 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     const wallets = [...new Set(candidates.map((request) => request.walletAddress))];
     await Promise.all(wallets.map(async (walletAddress) => {
       const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(walletAddress)}/transactions?limit=100&sort_order=desc`;
-      let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
-      if (response.status === 401 && config.tonApiKey) {
-        response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+      try {
+        let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
+        if (response.status === 401 && config.tonApiKey) {
+          response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json() as { transactions?: Array<Record<string, unknown>> };
+        transactionsByWallet.set(walletAddress, Array.isArray(payload.transactions) ? payload.transactions : []);
+      } catch (error) {
+        // One malformed legacy address or provider failure must not block
+        // reconciliation of every other withdrawal.
+        console.error(`TonAPI withdrawal recheck failed for ${walletAddress}:`, error);
+        transactionsByWallet.set(walletAddress, []);
       }
-      if (!response.ok) throw new Error(`TonAPI withdrawal recheck returned HTTP ${response.status}.`);
-      const payload = await response.json() as { transactions?: Array<Record<string, unknown>> };
-      transactionsByWallet.set(walletAddress, Array.isArray(payload.transactions) ? payload.transactions : []);
     }));
     let completedCount = 0;
     for (const request of candidates) {

@@ -400,7 +400,6 @@ export function Web3Dashboard({
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
   const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
   const [pendingWithdrawal, setPendingWithdrawal] = useState<null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null }>(null);
-  const [withdrawCancelState, setWithdrawCancelState] = useState<'idle' | 'cancelling'>('idle');
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
   const [showAccountRefresh, setShowAccountRefresh] = useState(() => Boolean(localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY)));
@@ -435,7 +434,7 @@ export function Web3Dashboard({
     setTransactions(result.transactions);
     const activeRequest = result.request?.status === 'pending' ? { ...result.request, status: 'pending' as const } : null;
     setPendingWithdrawal(activeRequest);
-    if (result.request?.status === 'completed') setWithdrawStatusMessage('Successful');
+    if (result.request?.status === 'completed') setWithdrawStatusMessage('');
     return activeRequest;
   }, []);
   const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((apiTraceNow - apiTrace.startedAt) / 1000)) : 0;
@@ -1389,7 +1388,8 @@ export function Web3Dashboard({
         lastChainCheckAt: null,
       });
       setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
-      setWithdrawStatusMessage('Successful');
+      setWithdrawStatusMessage('');
+      setWithdrawAmount('1');
       setWithdrawRequestState('idle');
       setWithdrawRequestId('');
       Promise.all([
@@ -1410,33 +1410,11 @@ export function Web3Dashboard({
       setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not create withdrawal request.');
       refreshPendingWithdrawal().then((recovered) => {
         if (recovered?.id === failedRequestId) {
-          setWithdrawStatusMessage('Successful');
+          setWithdrawStatusMessage('');
         } else if (recovered) {
-          setWithdrawStatusMessage(`A ${recovered.ticketAmount.toFixed(2)} TKT withdrawal is already pending.`);
+          setWithdrawStatusMessage('');
         }
       }).catch(() => undefined);
-    }
-  };
-
-  const cancelPendingWithdrawal = async () => {
-    if (!pendingWithdrawal || withdrawCancelState === 'cancelling') return;
-    setWithdrawCancelState('cancelling');
-    setWithdrawStatusMessage('');
-    try {
-      const result = await apiRequest<{ availableTickets: number; transactions: any[] }>('/api/tickets/withdraw-cancel', {
-        method: 'POST',
-        body: JSON.stringify({ requestId: pendingWithdrawal.id }),
-        timeoutMs: 20_000,
-      });
-      setGoldenTickets(result.availableTickets);
-      setTransactions(result.transactions);
-      setPendingWithdrawal(null);
-      setWithdrawStatusMessage('Withdrawal cancelled. Tickets returned.');
-    } catch (error) {
-      setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not cancel withdrawal.');
-      refreshPendingWithdrawal().catch(() => undefined);
-    } finally {
-      setWithdrawCancelState('idle');
     }
   };
 
@@ -2108,29 +2086,6 @@ export function Web3Dashboard({
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
                 <div className="space-y-1.5">
                   <div className="text-[7.5px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
-                  {pendingWithdrawal && (
-                    <div className="space-y-1.5 border border-[#ffcc00] bg-[#231b05] p-2 text-[7px] text-[#ffe680]">
-                      <div>
-                        Pending withdrawal: <strong>{pendingWithdrawal.ticketAmount.toFixed(2)} TKT</strong>.
-                        Tickets are reserved until payout, cancellation, or automatic expiry.
-                      </div>
-                      <div className="text-[6.5px] text-slate-300">
-                        Admin notification: {pendingWithdrawal.notificationStatus === 'sent'
-                          ? 'delivered'
-                          : pendingWithdrawal.notificationStatus === 'failed'
-                            ? 'delivery failed'
-                            : 'queued'} · Blockchain: waiting for payment
-                      </div>
-                      <button
-                        type="button"
-                        onClick={cancelPendingWithdrawal}
-                        disabled={withdrawCancelState === 'cancelling'}
-                        className="w-full border border-black bg-[#ff4b4b] py-1 text-[7px] font-black uppercase text-black pixel-btn-interactive disabled:opacity-60"
-                      >
-                        {withdrawCancelState === 'cancelling' ? 'Cancelling…' : 'Cancel & return tickets'}
-                      </button>
-                    </div>
-                  )}
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -2185,17 +2140,8 @@ export function Web3Dashboard({
                       </div>
                     </div>
                   )}
-                  {withdrawRequestState === 'submitting' && (
-                    <div className="border border-[#00d2ff] bg-[#061923] p-2 text-[7px] text-[#9eeaff]">
-                      Processing withdrawal request…
-                    </div>
-                  )}
                   {withdrawStatusMessage && withdrawRequestState !== 'submitting' && (
-                    <div className={`border border-black p-2 text-[7px] ${
-                      withdrawStatusMessage === 'Successful'
-                        ? 'bg-[#072313] text-[#8dffaf]'
-                        : 'bg-[#2a0d0d] text-[#ff9a9a]'
-                    }`}>
+                    <div className="border border-black bg-[#2a0d0d] p-2 text-[7px] text-[#ff9a9a]">
                       {withdrawStatusMessage}
                     </div>
                   )}
