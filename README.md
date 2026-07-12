@@ -356,6 +356,7 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - `PORT`
 - `BACKEND_PUBLIC_URL`
 - `MARKETING_WALLET`
+- `WITHDRAWAL_SENDER_WALLET` (must be an active, deployed wallet controlled by the payout operator)
 - `TICKET_PRICE_TON`
 - `ENABLE_CHAIN_VERIFICATION`
 - `TON_VERIFICATION_MODE`

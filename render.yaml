@@ -35,6 +35,8 @@ services:
         value: https://yoapp-backend.onrender.com
       - key: MARKETING_WALLET
         value: UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj
+      - key: WITHDRAWAL_SENDER_WALLET
+        value: UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj
       - key: TICKET_PRICE_TON
         value: 1
       - key: ENABLE_CHAIN_VERIFICATION

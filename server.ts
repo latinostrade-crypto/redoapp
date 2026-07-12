@@ -15,6 +15,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj';
+const WITHDRAWAL_SENDER_WALLET = process.env.WITHDRAWAL_SENDER_WALLET || MARKETING_WALLET;
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
 const MIN_WITHDRAW_TICKETS = 0.5;
 const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION !== 'false';
@@ -1650,7 +1651,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
     `Tickets: ${request.ticketAmount.toFixed(2)} TKT`,
     `TON to send: ${request.tonAmount.toFixed(2)} TON`,
     `Wallet: ${request.walletAddress}`,
-    `Required sender: ${MARKETING_WALLET}`,
+    `Required sender: ${WITHDRAWAL_SENDER_WALLET}`,
     `Created: ${createdAt}`,
     '',
     'Server checks:',
@@ -1743,6 +1744,7 @@ const ticketingService = createTicketingService({
   tonApiBaseUrl: TON_API_BASE_URL,
   tonApiKey: TON_API_KEY,
   tonVerificationMode: TON_VERIFICATION_MODE,
+  withdrawalSenderWallet: WITHDRAWAL_SENDER_WALLET,
 });
 
 function generateServerDeck(): ServerCard[] {
@@ -3647,6 +3649,11 @@ if (process.env.NODE_ENV === 'production' && (!process.env.TELEGRAM_BOT_TOKEN ||
 async function bootstrap() {
   await loadPersistedState();
   ticketingService.reconcilePendingWithdrawals();
+  try {
+    await ticketingService.recheckPendingWithdrawals();
+  } catch (error) {
+    console.error('Initial pending withdrawal chain recheck failed', error);
+  }
   recoverPendingWithdrawalNotifications();
   flushTelegramNotifications().catch((error) => {
     console.error('Initial withdrawal notification flush failed', error);
@@ -3654,9 +3661,6 @@ async function bootstrap() {
   ticketingService.startBackgroundDepositRecheck();
   ticketingService.recheckPendingDeposits().catch((error) => {
     console.error('Initial pending deposit recheck failed', error);
-  });
-  ticketingService.recheckPendingWithdrawals().catch((error) => {
-    console.error('Initial pending withdrawal chain recheck failed', error);
   });
   app.listen(PORT, () => {
     console.log(`Redoapp backend running on port ${PORT}`);

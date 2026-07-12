@@ -118,6 +118,7 @@ interface TicketingConfig {
   tonApiBaseUrl: string;
   tonApiKey: string;
   tonVerificationMode: string;
+  withdrawalSenderWallet: string;
 }
 
 export interface PendingDepositView {
@@ -391,12 +392,17 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
 
   function expirePendingWithdrawal(request: WithdrawalRequest) {
     if (request.status !== 'pending' || Date.now() - request.createdAt < pendingWithdrawalTtlMs) return false;
+    return rejectPendingWithdrawal(request, 'Withdrawal Expired');
+  }
+
+  function rejectPendingWithdrawal(request: WithdrawalRequest, event: string) {
+    if (request.status !== 'pending') return false;
     const user = deps.getUser(request.userId, request.walletAddress);
     request.status = 'rejected';
     request.completedAt = Date.now();
     user.availableTickets = deps.round2(user.availableTickets + request.ticketAmount);
     deps.createLedgerEntry(user, {
-      event: 'Withdrawal Expired',
+      event,
       value: `+${request.ticketAmount.toFixed(2)} TKT`,
       type: 'withdraw_rejected',
       amount: request.ticketAmount,
@@ -407,6 +413,23 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
 
   function reconcilePendingWithdrawals() {
     for (const request of deps.withdrawalRequests.values()) expirePendingWithdrawal(request);
+  }
+
+  async function getWithdrawalWalletReadiness(requiredTon = 0) {
+    const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.withdrawalSenderWallet)}`;
+    const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
+    let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(10_000) });
+    if (response.status === 401 && config.tonApiKey) {
+      response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+    }
+    if (!response.ok) throw new Error(`TonAPI payout wallet check returned HTTP ${response.status}.`);
+    const account = await response.json() as { status?: string; balance?: number | string };
+    const balanceNano = BigInt(String(account.balance || '0'));
+    return {
+      active: account.status === 'active',
+      status: account.status || 'unknown',
+      funded: balanceNano >= toNano(requiredTon) + toNano(0.05),
+    };
   }
 
   function completeWithdrawalFromChain(request: WithdrawalRequest, txHash: string, messageHash: string) {
@@ -430,7 +453,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   function withdrawalMatchesTransaction(transaction: Record<string, unknown>, request: WithdrawalRequest) {
     if (!transactionSucceeded(transaction)) return null;
     const account = extractAddress(transaction.account);
-    if (!tonAddressesEqual(account, config.marketingWallet)) return null;
+    if (!tonAddressesEqual(account, config.withdrawalSenderWallet)) return null;
     const expectedNano = toNano(request.tonAmount);
     const expectedComment = `Redoapp withdrawal ${request.id}`;
     const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
@@ -448,7 +471,12 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     reconcilePendingWithdrawals();
     const pending = Array.from(deps.withdrawalRequests.values()).filter((request) => request.status === 'pending');
     if (!pending.length) return 0;
-    const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.marketingWallet)}/transactions?limit=100&sort_order=desc`;
+    const readiness = await getWithdrawalWalletReadiness();
+    if (!readiness.active) {
+      pending.forEach((request) => rejectPendingWithdrawal(request, 'Withdrawal Refunded — Payout Wallet Inactive'));
+      return 0;
+    }
+    const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.withdrawalSenderWallet)}/transactions?limit=100&sort_order=desc`;
     const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
     let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
     if (response.status === 401 && config.tonApiKey) {
@@ -899,7 +927,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       });
     });
 
-    app.post('/api/tickets/withdraw-request', (req: Request, res: Response) => {
+    app.post('/api/tickets/withdraw-request', async (req: Request, res: Response) => {
       const { walletAddress, ticketAmount, requestId: clientRequestId } = req.body;
       const userId = getRequestUserId(req);
       if (!userId || !walletAddress || !ticketAmount) {
@@ -955,6 +983,18 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
       }
       const tonAmount = deps.round2(amount * config.ticketPriceTon);
+      let payoutWallet;
+      try {
+        payoutWallet = await getWithdrawalWalletReadiness(tonAmount);
+      } catch (error) {
+        return res.status(503).json({ error: error instanceof Error ? error.message : 'Could not verify payout wallet readiness.' });
+      }
+      if (!payoutWallet.active) {
+        return res.status(503).json({ error: `Withdrawals are temporarily unavailable: payout wallet status is ${payoutWallet.status}. The operator must deploy or replace it.` });
+      }
+      if (!payoutWallet.funded) {
+        return res.status(503).json({ error: 'Withdrawals are temporarily unavailable: payout wallet balance is insufficient for the amount and network fee.' });
+      }
       user.availableTickets = deps.round2(user.availableTickets - amount);
       const request: WithdrawalRequest = {
         id: normalizedRequestId || `wd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
