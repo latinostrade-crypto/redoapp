@@ -232,7 +232,7 @@ Current behavior:
 2. Backend validates the authenticated user, saved wallet, available balance, duplicate pending requests, held funds, active matches, queues, and private rooms.
 3. Backend stores the request, reserves the requested tickets, and reliably queues a private Telegram message for the configured operator.
 4. The operator opens the inline Tonkeeper transfer button and sends the TON payout from the configured marketing wallet.
-5. Backend polls finalized TonAPI account transactions and completes the withdrawal only after sender, recipient, amount, and request comment all match. The operator can also trigger the same verification from the signed `Verify on blockchain` link.
+5. Backend polls finalized TonAPI transactions for the recipient wallet and completes the withdrawal only after recipient, amount, unique request comment, and message hash all match. This remains reliable when Tonkeeper uses another operator-owned source wallet. The operator can also trigger the same verification from the signed `Check payment` link.
 6. The Mini App polls withdrawal status and updates activity automatically after the on-chain payment is found.
 5. If the payout should not be sent, the operator can tap `Reject & refund` to return tickets to the user balance.
 

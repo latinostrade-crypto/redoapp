@@ -421,23 +421,6 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     for (const request of deps.withdrawalRequests.values()) expirePendingWithdrawal(request);
   }
 
-  async function getWithdrawalWalletReadiness(requiredTon = 0) {
-    const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.withdrawalSenderWallet)}`;
-    const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
-    let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(10_000) });
-    if (response.status === 401 && config.tonApiKey) {
-      response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
-    }
-    if (!response.ok) throw new Error(`TonAPI payout wallet check returned HTTP ${response.status}.`);
-    const account = await response.json() as { status?: string; balance?: number | string };
-    const balanceNano = BigInt(String(account.balance || '0'));
-    return {
-      active: account.status === 'active',
-      status: account.status || 'unknown',
-      funded: balanceNano >= toNano(requiredTon) + toNano(0.05),
-    };
-  }
-
   function completeWithdrawalFromChain(request: WithdrawalRequest, txHash: string, messageHash: string) {
     if (request.status !== 'pending' && request.status !== 'rejected') return false;
     const messageAlreadyClaimed = Array.from(deps.withdrawalRequests.values()).some((entry) => (
@@ -467,45 +450,60 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   function withdrawalMatchesTransaction(transaction: Record<string, unknown>, request: WithdrawalRequest) {
     if (!transactionSucceeded(transaction)) return null;
     const account = extractAddress(transaction.account);
-    if (!tonAddressesEqual(account, config.withdrawalSenderWallet)) return null;
     const expectedNano = toNano(request.tonAmount);
     // Requests created before payoutComment was introduced keep their original
     // comment so already-issued operator buttons remain verifiable.
     const expectedComment = request.payoutComment || `Redoapp withdrawal ${request.id}`;
     const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
-    return outMessages.find((message) => {
+    const outboundMatch = outMessages.find((message) => {
       const record = (message || {}) as Record<string, unknown>;
       const destination = extractAddress(record.destination) || extractAddress(record.dest);
       const value = extractNanoAmount(record.value);
       return tonAddressesEqual(destination, request.walletAddress)
         && value === expectedNano
         && extractTextComment(record) === expectedComment;
-    }) as Record<string, unknown> | undefined || null;
+    }) as Record<string, unknown> | undefined;
+    if (outboundMatch) return outboundMatch;
+
+    // Tonkeeper lets the operator choose the source wallet and transfer links
+    // cannot enforce it. Verify the recipient-side inbound message as the
+    // source of truth so a valid payout is never missed for that reason.
+    if (!tonAddressesEqual(account, request.walletAddress)) return null;
+    const inbound = transaction.in_msg && typeof transaction.in_msg === 'object'
+      ? transaction.in_msg as Record<string, unknown>
+      : null;
+    if (!inbound) return null;
+    const destination = extractAddress(inbound.destination) || extractAddress(inbound.dest) || account;
+    return tonAddressesEqual(destination, request.walletAddress)
+      && extractNanoAmount(inbound.value) === expectedNano
+      && extractTextComment(inbound) === expectedComment
+      ? inbound
+      : null;
   }
 
   async function recheckPendingWithdrawals() {
     reconcilePendingWithdrawals();
-    const pending = Array.from(deps.withdrawalRequests.values()).filter((request) => request.status === 'pending');
     const candidates = Array.from(deps.withdrawalRequests.values()).filter((request) => (
       (request.status === 'pending' || request.status === 'rejected') && !request.outboundMessageHash
     ));
     if (!candidates.length) return 0;
-    const readiness = await getWithdrawalWalletReadiness();
-    if (!readiness.active) {
-      pending.forEach((request) => rejectPendingWithdrawal(request, 'Withdrawal Refunded — Payout Wallet Inactive'));
-    }
-    const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.withdrawalSenderWallet)}/transactions?limit=100&sort_order=desc`;
     const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
-    let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
-    if (response.status === 401 && config.tonApiKey) {
-      response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
-    }
-    if (!response.ok) throw new Error(`TonAPI withdrawal recheck returned HTTP ${response.status}.`);
-    const payload = await response.json() as { transactions?: Array<Record<string, unknown>> };
-    const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+    const transactionsByWallet = new Map<string, Array<Record<string, unknown>>>();
+    const wallets = [...new Set(candidates.map((request) => request.walletAddress))];
+    await Promise.all(wallets.map(async (walletAddress) => {
+      const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(walletAddress)}/transactions?limit=100&sort_order=desc`;
+      let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
+      if (response.status === 401 && config.tonApiKey) {
+        response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+      }
+      if (!response.ok) throw new Error(`TonAPI withdrawal recheck returned HTTP ${response.status}.`);
+      const payload = await response.json() as { transactions?: Array<Record<string, unknown>> };
+      transactionsByWallet.set(walletAddress, Array.isArray(payload.transactions) ? payload.transactions : []);
+    }));
     let completedCount = 0;
     for (const request of candidates) {
       request.lastChainCheckAt = Date.now();
+      const transactions = transactionsByWallet.get(request.walletAddress) || [];
       const transaction = transactions.find((entry) => {
         const timestamp = Number(entry.utime || entry.now || 0) * 1000;
         return (!timestamp || timestamp >= request.createdAt - 60_000) && !!withdrawalMatchesTransaction(entry, request);
@@ -1001,18 +999,6 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
       }
       const tonAmount = deps.round2(amount * config.ticketPriceTon);
-      let payoutWallet;
-      try {
-        payoutWallet = await getWithdrawalWalletReadiness(tonAmount);
-      } catch (error) {
-        return res.status(503).json({ error: error instanceof Error ? error.message : 'Could not verify payout wallet readiness.' });
-      }
-      if (!payoutWallet.active) {
-        return res.status(503).json({ error: `Withdrawals are temporarily unavailable: payout wallet status is ${payoutWallet.status}. The operator must deploy or replace it.` });
-      }
-      if (!payoutWallet.funded) {
-        return res.status(503).json({ error: 'Withdrawals are temporarily unavailable: payout wallet balance is insufficient for the amount and network fee.' });
-      }
       user.availableTickets = deps.round2(user.availableTickets - amount);
       const request: WithdrawalRequest = {
         id: normalizedRequestId || `wd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

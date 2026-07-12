@@ -1377,7 +1377,7 @@ export function Web3Dashboard({
           ticketAmount: amount,
         }),
         retryOnNetworkError: false,
-        timeoutMs: 20_000,
+        timeoutMs: 12_000,
       });
       setPendingWithdrawal({
         id: created.requestId,
