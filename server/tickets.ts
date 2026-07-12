@@ -59,10 +59,16 @@ export interface WithdrawalRequest {
   completedAt?: number;
   completedTxHash?: string | null;
   operatorTransferLink?: string;
+  payoutComment?: string;
   reviewFlags?: string[];
   outboundTxHash?: string | null;
   outboundMessageHash?: string | null;
   lastChainCheckAt?: number | null;
+}
+
+function buildWithdrawalPayoutComment(requestId: string) {
+  const compactId = requestId.replace(/[^a-zA-Z0-9]/g, '').slice(-12);
+  return `WD-${compactId}`;
 }
 
 interface UserStateLike {
@@ -433,18 +439,26 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   }
 
   function completeWithdrawalFromChain(request: WithdrawalRequest, txHash: string, messageHash: string) {
-    if (request.status !== 'pending') return false;
+    if (request.status !== 'pending' && request.status !== 'rejected') return false;
+    const messageAlreadyClaimed = Array.from(deps.withdrawalRequests.values()).some((entry) => (
+      entry.id !== request.id && entry.outboundMessageHash === messageHash
+    ));
+    if (messageAlreadyClaimed) return false;
+    const wasRefunded = request.status === 'rejected';
     request.status = 'completed';
     request.completedAt = Date.now();
     request.completedTxHash = txHash;
     request.outboundTxHash = txHash;
     request.outboundMessageHash = messageHash;
     const user = deps.getUser(request.userId, request.walletAddress);
+    if (wasRefunded) {
+      user.availableTickets = deps.round2(user.availableTickets - request.ticketAmount);
+    }
     deps.createLedgerEntry(user, {
-      event: 'Withdrawal Completed',
-      value: `${request.ticketAmount.toFixed(2)} TKT`,
+      event: wasRefunded ? 'Late Withdrawal Settled' : 'Withdrawal Completed',
+      value: wasRefunded ? `-${request.ticketAmount.toFixed(2)} TKT` : `${request.ticketAmount.toFixed(2)} TKT`,
       type: 'withdraw_completed',
-      amount: request.ticketAmount,
+      amount: wasRefunded ? -request.ticketAmount : request.ticketAmount,
     });
     deps.schedulePersist({ withdrawalId: request.id, userId: request.userId });
     return true;
@@ -455,7 +469,9 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     const account = extractAddress(transaction.account);
     if (!tonAddressesEqual(account, config.withdrawalSenderWallet)) return null;
     const expectedNano = toNano(request.tonAmount);
-    const expectedComment = `Redoapp withdrawal ${request.id}`;
+    // Requests created before payoutComment was introduced keep their original
+    // comment so already-issued operator buttons remain verifiable.
+    const expectedComment = request.payoutComment || `Redoapp withdrawal ${request.id}`;
     const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
     return outMessages.find((message) => {
       const record = (message || {}) as Record<string, unknown>;
@@ -470,11 +486,13 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   async function recheckPendingWithdrawals() {
     reconcilePendingWithdrawals();
     const pending = Array.from(deps.withdrawalRequests.values()).filter((request) => request.status === 'pending');
-    if (!pending.length) return 0;
+    const candidates = Array.from(deps.withdrawalRequests.values()).filter((request) => (
+      (request.status === 'pending' || request.status === 'rejected') && !request.outboundMessageHash
+    ));
+    if (!candidates.length) return 0;
     const readiness = await getWithdrawalWalletReadiness();
     if (!readiness.active) {
       pending.forEach((request) => rejectPendingWithdrawal(request, 'Withdrawal Refunded — Payout Wallet Inactive'));
-      return 0;
     }
     const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.withdrawalSenderWallet)}/transactions?limit=100&sort_order=desc`;
     const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
@@ -486,7 +504,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     const payload = await response.json() as { transactions?: Array<Record<string, unknown>> };
     const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
     let completedCount = 0;
-    for (const request of pending) {
+    for (const request of candidates) {
       request.lastChainCheckAt = Date.now();
       const transaction = transactions.find((entry) => {
         const timestamp = Number(entry.utime || entry.now || 0) * 1000;
@@ -1005,10 +1023,11 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         status: 'pending',
         createdAt: Date.now(),
       };
+      request.payoutComment = buildWithdrawalPayoutComment(request.id);
       request.operatorTransferLink = buildTonkeeperTransferLink(
         request.walletAddress,
         request.tonAmount,
-        `Redoapp withdrawal ${request.id}`
+        request.payoutComment
       );
       request.reviewFlags = deps.getWithdrawalReviewFlags?.(user, request, pendingRequests) || [];
       deps.withdrawalRequests.set(request.id, request);

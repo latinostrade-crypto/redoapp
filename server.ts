@@ -1638,46 +1638,37 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
     return;
   }
 
-  const flags = request.reviewFlags?.length ? request.reviewFlags : ['No blocking signals detected by server checks'];
-  const createdAt = new Date(request.createdAt).toISOString();
+  const flags = (request.reviewFlags || []).filter((flag) => flag !== 'No blocking signals detected by server checks');
   const completeUrl = buildWithdrawalOperatorActionUrl('complete', request.id);
   const rejectUrl = buildWithdrawalOperatorActionUrl('reject', request.id);
+  const shortAddress = (address: string) => address.length > 18
+    ? `${address.slice(0, 8)}…${address.slice(-6)}`
+    : address;
+  const username = user.telegramUsername ? `@${user.telegramUsername.replace(/^@/, '')}` : user.userId;
   const message = [
-    'New withdrawal request',
-    '',
-    `Operator: @${WITHDRAWAL_OPERATOR_USERNAME} (${operatorChatId})`,
-    `Request: ${request.id}`,
-    `User: ${formatUserForOperator(user)}`,
-    `Tickets: ${request.ticketAmount.toFixed(2)} TKT`,
-    `TON to send: ${request.tonAmount.toFixed(2)} TON`,
-    `Wallet: ${request.walletAddress}`,
-    `Required sender: ${WITHDRAWAL_SENDER_WALLET}`,
-    `Created: ${createdAt}`,
-    '',
-    'Server checks:',
-    ...flags.map((flag) => `- ${flag}`),
-    '',
-    'Flow:',
-    '1. Open Tonkeeper and send from the configured marketing wallet.',
-    '2. Tap Verify on blockchain after the transfer is sent.',
-    '3. Tap Reject & refund only if the payout should not be sent.',
+    `💸 Withdrawal: ${request.ticketAmount.toFixed(2)} TKT → ${request.tonAmount.toFixed(2)} TON`,
+    `User: ${username}`,
+    `To: ${shortAddress(request.walletAddress)}`,
+    `From: ${shortAddress(WITHDRAWAL_SENDER_WALLET)}`,
+    `Ref: ${request.payoutComment || request.id}`,
+    ...flags.map((flag) => `⚠️ ${flag}`),
   ].join('\n');
 
   queueTelegramMessage(`withdrawal:${request.id}`, operatorChatId, message, {
     inline_keyboard: [
       [
         {
-          text: 'Open transfer in Tonkeeper',
+          text: `Pay ${request.tonAmount.toFixed(2)} TON`,
           url: request.operatorTransferLink,
         },
       ],
       [
         {
-          text: 'Verify on blockchain',
+          text: 'Check payment',
           url: completeUrl,
         },
         {
-          text: 'Reject & refund',
+          text: 'Refund',
           url: rejectUrl,
         },
       ],
