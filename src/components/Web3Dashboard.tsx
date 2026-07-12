@@ -429,7 +429,7 @@ export function Web3Dashboard({
   const refreshPendingWithdrawal = useCallback(async () => {
     const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending' | 'completed' | 'rejected'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null } }>(
       '/api/tickets/withdraw-pending',
-      { timeoutMs: 20_000 },
+      { timeoutMs: 8_000 },
     );
     setGoldenTickets(result.availableTickets);
     setTransactions(result.transactions);
@@ -1404,19 +1404,17 @@ export function Web3Dashboard({
         // remains available if Telegram interrupts the follow-up synchronization.
       });
     } catch (error) {
-      const recovered = await refreshPendingWithdrawal().catch(() => null);
-      if (recovered?.id === withdrawRequestId) {
-        setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
-        setWithdrawStatusMessage('Successful');
-        setWithdrawRequestState('idle');
-        setWithdrawRequestId('');
-      } else {
-        setWithdrawRequestState('idle');
-        setWithdrawRequestId('');
-        setWithdrawStatusMessage(recovered
-          ? `A ${recovered.ticketAmount.toFixed(2)} TKT withdrawal is already pending.`
-          : (error instanceof Error ? error.message : 'Could not create withdrawal request.'));
-      }
+      const failedRequestId = withdrawRequestId;
+      setWithdrawRequestState('idle');
+      setWithdrawRequestId('');
+      setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not create withdrawal request.');
+      refreshPendingWithdrawal().then((recovered) => {
+        if (recovered?.id === failedRequestId) {
+          setWithdrawStatusMessage('Successful');
+        } else if (recovered) {
+          setWithdrawStatusMessage(`A ${recovered.ticketAmount.toFixed(2)} TKT withdrawal is already pending.`);
+        }
+      }).catch(() => undefined);
     }
   };
 
@@ -1436,7 +1434,7 @@ export function Web3Dashboard({
       setWithdrawStatusMessage('Withdrawal cancelled. Tickets returned.');
     } catch (error) {
       setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not cancel withdrawal.');
-      await refreshPendingWithdrawal().catch(() => undefined);
+      refreshPendingWithdrawal().catch(() => undefined);
     } finally {
       setWithdrawCancelState('idle');
     }
@@ -2120,7 +2118,7 @@ export function Web3Dashboard({
                         Admin notification: {pendingWithdrawal.notificationStatus === 'sent'
                           ? 'delivered'
                           : pendingWithdrawal.notificationStatus === 'failed'
-                            ? 'delivery failed — retrying'
+                            ? 'delivery failed'
                             : 'queued'} · Blockchain: waiting for payment
                       </div>
                       <button

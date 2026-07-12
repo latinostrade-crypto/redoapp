@@ -113,25 +113,6 @@ function rateLimitMiddleware(limit: number, windowMs: number, scope = 'ip') {
 
 app.use(express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 50 }));
 
-const userLocks = new Map<string, Promise<void>>();
-async function acquireUserLock(userId: string): Promise<() => void> {
-  let resolveLock: () => void;
-  const currentLock = userLocks.get(userId);
-  const newLock = new Promise<void>((resolve) => {
-    resolveLock = resolve;
-  });
-  userLocks.set(userId, newLock);
-  if (currentLock) {
-    await currentLock;
-  }
-  return () => {
-    if (userLocks.get(userId) === newLock) {
-      userLocks.delete(userId);
-    }
-    resolveLock();
-  };
-}
-
 function validatePayload(body: any, schema: Record<string, string>) {
   if (!body || typeof body !== 'object') {
     throw new Error('Invalid request payload.');
@@ -1650,7 +1631,8 @@ function getWithdrawalReviewFlags(user: WithdrawalReviewUser, request: Withdrawa
 }
 
 function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: WithdrawalRequest) {
-  if (!WITHDRAWAL_OPERATOR_CHAT_ID || !Number.isFinite(WITHDRAWAL_OPERATOR_CHAT_ID)) {
+  const operatorChatId = resolveWithdrawalOperatorChatId();
+  if (!operatorChatId || !Number.isFinite(operatorChatId)) {
     console.warn(`Withdrawal ${request.id} created, but WITHDRAWAL_OPERATOR_CHAT_ID is not configured.`);
     return;
   }
@@ -1662,7 +1644,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
   const message = [
     'New withdrawal request',
     '',
-    `Operator: @${WITHDRAWAL_OPERATOR_USERNAME} (${WITHDRAWAL_OPERATOR_CHAT_ID})`,
+    `Operator: @${WITHDRAWAL_OPERATOR_USERNAME} (${operatorChatId})`,
     `Request: ${request.id}`,
     `User: ${formatUserForOperator(user)}`,
     `Tickets: ${request.ticketAmount.toFixed(2)} TKT`,
@@ -1680,7 +1662,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
     '3. Tap Reject & refund only if the payout should not be sent.',
   ].join('\n');
 
-  queueTelegramMessage(`withdrawal:${request.id}`, WITHDRAWAL_OPERATOR_CHAT_ID, message, {
+  queueTelegramMessage(`withdrawal:${request.id}`, operatorChatId, message, {
     inline_keyboard: [
       [
         {
@@ -1705,13 +1687,23 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
   });
 }
 
+function resolveWithdrawalOperatorChatId() {
+  const normalizedUsername = WITHDRAWAL_OPERATOR_USERNAME.replace(/^@/, '').trim().toLowerCase();
+  const operator = Array.from(users.values()).find((entry) => (
+    entry.telegramUsername?.replace(/^@/, '').trim().toLowerCase() === normalizedUsername
+    && !!entry.telegramChatId
+  ));
+  return operator?.telegramChatId || WITHDRAWAL_OPERATOR_CHAT_ID;
+}
+
 function recoverPendingWithdrawalNotifications() {
+  const operatorChatId = resolveWithdrawalOperatorChatId();
   for (const request of withdrawalRequests.values()) {
     if (request.status !== 'pending') continue;
     const notificationKey = `withdrawal:${request.id}`;
     const hasCurrentDelivery = telegramNotifications.some((item) => (
       item.userId === notificationKey
-      && item.telegramChatId === WITHDRAWAL_OPERATOR_CHAT_ID
+      && item.telegramChatId === operatorChatId
       && (item.status === 'sent' || item.status === 'pending' || (item.status === 'failed' && (item.attempts || 0) < 8))
     ));
     if (!hasCurrentDelivery) {
@@ -2485,28 +2477,7 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   });
 });
 
-app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  const userId = req.authUserId;
-  if (!userId) return next();
-  let connectionClosed = false;
-  const markClosedWhileWaiting = () => { connectionClosed = true; };
-  res.once('close', markClosedWhileWaiting);
-  const release = await acquireUserLock(userId);
-  res.removeListener('close', markClosedWhileWaiting);
-  if (connectionClosed || res.destroyed || res.writableEnded) {
-    release();
-    return;
-  }
-  let released = false;
-  const releaseOnce = () => {
-    if (released) return;
-    released = true;
-    release();
-  };
-  res.once('finish', releaseOnce);
-  res.once('close', releaseOnce);
-  next();
-});
+app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'));
 ticketingService.registerRoutes(app);
 
 app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
@@ -3512,6 +3483,7 @@ app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) =>
 });
 
 setInterval(() => {
+  recoverPendingWithdrawalNotifications();
   flushTelegramNotifications().catch((error) => {
     console.error('Telegram notification worker failed', error);
   });
