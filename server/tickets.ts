@@ -60,6 +60,9 @@ export interface WithdrawalRequest {
   completedTxHash?: string | null;
   operatorTransferLink?: string;
   reviewFlags?: string[];
+  outboundTxHash?: string | null;
+  outboundMessageHash?: string | null;
+  lastChainCheckAt?: number | null;
 }
 
 interface UserStateLike {
@@ -102,6 +105,7 @@ interface TicketingDeps {
   notifyWithdrawalRequest?: (user: UserStateLike, request: WithdrawalRequest) => void;
   withdrawalRequests: Map<string, WithdrawalRequest>;
   claimDepositPayment?: (claimKey: string, intentId: string) => Promise<{ claimed: boolean; ownerIntentId: string }>;
+  getWithdrawalNotificationStatus?: (requestId: string) => 'queued' | 'sent' | 'failed' | 'missing';
 }
 
 interface TicketingConfig {
@@ -374,7 +378,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   let confirmationClaimQueue: Promise<void> = Promise.resolve();
   let depositReconciliationPromise: Promise<void> | null = null;
   const signedDepositRecoveryTtlMs = 7 * 24 * 60 * 60 * 1000;
-  const pendingWithdrawalTtlMs = 30 * 60 * 1000;
+  const pendingWithdrawalTtlMs = 24 * 60 * 60 * 1000;
   const getRequestUserId = (req: Request) => (req as Request & { authUserId?: string }).authUserId;
 
   function isIntentExpired(intent: DepositIntent) {
@@ -403,6 +407,73 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
 
   function reconcilePendingWithdrawals() {
     for (const request of deps.withdrawalRequests.values()) expirePendingWithdrawal(request);
+  }
+
+  function completeWithdrawalFromChain(request: WithdrawalRequest, txHash: string, messageHash: string) {
+    if (request.status !== 'pending') return false;
+    request.status = 'completed';
+    request.completedAt = Date.now();
+    request.completedTxHash = txHash;
+    request.outboundTxHash = txHash;
+    request.outboundMessageHash = messageHash;
+    const user = deps.getUser(request.userId, request.walletAddress);
+    deps.createLedgerEntry(user, {
+      event: 'Withdrawal Completed',
+      value: `${request.ticketAmount.toFixed(2)} TKT`,
+      type: 'withdraw_completed',
+      amount: request.ticketAmount,
+    });
+    deps.schedulePersist({ withdrawalId: request.id, userId: request.userId });
+    return true;
+  }
+
+  function withdrawalMatchesTransaction(transaction: Record<string, unknown>, request: WithdrawalRequest) {
+    if (!transactionSucceeded(transaction)) return null;
+    const account = extractAddress(transaction.account);
+    if (!tonAddressesEqual(account, config.marketingWallet)) return null;
+    const expectedNano = toNano(request.tonAmount);
+    const expectedComment = `Redoapp withdrawal ${request.id}`;
+    const outMessages = Array.isArray(transaction.out_msgs) ? transaction.out_msgs : [];
+    return outMessages.find((message) => {
+      const record = (message || {}) as Record<string, unknown>;
+      const destination = extractAddress(record.destination) || extractAddress(record.dest);
+      const value = extractNanoAmount(record.value);
+      return tonAddressesEqual(destination, request.walletAddress)
+        && value === expectedNano
+        && extractTextComment(record) === expectedComment;
+    }) as Record<string, unknown> | undefined || null;
+  }
+
+  async function recheckPendingWithdrawals() {
+    reconcilePendingWithdrawals();
+    const pending = Array.from(deps.withdrawalRequests.values()).filter((request) => request.status === 'pending');
+    if (!pending.length) return 0;
+    const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(config.marketingWallet)}/transactions?limit=100&sort_order=desc`;
+    const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
+    let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
+    if (response.status === 401 && config.tonApiKey) {
+      response = await fetch(requestUrl, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(12_000) });
+    }
+    if (!response.ok) throw new Error(`TonAPI withdrawal recheck returned HTTP ${response.status}.`);
+    const payload = await response.json() as { transactions?: Array<Record<string, unknown>> };
+    const transactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+    let completedCount = 0;
+    for (const request of pending) {
+      request.lastChainCheckAt = Date.now();
+      const transaction = transactions.find((entry) => {
+        const timestamp = Number(entry.utime || entry.now || 0) * 1000;
+        return (!timestamp || timestamp >= request.createdAt - 60_000) && !!withdrawalMatchesTransaction(entry, request);
+      });
+      if (!transaction) {
+        deps.schedulePersist({ withdrawalId: request.id });
+        continue;
+      }
+      const message = withdrawalMatchesTransaction(transaction, request);
+      const txHash = typeof transaction.hash === 'string' ? transaction.hash : '';
+      const messageHash = message && typeof message.hash === 'string' ? message.hash : '';
+      if (txHash && messageHash && completeWithdrawalFromChain(request, txHash, messageHash)) completedCount += 1;
+    }
+    return completedCount;
   }
 
   function hasDuplicateMessageHash(intent: DepositIntent, normalizedMessageHash?: string) {
@@ -654,6 +725,9 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     backgroundTimer = setInterval(() => {
       recheckPendingDeposits().catch((error) => {
         console.error('Pending deposit background recheck failed', error);
+      });
+      recheckPendingWithdrawals().catch((error) => {
+        console.error('Pending withdrawal background recheck failed', error);
       });
     }, config.backgroundRecheckIntervalMs);
   }
@@ -918,8 +992,9 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       const userId = getRequestUserId(req);
       if (!userId) return res.status(403).json({ error: 'Forbidden.' });
       const user = deps.getUser(userId);
-      const request = Array.from(deps.withdrawalRequests.values())
-        .filter((entry) => entry.userId === userId && entry.status === 'pending' && !expirePendingWithdrawal(entry))
+      const userRequests = Array.from(deps.withdrawalRequests.values()).filter((entry) => entry.userId === userId);
+      userRequests.forEach((entry) => expirePendingWithdrawal(entry));
+      const request = userRequests
         .sort((left, right) => right.createdAt - left.createdAt)[0];
       return res.json({
         availableTickets: user.availableTickets,
@@ -930,6 +1005,10 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
           tonAmount: request.tonAmount,
           status: request.status,
           createdAt: request.createdAt,
+          completedAt: request.completedAt || null,
+          outboundTxHash: request.outboundTxHash || request.completedTxHash || null,
+          lastChainCheckAt: request.lastChainCheckAt || null,
+          notificationStatus: deps.getWithdrawalNotificationStatus?.(request.id) || 'missing',
         } : null,
       });
     });
@@ -961,7 +1040,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     });
 
     app.post('/api/tickets/withdraw-complete', deps.requireAdmin, (req: Request, res: Response) => {
-      const { requestId, txHash } = req.body;
+      const { requestId } = req.body;
       const request = deps.withdrawalRequests.get(requestId);
       if (!request) {
         return res.status(404).json({ error: 'Withdrawal request not found.' });
@@ -972,23 +1051,20 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (request.status === 'rejected') {
         return res.status(400).json({ error: 'Withdrawal request was already rejected.' });
       }
-      request.status = 'completed';
-      request.completedAt = Date.now();
-      request.completedTxHash = typeof txHash === 'string' && txHash.trim() ? txHash.trim() : null;
-      deps.schedulePersist({ withdrawalId: request.id, userId: request.userId });
-      const user = deps.getUser(request.userId, request.walletAddress);
-      deps.createLedgerEntry(user, {
-        event: 'Withdrawal Completed',
-        value: `${request.ticketAmount.toFixed(2)} TKT`,
-        type: 'withdraw_completed',
-        amount: request.ticketAmount,
+      recheckPendingWithdrawals().then(() => {
+        if (request.status !== 'completed') {
+          return res.status(409).json({ error: 'Matching on-chain withdrawal payment was not found.' });
+        }
+        return res.json({ success: true, status: request.status, txHash: request.outboundTxHash || request.completedTxHash || null });
+      }).catch((error) => {
+        return res.status(502).json({ error: error instanceof Error ? error.message : 'Withdrawal verification failed.' });
       });
-      return res.json({ success: true, status: request.status });
     });
   }
 
   return {
     reconcilePendingWithdrawals,
+    recheckPendingWithdrawals,
     registerRoutes,
     startBackgroundDepositRecheck,
     recheckPendingDeposits,

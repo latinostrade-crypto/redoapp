@@ -399,7 +399,7 @@ export function Web3Dashboard({
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
   const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
-  const [pendingWithdrawal, setPendingWithdrawal] = useState<null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number }>(null);
+  const [pendingWithdrawal, setPendingWithdrawal] = useState<null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null }>(null);
   const [withdrawCancelState, setWithdrawCancelState] = useState<'idle' | 'cancelling'>('idle');
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
@@ -427,14 +427,16 @@ export function Web3Dashboard({
   const launchStartParam = getReferralStartParam();
   const authReady = bootstrapState === 'ready';
   const refreshPendingWithdrawal = useCallback(async () => {
-    const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number } }>(
+    const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending' | 'completed' | 'rejected'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null } }>(
       '/api/tickets/withdraw-pending',
       { timeoutMs: 20_000 },
     );
     setGoldenTickets(result.availableTickets);
     setTransactions(result.transactions);
-    setPendingWithdrawal(result.request);
-    return result.request;
+    const activeRequest = result.request?.status === 'pending' ? { ...result.request, status: 'pending' as const } : null;
+    setPendingWithdrawal(activeRequest);
+    if (result.request?.status === 'completed') setWithdrawStatusMessage('Successful');
+    return activeRequest;
   }, []);
   const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((apiTraceNow - apiTrace.startedAt) / 1000)) : 0;
   const apiTraceHost = (() => {
@@ -456,6 +458,14 @@ export function Web3Dashboard({
     if (!authReady) return;
     refreshPendingWithdrawal().catch(() => undefined);
   }, [authReady, refreshPendingWithdrawal]);
+
+  useEffect(() => {
+    if (!authReady || !pendingWithdrawal) return;
+    const timer = window.setInterval(() => {
+      refreshPendingWithdrawal().catch(() => undefined);
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [authReady, pendingWithdrawal?.id, refreshPendingWithdrawal]);
 
   useEffect(() => {
     const handleApiTrace = (event: Event) => {
@@ -1158,7 +1168,7 @@ export function Web3Dashboard({
         setFullProfile(normalized);
         setGoldenTickets(me.availableTickets);
         setHeldTickets(me.heldTickets);
-      });
+      }).catch(() => undefined);
     }).catch((error) => {
       alert(error.message);
     }).finally(() => {
@@ -1369,7 +1379,15 @@ export function Web3Dashboard({
         retryOnNetworkError: false,
         timeoutMs: 20_000,
       });
-      setPendingWithdrawal({ id: created.requestId, ticketAmount: amount, tonAmount: created.tonAmount, status: 'pending', createdAt: Date.now() });
+      setPendingWithdrawal({
+        id: created.requestId,
+        ticketAmount: amount,
+        tonAmount: created.tonAmount,
+        status: 'pending',
+        createdAt: Date.now(),
+        notificationStatus: 'queued',
+        lastChainCheckAt: null,
+      });
       setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
       setWithdrawStatusMessage('Successful');
       setWithdrawRequestState('idle');
@@ -2097,6 +2115,13 @@ export function Web3Dashboard({
                       <div>
                         Pending withdrawal: <strong>{pendingWithdrawal.ticketAmount.toFixed(2)} TKT</strong>.
                         Tickets are reserved until payout, cancellation, or automatic expiry.
+                      </div>
+                      <div className="text-[6.5px] text-slate-300">
+                        Admin notification: {pendingWithdrawal.notificationStatus === 'sent'
+                          ? 'delivered'
+                          : pendingWithdrawal.notificationStatus === 'failed'
+                            ? 'delivery failed — retrying'
+                            : 'queued'} · Blockchain: waiting for payment
                       </div>
                       <button
                         type="button"

@@ -1668,14 +1668,15 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
     `Tickets: ${request.ticketAmount.toFixed(2)} TKT`,
     `TON to send: ${request.tonAmount.toFixed(2)} TON`,
     `Wallet: ${request.walletAddress}`,
+    `Required sender: ${MARKETING_WALLET}`,
     `Created: ${createdAt}`,
     '',
     'Server checks:',
     ...flags.map((flag) => `- ${flag}`),
     '',
     'Flow:',
-    '1. Open Tonkeeper and send the transfer.',
-    '2. Tap Mark completed after the transfer is sent.',
+    '1. Open Tonkeeper and send from the configured marketing wallet.',
+    '2. Tap Verify on blockchain after the transfer is sent.',
     '3. Tap Reject & refund only if the payout should not be sent.',
   ].join('\n');
 
@@ -1689,7 +1690,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
       ],
       [
         {
-          text: 'Mark completed',
+          text: 'Verify on blockchain',
           url: completeUrl,
         },
         {
@@ -1720,11 +1721,20 @@ function recoverPendingWithdrawalNotifications() {
   }
 }
 
+function getWithdrawalNotificationStatus(requestId: string): 'queued' | 'sent' | 'failed' | 'missing' {
+  const items = telegramNotifications.filter((item) => item.userId === `withdrawal:${requestId}`);
+  if (items.some((item) => item.status === 'sent')) return 'sent';
+  if (items.some((item) => item.status === 'pending' || (item.status === 'failed' && (item.attempts || 0) < 8))) return 'queued';
+  if (items.some((item) => item.status === 'failed')) return 'failed';
+  return 'missing';
+}
+
 const ticketingService = createTicketingService({
   claimDepositPayment,
   createLedgerEntry,
   depositIntents,
   getWithdrawalReviewFlags,
+  getWithdrawalNotificationStatus,
   getUser,
   notifyWithdrawalRequest: notifyWithdrawalOperator,
   requireAdmin,
@@ -2478,9 +2488,23 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
 app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'), async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const userId = req.authUserId;
   if (!userId) return next();
+  let connectionClosed = false;
+  const markClosedWhileWaiting = () => { connectionClosed = true; };
+  res.once('close', markClosedWhileWaiting);
   const release = await acquireUserLock(userId);
-  res.on('finish', release);
-  res.on('close', release);
+  res.removeListener('close', markClosedWhileWaiting);
+  if (connectionClosed || res.destroyed || res.writableEnded) {
+    release();
+    return;
+  }
+  let released = false;
+  const releaseOnce = () => {
+    if (released) return;
+    released = true;
+    release();
+  };
+  res.once('finish', releaseOnce);
+  res.once('close', releaseOnce);
   next();
 });
 ticketingService.registerRoutes(app);
@@ -2491,7 +2515,7 @@ app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
     return res.status(403).send('Invalid or expired withdrawal operator link.');
   }
   // The link is only a short-lived confirmation page; the state change requires POST.
-  return res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Confirm withdrawal</title><form method="post" action="/api/admin/withdrawals/${encodeURIComponent(requestId)}/complete"><input type="hidden" name="token" value="${String(req.query.token).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><button type="submit">Confirm withdrawal completion</button></form>`);
+  return res.type('html').send(`<!doctype html><meta charset="utf-8"><title>Verify withdrawal</title><form method="post" action="/api/admin/withdrawals/${encodeURIComponent(requestId)}/complete"><input type="hidden" name="token" value="${String(req.query.token).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><button type="submit">Verify TON payment on blockchain</button></form>`);
 
   const request = withdrawalRequests.get(requestId);
   if (!request) {
@@ -2560,16 +2584,19 @@ app.get('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
 
 app.post('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
   const requestId = String(req.params.requestId || '');
-  if (!consumeWithdrawalOperatorToken('complete', requestId, req.body?.token)) return res.status(403).send('Invalid or expired withdrawal operator link.');
+  if (!verifyWithdrawalOperatorToken('complete', requestId, req.body?.token)) return res.status(403).send('Invalid or expired withdrawal operator link.');
   const request = withdrawalRequests.get(requestId);
-  if (!request || request.status !== 'pending') return res.status(400).send('Withdrawal cannot be completed.');
-  request.status = 'completed';
-  request.completedAt = Date.now();
-  schedulePersist({ withdrawalId: request.id, userId: request.userId });
-  const user = getUser(request.userId, request.walletAddress);
-  createLedgerEntry(user, { event: 'Withdrawal Completed', value: `${request.ticketAmount.toFixed(2)} TKT`, type: 'withdraw_completed', amount: request.ticketAmount });
+  if (!request) return res.status(404).send('Withdrawal request not found.');
+  if (request.status === 'rejected') return res.status(400).send('Withdrawal was cancelled or expired. Do not send it.');
+  if (request.status === 'completed') return res.send(`Withdrawal ${request.id} is already verified on-chain.`);
+  await ticketingService.recheckPendingWithdrawals();
+  const verifiedRequest = withdrawalRequests.get(requestId);
+  if (verifiedRequest?.status !== 'completed') {
+    return res.status(409).send('The matching TON transaction is not indexed yet. Wait a few seconds and retry verification.');
+  }
+  consumeWithdrawalOperatorToken('complete', requestId, req.body?.token);
   await persistStateNow();
-  return res.send(`Withdrawal ${request.id} marked completed.`);
+  return res.send(`Withdrawal ${request.id} verified on-chain and marked completed.`);
 });
 
 app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
@@ -3655,6 +3682,9 @@ async function bootstrap() {
   ticketingService.startBackgroundDepositRecheck();
   ticketingService.recheckPendingDeposits().catch((error) => {
     console.error('Initial pending deposit recheck failed', error);
+  });
+  ticketingService.recheckPendingWithdrawals().catch((error) => {
+    console.error('Initial pending withdrawal chain recheck failed', error);
   });
   app.listen(PORT, () => {
     console.log(`Redoapp backend running on port ${PORT}`);
