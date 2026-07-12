@@ -374,6 +374,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   let confirmationClaimQueue: Promise<void> = Promise.resolve();
   let depositReconciliationPromise: Promise<void> | null = null;
   const signedDepositRecoveryTtlMs = 7 * 24 * 60 * 60 * 1000;
+  const pendingWithdrawalTtlMs = 30 * 60 * 1000;
   const getRequestUserId = (req: Request) => (req as Request & { authUserId?: string }).authUserId;
 
   function isIntentExpired(intent: DepositIntent) {
@@ -382,6 +383,26 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
 
   function canRecoverSignedIntent(intent: DepositIntent) {
     return !!intent.signedBoc && Date.now() - intent.createdAt <= signedDepositRecoveryTtlMs;
+  }
+
+  function expirePendingWithdrawal(request: WithdrawalRequest) {
+    if (request.status !== 'pending' || Date.now() - request.createdAt < pendingWithdrawalTtlMs) return false;
+    const user = deps.getUser(request.userId, request.walletAddress);
+    request.status = 'rejected';
+    request.completedAt = Date.now();
+    user.availableTickets = deps.round2(user.availableTickets + request.ticketAmount);
+    deps.createLedgerEntry(user, {
+      event: 'Withdrawal Expired',
+      value: `+${request.ticketAmount.toFixed(2)} TKT`,
+      type: 'withdraw_rejected',
+      amount: request.ticketAmount,
+    });
+    deps.schedulePersist({ withdrawalId: request.id, userId: request.userId });
+    return true;
+  }
+
+  function reconcilePendingWithdrawals() {
+    for (const request of deps.withdrawalRequests.values()) expirePendingWithdrawal(request);
   }
 
   function hasDuplicateMessageHash(intent: DepositIntent, normalizedMessageHash?: string) {
@@ -854,7 +875,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         return res.status(400).json({ error: 'Insufficient available tickets.' });
       }
       const pendingRequests = Array.from(deps.withdrawalRequests.values()).filter((request) => (
-        request.userId === userId && request.status === 'pending'
+        request.userId === userId && request.status === 'pending' && !expirePendingWithdrawal(request)
       ));
       if (pendingRequests.length > 0) {
         return res.status(400).json({ error: 'You already have a pending withdrawal request.' });
@@ -893,6 +914,52 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       });
     });
 
+    app.get('/api/tickets/withdraw-pending', (req: Request, res: Response) => {
+      const userId = getRequestUserId(req);
+      if (!userId) return res.status(403).json({ error: 'Forbidden.' });
+      const user = deps.getUser(userId);
+      const request = Array.from(deps.withdrawalRequests.values())
+        .filter((entry) => entry.userId === userId && entry.status === 'pending' && !expirePendingWithdrawal(entry))
+        .sort((left, right) => right.createdAt - left.createdAt)[0];
+      return res.json({
+        availableTickets: user.availableTickets,
+        transactions: user.transactions,
+        request: request ? {
+          id: request.id,
+          ticketAmount: request.ticketAmount,
+          tonAmount: request.tonAmount,
+          status: request.status,
+          createdAt: request.createdAt,
+        } : null,
+      });
+    });
+
+    app.post('/api/tickets/withdraw-cancel', (req: Request, res: Response) => {
+      const userId = getRequestUserId(req);
+      const requestId = typeof req.body?.requestId === 'string' ? req.body.requestId : '';
+      if (!userId || !requestId) return res.status(400).json({ error: 'Withdrawal cancellation requires requestId.' });
+      const request = deps.withdrawalRequests.get(requestId);
+      if (!request || request.userId !== userId) return res.status(404).json({ error: 'Withdrawal request not found.' });
+      const user = deps.getUser(userId, request.walletAddress);
+      if (request.status === 'completed') {
+        return res.status(409).json({ error: 'Completed withdrawal cannot be cancelled.' });
+      }
+      if (request.status === 'rejected') {
+        return res.json({ success: true, status: request.status, availableTickets: user.availableTickets, transactions: user.transactions });
+      }
+      request.status = 'rejected';
+      request.completedAt = Date.now();
+      user.availableTickets = deps.round2(user.availableTickets + request.ticketAmount);
+      deps.createLedgerEntry(user, {
+        event: 'Withdrawal Cancelled',
+        value: `+${request.ticketAmount.toFixed(2)} TKT`,
+        type: 'withdraw_rejected',
+        amount: request.ticketAmount,
+      });
+      deps.schedulePersist({ withdrawalId: request.id, userId });
+      return res.json({ success: true, status: request.status, availableTickets: user.availableTickets, transactions: user.transactions });
+    });
+
     app.post('/api/tickets/withdraw-complete', deps.requireAdmin, (req: Request, res: Response) => {
       const { requestId, txHash } = req.body;
       const request = deps.withdrawalRequests.get(requestId);
@@ -921,6 +988,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   }
 
   return {
+    reconcilePendingWithdrawals,
     registerRoutes,
     startBackgroundDepositRecheck,
     recheckPendingDeposits,

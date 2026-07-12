@@ -3647,6 +3647,7 @@ if (process.env.NODE_ENV === 'production' && (!process.env.TELEGRAM_BOT_TOKEN ||
 
 async function bootstrap() {
   await loadPersistedState();
+  ticketingService.reconcilePendingWithdrawals();
   recoverPendingWithdrawalNotifications();
   flushTelegramNotifications().catch((error) => {
     console.error('Initial withdrawal notification flush failed', error);

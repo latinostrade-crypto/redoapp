@@ -399,6 +399,8 @@ export function Web3Dashboard({
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
   const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
+  const [pendingWithdrawal, setPendingWithdrawal] = useState<null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number }>(null);
+  const [withdrawCancelState, setWithdrawCancelState] = useState<'idle' | 'cancelling'>('idle');
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
   const [showAccountRefresh, setShowAccountRefresh] = useState(() => Boolean(localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY)));
@@ -424,6 +426,16 @@ export function Web3Dashboard({
   const privateStakeRequiresWallet = privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
   const authReady = bootstrapState === 'ready';
+  const refreshPendingWithdrawal = useCallback(async () => {
+    const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number } }>(
+      '/api/tickets/withdraw-pending',
+      { timeoutMs: 20_000 },
+    );
+    setGoldenTickets(result.availableTickets);
+    setTransactions(result.transactions);
+    setPendingWithdrawal(result.request);
+    return result.request;
+  }, []);
   const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((apiTraceNow - apiTrace.startedAt) / 1000)) : 0;
   const apiTraceHost = (() => {
     try {
@@ -439,6 +451,11 @@ export function Web3Dashboard({
       .map((payout, index) => `${formatPlaceLabel(index + 1)} ${payout.toFixed(2)} TKT`)
       .join(' · ');
   };
+
+  useEffect(() => {
+    if (!authReady) return;
+    refreshPendingWithdrawal().catch(() => undefined);
+  }, [authReady, refreshPendingWithdrawal]);
 
   useEffect(() => {
     const handleApiTrace = (event: Event) => {
@@ -1312,6 +1329,10 @@ export function Web3Dashboard({
   const prepareWithdrawal = () => {
     const amount = Number(withdrawAmount);
     setWithdrawStatusMessage('');
+    if (pendingWithdrawal) {
+      setWithdrawStatusMessage(`A ${pendingWithdrawal.ticketAmount.toFixed(2)} TKT withdrawal is already pending.`);
+      return;
+    }
     if (!walletConnected || !rawAddress) {
       setWithdrawStatusMessage('Connect wallet first.');
       return;
@@ -1338,16 +1359,17 @@ export function Web3Dashboard({
     setWithdrawRequestState('submitting');
     setWithdrawStatusMessage('Processing withdrawal request...');
     try {
-      await apiRequest('/api/tickets/withdraw-request', {
+      const created = await apiRequest<{ requestId: string; status: 'pending'; tonAmount: number }>('/api/tickets/withdraw-request', {
         method: 'POST',
         body: JSON.stringify({
           requestId: withdrawRequestId,
           walletAddress: rawAddress,
           ticketAmount: amount,
         }),
-        retryOnNetworkError: true,
-        timeoutMs: 60_000,
+        retryOnNetworkError: false,
+        timeoutMs: 20_000,
       });
+      setPendingWithdrawal({ id: created.requestId, ticketAmount: amount, tonAmount: created.tonAmount, status: 'pending', createdAt: Date.now() });
       setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
       setWithdrawStatusMessage('Successful');
       setWithdrawRequestState('idle');
@@ -1364,8 +1386,41 @@ export function Web3Dashboard({
         // remains available if Telegram interrupts the follow-up synchronization.
       });
     } catch (error) {
-      setWithdrawRequestState('confirming');
-      setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not create withdrawal request.');
+      const recovered = await refreshPendingWithdrawal().catch(() => null);
+      if (recovered?.id === withdrawRequestId) {
+        setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
+        setWithdrawStatusMessage('Successful');
+        setWithdrawRequestState('idle');
+        setWithdrawRequestId('');
+      } else {
+        setWithdrawRequestState('idle');
+        setWithdrawRequestId('');
+        setWithdrawStatusMessage(recovered
+          ? `A ${recovered.ticketAmount.toFixed(2)} TKT withdrawal is already pending.`
+          : (error instanceof Error ? error.message : 'Could not create withdrawal request.'));
+      }
+    }
+  };
+
+  const cancelPendingWithdrawal = async () => {
+    if (!pendingWithdrawal || withdrawCancelState === 'cancelling') return;
+    setWithdrawCancelState('cancelling');
+    setWithdrawStatusMessage('');
+    try {
+      const result = await apiRequest<{ availableTickets: number; transactions: any[] }>('/api/tickets/withdraw-cancel', {
+        method: 'POST',
+        body: JSON.stringify({ requestId: pendingWithdrawal.id }),
+        timeoutMs: 20_000,
+      });
+      setGoldenTickets(result.availableTickets);
+      setTransactions(result.transactions);
+      setPendingWithdrawal(null);
+      setWithdrawStatusMessage('Withdrawal cancelled. Tickets returned.');
+    } catch (error) {
+      setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not cancel withdrawal.');
+      await refreshPendingWithdrawal().catch(() => undefined);
+    } finally {
+      setWithdrawCancelState('idle');
     }
   };
 
@@ -2037,12 +2092,29 @@ export function Web3Dashboard({
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
                 <div className="space-y-1.5">
                   <div className="text-[7.5px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
+                  {pendingWithdrawal && (
+                    <div className="space-y-1.5 border border-[#ffcc00] bg-[#231b05] p-2 text-[7px] text-[#ffe680]">
+                      <div>
+                        Pending withdrawal: <strong>{pendingWithdrawal.ticketAmount.toFixed(2)} TKT</strong>.
+                        Tickets are reserved until payout, cancellation, or automatic expiry.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={cancelPendingWithdrawal}
+                        disabled={withdrawCancelState === 'cancelling'}
+                        className="w-full border border-black bg-[#ff4b4b] py-1 text-[7px] font-black uppercase text-black pixel-btn-interactive disabled:opacity-60"
+                      >
+                        {withdrawCancelState === 'cancelling' ? 'Cancelling…' : 'Cancel & return tickets'}
+                      </button>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <input
                       type="number"
                       min="0.5"
                       step="0.1"
                       value={withdrawAmount}
+                      disabled={!!pendingWithdrawal || withdrawRequestState === 'submitting'}
                       onChange={(e) => {
                         setWithdrawAmount(e.target.value);
                         if (withdrawRequestState === 'confirming') {
@@ -2057,7 +2129,7 @@ export function Web3Dashboard({
                     <button
                       type="button"
                       onClick={prepareWithdrawal}
-                      disabled={withdrawRequestState === 'submitting'}
+                      disabled={withdrawRequestState === 'submitting' || !!pendingWithdrawal}
                       className="px-3 py-1 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       Withdraw
