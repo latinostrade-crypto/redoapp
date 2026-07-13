@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
-import { AvatarId, GameStats, PendingDepositView, PlayerProfile } from '../types';
+import { AvatarId, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
 import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken, wakeBackend } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
@@ -207,6 +207,10 @@ type PrivateRoomResponse = {
   availableTickets?: number;
   heldTickets?: number;
 };
+type ReferralPageResponse = {
+  invites: ReferralInvite[];
+  nextCursor: string | null;
+};
 
 export function Web3Dashboard({
   userName,
@@ -266,6 +270,10 @@ export function Web3Dashboard({
     }
   });
   const [fullProfileLoading, setFullProfileLoading] = useState(false);
+  const [referralInvites, setReferralInvites] = useState<ReferralInvite[]>([]);
+  const [referralInviteCursor, setReferralInviteCursor] = useState<string | null>(null);
+  const [referralInvitesLoading, setReferralInvitesLoading] = useState(false);
+  const [referralInvitesError, setReferralInvitesError] = useState('');
   const [isClaimingDaily, setIsClaimingDaily] = useState(false);
   const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>(() => (
     profile && getSessionToken() ? 'ready' : 'idle'
@@ -912,6 +920,31 @@ export function Web3Dashboard({
         setFullProfileLoading(false);
       });
   };
+
+  const loadReferralInvites = (cursor: string | null = null) => {
+    if (referralInvitesLoading || !getSessionToken()) return Promise.resolve();
+    setReferralInvitesLoading(true);
+    setReferralInvitesError('');
+    const query = new URLSearchParams({ limit: '20' });
+    if (cursor) query.set('cursor', cursor);
+    return apiRequest<ReferralPageResponse>(`/api/referrals?${query.toString()}`)
+      .then((page) => {
+        setReferralInvites((current) => cursor ? [...current, ...page.invites] : page.invites);
+        setReferralInviteCursor(page.nextCursor);
+      })
+      .catch((error) => {
+        setReferralInvitesError(error instanceof Error ? error.message : 'Could not load referrals.');
+      })
+      .finally(() => {
+        setReferralInvitesLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    setReferralInvites([]);
+    setReferralInviteCursor(null);
+    setReferralInvitesError('');
+  }, [currentUserId]);
 
   const updateAccountBalance = async () => {
     if (accountRefreshState === 'refreshing') return;
@@ -1786,7 +1819,14 @@ export function Web3Dashboard({
                     type="button"
                     onClick={() => {
                       sound.playPop();
-                      setShowReferralDetails(!showReferralDetails);
+                      const nextOpen = !showReferralDetails;
+                      setShowReferralDetails(nextOpen);
+                      if (nextOpen) {
+                        fetchFullProfile().catch(() => undefined);
+                        if (referralInvites.length === 0) {
+                          loadReferralInvites().catch(() => undefined);
+                        }
+                      }
                     }}
                     className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#ffcc00] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
                   >
@@ -1856,6 +1896,32 @@ export function Web3Dashboard({
                                 <div className="text-slate-550 uppercase">Rejected</div>
                                 <div className="text-slate-300 font-black">{referralStats.rejectedInvited}</div>
                               </div>
+                            </div>
+                            <div className="pt-1 space-y-1 text-left">
+                              <div className="text-[6.5px] uppercase font-bold text-slate-500">Invited players</div>
+                              {referralInvites.length === 0 && !referralInvitesLoading ? (
+                                <div className="text-[7px] text-slate-500">The invite records are being restored or no detailed names are available yet.</div>
+                              ) : referralInvites.map((invite) => (
+                                <div key={invite.userId} className="flex items-center justify-between gap-2 bg-slate-950 border border-black px-1.5 py-1 text-[7px]">
+                                  <span className="min-w-0 truncate text-slate-200">{invite.username}</span>
+                                  <span className={invite.status === 'activated' ? 'font-black text-[#00ff66]' : invite.status === 'pending' ? 'font-black text-[#ffcc00]' : 'font-black text-slate-400'}>
+                                    {invite.status === 'activated' ? 'ACTIVE' : invite.status.toUpperCase()}
+                                  </span>
+                                </div>
+                              ))}
+                              {referralInvitesLoading && (
+                                <div className="text-[7px] text-slate-500">Loading invited players...</div>
+                              )}
+                              {referralInvitesError && (
+                                <button type="button" onClick={() => loadReferralInvites()} className="text-left text-[7px] text-[#ff8b8b] underline">
+                                  Could not load invite list. Tap to retry.
+                                </button>
+                              )}
+                              {referralInviteCursor && !referralInvitesLoading && (
+                                <button type="button" onClick={() => loadReferralInvites(referralInviteCursor)} className="w-full border border-black bg-slate-900 py-1 text-[7px] font-black text-[#9ed8ff] uppercase pixel-btn-interactive">
+                                  Load more
+                                </button>
+                              )}
                             </div>
                           </>
                         )}

@@ -173,6 +173,8 @@ The profile API no longer returns the full invited-user list by default. This is
 
 The frontend profile card displays the aggregate counts instead of rendering usernames. This keeps profile sync fast for high-volume inviters.
 
+`GET /api/referrals?limit=20&cursor=…` returns the inviter's own detailed referral list in pages. The profile opens this list on demand, so individual invitees remain visible without making every profile request large.
+
 For legacy users, `totalInvited` is never lower than the stored `referralsActivated` counter, so referrals that were already credited before detailed referral links were repaired still appear in aggregate profile stats.
 
 ### Referral Reliability Fixes
@@ -185,7 +187,9 @@ The backend now protects referral state with:
 - explicit dirty-user persistence for L1 and L2 referral bonus recipients
 - in-memory referral stats rebuilt after local or Supabase state load
 - Supabase paginated reads for all granular state rows
-- fallback loading from the legacy `runtime-state` row when granular rows do not exist
+- legacy `runtime-state` is merged with granular rows on every startup, then legacy-only users are migrated to `user:*` rows
+- Supabase write errors keep their dirty records queued for retry instead of being treated as a successful save
+- production refuses to start without Supabase, because Render's local disk is not durable enough for balances or referrals
 
 ## XP, Energy, Quests, and Rewards
 

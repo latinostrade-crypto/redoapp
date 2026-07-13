@@ -225,6 +225,10 @@ interface UserQuestProgress {
   updatedAt: number;
 }
 
+type PersistedUserState = UserState & {
+  questProgress?: UserQuestProgress[];
+};
+
 type ReferralStatus = NonNullable<UserState['referralStatus']>;
 
 interface ReferralStats {
@@ -334,6 +338,7 @@ const referralStatsByInviter = new Map<string, ReferralStats>();
 let telegramFlushPromise: Promise<void> | null = null;
 const localDepositPaymentClaims = new Map<string, string>();
 let persistTimer: NodeJS.Timeout | null = null;
+let persistRetryTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
@@ -416,117 +421,116 @@ const dirtyDeposits = new Set<string>();
 const dirtyWithdrawals = new Set<string>();
 const deletedMatches = new Set<string>();
 const deletedPrivateRooms = new Set<string>();
+const dirtyUserVersions = new Map<string, number>();
+const dirtyMatchVersions = new Map<string, number>();
+const dirtyPrivateRoomVersions = new Map<string, number>();
+const dirtyDepositVersions = new Map<string, number>();
+const dirtyWithdrawalVersions = new Map<string, number>();
+let persistInFlight: Promise<void> | null = null;
+
+function markDirty(dirty: Set<string>, versions: Map<string, number>, id: string) {
+  dirty.add(id);
+  versions.set(id, (versions.get(id) || 0) + 1);
+}
+
+function acknowledgeDirty(dirty: Set<string>, versions: Map<string, number>, id: string, persistedVersion: number) {
+  // A request can update the same record while Supabase is awaiting its write.
+  // Only acknowledge the write if nothing newer was queued in the meantime.
+  if (versions.get(id) === persistedVersion) {
+    dirty.delete(id);
+    versions.delete(id);
+  }
+}
+
+async function upsertStateRow(id: string, payload: unknown) {
+  const { error } = await supabaseAdmin!
+    .from(SUPABASE_STATE_TABLE)
+    .upsert({
+      id,
+      payload,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+  if (error) throw new Error(`Supabase upsert failed for ${id}: ${error.message}`);
+}
+
+async function persistDirtyRows<T>(
+  dirty: Set<string>,
+  versions: Map<string, number>,
+  rowPrefix: string,
+  getValue: (id: string) => T | undefined,
+) {
+  for (const id of Array.from(dirty)) {
+    const version = versions.get(id) || 0;
+    const value = getValue(id);
+    if (value === undefined) {
+      acknowledgeDirty(dirty, versions, id, version);
+      continue;
+    }
+    await upsertStateRow(`${rowPrefix}${id}`, value);
+    acknowledgeDirty(dirty, versions, id, version);
+  }
+}
 
 async function persistStateNow() {
+  if (persistInFlight) return persistInFlight;
+  persistInFlight = persistStateNowInternal().finally(() => {
+    persistInFlight = null;
+  });
+  return persistInFlight;
+}
+
+async function persistStateNowInternal() {
   if (supabaseAdmin) {
     try {
       // 1. Persist dirty users
-      for (const userId of dirtyUsers) {
+      await persistDirtyRows<PersistedUserState>(dirtyUsers, dirtyUserVersions, 'user:', (userId) => {
         const user = users.get(userId);
-        if (user) {
-          await supabaseAdmin
-            .from(SUPABASE_STATE_TABLE)
-            .upsert({
-              id: `user:${userId}`,
-              payload: user,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id' });
-        }
-      }
-      dirtyUsers.clear();
+        return user
+          ? { ...user, questProgress: questProgressByUser.get(userId) || [] }
+          : undefined;
+      });
 
       // 2. Persist dirty matches
-      for (const matchId of dirtyMatches) {
-        const match = activeMatches.get(matchId);
-        if (match) {
-          await supabaseAdmin
-            .from(SUPABASE_STATE_TABLE)
-            .upsert({
-              id: `match:${matchId}`,
-              payload: match,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id' });
-        }
-      }
-      dirtyMatches.clear();
+      await persistDirtyRows(dirtyMatches, dirtyMatchVersions, 'match:', (matchId) => activeMatches.get(matchId));
 
       // 3. Persist dirty private rooms
-      for (const roomCode of dirtyPrivateRooms) {
-        const room = privateRooms.get(roomCode);
-        if (room) {
-          await supabaseAdmin
-            .from(SUPABASE_STATE_TABLE)
-            .upsert({
-              id: `room:${roomCode}`,
-              payload: room,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id' });
-        }
-      }
-      dirtyPrivateRooms.clear();
+      await persistDirtyRows(dirtyPrivateRooms, dirtyPrivateRoomVersions, 'room:', (roomCode) => privateRooms.get(roomCode));
 
       // 4. Persist dirty deposits
-      for (const depositId of dirtyDeposits) {
-        const intent = depositIntents.get(depositId);
-        if (intent) {
-          await supabaseAdmin
-            .from(SUPABASE_STATE_TABLE)
-            .upsert({
-              id: `deposit:${depositId}`,
-              payload: intent,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id' });
-        }
-      }
-      dirtyDeposits.clear();
+      await persistDirtyRows(dirtyDeposits, dirtyDepositVersions, 'deposit:', (depositId) => depositIntents.get(depositId));
 
       // 5. Persist dirty withdrawals
-      for (const withdrawalId of dirtyWithdrawals) {
-        const request = withdrawalRequests.get(withdrawalId);
-        if (request) {
-          await supabaseAdmin
-            .from(SUPABASE_STATE_TABLE)
-            .upsert({
-              id: `withdrawal:${withdrawalId}`,
-              payload: request,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'id' });
-        }
-      }
-      dirtyWithdrawals.clear();
+      await persistDirtyRows(dirtyWithdrawals, dirtyWithdrawalVersions, 'withdrawal:', (withdrawalId) => withdrawalRequests.get(withdrawalId));
 
       // 6. Delete removed matches
-      for (const matchId of deletedMatches) {
-        await supabaseAdmin
+      for (const matchId of Array.from(deletedMatches)) {
+        const { error } = await supabaseAdmin
           .from(SUPABASE_STATE_TABLE)
           .delete()
           .eq('id', `match:${matchId}`);
+        if (error) throw new Error(`Supabase delete failed for match:${matchId}: ${error.message}`);
+        deletedMatches.delete(matchId);
       }
-      deletedMatches.clear();
 
       // 7. Delete removed private rooms
-      for (const roomCode of deletedPrivateRooms) {
-        await supabaseAdmin
+      for (const roomCode of Array.from(deletedPrivateRooms)) {
+        const { error } = await supabaseAdmin
           .from(SUPABASE_STATE_TABLE)
           .delete()
           .eq('id', `room:${roomCode}`);
+        if (error) throw new Error(`Supabase delete failed for room:${roomCode}: ${error.message}`);
+        deletedPrivateRooms.delete(roomCode);
       }
-      deletedPrivateRooms.clear();
 
       // 8. Persist global state (queue, notifications)
       const globalState = {
         matchmakingQueue,
         telegramNotifications,
       };
-      await supabaseAdmin
-        .from(SUPABASE_STATE_TABLE)
-        .upsert({
-          id: 'global-state',
-          payload: globalState,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'id' });
+      await upsertStateRow('global-state', globalState);
     } catch (err) {
       console.error('Supabase granular persist failed:', err);
+      throw err;
     }
     return;
   }
@@ -547,11 +551,11 @@ function schedulePersist(opts?: {
   deleteRoomCode?: string;
 }) {
   if (opts) {
-    if (opts.userId) dirtyUsers.add(opts.userId);
-    if (opts.matchId) dirtyMatches.add(opts.matchId);
-    if (opts.roomCode) dirtyPrivateRooms.add(opts.roomCode);
-    if (opts.depositId) dirtyDeposits.add(opts.depositId);
-    if (opts.withdrawalId) dirtyWithdrawals.add(opts.withdrawalId);
+    if (opts.userId) markDirty(dirtyUsers, dirtyUserVersions, opts.userId);
+    if (opts.matchId) markDirty(dirtyMatches, dirtyMatchVersions, opts.matchId);
+    if (opts.roomCode) markDirty(dirtyPrivateRooms, dirtyPrivateRoomVersions, opts.roomCode);
+    if (opts.depositId) markDirty(dirtyDeposits, dirtyDepositVersions, opts.depositId);
+    if (opts.withdrawalId) markDirty(dirtyWithdrawals, dirtyWithdrawalVersions, opts.withdrawalId);
     if (opts.deleteMatchId) deletedMatches.add(opts.deleteMatchId);
     if (opts.deleteRoomCode) deletedPrivateRooms.add(opts.deleteRoomCode);
   }
@@ -563,6 +567,14 @@ function schedulePersist(opts?: {
     persistTimer = null;
     persistStateNow().catch((error) => {
       console.error('Failed to persist runtime state', error);
+      // Keep dirty rows in memory and retry. A transient Supabase outage must
+      // not turn referral assignments or balances into acknowledged data loss.
+      if (!persistRetryTimer) {
+        persistRetryTimer = setTimeout(() => {
+          persistRetryTimer = null;
+          schedulePersist();
+        }, 5_000);
+      }
     });
   }, 100);
 }
@@ -707,7 +719,23 @@ async function loadPersistedState() {
       questProgressByUser.clear();
       telegramNotifications.splice(0, telegramNotifications.length);
 
-      // 1. Load global state
+      // Read the legacy snapshot even after granular rows have appeared. The
+      // first granular write used to make all users stored only in
+      // `runtime-state` disappear on the next Render restart.
+      let legacySnapshot: PersistedState | null = null;
+      const { data: legacyData, error: legacyError } = await supabaseAdmin
+        .from(SUPABASE_STATE_TABLE)
+        .select('payload')
+        .eq('id', SUPABASE_STATE_ROW_ID)
+        .maybeSingle();
+      if (legacyError) {
+        console.error('Failed to load legacy runtime state from Supabase', legacyError);
+      } else if (legacyData?.payload && Array.isArray((legacyData.payload as Partial<PersistedState>).users)) {
+        legacySnapshot = legacyData.payload as PersistedState;
+        applySnapshot(legacySnapshot);
+      }
+
+      // 1. Granular rows are newer than the legacy snapshot and take priority.
       const { data: globalData, error: globalError } = await supabaseAdmin
         .from(SUPABASE_STATE_TABLE)
         .select('payload')
@@ -725,24 +753,16 @@ async function loadPersistedState() {
       // 2. Load users. Supabase paginates select results; read every page so
       // referral scans are not silently limited to the first 1000 user rows.
       const usersData = await loadSupabaseRowsByPrefix('user:');
-      if (usersData.length === 0) {
-        const { data: legacyData, error: legacyError } = await supabaseAdmin
-          .from(SUPABASE_STATE_TABLE)
-          .select('payload')
-          .eq('id', SUPABASE_STATE_ROW_ID)
-          .maybeSingle();
-
-        if (legacyError) {
-          console.error('Failed to load legacy runtime state from Supabase', legacyError);
-        } else if (legacyData?.payload && Array.isArray((legacyData.payload as Partial<PersistedState>).users)) {
-          applySnapshot(legacyData.payload as PersistedState);
-          return;
-        }
-      }
+      const granularUserIds = new Set<string>();
       usersData.forEach((row) => {
-        const user = row.payload as UserState;
+        const persistedUser = row.payload as PersistedUserState;
+        const user = persistedUser as UserState;
         hydrateUser(user);
         users.set(user.userId, user);
+        if (Array.isArray(persistedUser.questProgress)) {
+          questProgressByUser.set(user.userId, persistedUser.questProgress);
+        }
+        granularUserIds.add(user.userId);
       });
 
       // 3. Load active matches (non-settled)
@@ -779,6 +799,20 @@ async function loadPersistedState() {
       });
 
       rebuildReferralStats();
+
+      // Migrate each legacy-only user immediately into the granular format.
+      // This is idempotent and preserves both referral links and ticket
+      // balances before the next deployment or cold restart.
+      if (legacySnapshot) {
+        let migratedLegacyUser = false;
+        legacySnapshot.users?.forEach((legacyUser) => {
+          if (!granularUserIds.has(legacyUser.userId) && users.has(legacyUser.userId)) {
+            markDirty(dirtyUsers, dirtyUserVersions, legacyUser.userId);
+            migratedLegacyUser = true;
+          }
+        });
+        if (migratedLegacyUser || !globalData?.payload) schedulePersist();
+      }
       return;
     } catch (e) {
       console.error('Error during loadPersistedState from Supabase', e);
@@ -831,7 +865,9 @@ function getUser(userId: string, walletAddress?: string): UserState {
 }
 
 function createReferralCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  // Referral codes carry economic value, so do not derive them from the
+  // predictable PRNG used for visual/UI randomness.
+  return crypto.randomBytes(8).toString('hex').toUpperCase();
 }
 
 function createUniqueReferralCode(ownerUserId?: string) {
@@ -1029,6 +1065,56 @@ function buildProfileResponse(user: UserState) {
     },
     quests: buildQuestView(user.userId),
     claimedQuestIds,
+  };
+}
+
+function buildReferralInviteView(user: UserState) {
+  const fullName = [user.telegramFirstName, user.telegramLastName].filter(Boolean).join(' ').trim();
+  return {
+    userId: user.userId,
+    username: user.telegramUsername ? `@${user.telegramUsername}` : fullName || 'Telegram player',
+    photoUrl: user.telegramPhotoUrl || null,
+    status: normalizeReferralStatus(user.referralStatus),
+    assignedAt: user.referralAssignedAt || null,
+    activatedAt: user.referralActivatedAt || null,
+  };
+}
+
+function listReferralInvites(inviterUserId: string, rawLimit: unknown, rawCursor: unknown) {
+  const limitCandidate = Number(rawLimit);
+  const limit = Number.isFinite(limitCandidate) ? Math.min(50, Math.max(1, Math.floor(limitCandidate))) : 20;
+  let cursor: { assignedAt: number; userId: string } | null = null;
+  if (typeof rawCursor === 'string' && rawCursor) {
+    try {
+      const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8'));
+      if (Number.isFinite(decoded?.assignedAt) && typeof decoded?.userId === 'string') {
+        cursor = { assignedAt: decoded.assignedAt, userId: decoded.userId };
+      }
+    } catch {
+      // An invalid cursor is treated as the first page, rather than exposing
+      // an unbounded data scan or failing the Mini App profile screen.
+    }
+  }
+
+  const sorted = Array.from(users.values())
+    .filter((candidate) => candidate.referredByUserId === inviterUserId)
+    .sort((a, b) => {
+      const byAssignedAt = (b.referralAssignedAt || 0) - (a.referralAssignedAt || 0);
+      return byAssignedAt || a.userId.localeCompare(b.userId);
+    });
+  const afterCursor = cursor
+    ? sorted.filter((candidate) => (
+      (candidate.referralAssignedAt || 0) < cursor!.assignedAt
+      || ((candidate.referralAssignedAt || 0) === cursor!.assignedAt && candidate.userId > cursor!.userId)
+    ))
+    : sorted;
+  const page = afterCursor.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    invites: page.map(buildReferralInviteView),
+    nextCursor: afterCursor.length > page.length && last
+      ? Buffer.from(JSON.stringify({ assignedAt: last.referralAssignedAt || 0, userId: last.userId })).toString('base64url')
+      : null,
   };
 }
 
@@ -2316,7 +2402,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.post('/api/users/sync', (req, res) => {
+app.post('/api/users/sync', async (req, res) => {
   const { walletAddress, telegramInitData, startParam } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string; startParam?: string };
   const resolved = resolveCanonicalUserId(req.body);
   if (!resolved.userId) {
@@ -2327,7 +2413,17 @@ app.post('/api/users/sync', (req, res) => {
   if (resolved.auth) {
     applyTelegramAuth(user, resolved.auth);
   }
-  assignReferralIfNeeded(user, startParam || resolved.auth?.start_param);
+  // In production the referral parameter is part of Telegram's signed
+  // initData. Do not let a client replace it with an arbitrary inviter code.
+  const trustedStartParam = resolved.auth?.start_param || (!TELEGRAM_BOT_TOKEN ? startParam : undefined);
+  assignReferralIfNeeded(user, trustedStartParam);
+  try {
+    // The referral edge must be durable before the Mini App treats the sync
+    // as successful; otherwise a Render restart can lose a just-opened link.
+    await persistStateNow();
+  } catch {
+    return res.status(503).json({ error: 'Account data is temporarily unavailable. Please retry.' });
+  }
   return res.json({
     telegramInitDataValid: !!resolved.auth,
     sessionToken: canIssueSessionToken ? createSessionToken(user.userId) : null,
@@ -2404,6 +2500,12 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
 app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
   const user = getUser(getAuthenticatedUserId(req));
   return res.json(buildProfileResponse(user));
+});
+
+app.get('/api/referrals', requireAuth, (req: AuthenticatedRequest, res) => {
+  const inviterUserId = getAuthenticatedUserId(req);
+  const page = listReferralInvites(inviterUserId, req.query.limit, req.query.cursor);
+  return res.json(page);
 });
 
 app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, res) => {
@@ -3291,7 +3393,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   });
 });
 
-app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, res) => {
   const { matchId, action, cardId, chosenColor } = req.body as {
     matchId: string;
     action: 'play' | 'draw' | 'pass';
@@ -3320,13 +3422,15 @@ app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) =>
     }
 
     const perspective = buildPerspectiveState(activeMatch, userId);
+    await persistStateNow();
     broadcastMatch(matchId);
     return res.json({
       success: true,
       ...perspective,
     });
   } catch (error) {
-    return res.status(400).json({
+    const status = error instanceof Error && error.message.startsWith('Supabase ') ? 503 : 400;
+    return res.status(status).json({
       error: error instanceof Error ? error.message : 'Match action failed.',
     });
   }
@@ -3441,7 +3545,7 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   scheduleMatchCleanup(activeMatch.matchId);
 }
 
-app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/matches/settle', requireAuth, async (req: AuthenticatedRequest, res) => {
   const { matchId } = req.body as { matchId: string };
 
   if (!matchId) {
@@ -3461,6 +3565,12 @@ app.post('/api/matches/settle', requireAuth, (req: AuthenticatedRequest, res) =>
   }
 
   settleMatchHelper(activeMatch);
+  try {
+    // Payouts and both L1/L2 referral bonuses share this commit boundary.
+    await persistStateNow();
+  } catch {
+    return res.status(503).json({ error: 'Settlement is waiting for durable storage. Retry safely.' });
+  }
 
   const { grossPot, seasonFund, burnFund, netPrizePool, payoutByRank } = activeMatch.payoutResult;
 
@@ -3638,6 +3748,12 @@ if (process.env.NODE_ENV === 'production' && (!process.env.TELEGRAM_BOT_TOKEN ||
 }
 
 async function bootstrap() {
+  // Render's local filesystem is ephemeral. Starting production without the
+  // managed Supabase store would make referral links, balances and payouts
+  // disappear on a cold restart, so fail fast instead of accepting money.
+  if (process.env.NODE_ENV === 'production' && !supabaseAdmin) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in production.');
+  }
   await loadPersistedState();
   ticketingService.reconcilePendingWithdrawals();
   try {

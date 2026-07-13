@@ -31,6 +31,8 @@ services:
     buildCommand: npm install
     startCommand: npm run start
     envVars:
+      - key: NODE_ENV
+        value: production
       - key: BACKEND_PUBLIC_URL
         value: https://yoapp-backend.onrender.com
       - key: MARKETING_WALLET
