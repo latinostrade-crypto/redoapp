@@ -175,6 +175,10 @@ The frontend profile card displays the aggregate counts instead of rendering use
 
 `GET /api/referrals?limit=20&cursor=…` returns the inviter's own detailed referral list in pages. The profile opens this list on demand, so individual invitees remain visible without making every profile request large.
 
+### Referral Read Cache
+
+When `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set, only the authenticated `GET /api/referrals` page is cached in Upstash Redis for 30 seconds by default. Cache keys hash the inviter and cursor, responses are marked `Cache-Control: private, no-store`, and a per-inviter version is incremented immediately when a referral is assigned, activated, rejected, or its Telegram display data changes. This keeps profile reads fast without caching balances, payouts, matches, or any write operation. If Redis is unavailable, the endpoint automatically serves the live in-memory state and never fails the request because of the cache.
+
 For legacy users, `totalInvited` is never lower than the stored `referralsActivated` counter, so referrals that were already credited before detailed referral links were repaired still appear in aggregate profile stats.
 
 ### Referral Reliability Fixes
@@ -378,6 +382,10 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - `ADMIN_API_KEY`
 - `SUPABASE_STATE_TABLE`
 - `SUPABASE_STATE_ROW_ID`
+- `UPSTASH_REDIS_REST_URL` optional private referral-list cache
+- `UPSTASH_REDIS_REST_TOKEN` optional private referral-list cache credential
+- `REFERRAL_CACHE_TTL_SEC` optional, default `30` (range: 5-300)
+- `REDIS_CACHE_NAMESPACE` optional, default `redoapp:v1`
 
 ## Telegram Setup
 

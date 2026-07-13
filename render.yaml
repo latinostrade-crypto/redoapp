@@ -73,5 +73,13 @@ services:
         value: app_state
       - key: SUPABASE_STATE_ROW_ID
         value: runtime-state
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: REFERRAL_CACHE_TTL_SEC
+        value: 30
+      - key: REDIS_CACHE_NAMESPACE
+        value: redoapp:v1
       - key: PORT
         value: 10000

@@ -37,6 +37,12 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
 const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
 const SUPABASE_PAGE_SIZE = 1000;
+// Redis is deliberately limited to a short-lived cache for the referral list.
+// Supabase remains the durable source of truth for rewards, balances and users.
+const UPSTASH_REDIS_REST_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
+const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const REFERRAL_CACHE_TTL_SEC = Math.min(300, Math.max(5, Number(process.env.REFERRAL_CACHE_TTL_SEC || '30') || 30));
+const REDIS_CACHE_NAMESPACE = process.env.REDIS_CACHE_NAMESPACE || 'redoapp:v1';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
 const DEFAULT_MAX_ENERGY = 10;
@@ -342,6 +348,102 @@ let persistRetryTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
   : null;
+
+type RedisCommandResponse<T> = { result?: T; error?: string };
+
+const redisCacheEnabled = Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN);
+let redisCacheUnavailableUntil = 0;
+let redisCacheHits = 0;
+let redisCacheMisses = 0;
+let redisCacheFailures = 0;
+let redisCacheLastErrorLoggedAt = 0;
+const localReferralCacheVersions = new Map<string, number>();
+
+function cacheKeyPart(value: string) {
+  return crypto.createHash('sha256').update(value).digest('base64url');
+}
+
+function redisReferralVersionKey(inviterUserId: string) {
+  return `${REDIS_CACHE_NAMESPACE}:referrals:version:${cacheKeyPart(inviterUserId)}`;
+}
+
+function isRedisCacheAvailable() {
+  return redisCacheEnabled && Date.now() >= redisCacheUnavailableUntil;
+}
+
+async function runRedisCommand<T>(command: Array<string | number>): Promise<T | undefined> {
+  if (!isRedisCacheAvailable()) return undefined;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 700);
+  try {
+    const response = await fetch(UPSTASH_REDIS_REST_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(command),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json() as RedisCommandResponse<T>;
+    if (payload.error) throw new Error(payload.error);
+    return payload.result;
+  } catch (error) {
+    redisCacheFailures += 1;
+    // A cache outage must never delay or fail a Mini App request. Briefly
+    // opening this circuit also avoids a burst of timed-out Redis requests.
+    redisCacheUnavailableUntil = Date.now() + 5_000;
+    if (Date.now() - redisCacheLastErrorLoggedAt > 60_000) {
+      redisCacheLastErrorLoggedAt = Date.now();
+      console.warn('Upstash referral cache unavailable; serving the source response.', error instanceof Error ? error.message : error);
+    }
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getCachedJson<T>(key: string): Promise<T | null> {
+  const serialized = await runRedisCommand<string>(['GET', key]);
+  if (!serialized) {
+    if (isRedisCacheAvailable()) redisCacheMisses += 1;
+    return null;
+  }
+  try {
+    const value = JSON.parse(serialized) as T;
+    redisCacheHits += 1;
+    return value;
+  } catch {
+    // A malformed cache value is disposable and never reaches a user.
+    void runRedisCommand(['DEL', key]);
+    redisCacheMisses += 1;
+    return null;
+  }
+}
+
+async function setCachedJson(key: string, value: unknown, ttlSec: number) {
+  await runRedisCommand(['SET', key, JSON.stringify(value), 'EX', ttlSec]);
+}
+
+async function getReferralCacheVersion(inviterUserId: string) {
+  const localVersion = localReferralCacheVersions.get(inviterUserId) || 0;
+  const redisVersion = (await runRedisCommand<string>(['GET', redisReferralVersionKey(inviterUserId)])) || '0';
+  return `${localVersion}:${redisVersion}`;
+}
+
+function invalidateReferralCache(inviterUserId?: string) {
+  if (!inviterUserId) return;
+  // Advance the process-local version synchronously, so a request immediately
+  // following a reward/status mutation cannot read a prior cached page while
+  // the Redis INCR is still in flight.
+  localReferralCacheVersions.set(inviterUserId, (localReferralCacheVersions.get(inviterUserId) || 0) + 1);
+  if (!isRedisCacheAvailable()) return;
+  // Versioned keys make invalidation O(1), without wildcard scans or deletion
+  // races. Old 30-second keys naturally expire.
+  void runRedisCommand(['INCR', redisReferralVersionKey(inviterUserId)]);
+}
 
 function buildTelegramMiniAppLink(startParam: string) {
   return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
@@ -1080,7 +1182,7 @@ function buildReferralInviteView(user: UserState) {
   };
 }
 
-function listReferralInvites(inviterUserId: string, rawLimit: unknown, rawCursor: unknown) {
+function parseReferralPagination(rawLimit: unknown, rawCursor: unknown) {
   const limitCandidate = Number(rawLimit);
   const limit = Number.isFinite(limitCandidate) ? Math.min(50, Math.max(1, Math.floor(limitCandidate))) : 20;
   let cursor: { assignedAt: number; userId: string } | null = null;
@@ -1095,6 +1197,11 @@ function listReferralInvites(inviterUserId: string, rawLimit: unknown, rawCursor
       // an unbounded data scan or failing the Mini App profile screen.
     }
   }
+  return { limit, cursor };
+}
+
+function listReferralInvites(inviterUserId: string, rawLimit: unknown, rawCursor: unknown) {
+  const { limit, cursor } = parseReferralPagination(rawLimit, rawCursor);
 
   const sorted = Array.from(users.values())
     .filter((candidate) => candidate.referredByUserId === inviterUserId)
@@ -1474,6 +1581,7 @@ function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
   user.telegramAuthAt = auth.auth_date;
   if (changed) {
     schedulePersist({ userId: user.userId });
+    invalidateReferralCache(user.referredByUserId);
   }
 }
 
@@ -1526,6 +1634,7 @@ function assignReferralIfNeeded(user: UserState, startParam?: string) {
   user.referralAssignedAt = Date.now();
   adjustReferralStats(inviter.userId, null, 'pending');
   schedulePersist({ userId: user.userId });
+  invalidateReferralCache(inviter.userId);
 }
 
 function maybeActivateReferral(user: UserState, matchId: string) {
@@ -1537,6 +1646,7 @@ function maybeActivateReferral(user: UserState, matchId: string) {
     adjustReferralStats(user.referredByUserId, user.referralStatus || 'pending', 'rejected');
     user.referralStatus = 'rejected';
     schedulePersist({ userId: user.userId });
+    invalidateReferralCache(user.referredByUserId);
     return false;
   }
   const previousStatus = user.referralStatus || 'pending';
@@ -1555,6 +1665,7 @@ function maybeActivateReferral(user: UserState, matchId: string) {
   queueTelegramNotification(user, `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`);
   schedulePersist({ userId: user.userId });
   schedulePersist({ userId: inviter.userId });
+  invalidateReferralCache(inviter.userId);
   return true;
 }
 
@@ -2399,6 +2510,13 @@ app.get('/api/health', (req, res) => {
     time: new Date().toISOString(),
     service: 'redoapp-backend',
     privateRoomsVersion: 'json-create-free-room-v5',
+    cache: {
+      provider: redisCacheEnabled ? 'upstash-redis' : 'disabled',
+      referralTtlSec: redisCacheEnabled ? REFERRAL_CACHE_TTL_SEC : null,
+      hits: redisCacheHits,
+      misses: redisCacheMisses,
+      failures: redisCacheFailures,
+    },
   });
 });
 
@@ -2502,9 +2620,25 @@ app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
   return res.json(buildProfileResponse(user));
 });
 
-app.get('/api/referrals', requireAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/referrals', requireAuth, async (req: AuthenticatedRequest, res) => {
   const inviterUserId = getAuthenticatedUserId(req);
+  const { limit, cursor } = parseReferralPagination(req.query.limit, req.query.cursor);
+  const version = await getReferralCacheVersion(inviterUserId);
+  const cursorPart = cursor ? `${cursor.assignedAt}:${cursor.userId}` : 'first';
+  const cacheKey = `${REDIS_CACHE_NAMESPACE}:referrals:page:${cacheKeyPart(inviterUserId)}:${version}:${limit}:${cacheKeyPart(cursorPart)}`;
+  res.setHeader('Cache-Control', 'private, no-store');
+  const cached = await getCachedJson<ReturnType<typeof listReferralInvites>>(cacheKey);
+  if (cached) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json(cached);
+  }
   const page = listReferralInvites(inviterUserId, req.query.limit, req.query.cursor);
+  if (isRedisCacheAvailable()) {
+    void setCachedJson(cacheKey, page, REFERRAL_CACHE_TTL_SEC);
+    res.setHeader('X-Cache', 'MISS');
+  } else {
+    res.setHeader('X-Cache', 'BYPASS');
+  }
   return res.json(page);
 });
 
