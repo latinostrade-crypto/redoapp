@@ -187,6 +187,8 @@ When `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set, only the a
 
 Public paid-PVP settlement calculates referral shares server-side from the final payout: L1 receives 2.00% and L2 receives 1.00%. Both shares are deducted from the referred player's gross payout, so they never mint additional tickets. Each share has a deterministic idempotency key (`match + level + recipient`) and a permanent `referral-payout:*` Supabase record. If Render restarts during settlement, the same record and ledger key let the server safely finish a partial payout without crediting it twice.
 
+Referral activation XP and energy are permanently bound to the first qualifying match ID. This is deliberately independent from the profile's 50-row transaction display, so later history rotation cannot issue the activation reward again. Every referral activation, referral payout, and operator withdrawal notice also has a durable outbox deduplication key. The server commits a notice as `sending` before calling Telegram and treats an interrupted request as `unknown` rather than automatically resending it: the Bot API returns a `Message` on success but does not accept a caller idempotency key, so this at-most-once policy prevents duplicate financial notices while balances remain fully auditable in Supabase.
+
 An administrator can export the audit trail as a spreadsheet-safe CSV:
 
 ```bash

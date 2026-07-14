@@ -386,6 +386,7 @@ export function Web3Dashboard({
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
+  const [lootboxClaimMessage, setLootboxClaimMessage] = useState('');
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
     const stored = readNftEventVerifications();
@@ -1443,27 +1444,56 @@ export function Web3Dashboard({
     claimDailyXp();
   };
 
-  const openLootboxChest = () => {
+  const openLootboxChest = async () => {
     if (isOpeningLootbox) return;
     sound.playShuffle();
     setIsOpeningLootbox(true);
-    apiRequest<{
-      success: boolean;
-      rewardType: string;
-      rewardTickets: number;
-      rewardEnergy: number;
-      rewardXp?: number;
-      message: string;
-      availableTickets: number;
-      energy: any;
-    }>('/api/quests/claim-lootbox', {
-      method: 'POST',
-      body: JSON.stringify({ userId: currentUserId }),
-    }).then((result) => {
+    setLootboxClaimMessage('Opening chest...');
+    const claimId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `lootbox-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      const result = await apiRequest<{
+        success: boolean;
+        replayed?: boolean;
+        alreadyClaimed?: boolean;
+        claimId: string;
+        claimedAt: number;
+        rewardType: string;
+        rewardTickets: number;
+        rewardEnergy: number;
+        rewardXp: number;
+        message: string;
+        availableTickets: number;
+        xp: number;
+        energy: any;
+      }>('/api/quests/claim-lootbox', {
+        method: 'POST',
+        body: JSON.stringify({ claimId }),
+        retryOnNetworkError: true,
+        networkAttempts: 3,
+        timeoutMs: 90_000,
+      });
       setGoldenTickets(result.availableTickets);
       if (result.energy) {
         updateProfileEnergy(result.energy);
       }
+      setProfile((previous) => previous ? {
+        ...previous,
+        xp: result.xp,
+        availableTickets: result.availableTickets,
+        energy: result.energy ?? previous.energy,
+        lootboxClaimedAt: result.claimedAt,
+        lootboxAvailable: false,
+      } : previous);
+      setFullProfile((previous) => previous ? {
+        ...previous,
+        xp: result.xp,
+        availableTickets: result.availableTickets,
+        energy: result.energy ?? previous.energy,
+        lootboxClaimedAt: result.claimedAt,
+        lootboxAvailable: false,
+      } : previous);
       setLootboxReward({
         type: result.rewardType,
         tickets: result.rewardTickets,
@@ -1472,24 +1502,40 @@ export function Web3Dashboard({
         message: result.message,
       });
 
-      const newTx = {
-        id: `tx-chest-${Date.now()}`,
-        event: 'Chest Claimed',
-        value: result.rewardType === 'xp' 
-          ? `+${result.rewardXp} XP` 
-          : result.rewardType === 'energy' 
-            ? `+${formatEnergyValue(result.rewardEnergy)}` 
-            : `+${result.rewardXp}XP / +${formatEnergyValue(result.rewardEnergy)}`,
-        time: 'Just now',
-        type: 'claim'
-      };
-      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      if (!result.alreadyClaimed) {
+        const newTx = {
+          id: `tx-chest-${result.claimId}`,
+          event: 'Chest Claimed',
+          value: result.rewardType === 'xp'
+            ? `+${result.rewardXp} XP`
+            : result.rewardType === 'energy'
+              ? `+${formatEnergyValue(result.rewardEnergy)}`
+              : `+${result.rewardXp}XP / +${formatEnergyValue(result.rewardEnergy)}`,
+          time: 'Just now',
+          type: 'claim'
+        };
+        setTransactions((previous) => previous.some((entry) => entry.id === newTx.id)
+          ? previous
+          : [newTx, ...previous].slice(0, 10));
+      }
+      setLootboxClaimMessage('');
       fetchFullProfile().catch(() => undefined);
-    }).catch((error) => {
-      alert(error.message || 'Failed to open lootbox.');
-    }).finally(() => {
+    } catch (error) {
+      // A final profile read reconciles the rare case where all response
+      // attempts were lost after the backend committed the reward.
+      try {
+        const refreshed = await fetchFullProfile();
+        if (refreshed && !refreshed.lootboxAvailable && refreshed.lootboxClaimedAt) {
+          setLootboxClaimMessage('Chest collected. Balance and energy are up to date.');
+          return;
+        }
+      } catch {
+        // Keep the actionable claim error below the button.
+      }
+      setLootboxClaimMessage(error instanceof Error ? error.message : 'Could not open the chest. Please try again.');
+    } finally {
       setIsOpeningLootbox(false);
-    });
+    }
   };
 
   const verifyNftEventEligibility = async () => {
@@ -2261,14 +2307,15 @@ export function Web3Dashboard({
                   )}
                   
                   {activeProfile?.lootboxAvailable && (
-                    <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 flex items-center justify-between font-mono animate-pulse-soft">
+                    <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 font-mono animate-pulse-soft">
+                      <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <div className="w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-xl select-none animate-bounce-subtle">
                           🎁
                         </div>
                         <div className="text-left leading-none">
                           <span className="text-[8px] font-black text-[#ffcc00] uppercase">CHEST READY!</span>
-                          <p className="text-[5.5px] text-slate-450 mt-0.5 leading-none">Open for bonus Tickets + Energy!</p>
+                          <p className="text-[5.5px] text-slate-450 mt-0.5 leading-none">Open for bonus XP or Energy!</p>
                         </div>
                       </div>
                       <button
@@ -2277,8 +2324,14 @@ export function Web3Dashboard({
                         onClick={openLootboxChest}
                         className="px-2 py-1 bg-[#9b51e0] hover:bg-[#8540cc] text-white border border-black text-[7.5px] font-black uppercase pixel-btn-interactive"
                       >
-                        {isOpeningLootbox ? 'Open...' : 'CLAIM'}
+                        {isOpeningLootbox ? 'OPENING...' : 'OPEN'}
                       </button>
+                      </div>
+                      {lootboxClaimMessage && (
+                        <p className={`mt-1 text-[6px] leading-tight ${lootboxClaimMessage.includes('[') ? 'text-[#ff6666]' : 'text-[#00d2ff]'}`}>
+                          {lootboxClaimMessage}
+                        </p>
+                      )}
                     </div>
                   )}
 

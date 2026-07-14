@@ -195,6 +195,16 @@ interface ServerGameState {
   turnStartedAt?: number;
 }
 
+interface LootboxClaimRecord {
+  claimId: string;
+  claimedAt: number;
+  rewardType: 'xp' | 'energy' | 'jackpot';
+  rewardTickets: number;
+  rewardEnergy: number;
+  rewardXp: number;
+  message: string;
+}
+
 interface UserState {
   userId: string;
   telegramId?: number;
@@ -225,6 +235,7 @@ interface UserState {
   transactions: TicketLedgerEntry[];
   dailyStreak?: number;
   lootboxClaimedAt?: number | null;
+  lastLootboxClaim?: LootboxClaimRecord | null;
   matchmakingFailureAt?: number | null;
   matchmakingFailureReason?: 'timeout' | null;
 }
@@ -282,7 +293,11 @@ interface TelegramNotification {
   telegramChatId: number;
   message: string;
   replyMarkup?: Record<string, unknown>;
-  status: 'pending' | 'sent' | 'failed';
+  /** Durable business-event key. One key must produce no more than one chat message. */
+  dedupeKey?: string;
+  /** Telegram has no idempotency key, therefore financial-event notices are at-most-once. */
+  deliveryMode?: 'at_most_once';
+  status: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown';
   createdAt: number;
   sentAt?: number;
   error?: string;
@@ -860,7 +875,7 @@ function applySnapshot(snapshot: PersistedState) {
   snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
   snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
   snapshot.referralPayouts?.forEach((payout) => referralPayouts.set(payout.id, payout));
-  snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
+  snapshot.telegramNotifications?.forEach((entry) => appendTelegramNotification(entry));
   rebuildReferralStats();
 }
 
@@ -905,7 +920,7 @@ async function loadPersistedState() {
       } else if (globalData?.payload) {
         const payload = globalData.payload as any;
         matchmakingQueue = payload.matchmakingQueue || [];
-        payload.telegramNotifications?.forEach((entry: any) => telegramNotifications.push(entry));
+        payload.telegramNotifications?.forEach((entry: TelegramNotification) => appendTelegramNotification(entry));
       }
 
       // 2. Load users. Supabase paginates select results; read every page so
@@ -1158,6 +1173,20 @@ function hydrateUser(user: UserState): boolean {
   if (user.lastDailyXpAt === undefined) {
     user.lastDailyXpAt = null;
     changed = true;
+  }
+  if (user.lastLootboxClaim !== undefined && user.lastLootboxClaim !== null) {
+    const claim = user.lastLootboxClaim;
+    const validClaim = typeof claim.claimId === 'string'
+      && Number.isFinite(claim.claimedAt)
+      && ['xp', 'energy', 'jackpot'].includes(claim.rewardType)
+      && Number.isFinite(claim.rewardTickets)
+      && Number.isFinite(claim.rewardEnergy)
+      && Number.isFinite(claim.rewardXp)
+      && typeof claim.message === 'string';
+    if (!validClaim) {
+      user.lastLootboxClaim = null;
+      changed = true;
+    }
   }
   return changed;
 }
@@ -1462,20 +1491,80 @@ function findUserByReferralCode(code: string) {
   return Array.from(users.values()).find((user) => user.referralCode === normalized);
 }
 
-function queueTelegramNotification(user: UserState, message: string) {
+type TelegramNotificationOptions = {
+  dedupeKey: string;
+};
+
+function normalizeTelegramNotification(entry: TelegramNotification): TelegramNotification {
+  const deliveryMode = 'at_most_once' as const;
+  const status = entry.status === 'sending'
+    ? 'unknown'
+    : entry.status;
+  return {
+    ...entry,
+    deliveryMode,
+    status,
+    attempts: Number.isFinite(entry.attempts) ? entry.attempts : 0,
+    nextAttemptAt: entry.nextAttemptAt,
+    ...(entry.status === 'sending'
+      ? { error: entry.error || 'Delivery outcome was unknown after restart; not retried to prevent a duplicate Telegram message.' }
+      : {}),
+  };
+}
+
+function appendTelegramNotification(entry: TelegramNotification) {
+  const normalized = normalizeTelegramNotification(entry);
+  const existingIndex = telegramNotifications.findIndex((item) => (
+    item.id === normalized.id
+    || (!!normalized.dedupeKey && item.dedupeKey === normalized.dedupeKey)
+  ));
+  if (existingIndex === -1) {
+    telegramNotifications.push(normalized);
+    return;
+  }
+
+  // `runtime-state` and `global-state` may both contain the same outbox entry
+  // during the granular-storage migration. A successful delivery always wins;
+  // otherwise preserve the newer payload without creating a second send job.
+  const existing = telegramNotifications[existingIndex];
+  const merged: TelegramNotification = { ...existing, ...normalized };
+  if (existing.status === 'sent' || normalized.status === 'sent') {
+    merged.status = 'sent';
+    merged.sentAt = Math.max(existing.sentAt || 0, normalized.sentAt || 0) || undefined;
+    merged.error = undefined;
+    merged.nextAttemptAt = undefined;
+  } else if (existing.status === 'unknown' || normalized.status === 'unknown') {
+    merged.status = 'unknown';
+    merged.nextAttemptAt = undefined;
+  }
+  telegramNotifications[existingIndex] = merged;
+}
+
+function queueTelegramNotification(user: UserState, message: string, options: TelegramNotificationOptions) {
   if (!user.telegramChatId) {
     return;
   }
-  queueTelegramMessage(user.userId, user.telegramChatId, message);
+  queueTelegramMessage(user.userId, user.telegramChatId, message, undefined, options);
 }
 
-function queueTelegramMessage(userId: string, telegramChatId: number, message: string, replyMarkup?: Record<string, unknown>) {
+function queueTelegramMessage(
+  userId: string,
+  telegramChatId: number,
+  message: string,
+  replyMarkup: Record<string, unknown> | undefined,
+  options: TelegramNotificationOptions,
+) {
+  if (telegramNotifications.some((item) => item.dedupeKey === options.dedupeKey)) {
+    return;
+  }
   telegramNotifications.push({
     id: `tg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     userId,
     telegramChatId,
     message,
     replyMarkup,
+    dedupeKey: options.dedupeKey,
+    deliveryMode: 'at_most_once',
     status: 'pending',
     createdAt: Date.now(),
     attempts: 0,
@@ -1489,12 +1578,25 @@ async function performTelegramNotificationFlush() {
   const now = Date.now();
   const pending = telegramNotifications.filter((item) => (
     (item.status === 'pending' || item.status === 'failed')
-    && (item.attempts || 0) < 8
     && (item.nextAttemptAt || 0) <= now
   )).slice(0, 5);
   for (const item of pending) {
+    item.status = 'sending';
+    item.attempts = (item.attempts || 0) + 1;
+    item.nextAttemptAt = undefined;
     try {
-      item.attempts = (item.attempts || 0) + 1;
+      // Commit the send intent first. Telegram's sendMessage response returns
+      // a Message but accepts no idempotency key, so retrying an ambiguous
+      // transport failure can show the same financial notice twice.
+      await persistStateNow();
+    } catch (error) {
+      item.status = 'failed';
+      item.error = error instanceof Error ? error.message : 'Could not persist notification send intent';
+      item.nextAttemptAt = Date.now() + 15_000;
+      console.error(`Telegram notification ${item.id} was not sent because its intent could not be persisted:`, error);
+      continue;
+    }
+    try {
       const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1508,16 +1610,9 @@ async function performTelegramNotificationFlush() {
       });
       if (!response.ok) {
         const payload = await response.text();
-        item.status = 'failed';
-        item.error = payload;
-        let retryAfterSeconds = 0;
-        try {
-          retryAfterSeconds = Number(JSON.parse(payload)?.parameters?.retry_after || 0);
-        } catch {
-          // Telegram sometimes returns a plain-text proxy error.
-        }
-        const backoffMs = Math.min(15 * 60_000, 15_000 * (2 ** Math.max(0, (item.attempts || 1) - 1)));
-        item.nextAttemptAt = Date.now() + Math.max(backoffMs, retryAfterSeconds * 1000);
+        item.status = 'unknown';
+        item.error = `Telegram returned HTTP ${response.status}: ${payload}`;
+        item.nextAttemptAt = undefined;
         console.error(`Telegram notification ${item.id} failed (attempt ${item.attempts}): ${payload}`);
       } else {
         item.status = 'sent';
@@ -1526,10 +1621,9 @@ async function performTelegramNotificationFlush() {
         item.nextAttemptAt = undefined;
       }
     } catch (error) {
-      item.status = 'failed';
-      item.error = error instanceof Error ? error.message : 'Notification failed';
-      const backoffMs = Math.min(15 * 60_000, 15_000 * (2 ** Math.max(0, (item.attempts || 1) - 1)));
-      item.nextAttemptAt = Date.now() + backoffMs;
+      item.status = 'unknown';
+      item.error = error instanceof Error ? error.message : 'Telegram delivery outcome unknown';
+      item.nextAttemptAt = undefined;
       console.error(`Telegram notification ${item.id} transport error (attempt ${item.attempts}):`, error);
     }
   }
@@ -1786,6 +1880,20 @@ function maybeActivateReferral(user: UserState, matchId: string) {
     invalidateReferralCache(user.referredByUserId);
     return false;
   }
+  // An activation belongs to the first qualifying match forever. The profile
+  // ledger is intentionally capped to recent history, so it must never be the
+  // source of truth for whether this XP/energy event has already happened.
+  if (user.referralStatus === 'activated') {
+    if (!user.referralActivationMatchId) {
+      // Historical activations predate the durable match key. Mark them as
+      // legacy-complete instead of guessing and issuing a new reward.
+      user.referralActivationMatchId = 'legacy-activation';
+      schedulePersist({ userId: user.userId });
+    }
+    if (user.referralActivationMatchId !== matchId) {
+      return false;
+    }
+  }
   const firstActivation = user.referralStatus !== 'activated';
   if (firstActivation) {
     const previousStatus = user.referralStatus || 'pending';
@@ -1808,10 +1916,18 @@ function maybeActivateReferral(user: UserState, matchId: string) {
     claimCompletedQuests(inviter);
   }
   if (inviterXpCredited || inviterEnergyCredited) {
-    queueTelegramNotification(inviter, `Referral activated: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId}. Rewards: +${REFERRER_REWARD_ENERGY} energy, +${REFERRER_REWARD_XP} XP.`);
+    queueTelegramNotification(
+      inviter,
+      `Referral activated: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId}. Rewards: +${REFERRER_REWARD_ENERGY} energy, +${REFERRER_REWARD_XP} XP.`,
+      { dedupeKey: `${activationKey}:inviter:${inviter.userId}:notice` },
+    );
   }
   if (sourceXpCredited || sourceEnergyCredited) {
-    queueTelegramNotification(user, `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`);
+    queueTelegramNotification(
+      user,
+      `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`,
+      { dedupeKey: `${activationKey}:source:${user.userId}:notice` },
+    );
   }
   schedulePersist({ userId: user.userId });
   schedulePersist({ userId: inviter.userId });
@@ -1837,7 +1953,8 @@ function creditReferralPayout(record: ReferralPayoutRecord, recipient: UserState
     });
     queueTelegramNotification(
       recipient,
-      `L${record.level} referral bonus: ${source.telegramUsername ? '@' + source.telegramUsername : source.userId} won a match. You received +${record.amount.toFixed(2)} TKT.`
+      `L${record.level} referral bonus: ${source.telegramUsername ? '@' + source.telegramUsername : source.userId} won a match. You received +${record.amount.toFixed(2)} TKT.`,
+      { dedupeKey: `${record.id}:notice` },
     );
   }
   record.status = 'credited';
@@ -2050,7 +2167,7 @@ function notifyWithdrawalOperator(user: WithdrawalReviewUser, request: Withdrawa
         },
       ],
     ],
-  });
+  }, { dedupeKey: `withdrawal:${request.id}:notice` });
   flushTelegramNotifications().catch((error) => {
     console.error('Withdrawal operator notification flush failed', error);
   });
@@ -2073,7 +2190,7 @@ function recoverPendingWithdrawalNotifications() {
     const hasCurrentDelivery = telegramNotifications.some((item) => (
       item.userId === notificationKey
       && item.telegramChatId === operatorChatId
-      && (item.status === 'sent' || item.status === 'pending' || (item.status === 'failed' && (item.attempts || 0) < 8))
+      && (item.status === 'sent' || item.status === 'pending' || item.status === 'sending' || item.status === 'unknown' || item.status === 'failed')
     ));
     if (!hasCurrentDelivery) {
       const user = getUser(request.userId, request.walletAddress);
@@ -2085,8 +2202,7 @@ function recoverPendingWithdrawalNotifications() {
 function getWithdrawalNotificationStatus(requestId: string): 'queued' | 'sent' | 'failed' | 'missing' {
   const items = telegramNotifications.filter((item) => item.userId === `withdrawal:${requestId}`);
   if (items.some((item) => item.status === 'sent')) return 'sent';
-  if (items.some((item) => item.status === 'pending' || (item.status === 'failed' && (item.attempts || 0) < 8))) return 'queued';
-  if (items.some((item) => item.status === 'failed')) return 'failed';
+  if (items.some((item) => item.status === 'pending' || item.status === 'sending' || item.status === 'unknown' || item.status === 'failed')) return 'queued';
   return 'missing';
 }
 
@@ -3045,13 +3161,55 @@ app.get('/api/referrals', requireAuth, async (req: AuthenticatedRequest, res) =>
   return res.json(page);
 });
 
+function buildLootboxClaimResponse(user: UserState, claim: LootboxClaimRecord, replayed: boolean) {
+  return {
+    success: true,
+    replayed,
+    ...claim,
+    availableTickets: user.availableTickets,
+    xp: user.xp,
+    energy: getEnergyState(user),
+    lootboxClaimedAt: claim.claimedAt,
+    lootboxAvailable: false,
+  };
+}
+
 app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, res) => {
   const user = getUser(getAuthenticatedUserId(req));
   const now = Date.now();
   const todayStart = getStartOfUtcDay(now);
+  const requestedClaimId = typeof req.body?.claimId === 'string'
+    ? req.body.claimId.trim().slice(0, 120)
+    : '';
 
   if (user.lootboxClaimedAt && getStartOfUtcDay(user.lootboxClaimedAt) === todayStart) {
-    return res.status(400).json({ error: "You have already claimed today's lootbox." });
+    const savedClaim = user.lastLootboxClaim;
+    if (savedClaim && getStartOfUtcDay(savedClaim.claimedAt) === todayStart) {
+      // A Telegram WebView can lose the response after the server has already
+      // committed the reward. Replaying the stored result makes retries safe
+      // and prevents both a false error and a second credit.
+      return res.json(buildLootboxClaimResponse(user, savedClaim, true));
+    }
+    // Compatibility for rewards claimed before idempotent records existed.
+    // We cannot reconstruct the old random roll, but the current balance is
+    // authoritative and a retry must never issue another reward.
+    return res.json({
+      success: true,
+      replayed: true,
+      alreadyClaimed: true,
+      claimId: requestedClaimId || `legacy-${user.userId}-${todayStart}`,
+      claimedAt: user.lootboxClaimedAt,
+      rewardType: 'xp',
+      rewardTickets: 0,
+      rewardEnergy: 0,
+      rewardXp: 0,
+      message: "Today's chest was already collected. Your balance is up to date.",
+      availableTickets: user.availableTickets,
+      xp: user.xp,
+      energy: getEnergyState(user),
+      lootboxClaimedAt: user.lootboxClaimedAt,
+      lootboxAvailable: false,
+    });
   }
 
   const progressList = getQuestProgress(user.userId);
@@ -3093,20 +3251,20 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
     message = `🎉 JACKPOT! You opened today's lootbox and found +300 XP and +10 Energy!`;
   }
 
-  user.lootboxClaimedAt = now;
-  schedulePersist();
-
-  return res.json({
-    success: true,
+  const claim: LootboxClaimRecord = {
+    claimId: requestedClaimId || `lootbox-${user.userId}-${todayStart}`,
+    claimedAt: now,
     rewardType,
     rewardTickets: 0,
     rewardEnergy: rewardEnergyAmount,
     rewardXp: rewardXpAmount,
     message,
-    availableTickets: user.availableTickets,
-    energy: getEnergyState(user),
-    lootboxClaimedAt: user.lootboxClaimedAt,
-  });
+  };
+  user.lootboxClaimedAt = now;
+  user.lastLootboxClaim = claim;
+  schedulePersist({ userId: user.userId });
+
+  return res.json(buildLootboxClaimResponse(user, claim, false));
 });
 
 app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'));
