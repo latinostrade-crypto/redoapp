@@ -149,16 +149,3 @@
   animation: flicker 0.15s infinite;
 }
 
-/* The flashlight is deliberately geometric: soft blur would break the pixel-art language. */
-.pixel-flashlight-overlay,
-.pixel-flashlight-overlay polygon,
-.pixel-flashlight-overlay ellipse,
-.pixel-flashlight-overlay circle {
-  shape-rendering: crispEdges;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .pixel-flashlight-overlay {
-    display: none;
-  }
-}
