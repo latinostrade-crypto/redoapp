@@ -26,6 +26,46 @@ import { sound } from '../utils/sound';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 
+function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: GameState }> {
+  return new Promise((resolve, reject) => {
+    const requestId = `match-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const url = new URL(buildAuthenticatedUrl(`/api/matches/state-beacon/${encodeURIComponent(matchId)}`));
+    url.searchParams.set('responseMode', 'iframe');
+    url.searchParams.set('bridgeRequestId', requestId);
+    url.searchParams.set('parentOrigin', window.location.origin);
+    const expectedOrigin = url.origin;
+    const iframe = document.createElement('iframe');
+    let timeoutId = 0;
+
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', onMessage);
+      iframe.remove();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
+      const data = event.data as { source?: string; requestId?: string; payload?: { gameState?: GameState } } | null;
+      if (data?.source !== 'redoapp-match-state-bridge' || data.requestId !== requestId || !data.payload?.gameState) return;
+      cleanup();
+      resolve(data.payload as { gameState: GameState });
+    };
+
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Match state bridge timed out.'));
+    }, 12_000);
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.display = 'none';
+    iframe.src = url.toString();
+    iframe.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('Match state bridge failed to load.'));
+    }, { once: true });
+    window.addEventListener('message', onMessage);
+    document.body.appendChild(iframe);
+  });
+}
+
 const INITIAL_STATS: GameStats = {
   gamesPlayed: 0,
   gamesWon: 0,
@@ -159,7 +199,19 @@ export function useUnoGame() {
       }
       remoteMatchIdRef.current = activeMatch.matchId;
       remoteUserIdRef.current = activeMatch.currentUserId;
-      const result = await apiRequest<{ gameState: GameState }>(`/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`);
+      // Telegram WebViews can indefinitely hold a credentialed CORS request
+      // before it reaches the backend. The iframe route has no preflight and
+      // is therefore the primary match-connection path; direct fetch remains
+      // a fallback for browsers that block embedded frames.
+      let result: { gameState: GameState };
+      try {
+        result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
+      } catch {
+        result = await apiRequest<{ gameState: GameState }>(
+          `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
+          { timeoutMs: 8_000 },
+        );
+      }
       setGameState(result.gameState);
       setRemoteSessionActive(true);
       return true;
@@ -303,6 +355,25 @@ export function useUnoGame() {
         remoteMatchStreamRef.current = null;
       }
     };
+  }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
+
+  // SSE is preferred for instant moves, but some Telegram WebViews terminate
+  // long-lived EventSource connections. Keep a no-preflight heartbeat and
+  // state refresh so both players still start the match and receive turns.
+  useEffect(() => {
+    if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || gameState.phase === 'game_over') {
+      return;
+    }
+    let syncing = false;
+    const refresh = () => {
+      if (syncing) return;
+      syncing = true;
+      syncRemoteMatchState().catch(() => undefined).finally(() => {
+        syncing = false;
+      });
+    };
+    const timer = window.setInterval(refresh, 3_000);
+    return () => window.clearInterval(timer);
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
   const handleRemoteActionError = useCallback((error: unknown) => {

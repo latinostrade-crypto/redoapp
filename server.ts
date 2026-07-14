@@ -174,6 +174,9 @@ interface ServerGamePlayer {
   emotion: 'happy' | 'thinking' | 'worried' | 'angry' | 'celebrating';
   isConnected?: boolean;
   hasConnected?: boolean;
+  // A successful state read is also a heartbeat. This keeps games usable in
+  // Telegram clients where EventSource is unavailable or intermittently cut.
+  lastSeenAt?: number | null;
   disconnectedAt?: number | null;
 }
 
@@ -2207,6 +2210,7 @@ function createInitialMatchState(players: QueuePlayer[]): ServerGameState {
     isAi: false,
     isConnected: false,
     hasConnected: false,
+    lastSeenAt: null,
     disconnectedAt: null,
     unoDeclared: false,
     emotion: 'happy',
@@ -2561,6 +2565,7 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   if (!player || player.isAi) return;
   player.isConnected = true;
   player.hasConnected = true;
+  player.lastSeenAt = Date.now();
   player.disconnectedAt = null;
   maybeStartPublicMatch(match);
 }
@@ -3884,7 +3889,26 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   });
 });
 
-app.get('/api/matches/state/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
+function sendMatchStateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
+  const input = req.query as Record<string, unknown>;
+  if (input.responseMode === 'iframe') {
+    const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
+      ? input.parentOrigin
+      : '';
+    if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
+    const message = JSON.stringify({
+      source: 'redoapp-match-state-bridge',
+      requestId: String(input.bridgeRequestId || ''),
+      payload,
+    }).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
+  }
+  return res.json(payload);
+}
+
+function handleMatchState(req: AuthenticatedRequest, res: Response) {
   const { matchId } = req.params;
   const userId = getAuthenticatedUserId(req);
   const activeMatch = activeMatches.get(matchId);
@@ -3896,8 +3920,13 @@ app.get('/api/matches/state/:matchId', requireAuth, (req: AuthenticatedRequest, 
   if (!state) {
     return res.status(403).json({ error: 'User is not part of this match.' });
   }
-  return res.json(state);
-});
+  return sendMatchStateSuccess(req, res, state);
+}
+
+app.get('/api/matches/state/:matchId', requireAuth, handleMatchState);
+// A no-preflight state read for Telegram WebViews. It both returns the
+// player's perspective and records the connection heartbeat.
+app.get('/api/matches/state-beacon/:matchId', requireAuth, handleMatchState);
 
 app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
   const { matchId } = req.params;
@@ -3924,6 +3953,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     const previouslyDisconnected = player.isConnected === false;
     player.isConnected = true;
     player.hasConnected = true;
+    player.lastSeenAt = Date.now();
     player.disconnectedAt = null;
     if (previouslyDisconnected) {
       activeMatch.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...activeMatch.gameState.logs].slice(0, 50);
@@ -3945,7 +3975,8 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
       const match = activeMatches.get(matchId);
       if (match) {
         const player = match.gameState.players.find(p => p.userId === userId);
-        if (player && player.isConnected !== false) {
+        const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
+        if (player && player.isConnected !== false && !hasFreshHeartbeat) {
           player.isConnected = false;
           player.disconnectedAt = Date.now();
           match.gameState.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...match.gameState.logs].slice(0, 50);
@@ -4181,9 +4212,11 @@ setInterval(() => {
     // Evaluate connection status
     state.players.forEach((player) => {
       const subscribers = matchSubscribers.get(matchId);
-      const isConnected = !!subscribers && Array.from(subscribers).some(
+      const hasSseConnection = !!subscribers && Array.from(subscribers).some(
         (res) => res.locals.userId === player.userId
       );
+      const hasFreshHeartbeat = !!player.lastSeenAt && now - player.lastSeenAt < 10_000;
+      const isConnected = hasSseConnection || hasFreshHeartbeat;
 
       if (isConnected) {
         if (player.isConnected === false) {
