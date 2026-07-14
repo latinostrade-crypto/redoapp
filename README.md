@@ -183,6 +183,20 @@ The frontend profile card displays the aggregate counts instead of rendering use
 
 When `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set, only the authenticated `GET /api/referrals` page is cached in Upstash Redis for 30 seconds by default. Cache keys hash the inviter and cursor, responses are marked `Cache-Control: private, no-store`, and a per-inviter version is incremented immediately when a referral is assigned, activated, rejected, or its Telegram display data changes. This keeps profile reads fast without caching balances, payouts, matches, or any write operation. If Redis is unavailable, the endpoint automatically serves the live in-memory state and never fails the request because of the cache.
 
+### Reliable L1/L2 Payouts and Export
+
+Public paid-PVP settlement calculates referral shares server-side from the final payout: L1 receives 2.00% and L2 receives 1.00%. Both shares are deducted from the referred player's gross payout, so they never mint additional tickets. Each share has a deterministic idempotency key (`match + level + recipient`) and a permanent `referral-payout:*` Supabase record. If Render restarts during settlement, the same record and ledger key let the server safely finish a partial payout without crediting it twice.
+
+An administrator can export the audit trail as a spreadsheet-safe CSV:
+
+```bash
+curl -H "x-admin-api-key: $ADMIN_API_KEY" \
+  "https://yoapp-backend.onrender.com/api/admin/referrals/payouts.csv" \
+  -o referral-payouts.csv
+```
+
+Optional `from` and `to` query parameters are Unix milliseconds; `status=credited` exports only completed payouts. The CSV includes payout ID, match ID, L1/L2 level, source and beneficiary, gross payout, rate, amount, and UTC timestamps.
+
 For legacy users, `totalInvited` is never lower than the stored `referralsActivated` counter, so referrals that were already credited before detailed referral links were repaired still appear in aggregate profile stats.
 
 ### Referral Reliability Fixes

@@ -257,6 +257,22 @@ interface ReferralStats {
   rejected: number;
 }
 
+type ReferralPayoutLevel = 1 | 2;
+
+interface ReferralPayoutRecord {
+  id: string;
+  matchId: string;
+  level: ReferralPayoutLevel;
+  sourceUserId: string;
+  recipientUserId: string;
+  grossPayout: number;
+  rateBps: number;
+  amount: number;
+  status: 'pending' | 'credited';
+  createdAt: number;
+  creditedAt: number | null;
+}
+
 interface TelegramNotification {
   id: string;
   userId: string;
@@ -339,6 +355,7 @@ interface PersistedState {
   activeMatchByUser: Array<[string, string]>;
   privateRooms: PrivateRoom[];
   questProgressByUser?: Array<[string, UserQuestProgress[]]>;
+  referralPayouts?: ReferralPayoutRecord[];
   telegramNotifications?: TelegramNotification[];
 }
 
@@ -362,6 +379,7 @@ const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
 const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
 const referralStatsByInviter = new Map<string, ReferralStats>();
+const referralPayouts = new Map<string, ReferralPayoutRecord>();
 let telegramFlushPromise: Promise<void> | null = null;
 const localDepositPaymentClaims = new Map<string, string>();
 let persistTimer: NodeJS.Timeout | null = null;
@@ -535,6 +553,7 @@ function buildPersistedState(): PersistedState {
     activeMatchByUser: Array.from(activeMatchByUser.entries()),
     privateRooms: Array.from(privateRooms.values()),
     questProgressByUser: Array.from(questProgressByUser.entries()),
+    referralPayouts: Array.from(referralPayouts.values()),
     telegramNotifications,
   };
 }
@@ -551,6 +570,8 @@ const dirtyMatchVersions = new Map<string, number>();
 const dirtyPrivateRoomVersions = new Map<string, number>();
 const dirtyDepositVersions = new Map<string, number>();
 const dirtyWithdrawalVersions = new Map<string, number>();
+const dirtyReferralPayouts = new Set<string>();
+const dirtyReferralPayoutVersions = new Map<string, number>();
 let persistInFlight: Promise<void> | null = null;
 
 function markDirty(dirty: Set<string>, versions: Map<string, number>, id: string) {
@@ -627,7 +648,11 @@ async function persistStateNowInternal() {
       // 5. Persist dirty withdrawals
       await persistDirtyRows(dirtyWithdrawals, dirtyWithdrawalVersions, 'withdrawal:', (withdrawalId) => withdrawalRequests.get(withdrawalId));
 
-      // 6. Delete removed matches
+      // 6. Persist the append-only referral payout audit trail separately
+      // from the capped in-profile transaction display.
+      await persistDirtyRows(dirtyReferralPayouts, dirtyReferralPayoutVersions, 'referral-payout:', (payoutId) => referralPayouts.get(payoutId));
+
+      // 7. Delete removed matches
       for (const matchId of Array.from(deletedMatches)) {
         const { error } = await supabaseAdmin
           .from(SUPABASE_STATE_TABLE)
@@ -637,7 +662,7 @@ async function persistStateNowInternal() {
         deletedMatches.delete(matchId);
       }
 
-      // 7. Delete removed private rooms
+      // 8. Delete removed private rooms
       for (const roomCode of Array.from(deletedPrivateRooms)) {
         const { error } = await supabaseAdmin
           .from(SUPABASE_STATE_TABLE)
@@ -647,7 +672,7 @@ async function persistStateNowInternal() {
         deletedPrivateRooms.delete(roomCode);
       }
 
-      // 8. Persist global state (queue, notifications)
+      // 9. Persist global state (queue, notifications)
       const globalState = {
         matchmakingQueue,
         telegramNotifications,
@@ -672,6 +697,7 @@ function schedulePersist(opts?: {
   roomCode?: string;
   depositId?: string;
   withdrawalId?: string;
+  referralPayoutId?: string;
   deleteMatchId?: string;
   deleteRoomCode?: string;
 }) {
@@ -681,6 +707,7 @@ function schedulePersist(opts?: {
     if (opts.roomCode) markDirty(dirtyPrivateRooms, dirtyPrivateRoomVersions, opts.roomCode);
     if (opts.depositId) markDirty(dirtyDeposits, dirtyDepositVersions, opts.depositId);
     if (opts.withdrawalId) markDirty(dirtyWithdrawals, dirtyWithdrawalVersions, opts.withdrawalId);
+    if (opts.referralPayoutId) markDirty(dirtyReferralPayouts, dirtyReferralPayoutVersions, opts.referralPayoutId);
     if (opts.deleteMatchId) deletedMatches.add(opts.deleteMatchId);
     if (opts.deleteRoomCode) deletedPrivateRooms.add(opts.deleteRoomCode);
   }
@@ -815,6 +842,7 @@ function applySnapshot(snapshot: PersistedState) {
   activeMatchByUser.clear();
   privateRooms.clear();
   questProgressByUser.clear();
+  referralPayouts.clear();
   telegramNotifications.splice(0, telegramNotifications.length);
 
   snapshot.users?.forEach((user) => {
@@ -828,6 +856,7 @@ function applySnapshot(snapshot: PersistedState) {
   snapshot.activeMatchByUser?.forEach(([userId, matchId]) => activeMatchByUser.set(userId, matchId));
   snapshot.privateRooms?.forEach((room) => privateRooms.set(room.roomCode, room));
   snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
+  snapshot.referralPayouts?.forEach((payout) => referralPayouts.set(payout.id, payout));
   snapshot.telegramNotifications?.forEach((entry) => telegramNotifications.push(entry));
   rebuildReferralStats();
 }
@@ -842,6 +871,7 @@ async function loadPersistedState() {
       activeMatchByUser.clear();
       privateRooms.clear();
       questProgressByUser.clear();
+      referralPayouts.clear();
       telegramNotifications.splice(0, telegramNotifications.length);
 
       // Read the legacy snapshot even after granular rows have appeared. The
@@ -921,6 +951,15 @@ async function loadPersistedState() {
       withdrawalsData.forEach((row) => {
         const request = row.payload as WithdrawalRequest;
         withdrawalRequests.set(request.id, request);
+      });
+
+      // 7. Load the permanent, exportable referral payout audit records.
+      const referralPayoutData = await loadSupabaseRowsByPrefix('referral-payout:');
+      referralPayoutData.forEach((row) => {
+        const payout = row.payload as ReferralPayoutRecord;
+        if (payout?.id && payout.status && payout.matchId) {
+          referralPayouts.set(payout.id, payout);
+        }
       });
 
       rebuildReferralStats();
@@ -1319,26 +1358,32 @@ function spendEnergy(user: UserState, amount: number, reason: string) {
   });
 }
 
-function rewardEnergy(user: UserState, amount: number, reason: string) {
+function rewardEnergy(user: UserState, amount: number, reason: string, ledgerId?: string) {
+  if (ledgerId && user.transactions.some((entry) => entry.id === ledgerId)) return false;
   recalculateEnergy(user);
   user.energy = Math.min(user.maxEnergy, user.energy + amount);
   user.energyUpdatedAt = Date.now();
   createLedgerEntry(user, {
+    ...(ledgerId ? { id: ledgerId } : {}),
     event: reason,
     value: `+⚡ ${amount}`,
     type: 'reward',
     amount,
   });
+  return true;
 }
 
-function rewardXp(user: UserState, amount: number, reason: string) {
+function rewardXp(user: UserState, amount: number, reason: string, ledgerId?: string) {
+  if (ledgerId && user.transactions.some((entry) => entry.id === ledgerId)) return false;
   user.xp += amount;
   createLedgerEntry(user, {
+    ...(ledgerId ? { id: ledgerId } : {}),
     event: reason,
     value: `+${amount} XP`,
     type: 'reward',
     amount,
   });
+  return true;
 }
 
 function getQuestProgress(userId: string) {
@@ -1727,7 +1772,7 @@ function assignReferralIfNeeded(user: UserState, startParam?: string) {
 }
 
 function maybeActivateReferral(user: UserState, matchId: string) {
-  if (!user.referredByUserId || user.referralStatus === 'activated') {
+  if (!user.referredByUserId) {
     return false;
   }
   const inviter = users.get(user.referredByUserId);
@@ -1738,27 +1783,67 @@ function maybeActivateReferral(user: UserState, matchId: string) {
     invalidateReferralCache(user.referredByUserId);
     return false;
   }
-  const previousStatus = user.referralStatus || 'pending';
-  user.referralStatus = 'activated';
-  user.referralActivatedAt = Date.now();
-  user.referralActivationMatchId = matchId;
-  inviter.referralsActivated += 1;
-  adjustReferralStats(inviter.userId, previousStatus, 'activated');
-  rewardXp(user, REFERRED_REWARD_XP, 'Referral Activated');
-  rewardEnergy(user, REFERRED_REWARD_ENERGY, 'Referral Activated');
-  rewardXp(inviter, REFERRER_REWARD_XP, 'Referral Reward');
-  rewardEnergy(inviter, REFERRER_REWARD_ENERGY, 'Referral Reward');
-  updateQuestProgress(inviter.userId, 'invite_referral', 1);
-  claimCompletedQuests(inviter);
-  queueTelegramNotification(inviter, `Referral activated: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId}. Rewards: +${REFERRER_REWARD_ENERGY} energy, +${REFERRER_REWARD_XP} XP.`);
-  queueTelegramNotification(user, `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`);
+  const firstActivation = user.referralStatus !== 'activated';
+  if (firstActivation) {
+    const previousStatus = user.referralStatus || 'pending';
+    user.referralStatus = 'activated';
+    user.referralActivatedAt = Date.now();
+    user.referralActivationMatchId = matchId;
+    inviter.referralsActivated += 1;
+    adjustReferralStats(inviter.userId, previousStatus, 'activated');
+  }
+
+  // Deterministic IDs let a restart safely finish a partially persisted
+  // activation without ever issuing XP/energy twice.
+  const activationKey = `referral-activation:${matchId}`;
+  const sourceXpCredited = rewardXp(user, REFERRED_REWARD_XP, 'Referral Activated', `${activationKey}:source:${user.userId}:xp`);
+  const sourceEnergyCredited = rewardEnergy(user, REFERRED_REWARD_ENERGY, 'Referral Activated', `${activationKey}:source:${user.userId}:energy`);
+  const inviterXpCredited = rewardXp(inviter, REFERRER_REWARD_XP, 'Referral Reward', `${activationKey}:l1:${inviter.userId}:xp`);
+  const inviterEnergyCredited = rewardEnergy(inviter, REFERRER_REWARD_ENERGY, 'Referral Reward', `${activationKey}:l1:${inviter.userId}:energy`);
+  if (inviterXpCredited) {
+    updateQuestProgress(inviter.userId, 'invite_referral', 1);
+    claimCompletedQuests(inviter);
+  }
+  if (inviterXpCredited || inviterEnergyCredited) {
+    queueTelegramNotification(inviter, `Referral activated: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId}. Rewards: +${REFERRER_REWARD_ENERGY} energy, +${REFERRER_REWARD_XP} XP.`);
+  }
+  if (sourceXpCredited || sourceEnergyCredited) {
+    queueTelegramNotification(user, `Referral confirmed. Rewards: +${REFERRED_REWARD_ENERGY} energy, +${REFERRED_REWARD_XP} XP.`);
+  }
   schedulePersist({ userId: user.userId });
   schedulePersist({ userId: inviter.userId });
   invalidateReferralCache(inviter.userId);
-  return true;
+  return firstActivation;
 }
 
-function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
+function creditReferralPayout(record: ReferralPayoutRecord, recipient: UserState, source: UserState) {
+  // Once the durable audit record is credited it is authoritative. The profile
+  // only keeps a recent transaction window, so an older ledger line may no
+  // longer be present there and must never cause a second credit.
+  if (record.status === 'credited') return;
+  const ledgerId = `ledger:${record.id}`;
+  const ledgerExists = recipient.transactions.some((entry) => entry.id === ledgerId);
+  if (!ledgerExists) {
+    recipient.availableTickets = round2(recipient.availableTickets + record.amount);
+    createLedgerEntry(recipient, {
+      id: ledgerId,
+      event: `L${record.level} Referral Match Bonus`,
+      value: `+${record.amount.toFixed(2)} TKT`,
+      type: 'referral_bonus',
+      amount: record.amount,
+    });
+    queueTelegramNotification(
+      recipient,
+      `L${record.level} referral bonus: ${source.telegramUsername ? '@' + source.telegramUsername : source.userId} won a match. You received +${record.amount.toFixed(2)} TKT.`
+    );
+  }
+  record.status = 'credited';
+  record.creditedAt = Date.now();
+  referralPayouts.set(record.id, record);
+  schedulePersist({ referralPayoutId: record.id });
+}
+
+function applyReferralMatchBonus(user: UserState, payoutAmount: number, matchId: string) {
   if (payoutAmount <= 0) {
     return {
       inviterBonus: 0,
@@ -1767,48 +1852,46 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
   }
 
   let totalBonus = 0;
-  let inviterBonusL1 = 0;
-  let inviterBonusL2 = 0;
-  const bonusRecipientIds = new Set<string>();
+  const createRecord = (level: ReferralPayoutLevel, recipient: UserState, rateBps: number) => {
+    const id = `referral-payout:${matchId}:l${level}:${recipient.userId}`;
+    const amount = round2(payoutAmount * rateBps / 10_000);
+    const existing = referralPayouts.get(id);
+    const record: ReferralPayoutRecord = existing || {
+      id,
+      matchId,
+      level,
+      sourceUserId: user.userId,
+      recipientUserId: recipient.userId,
+      grossPayout: payoutAmount,
+      rateBps,
+      amount,
+      status: 'pending',
+      createdAt: Date.now(),
+      creditedAt: null,
+    };
+    if (!existing) {
+      referralPayouts.set(id, record);
+      schedulePersist({ referralPayoutId: id });
+    }
+    return record;
+  };
 
   if (user.referredByUserId) {
     const inviterL1 = users.get(user.referredByUserId);
     if (inviterL1 && inviterL1.userId !== user.userId) {
-      inviterBonusL1 = round2(payoutAmount * 0.02); // 2% Level 1
-      if (inviterBonusL1 > 0) {
-        inviterL1.availableTickets = round2(inviterL1.availableTickets + inviterBonusL1);
-        createLedgerEntry(inviterL1, {
-          event: 'L1 Referral Match Bonus',
-          value: `+${inviterBonusL1.toFixed(2)} TKT`,
-          type: 'referral_bonus',
-          amount: inviterBonusL1,
-        });
-        queueTelegramNotification(
-          inviterL1,
-          `L1 Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} won a match. You received +${inviterBonusL1.toFixed(2)} TKT.`
-        );
-        totalBonus += inviterBonusL1;
-        bonusRecipientIds.add(inviterL1.userId);
+      const l1 = createRecord(1, inviterL1, 200); // 2.00% Level 1
+      if (l1.amount > 0) {
+        totalBonus += l1.amount;
+        creditReferralPayout(l1, inviterL1, user);
       }
 
       if (inviterL1.referredByUserId) {
         const inviterL2 = users.get(inviterL1.referredByUserId);
         if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviterL1.userId) {
-          inviterBonusL2 = round2(payoutAmount * 0.01); // 1% Level 2
-          if (inviterBonusL2 > 0) {
-            inviterL2.availableTickets = round2(inviterL2.availableTickets + inviterBonusL2);
-            createLedgerEntry(inviterL2, {
-              event: 'L2 Referral Match Bonus',
-              value: `+${inviterBonusL2.toFixed(2)} TKT`,
-              type: 'referral_bonus',
-              amount: inviterBonusL2,
-            });
-            queueTelegramNotification(
-              inviterL2,
-              `L2 Referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} (via L1 @${inviterL1.telegramUsername || inviterL1.userId}) won a match. You received +${inviterBonusL2.toFixed(2)} TKT.`
-            );
-            totalBonus += inviterBonusL2;
-            bonusRecipientIds.add(inviterL2.userId);
+          const l2 = createRecord(2, inviterL2, 100); // 1.00% Level 2
+          if (l2.amount > 0) {
+            totalBonus += l2.amount;
+            creditReferralPayout(l2, inviterL2, user);
           }
         }
       }
@@ -1816,17 +1899,22 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number) {
   }
 
   const netPayout = round2(Math.max(0, payoutAmount - totalBonus));
-  bonusRecipientIds.forEach((userId) => schedulePersist({ userId }));
   return {
     inviterBonus: round2(totalBonus),
     netPayout,
   };
 }
 
-function createLedgerEntry(user: UserState, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'>) {
+type LedgerEntryInput = Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'> & Partial<Pick<TicketLedgerEntry, 'id' | 'createdAt'>>;
+
+function createLedgerEntry(user: UserState, entry: LedgerEntryInput) {
+  if (entry.id) {
+    const existing = user.transactions.find((candidate) => candidate.id === entry.id);
+    if (existing) return existing;
+  }
   const ledgerEntry: TicketLedgerEntry = {
-    id: `ledger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    createdAt: Date.now(),
+    id: entry.id || `ledger-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: entry.createdAt || Date.now(),
     userId: user.userId,
     ...entry,
   };
@@ -2768,7 +2856,62 @@ app.get('/api/health', (req, res) => {
       status: referralResetStatus,
       affectedUsers: referralResetAffectedUsers,
     },
+    referralPayoutAudit: {
+      total: referralPayouts.size,
+      pending: Array.from(referralPayouts.values()).filter((payout) => payout.status === 'pending').length,
+    },
   });
+});
+
+function csvCell(value: unknown) {
+  const raw = value === null || value === undefined ? '' : String(value);
+  // Spreadsheet applications treat a leading formula marker as executable.
+  const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function csvTimestamp(value: number | null) {
+  return value ? new Date(value).toISOString() : '';
+}
+
+app.get('/api/admin/referrals/payouts.csv', requireAdmin, (req, res) => {
+  const from = Number(req.query.from);
+  const to = Number(req.query.to);
+  const status = req.query.status === 'pending' || req.query.status === 'credited' ? req.query.status : null;
+  const payouts = Array.from(referralPayouts.values())
+    .filter((payout) => (!Number.isFinite(from) || payout.createdAt >= from) && (!Number.isFinite(to) || payout.createdAt <= to))
+    .filter((payout) => !status || payout.status === status)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+
+  const header = [
+    'payout_id', 'status', 'match_id', 'level', 'source_user_id', 'source_username',
+    'recipient_user_id', 'recipient_username', 'gross_payout_tkt', 'rate_percent',
+    'amount_tkt', 'created_at_utc', 'credited_at_utc',
+  ];
+  const rows = payouts.map((payout) => {
+    const source = users.get(payout.sourceUserId);
+    const recipient = users.get(payout.recipientUserId);
+    return [
+      payout.id,
+      payout.status,
+      payout.matchId,
+      payout.level,
+      payout.sourceUserId,
+      source?.telegramUsername ? `@${source.telegramUsername}` : '',
+      payout.recipientUserId,
+      recipient?.telegramUsername ? `@${recipient.telegramUsername}` : '',
+      payout.grossPayout.toFixed(2),
+      (payout.rateBps / 100).toFixed(2),
+      payout.amount.toFixed(2),
+      csvTimestamp(payout.createdAt),
+      csvTimestamp(payout.creditedAt),
+    ].map(csvCell).join(',');
+  });
+
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="referral-payouts-${new Date().toISOString().slice(0, 10)}.csv"`);
+  return res.send(`\uFEFF${header.map(csvCell).join(',')}\n${rows.join('\n')}\n`);
 });
 
 app.post('/api/users/sync', async (req, res) => {
@@ -3888,24 +4031,29 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
     const user = getUser(userId);
     const grossPayout = payoutByRank[rank];
     const referralSettlement = activeMatch.mode === 'pvp'
-      ? applyReferralMatchBonus(user, grossPayout)
+      ? applyReferralMatchBonus(user, grossPayout, activeMatch.matchId)
       : { inviterBonus: 0, netPayout: grossPayout };
+    const matchPayoutLedgerId = `match-payout:${activeMatch.matchId}:${user.userId}`;
+    const payoutAlreadyCredited = user.transactions.some((entry) => entry.id === matchPayoutLedgerId);
 
-    user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
-    user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
-    createLedgerEntry(user, {
-      event: `${activeMatch.mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
-      value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
-      type: 'match_payout',
-      amount: referralSettlement.netPayout,
-    });
-    if (activeMatch.mode === 'pvp') {
-      updateQuestProgress(user.userId, 'play_online', 1);
-    } else {
-      updateQuestProgress(user.userId, 'play_private', 1);
-    }
-    if (rank === 1) {
-      updateQuestProgress(user.userId, 'win_any', 1);
+    if (!payoutAlreadyCredited) {
+      user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
+      user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+      createLedgerEntry(user, {
+        id: matchPayoutLedgerId,
+        event: `${activeMatch.mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
+        value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+        type: 'match_payout',
+        amount: referralSettlement.netPayout,
+      });
+      if (activeMatch.mode === 'pvp') {
+        updateQuestProgress(user.userId, 'play_online', 1);
+      } else {
+        updateQuestProgress(user.userId, 'play_private', 1);
+      }
+      if (rank === 1) {
+        updateQuestProgress(user.userId, 'win_any', 1);
+      }
     }
     maybeActivateReferral(user, activeMatch.matchId);
     claimCompletedQuests(user);
