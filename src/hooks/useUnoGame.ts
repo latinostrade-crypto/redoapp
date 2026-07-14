@@ -1049,12 +1049,9 @@ export function useUnoGame() {
       }, 1600);
     };
 
-    // Start the bot pipeline immediately. Previously this had an extra queued
-    // timeout before the real move timer; in a mobile WebView that first timer
-    // could be cancelled by a render caused by the thought bubble, leaving the
-    // practice match on the bot's turn forever.
+    // Queue AI move
     if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
-    playAiTurn();
+    aiTurnTimeoutRef.current = setTimeout(playAiTurn, 100);
 
     return () => {
       // We don't clear the timeout on re-renders unless the turn actually changed
