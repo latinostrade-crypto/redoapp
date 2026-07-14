@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useId } from 'react';
 import { useUnoGame } from './hooks/useUnoGame';
 import { Avatar } from './components/Avatars';
 import { UnoCard } from './components/UnoCard';
@@ -25,15 +25,27 @@ import {
   Users,
 } from 'lucide-react';
 import { sound } from './utils/sound';
-import { AvatarId, CardColor } from './types';
+import { AvatarId, CardColor, PlayerId } from './types';
 
 type FlashlightScene = {
   sourceX: number;
   sourceY: number;
   targetX: number;
   targetY: number;
-  radiusX: number;
-  radiusY: number;
+  targetHalfWidth: number;
+};
+
+type LightAnchor = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type LightLayout = {
+  hand: LightAnchor | null;
+  discard: LightAnchor | null;
+  players: Partial<Record<PlayerId, LightAnchor>>;
 };
 
 function getFlashlightRayPoints(scene: FlashlightScene) {
@@ -43,7 +55,7 @@ function getFlashlightRayPoints(scene: FlashlightScene) {
   const perpendicularX = -deltaY / length;
   const perpendicularY = deltaX / length;
   const sourceWidth = 1.4;
-  const targetWidth = Math.max(10, Math.min(scene.radiusX * 0.56, 22));
+  const targetWidth = scene.targetHalfWidth;
 
   return [
     [scene.sourceX + perpendicularX * sourceWidth, scene.sourceY + perpendicularY * sourceWidth],
@@ -172,6 +184,7 @@ export default function App() {
     id: string;
     card: any;
     isBack: boolean;
+    playerId: PlayerId;
     startX: number;
     startY: number;
     endX: number;
@@ -183,33 +196,108 @@ export default function App() {
   const [flyingCards, setFlyingCards] = useState<FlyingCardAnimation[]>([]);
   const [visualTopCard, setVisualTopCard] = useState<any>(null);
   const flashlightMaskId = useId().replace(/:/g, '');
+  const gameTableRef = useRef<HTMLElement | null>(null);
+  const handLightRef = useRef<HTMLDivElement | null>(null);
+  const discardLightRef = useRef<HTMLDivElement | null>(null);
+  const playerLightRefs = useRef<Partial<Record<PlayerId, HTMLDivElement | null>>>({});
+  const [lightLayout, setLightLayout] = useState<LightLayout>({ hand: null, discard: null, players: {} });
   const prevGameStateRef = useRef<any>(null);
   const settlementHandledRef = useRef<string | null>(null);
 
-  const flashlightScene = useMemo<FlashlightScene>(() => {
-    const playedCardInFlight = flyingCards.find((card) => !card.isBack);
-    if (playedCardInFlight) {
+  useLayoutEffect(() => {
+    const table = gameTableRef.current;
+    if (!table) return;
+
+    const getAnchor = (element: Element | null): LightAnchor | null => {
+      if (!element) return null;
+      const tableRect = table.getBoundingClientRect();
+      const rect = element.getBoundingClientRect();
+      if (!tableRect.width || !tableRect.height || !rect.width || !rect.height) return null;
       return {
-        sourceX: playedCardInFlight.startX,
-        sourceY: playedCardInFlight.startY,
-        targetX: playedCardInFlight.endX,
-        targetY: playedCardInFlight.endY,
-        radiusX: 20,
-        radiusY: 18,
+        x: ((rect.left + rect.width / 2 - tableRect.left) / tableRect.width) * 100,
+        y: ((rect.top + rect.height / 2 - tableRect.top) / tableRect.height) * 100,
+        width: (rect.width / tableRect.width) * 100,
+        height: (rect.height / tableRect.height) * 100,
+      };
+    };
+
+    const updateLayout = () => {
+      const players: Partial<Record<PlayerId, LightAnchor>> = {};
+      (['ai1', 'ai2', 'ai3'] as PlayerId[]).forEach((id) => {
+        const anchor = getAnchor(playerLightRefs.current[id] || null);
+        if (anchor) players[id] = anchor;
+      });
+      setLightLayout({
+        hand: getAnchor(handLightRef.current),
+        discard: getAnchor(discardLightRef.current),
+        players,
+      });
+    };
+
+    updateLayout();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateLayout);
+    observer?.observe(table);
+    if (handLightRef.current) observer?.observe(handLightRef.current);
+    if (discardLightRef.current) observer?.observe(discardLightRef.current);
+    (['ai1', 'ai2', 'ai3'] as PlayerId[]).forEach((id) => {
+      const element = playerLightRefs.current[id];
+      if (element) observer?.observe(element);
+    });
+    window.addEventListener('resize', updateLayout);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateLayout);
+    };
+  }, [gameState.currentPlayerIndex, gameState.phase, gameState.players.length, flyingCards.length]);
+
+  const flashlightScene = useMemo<FlashlightScene>(() => {
+    const fallbackScene: FlashlightScene = { sourceX: 50, sourceY: 101, targetX: 50, targetY: 78, targetHalfWidth: 34 };
+    const hand = lightLayout.hand;
+    const discard = lightLayout.discard;
+
+    const getPlayerSource = (playerId: PlayerId) => {
+      if (playerId === 'player' && hand) {
+        return { x: hand.x, y: Math.min(104, hand.y + hand.height / 2 + 5) };
+      }
+      const player = lightLayout.players[playerId];
+      return player ? { x: player.x, y: player.y } : { x: 50, y: 50 };
+    };
+
+    const playedCardInFlight = flyingCards.find((card) => !card.isBack);
+    if (playedCardInFlight && discard) {
+      const source = getPlayerSource(playedCardInFlight.playerId);
+      return {
+        sourceX: source.x,
+        sourceY: source.y,
+        targetX: discard.x,
+        targetY: discard.y,
+        targetHalfWidth: Math.max(9, Math.min(16, discard.width * 0.85)),
       };
     }
 
-    const playerScenes: FlashlightScene[] = [
-      // The human lights their own hand. Bots cast a visible beam from their
-      // avatar toward the table, because their hidden cards are not rendered.
-      { sourceX: 50, sourceY: 101, targetX: 50, targetY: 77, radiusX: 38, radiusY: 0 },
-      { sourceX: 10, sourceY: 48, targetX: 48, targetY: 51, radiusX: 22, radiusY: 0 },
-      { sourceX: 50, sourceY: 15, targetX: 50, targetY: 51, radiusX: 22, radiusY: 0 },
-      { sourceX: 90, sourceY: 48, targetX: 53, targetY: 51, radiusX: 22, radiusY: 0 },
-    ];
+    if (currentActivePlayer?.id === 'player' && hand) {
+      return {
+        sourceX: hand.x,
+        sourceY: Math.min(104, hand.y + hand.height / 2 + 5),
+        targetX: hand.x,
+        targetY: hand.y,
+        targetHalfWidth: Math.max(24, Math.min(42, hand.width / 2 + 2)),
+      };
+    }
 
-    return playerScenes[gameState.currentPlayerIndex] || playerScenes[0];
-  }, [flyingCards, gameState.currentPlayerIndex]);
+    const source = currentActivePlayer ? getPlayerSource(currentActivePlayer.id) : null;
+    if (source && discard) {
+      return {
+        sourceX: source.x,
+        sourceY: source.y,
+        targetX: discard.x,
+        targetY: discard.y,
+        targetHalfWidth: Math.max(9, Math.min(16, discard.width * 0.85)),
+      };
+    }
+
+    return fallbackScene;
+  }, [currentActivePlayer, flyingCards, lightLayout]);
   const flashlightRayPoints = getFlashlightRayPoints(flashlightScene);
   const showFlashlight = gameState.phase === 'playing' && Boolean(currentActivePlayer);
 
@@ -419,6 +507,7 @@ export default function App() {
             id: animId,
             card: playedCard,
             isBack: false,
+            playerId: activePlayer.id,
             startX,
             startY,
             endX: 62,
@@ -467,10 +556,11 @@ export default function App() {
           setFlyingCards((prevAnims) => [
             ...prevAnims,
             {
-              id: animId,
-              card: newlyDrawnCard || { id: 'back', color: 'wild', value: 'wild', score: 0 },
-              isBack: true,
-              startX: 38,
+            id: animId,
+            card: newlyDrawnCard || { id: 'back', color: 'wild', value: 'wild', score: 0 },
+            isBack: true,
+            playerId: currPlayer.id,
+            startX: 38,
               startY: 50,
               endX,
               endY,
@@ -603,7 +693,7 @@ export default function App() {
 
       {/* ACTIVE GAMEPLAY CONTAINER: THEMED GEOMETRIC BALANCE FELT PLAY TABLE */}
       {gameState.phase !== 'setup' && (
-        <main className="flex-1 w-full max-w-4xl my-1 p-2.5 flex flex-col justify-between gap-2 overflow-hidden z-10 relative bg-[#0c0f12] border-4 border-black shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
+        <main ref={gameTableRef} className="flex-1 w-full max-w-4xl my-1 p-2.5 flex flex-col justify-between gap-2 overflow-hidden z-10 relative bg-[#0c0f12] border-4 border-black shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
 
           {/* PIXEL FLASHLIGHT: an inverse SVG mask reveals a real cone of light. */}
           <motion.svg
@@ -631,9 +721,9 @@ export default function App() {
                 x2={flashlightScene.targetX}
                 y2={flashlightScene.targetY}
               >
-                <stop offset="0%" stopColor="#fff3b0" stopOpacity="0.38" />
-                <stop offset="52%" stopColor="#ffcf4d" stopOpacity="0.20" />
-                <stop offset="100%" stopColor="#ffb703" stopOpacity="0.06" />
+                <stop offset="0%" stopColor="#fff3b0" stopOpacity="0.16" />
+                <stop offset="52%" stopColor="#ffcf4d" stopOpacity="0.09" />
+                <stop offset="100%" stopColor="#ffb703" stopOpacity="0.03" />
               </linearGradient>
             </defs>
 
@@ -772,7 +862,7 @@ export default function App() {
               const isBot = gameMode !== 'offline' && pandaPlayer.isAi;
               const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
               return (
-                <div className="flex flex-col items-center relative gap-1">
+                <div ref={(element) => { playerLightRefs.current.ai2 = element; }} className="flex flex-col items-center relative gap-1">
                   <div style={{ filter: avatarFilter }}>
                     <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={38} />
                   </div>
@@ -807,7 +897,7 @@ export default function App() {
                 const isBot = gameMode !== 'offline' && leftPlayer.isAi;
                 const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
                 return (
-                  <div className="flex flex-col items-center relative gap-1 text-center">
+                  <div ref={(element) => { playerLightRefs.current.ai1 = element; }} className="flex flex-col items-center relative gap-1 text-center">
                     <div style={{ filter: avatarFilter }}>
                       <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={36} />
                     </div>
@@ -899,7 +989,7 @@ export default function App() {
                 </div>
 
                 {/* DISCARD PILE */}
-                <div className="flex flex-col items-center gap-1 justify-self-center">
+                <div ref={discardLightRef} className="flex flex-col items-center gap-1 justify-self-center">
                   <div className="relative">
                     <div className="relative z-10">
                       {(() => {
@@ -950,7 +1040,7 @@ export default function App() {
                 const isBot = gameMode !== 'offline' && rightPlayer.isAi;
                 const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
                 return (
-                  <div className="flex flex-col items-center relative gap-1 text-center">
+                <div ref={(element) => { playerLightRefs.current.ai3 = element; }} className="flex flex-col items-center relative gap-1 text-center">
                     <div style={{ filter: avatarFilter }}>
                       <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={36} />
                     </div>
@@ -988,7 +1078,7 @@ export default function App() {
           <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2">
             
             {/* NO-SCROLL DYNAMIC OVERLAPPING CARDS ZONE */}
-            <div className="cards-hand-container w-full overflow-x-auto py-2 px-1 flex flex-row items-center justify-start min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative bg-black/40 border border-black">
+            <div ref={handLightRef} className="cards-hand-container w-full overflow-x-auto py-2 px-1 flex flex-row items-center justify-start min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative bg-black/40 border border-black">
               {(() => {
                 const human = gameState.players.find((p) => p.id === 'player');
                 if (!human) return <div className="text-slate-500 text-xs italic font-mono">Loading...</div>;
