@@ -131,6 +131,7 @@ export function useUnoGame() {
   const remoteUserIdRef = useRef<string | null>(null);
   const [remoteSessionActive, setRemoteSessionActive] = useState(false);
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
+  const remoteMatchStreamLastEventAtRef = useRef(0);
 
   useEffect(() => {
     localStorage.setItem('uno_golden_tickets', goldenTickets.toString());
@@ -342,10 +343,12 @@ export function useUnoGame() {
 
     stream.addEventListener('match-state', (event) => {
       const payload = JSON.parse((event as MessageEvent).data) as { gameState: GameState };
+      remoteMatchStreamLastEventAtRef.current = Date.now();
       setGameState(payload.gameState);
     });
 
     stream.onerror = () => {
+      remoteMatchStreamLastEventAtRef.current = 0;
       syncRemoteMatchState().catch(() => undefined);
     };
 
@@ -357,22 +360,25 @@ export function useUnoGame() {
     };
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
-  // SSE is preferred for instant moves, but some Telegram WebViews terminate
-  // long-lived EventSource connections. Keep a no-preflight heartbeat and
-  // state refresh so both players still start the match and receive turns.
+  // SSE is preferred for instant moves. Only fall back to bridge polling when
+  // Telegram has actually cut the stream; unconditional full-state polling
+  // was needlessly re-rendering the table while a player was tapping cards.
   useEffect(() => {
     if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || gameState.phase === 'game_over') {
       return;
     }
     let syncing = false;
     const refresh = () => {
+      const streamIsFresh = remoteMatchStreamLastEventAtRef.current > 0
+        && Date.now() - remoteMatchStreamLastEventAtRef.current < 6_000;
+      if (streamIsFresh) return;
       if (syncing) return;
       syncing = true;
       syncRemoteMatchState().catch(() => undefined).finally(() => {
         syncing = false;
       });
     };
-    const timer = window.setInterval(refresh, 3_000);
+    const timer = window.setInterval(refresh, 1_500);
     return () => window.clearInterval(timer);
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 

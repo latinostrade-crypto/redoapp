@@ -3235,6 +3235,25 @@ function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<
   return res.json(payload);
 }
 
+function sendMatchmakerStatusSuccess(req: Request, res: Response, payload: object) {
+  const input = req.query as Record<string, unknown>;
+  if (input.responseMode === 'iframe') {
+    const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
+      ? input.parentOrigin
+      : '';
+    if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
+    const message = JSON.stringify({
+      source: 'redoapp-matchmaker-status-bridge',
+      requestId: String(input.bridgeRequestId || ''),
+      payload,
+    }).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
+  }
+  return res.json(payload);
+}
+
 function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   const { username, avatarId, stake, mode, walletAddress } = input as {
@@ -3371,7 +3390,7 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
   });
 });
 
-app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) => {
+function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
   const userId = getAuthenticatedUserId(req);
   expireTimedOutMatchmakingPlayers();
 
@@ -3385,7 +3404,7 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     if (activeMatch) {
-      return res.json({
+      return sendMatchmakerStatusSuccess(req, res, {
         status: 'ready',
         matchId: activeMatch.matchId,
         players: activeMatch.players,
@@ -3395,8 +3414,13 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
     }
   }
 
-  return res.json(tryActivateQueuedMatch(userId) || { status: 'idle' });
-});
+  return sendMatchmakerStatusSuccess(req, res, tryActivateQueuedMatch(userId) || { status: 'idle' });
+}
+
+app.get('/api/matchmaker/status', requireAuth, handleMatchmakerStatus);
+// Same queue truth as /status, but delivered without a credentialed CORS
+// preflight so a Telegram WebView cannot miss the ready transition.
+app.get('/api/matchmaker/status-beacon', requireAuth, handleMatchmakerStatus);
 
 function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
@@ -3988,7 +4012,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   });
 });
 
-app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, res) => {
+app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
   const { matchId, action, cardId, chosenColor } = req.body as {
     matchId: string;
     action: 'play' | 'draw' | 'pass';
@@ -4017,7 +4041,9 @@ app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, r
     }
 
     const perspective = buildPerspectiveState(activeMatch, userId);
-    await persistStateNow();
+    // The action functions already schedule a durable write. Do not make a
+    // player's card animation wait on a full Supabase batch (which may include
+    // unrelated rows): publish the authoritative in-memory result immediately.
     broadcastMatch(matchId);
     return res.json({
       success: true,

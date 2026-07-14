@@ -808,6 +808,62 @@ export function Web3Dashboard({
     });
   };
 
+  const getPublicQueueStatusViaBridge = () => {
+    return new Promise<{
+      status: 'idle' | 'searching' | 'ready' | 'expired';
+      queueLength?: number;
+      countdownSec?: number;
+      matchId?: string;
+      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+      message?: string;
+      failedAt?: number;
+    }>((resolve, reject) => {
+      const bridgeRequestId = `queue-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const params = new URLSearchParams({
+        responseMode: 'iframe',
+        bridgeRequestId,
+        parentOrigin: window.location.origin,
+      });
+      const iframe = document.createElement('iframe');
+      iframe.hidden = true;
+      iframe.src = buildAuthenticatedUrl(`/api/matchmaker/status-beacon?${params.toString()}`);
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Public queue status bridge timed out.'));
+      }, 8_000);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        iframe.remove();
+      };
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
+        const data = event.data as { source?: string; requestId?: string; payload?: {
+          status: 'idle' | 'searching' | 'ready' | 'expired';
+          queueLength?: number;
+          countdownSec?: number;
+          matchId?: string;
+          players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+          message?: string;
+          failedAt?: number;
+        }; error?: string };
+        if (data?.source !== 'redoapp-matchmaker-status-bridge' || data.requestId !== bridgeRequestId) return;
+        cleanup();
+        if (data.payload) {
+          resolve(data.payload);
+        } else {
+          reject(new Error(data.error || 'Public queue status bridge failed.'));
+        }
+      };
+      iframe.addEventListener('error', () => {
+        cleanup();
+        reject(new Error('Public queue status bridge failed to load.'));
+      }, { once: true });
+      window.addEventListener('message', onMessage);
+      document.body.appendChild(iframe);
+    });
+  };
+
   const recoverPrivateRoomByCode = (roomCode: string) => {
     let attempts = 0;
     const run = (): Promise<PrivateRoomResponse> => {
@@ -1710,7 +1766,7 @@ export function Web3Dashboard({
     const requestQueueStatus = () => {
       if (queueStatusRequestInFlightRef.current || disposed) return;
       queueStatusRequestInFlightRef.current = true;
-      apiRequest<{
+      getPublicQueueStatusViaBridge().catch(() => apiRequest<{
         status: 'idle' | 'searching' | 'ready' | 'expired';
         queueLength?: number;
         countdownSec?: number;
@@ -1718,7 +1774,7 @@ export function Web3Dashboard({
         players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
         message?: string;
         failedAt?: number;
-      }>('/api/matchmaker/status', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 })
+      }>('/api/matchmaker/status', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 }))
         .then(handleQueueStatus)
         .catch(() => undefined)
         .finally(() => {
