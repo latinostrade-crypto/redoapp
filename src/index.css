@@ -166,6 +166,17 @@
   animation: flashlight-ray-flicker 1.4s ease-in-out infinite;
 }
 
+@keyframes table-lamp-sway {
+  0%, 100% { transform: rotate(-2.5deg); }
+  50% { transform: rotate(2.5deg); }
+}
+
+.pixel-table-lamp {
+  transform-box: fill-box;
+  transform-origin: 50px 0px;
+  animation: table-lamp-sway 3.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pixel-flashlight-overlay {
     display: none;

@@ -263,7 +263,7 @@ export default function App() {
 
     const getPlayerSource = (playerId: PlayerId) => {
       if (playerId === 'player' && hand) {
-        return { x: hand.x, y: hand.y + hand.height / 2 };
+        return { x: hand.x, y: Math.min(104, hand.y + hand.height / 2 + 5) };
       }
       const player = lightLayout.players[playerId];
       return player ? { x: player.x, y: player.y } : { x: 50, y: 50 };
@@ -292,11 +292,12 @@ export default function App() {
     }
 
     if (currentActivePlayer?.id === 'player' && playableCount === 0 && draw) {
+      const source = getPlayerSource('player');
       return {
-        sourceX: draw.x,
-        sourceY: draw.y + draw.height / 2,
+        sourceX: source.x,
+        sourceY: source.y,
         targetX: draw.x,
-        targetY: draw.y - draw.height / 2,
+        targetY: draw.y,
         targetHalfWidth: getTargetWidth(draw, 13),
       };
     }
@@ -304,19 +305,20 @@ export default function App() {
     if (currentActivePlayer?.id === 'player' && hand) {
       return {
         sourceX: hand.x,
-        sourceY: hand.y + hand.height / 2,
+        sourceY: Math.min(104, hand.y + hand.height / 2 + 5),
         targetX: hand.x,
-        targetY: hand.y - hand.height / 2,
+        targetY: hand.y,
         targetHalfWidth: getTargetWidth(hand, 42),
       };
     }
 
-    if (currentActivePlayer?.isAi && discard) {
+    const source = currentActivePlayer ? getPlayerSource(currentActivePlayer.id) : null;
+    if (source && discard) {
       return {
-        sourceX: discard.x,
-        sourceY: discard.y - discard.height / 2,
+        sourceX: source.x,
+        sourceY: source.y,
         targetX: discard.x,
-        targetY: discard.y + discard.height / 2,
+        targetY: discard.y,
         targetHalfWidth: getTargetWidth(discard, 15),
       };
     }
@@ -762,6 +764,12 @@ export default function App() {
               transition={{ duration: 0.72, ease: [0.22, 1, 0.36, 1] }}
               fill={`url(#${flashlightMaskId}-beam)`}
             />
+            <g className="pixel-table-lamp">
+              <line x1="50" y1="0" x2="50" y2="13" stroke="#4a4a4a" strokeWidth="0.8" />
+              <rect x="46.5" y="12" width="7" height="4" fill="#17130a" stroke="#ffcc00" strokeWidth="0.7" />
+              <rect x="48.5" y="13" width="3" height="2" fill="#fff0a6" />
+              <polygon points="46,16 54,16 61,53 39,53" fill="#ffcc00" opacity="0.045" />
+            </g>
           </motion.svg>
           
           {/* FLYING CARDS ANIMATION OVERLAY */}
