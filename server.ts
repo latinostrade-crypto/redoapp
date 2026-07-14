@@ -1588,7 +1588,14 @@ async function performTelegramNotificationFlush() {
       // Commit the send intent first. Telegram's sendMessage response returns
       // a Message but accepts no idempotency key, so retrying an ambiguous
       // transport failure can show the same financial notice twice.
+      const writeAlreadyInFlight = persistInFlight;
       await persistStateNow();
+      // If another write was already under way, it may have captured the
+      // global outbox before this item changed to `sending`. Flush once more
+      // after it settles so the durable pre-send state is unambiguous.
+      if (writeAlreadyInFlight) {
+        await persistStateNow();
+      }
     } catch (error) {
       item.status = 'failed';
       item.error = error instanceof Error ? error.message : 'Could not persist notification send intent';
