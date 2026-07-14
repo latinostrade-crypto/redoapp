@@ -158,23 +158,16 @@
 }
 
 @keyframes flashlight-ray-flicker {
-  0%, 100% { opacity: 0.9; }
+  0%, 100% { opacity: 0.82; }
   50% { opacity: 1; }
 }
 
 .pixel-flashlight-ray {
-  animation: flashlight-ray-flicker 1.4s ease-in-out infinite;
+  animation: flashlight-ray-flicker 1.1s steps(2, end) infinite;
 }
 
-@keyframes table-lamp-sway {
-  0%, 100% { transform: rotate(-2.5deg); }
-  50% { transform: rotate(2.5deg); }
-}
-
-.pixel-table-lamp {
-  transform-box: fill-box;
-  transform-origin: 50px 0px;
-  animation: table-lamp-sway 3.6s ease-in-out infinite;
+.pixel-flashlight-focus {
+  animation: flashlight-ray-flicker 1.6s steps(2, end) infinite reverse;
 }
 
 @media (prefers-reduced-motion: reduce) {

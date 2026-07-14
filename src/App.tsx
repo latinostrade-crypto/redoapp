@@ -44,7 +44,6 @@ type LightAnchor = {
 
 type LightLayout = {
   hand: LightAnchor | null;
-  draw: LightAnchor | null;
   discard: LightAnchor | null;
   players: Partial<Record<PlayerId, LightAnchor>>;
 };
@@ -199,10 +198,9 @@ export default function App() {
   const flashlightMaskId = useId().replace(/:/g, '');
   const gameTableRef = useRef<HTMLElement | null>(null);
   const handLightRef = useRef<HTMLDivElement | null>(null);
-  const drawLightRef = useRef<HTMLDivElement | null>(null);
   const discardLightRef = useRef<HTMLDivElement | null>(null);
   const playerLightRefs = useRef<Partial<Record<PlayerId, HTMLDivElement | null>>>({});
-  const [lightLayout, setLightLayout] = useState<LightLayout>({ hand: null, draw: null, discard: null, players: {} });
+  const [lightLayout, setLightLayout] = useState<LightLayout>({ hand: null, discard: null, players: {} });
   const prevGameStateRef = useRef<any>(null);
   const settlementHandledRef = useRef<string | null>(null);
 
@@ -231,7 +229,6 @@ export default function App() {
       });
       setLightLayout({
         hand: getAnchor(handLightRef.current),
-        draw: getAnchor(drawLightRef.current),
         discard: getAnchor(discardLightRef.current),
         players,
       });
@@ -241,7 +238,6 @@ export default function App() {
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateLayout);
     observer?.observe(table);
     if (handLightRef.current) observer?.observe(handLightRef.current);
-    if (drawLightRef.current) observer?.observe(drawLightRef.current);
     if (discardLightRef.current) observer?.observe(discardLightRef.current);
     (['ai1', 'ai2', 'ai3'] as PlayerId[]).forEach((id) => {
       const element = playerLightRefs.current[id];
@@ -257,9 +253,7 @@ export default function App() {
   const flashlightScene = useMemo<FlashlightScene>(() => {
     const fallbackScene: FlashlightScene = { sourceX: 50, sourceY: 101, targetX: 50, targetY: 78, targetHalfWidth: 34 };
     const hand = lightLayout.hand;
-    const draw = lightLayout.draw;
     const discard = lightLayout.discard;
-    const getTargetWidth = (anchor: LightAnchor, maxWidth: number) => Math.max(8, Math.min(maxWidth, anchor.width / 2 + 1));
 
     const getPlayerSource = (playerId: PlayerId) => {
       if (playerId === 'player' && hand) {
@@ -269,36 +263,15 @@ export default function App() {
       return player ? { x: player.x, y: player.y } : { x: 50, y: 50 };
     };
 
-    const cardInFlight = flyingCards[flyingCards.length - 1];
-    if (cardInFlight?.isBack && cardInFlight.playerId === 'player' && draw && hand) {
-      return {
-        sourceX: draw.x,
-        sourceY: draw.y,
-        targetX: hand.x,
-        targetY: hand.y,
-        targetHalfWidth: getTargetWidth(hand, 42),
-      };
-    }
-
-    if (cardInFlight && discard) {
-      const source = getPlayerSource(cardInFlight.playerId);
+    const playedCardInFlight = flyingCards.find((card) => !card.isBack);
+    if (playedCardInFlight && discard) {
+      const source = getPlayerSource(playedCardInFlight.playerId);
       return {
         sourceX: source.x,
         sourceY: source.y,
         targetX: discard.x,
         targetY: discard.y,
-        targetHalfWidth: getTargetWidth(discard, 15),
-      };
-    }
-
-    if (currentActivePlayer?.id === 'player' && playableCount === 0 && draw) {
-      const source = getPlayerSource('player');
-      return {
-        sourceX: source.x,
-        sourceY: source.y,
-        targetX: draw.x,
-        targetY: draw.y,
-        targetHalfWidth: getTargetWidth(draw, 13),
+        targetHalfWidth: Math.max(9, Math.min(16, discard.width * 0.85)),
       };
     }
 
@@ -308,7 +281,7 @@ export default function App() {
         sourceY: Math.min(104, hand.y + hand.height / 2 + 5),
         targetX: hand.x,
         targetY: hand.y,
-        targetHalfWidth: getTargetWidth(hand, 42),
+        targetHalfWidth: Math.max(24, Math.min(42, hand.width / 2 + 2)),
       };
     }
 
@@ -319,12 +292,12 @@ export default function App() {
         sourceY: source.y,
         targetX: discard.x,
         targetY: discard.y,
-        targetHalfWidth: getTargetWidth(discard, 15),
+        targetHalfWidth: Math.max(9, Math.min(16, discard.width * 0.85)),
       };
     }
 
     return fallbackScene;
-  }, [currentActivePlayer, flyingCards, lightLayout, playableCount]);
+  }, [currentActivePlayer, flyingCards, lightLayout]);
   const flashlightRayPoints = getFlashlightRayPoints(flashlightScene);
   const showFlashlight = gameState.phase === 'playing' && Boolean(currentActivePlayer);
 
@@ -735,10 +708,8 @@ export default function App() {
             <defs>
               <mask id={flashlightMaskId} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
                 <rect width="100" height="100" fill="white" />
-                <motion.polygon
-                  initial={false}
-                  animate={{ points: flashlightRayPoints }}
-                  transition={{ duration: 0.72, ease: [0.22, 1, 0.36, 1] }}
+                <polygon
+                  points={flashlightRayPoints}
                   fill="black"
                 />
               </mask>
@@ -756,20 +727,12 @@ export default function App() {
               </linearGradient>
             </defs>
 
-            <rect width="100" height="100" fill="#020305" opacity="0.58" mask={`url(#${flashlightMaskId})`} />
-            <motion.polygon
+            <rect width="100" height="100" fill="#020305" opacity="0.62" mask={`url(#${flashlightMaskId})`} />
+            <polygon
               className="pixel-flashlight-ray"
-              initial={false}
-              animate={{ points: flashlightRayPoints }}
-              transition={{ duration: 0.72, ease: [0.22, 1, 0.36, 1] }}
+              points={flashlightRayPoints}
               fill={`url(#${flashlightMaskId}-beam)`}
             />
-            <g className="pixel-table-lamp">
-              <line x1="50" y1="0" x2="50" y2="13" stroke="#4a4a4a" strokeWidth="0.8" />
-              <rect x="46.5" y="12" width="7" height="4" fill="#17130a" stroke="#ffcc00" strokeWidth="0.7" />
-              <rect x="48.5" y="13" width="3" height="2" fill="#fff0a6" />
-              <polygon points="46,16 54,16 61,53 39,53" fill="#ffcc00" opacity="0.045" />
-            </g>
           </motion.svg>
           
           {/* FLYING CARDS ANIMATION OVERLAY */}
@@ -992,7 +955,7 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3 items-center justify-center z-10 w-full px-1">
                 
                 {/* DRAW DECK PILE (Clickable button) */}
-                <div ref={drawLightRef} className="flex flex-col items-center gap-1 justify-self-center">
+                <div className="flex flex-col items-center gap-1 justify-self-center">
                   <div className="relative">
                     <div className="absolute top-1 left-1 w-[54px] h-[80px] min-[370px]:w-[68px] min-[370px]:h-[100px] sm:w-[82px] sm:h-[122px] bg-black border-2 border-black opacity-60 z-0"></div>
                     
