@@ -91,16 +91,13 @@ export function buildAuthHeaders(init?: HeadersInit) {
 
 export function buildAuthenticatedUrl(path: string) {
   const token = getSessionToken();
-  if (!token) {
-    const telegramInitData = getTelegramInitData();
-    if (!telegramInitData) {
-      return `${API_BASE_URL}${path}`;
-    }
-    const separator = path.includes('?') ? '&' : '?';
-    return `${API_BASE_URL}${path}${separator}telegramInitData=${encodeURIComponent(telegramInitData)}`;
-  }
+  const telegramInitData = getTelegramInitData();
+  const params = new URLSearchParams();
+  if (token) params.set('sessionToken', token);
+  if (telegramInitData) params.set('telegramInitData', telegramInitData);
+  if (!params.size) return `${API_BASE_URL}${path}`;
   const separator = path.includes('?') ? '&' : '?';
-  return `${API_BASE_URL}${path}${separator}sessionToken=${encodeURIComponent(token)}`;
+  return `${API_BASE_URL}${path}${separator}${params.toString()}`;
 }
 
 type ApiRequestInit = RequestInit & {

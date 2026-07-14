@@ -339,6 +339,8 @@ export function Web3Dashboard({
   }, [walletConnected, setTransactions]);
 
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
+  const [dailyClaimStatus, setDailyClaimStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
+  const [dailyClaimMessage, setDailyClaimMessage] = useState('');
   const [showXpDetails, setShowXpDetails] = useState(false);
   const [showReferralDetails, setShowReferralDetails] = useState(false);
   const [showCollectionAddress, setShowCollectionAddress] = useState(false);
@@ -382,6 +384,7 @@ export function Web3Dashboard({
   const openingPublicMatchRef = useRef('');
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
+  const withdrawalRefreshInFlightRef = useRef(false);
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
   // Wallet connection is account metadata, never application identity.
@@ -411,6 +414,7 @@ export function Web3Dashboard({
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
   const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
+  const [withdrawStatusTone, setWithdrawStatusTone] = useState<'idle' | 'success' | 'refund' | 'error'>('idle');
   const [pendingWithdrawal, setPendingWithdrawal] = useState<null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null }>(null);
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
@@ -438,16 +442,37 @@ export function Web3Dashboard({
   const launchStartParam = getReferralStartParam();
   const authReady = bootstrapState === 'ready';
   const refreshPendingWithdrawal = useCallback(async () => {
-    const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending' | 'completed' | 'rejected'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null } }>(
-      '/api/tickets/withdraw-pending',
-      { timeoutMs: 30_000, retryOnNetworkError: true },
-    );
-    setGoldenTickets(result.availableTickets);
-    setTransactions(result.transactions);
-    const activeRequest = result.request?.status === 'pending' ? { ...result.request, status: 'pending' as const } : null;
-    setPendingWithdrawal(activeRequest);
-    if (result.request?.status === 'completed') setWithdrawStatusMessage('');
-    return activeRequest;
+    if (withdrawalRefreshInFlightRef.current) return null;
+    withdrawalRefreshInFlightRef.current = true;
+    try {
+      const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending' | 'completed' | 'rejected'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null } }>(
+        '/api/tickets/withdraw-pending',
+        { timeoutMs: 30_000, retryOnNetworkError: true },
+      );
+      const activeRequest = result.request?.status === 'pending' ? { ...result.request, status: 'pending' as const } : null;
+      // The backend reserves pending tickets immediately to prevent double
+      // spending. Keep the visible balance unchanged until the operator makes
+      // the final decision; a completion then deducts it and a rejection leaves
+      // it unchanged.
+      setGoldenTickets(activeRequest
+        ? Math.round((result.availableTickets + activeRequest.ticketAmount) * 100) / 100
+        : result.availableTickets);
+      setTransactions(result.transactions);
+      setPendingWithdrawal(activeRequest);
+      if (result.request?.status === 'pending') {
+        setWithdrawStatusTone('success');
+        setWithdrawStatusMessage('Successful');
+      } else if (result.request?.status === 'completed') {
+        setWithdrawStatusTone('success');
+        setWithdrawStatusMessage('Successful — payout sent to your wallet.');
+      } else if (result.request?.status === 'rejected') {
+        setWithdrawStatusTone('refund');
+        setWithdrawStatusMessage('Refunded — tickets returned to your balance.');
+      }
+      return activeRequest;
+    } finally {
+      withdrawalRefreshInFlightRef.current = false;
+    }
   }, []);
   const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((apiTraceNow - apiTrace.startedAt) / 1000)) : 0;
   const apiTraceHost = (() => {
@@ -1214,9 +1239,11 @@ export function Web3Dashboard({
   };
 
   const claimDailyXp = () => {
-    if (dailyXpClaimedToday) return;
+    if (dailyXpClaimedToday || isClaimingDaily || !authReady) return;
     sound.playShuffle();
     setIsClaimingDaily(true);
+    setDailyClaimStatus('checking');
+    setDailyClaimMessage('Checking daily reward...');
     apiRequest<{
       success: boolean;
       alreadyClaimed?: boolean;
@@ -1236,8 +1263,12 @@ export function Web3Dashboard({
         telegramInitData,
       }),
     }).then((result) => {
-      if (!result.success && !result.alreadyClaimed) return;
+      if (!result.success && !result.alreadyClaimed) {
+        throw new Error('Daily check-in was not accepted. Please retry.');
+      }
       setDailyXpClaimedToday(true);
+      setDailyClaimStatus('success');
+      setDailyClaimMessage(result.success ? 'Successful' : 'Already claimed today.');
       
       if (result.success) {
         const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
@@ -1267,9 +1298,10 @@ export function Web3Dashboard({
         setTransactions(ledger.transactions);
       }).catch(() => undefined);
     }).catch((error) => {
-      if (!isTransientApiError(error)) {
-        alert(error instanceof Error ? error.message : 'Daily check-in failed.');
-      }
+      setDailyClaimStatus('error');
+      setDailyClaimMessage(isTransientApiError(error)
+        ? 'Could not confirm yet. Tap Check-in to retry.'
+        : error instanceof Error ? error.message : 'Daily check-in failed.');
     }).finally(() => {
       setIsClaimingDaily(false);
     });
@@ -1438,19 +1470,24 @@ export function Web3Dashboard({
   const prepareWithdrawal = () => {
     const amount = Number(withdrawAmount);
     setWithdrawStatusMessage('');
+    setWithdrawStatusTone('idle');
     if (pendingWithdrawal) {
-      setWithdrawStatusMessage(`A ${pendingWithdrawal.ticketAmount.toFixed(2)} TKT withdrawal is already pending.`);
+      setWithdrawStatusTone('success');
+      setWithdrawStatusMessage('Successful');
       return;
     }
     if (!walletConnected || !rawAddress) {
+      setWithdrawStatusTone('error');
       setWithdrawStatusMessage('Connect wallet first.');
       return;
     }
     if (!Number.isFinite(amount) || amount < 0.5) {
+      setWithdrawStatusTone('error');
       setWithdrawStatusMessage('Minimum withdrawal is 0.5 tickets.');
       return;
     }
     if (amount > goldenTickets) {
+      setWithdrawStatusTone('error');
       setWithdrawStatusMessage('Insufficient available tickets.');
       return;
     }
@@ -1466,6 +1503,7 @@ export function Web3Dashboard({
     if (withdrawRequestState !== 'confirming' || !withdrawRequestId || !rawAddress) return;
     setShowAccountRefresh(true);
     setWithdrawRequestState('submitting');
+    setWithdrawStatusTone('idle');
     setWithdrawStatusMessage('Processing withdrawal request...');
     try {
       const created = await apiRequest<{ requestId: string; status: 'pending'; tonAmount: number }>('/api/tickets/withdraw-request', {
@@ -1487,17 +1525,12 @@ export function Web3Dashboard({
         notificationStatus: 'queued',
         lastChainCheckAt: null,
       });
-      setGoldenTickets((current) => Math.max(0, Math.round((current - amount) * 100) / 100));
-      setWithdrawStatusMessage('');
+      setWithdrawStatusTone('success');
+      setWithdrawStatusMessage('Successful');
       setWithdrawAmount('1');
       setWithdrawRequestState('idle');
       setWithdrawRequestId('');
-      Promise.all([
-        apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance', { timeoutMs: 60_000 }),
-        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { timeoutMs: 60_000 }),
-      ]).then(([balance, ledger]) => {
-        setGoldenTickets(balance.availableTickets);
-        setHeldTickets(balance.heldTickets);
+      apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { timeoutMs: 60_000 }).then((ledger) => {
         setTransactions(ledger.transactions);
       }).catch(() => {
         // The request is already server-authoritative; the manual refresh button
@@ -1507,16 +1540,25 @@ export function Web3Dashboard({
       const failedRequestId = withdrawRequestId;
       setWithdrawRequestState('idle');
       setWithdrawRequestId('');
-      setWithdrawStatusMessage(isTransientApiError(error)
-        ? ''
+      const transient = isTransientApiError(error);
+      setWithdrawStatusTone(transient ? 'idle' : 'error');
+      setWithdrawStatusMessage(transient
+        ? 'Checking request status...'
         : error instanceof Error ? error.message : 'Could not create withdrawal request.');
       refreshPendingWithdrawal().then((recovered) => {
         if (recovered?.id === failedRequestId) {
-          setWithdrawStatusMessage('');
+          setWithdrawStatusTone('success');
+          setWithdrawStatusMessage('Successful');
         } else if (recovered) {
-          setWithdrawStatusMessage('');
+          setWithdrawStatusTone('success');
+          setWithdrawStatusMessage('Successful');
         }
-      }).catch(() => undefined);
+      }).catch(() => {
+        if (transient) {
+          setWithdrawStatusTone('error');
+          setWithdrawStatusMessage('Could not confirm the request. Tap Withdraw to retry.');
+        }
+      });
     }
   };
 
@@ -1741,12 +1783,14 @@ export function Web3Dashboard({
           )}
           {walletConnected && !dailyXpClaimedToday && (
             <button
+              type="button"
               onClick={claimDailyXp}
-              className="p-1 bg-[#00ff66] text-black border-2 border-black pixel-btn-interactive text-[8px] font-black uppercase font-mono tracking-wider flex items-center justify-center gap-1"
+              disabled={!authReady || isClaimingDaily}
+              className="p-1 bg-[#00ff66] text-black border-2 border-black pixel-btn-interactive text-[8px] font-black uppercase font-mono tracking-wider flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-wait"
               title="Claim daily XP check-in"
             >
-              <Gift className="w-3.5 h-3.5" />
-              <span>CLAIM</span>
+              {isClaimingDaily ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Gift className="w-3.5 h-3.5" />}
+              <span>{!authReady ? 'SYNC' : isClaimingDaily ? 'WAIT' : 'CLAIM'}</span>
             </button>
           )}
           <button
@@ -2181,13 +2225,27 @@ export function Web3Dashboard({
                       <button
                         type="button"
                         onClick={claimDailyXp}
-                        className="px-2 py-1 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                        disabled={!authReady || isClaimingDaily}
+                        className="px-2 py-1 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black cursor-pointer disabled:opacity-60 disabled:cursor-wait flex items-center gap-1"
                       >
-                        Check-in
+                        {isClaimingDaily && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {!authReady ? 'Syncing' : isClaimingDaily ? 'Checking' : 'Check-in'}
                       </button>
                     )}
                   </div>
                 </div>
+
+                {dailyClaimMessage && (
+                  <div className={`border border-black px-2 py-1.5 text-[7px] ${
+                    dailyClaimStatus === 'error'
+                      ? 'bg-[#2a0d0d] text-[#ff9a9a]'
+                      : dailyClaimStatus === 'success'
+                        ? 'bg-[#062b12] text-[#8dffaf]'
+                        : 'bg-[#08131f] text-[#9ed8ff]'
+                  }`}>
+                    {dailyClaimMessage}
+                  </div>
+                )}
 
                 {/* Daily Streak Grid */}
                 <div className="bg-slate-950 p-2 border border-black font-mono space-y-1.5">
@@ -2245,6 +2303,7 @@ export function Web3Dashboard({
                           setWithdrawRequestState('idle');
                           setWithdrawRequestId('');
                         }
+                        setWithdrawStatusTone('idle');
                         setWithdrawStatusMessage('');
                       }}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
@@ -2256,7 +2315,7 @@ export function Web3Dashboard({
                       disabled={withdrawRequestState === 'submitting' || !!pendingWithdrawal}
                       className="px-3 py-1 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      Withdraw
+                      {pendingWithdrawal ? 'Pending' : withdrawRequestState === 'submitting' ? 'Sending' : 'Withdraw'}
                     </button>
                   </div>
                   {withdrawRequestState === 'confirming' && (
@@ -2270,6 +2329,7 @@ export function Web3Dashboard({
                           onClick={() => {
                             setWithdrawRequestState('idle');
                             setWithdrawRequestId('');
+                            setWithdrawStatusTone('idle');
                             setWithdrawStatusMessage('');
                           }}
                           className="border border-black bg-slate-800 py-1 text-[7px] font-black uppercase text-slate-200 pixel-btn-interactive"
@@ -2287,7 +2347,15 @@ export function Web3Dashboard({
                     </div>
                   )}
                   {withdrawStatusMessage && withdrawRequestState !== 'submitting' && (
-                    <div className="border border-black bg-[#2a0d0d] p-2 text-[7px] text-[#ff9a9a]">
+                    <div className={`border border-black p-2 text-[7px] ${
+                      withdrawStatusTone === 'error'
+                        ? 'bg-[#2a0d0d] text-[#ff9a9a]'
+                        : withdrawStatusTone === 'refund'
+                          ? 'bg-[#2b2105] text-[#ffe680]'
+                          : withdrawStatusTone === 'success'
+                            ? 'bg-[#062b12] text-[#8dffaf]'
+                            : 'bg-[#08131f] text-[#9ed8ff]'
+                    }`}>
                       {withdrawStatusMessage}
                     </div>
                   )}

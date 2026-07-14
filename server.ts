@@ -1592,32 +1592,42 @@ function extractTelegramInitData(req: Request) {
 }
 
 function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const session = verifySessionToken(extractSessionToken(req));
-  if (session) {
-    req.authUserId = session.userId;
-    return next();
-  }
-  const auth = verifyTelegramInitData(extractTelegramInitData(req));
-  if (!auth) {
-    return res.status(401).json({ error: 'Authentication required.' });
-  }
-  req.authUserId = `tg:${auth.id}`;
-  const user = getUser(req.authUserId);
-  applyTelegramAuth(user, auth);
-  return next();
-}
-
-function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
-  const session = verifySessionToken(extractSessionToken(req));
-  if (session) {
-    req.authUserId = session.userId;
-    return next();
-  }
-  const auth = verifyTelegramInitData(extractTelegramInitData(req));
+  // Telegram initData is bound to the currently opened Mini App account. When
+  // both credentials are present, prefer it over a cached session token that
+  // may belong to an account previously opened in the same WebView.
+  const telegramInitData = extractTelegramInitData(req);
+  const auth = verifyTelegramInitData(telegramInitData);
   if (auth) {
     req.authUserId = `tg:${auth.id}`;
     const user = getUser(req.authUserId);
     applyTelegramAuth(user, auth);
+    return next();
+  }
+  if (telegramInitData) {
+    return res.status(401).json({ error: 'Telegram authentication is invalid or expired.' });
+  }
+  const session = verifySessionToken(extractSessionToken(req));
+  if (session) {
+    req.authUserId = session.userId;
+    return next();
+  }
+  return res.status(401).json({ error: 'Authentication required.' });
+}
+
+function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  const telegramInitData = extractTelegramInitData(req);
+  const auth = verifyTelegramInitData(telegramInitData);
+  if (auth) {
+    req.authUserId = `tg:${auth.id}`;
+    const user = getUser(req.authUserId);
+    applyTelegramAuth(user, auth);
+    return next();
+  }
+  if (telegramInitData) return next();
+  const session = verifySessionToken(extractSessionToken(req));
+  if (session) {
+    req.authUserId = session.userId;
+    return next();
   }
   return next();
 }
