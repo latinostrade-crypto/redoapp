@@ -2859,6 +2859,7 @@ export function Web3Dashboard({
                             }>('/api/matchmaker/join', {
                               method: 'POST',
                               retryOnNetworkError: true,
+                              networkAttempts: 3,
                               timeoutMs: 45000,
                               body: JSON.stringify({
                                 userId: currentUserId,

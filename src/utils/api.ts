@@ -102,6 +102,7 @@ export function buildAuthenticatedUrl(path: string) {
 
 type ApiRequestInit = RequestInit & {
   retryOnNetworkError?: boolean;
+  networkAttempts?: number;
   skipAuthRefresh?: boolean;
   timeoutMs?: number;
 };
@@ -140,8 +141,8 @@ function refreshApiSession(signal?: AbortSignal) {
 }
 
 export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
-  const { retryOnNetworkError = false, skipAuthRefresh = false, timeoutMs = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
-  const attempts = retryOnNetworkError ? 2 : 1;
+  const { retryOnNetworkError = false, networkAttempts = 2, skipAuthRefresh = false, timeoutMs = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
+  const attempts = retryOnNetworkError ? Math.max(1, Math.min(3, networkAttempts)) : 1;
   const method = (requestInit.method || 'GET').toUpperCase();
   const url = `${API_BASE_URL}${path}`;
   const traceId = `api-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

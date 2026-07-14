@@ -1,7 +1,6 @@
 import { CardColor, CardValue } from '../types';
 
 export const CARD_ASSETS_READY_EVENT = 'redoapp:card-assets-ready';
-const CARD_ASSET_LOAD_ID = 'game-image-assets';
 
 function getDeterministicHash(value: string): number {
   let hash = 0;
@@ -101,35 +100,21 @@ function loadAndDecodeImage(url: string) {
   });
 }
 
-const wait = (durationMs: number) => new Promise<void>((resolve) => window.setTimeout(resolve, durationMs));
-
 export function preloadRequiredGameImages() {
   if (preloadPromise) return preloadPromise;
   preloadPromise = (async () => {
-    let pending = REQUIRED_GAME_IMAGE_URLS.filter((url) => !retainedImages.has(url));
-    let retryDelayMs = 750;
-    while (pending.length > 0) {
-      const results = await Promise.allSettled(pending.map((url) => loadAndDecodeImage(url)));
-      pending = pending.filter((_, index) => results[index].status === 'rejected');
-      if (pending.length > 0) {
-        await wait(retryDelayMs);
-        retryDelayMs = Math.min(5_000, retryDelayMs * 2);
-      }
-    }
+    const pending = REQUIRED_GAME_IMAGE_URLS.filter((url) => !retainedImages.has(url));
+    // Images improve the first round but must never prevent the Mini App from
+    // opening. A missing asset is handled by UnoCard's existing fallback.
+    await Promise.allSettled(pending.map((url) => loadAndDecodeImage(url)));
   })();
   return preloadPromise;
 }
 
 export function initializeRequiredGameImages() {
-  const activeLoads: string[] = (window as any).redoappActiveLoads || [];
-  (window as any).redoappActiveLoads = activeLoads;
-  if (!activeLoads.includes(CARD_ASSET_LOAD_ID)) activeLoads.push(CARD_ASSET_LOAD_ID);
-  window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
-
-  preloadRequiredGameImages().then(() => {
-    const currentLoads: string[] = (window as any).redoappActiveLoads || [];
-    (window as any).redoappActiveLoads = currentLoads.filter((id) => id !== CARD_ASSET_LOAD_ID);
+  // Preload in the background. Do not register it as a full-screen blocking
+  // load: Render/CDN hiccups previously kept the app on LOADING forever.
+  void preloadRequiredGameImages().finally(() => {
     window.dispatchEvent(new CustomEvent(CARD_ASSETS_READY_EVENT));
-    window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
   });
 }
