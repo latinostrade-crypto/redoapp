@@ -17,7 +17,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, setSessionToken, wakeBackend } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -354,6 +354,7 @@ export function Web3Dashboard({
   const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
   const [depositStatusMessage, setDepositStatusMessage] = useState('');
   const [pendingDeposits, setPendingDeposits] = useState<PendingDepositView[]>([]);
+  const [depositRecoveryAttempt, setDepositRecoveryAttempt] = useState(0);
 
   const [privateRoomStake, setPrivateRoomStake] = useState<PrivateStakeOption>(0);
   const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(4);
@@ -439,7 +440,7 @@ export function Web3Dashboard({
   const refreshPendingWithdrawal = useCallback(async () => {
     const result = await apiRequest<{ availableTickets: number; transactions: any[]; request: null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending' | 'completed' | 'rejected'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null } }>(
       '/api/tickets/withdraw-pending',
-      { timeoutMs: 8_000 },
+      { timeoutMs: 30_000, retryOnNetworkError: true },
     );
     setGoldenTickets(result.availableTickets);
     setTransactions(result.transactions);
@@ -836,6 +837,8 @@ export function Web3Dashboard({
     try {
       const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
         method: 'POST',
+        retryOnNetworkError: true,
+        timeoutMs: 90_000,
         body: JSON.stringify({
           intentId: pending.intentId,
           signedBoc: pending.signedBoc,
@@ -856,10 +859,18 @@ export function Web3Dashboard({
     } catch (e) {
       console.error(e);
       const message = e instanceof Error ? e.message : 'Ticket purchase failed.';
-      setDepositFlowStatus('failed');
-      setDepositStatusMessage(message);
+      const transient = isTransientApiError(e);
+      setDepositFlowStatus(transient ? 'waiting_chain' : 'failed');
+      setDepositStatusMessage(transient
+        ? 'Payment sent. Balance confirmation will continue automatically.'
+        : message);
       await refreshPendingDeposits();
-      if (!options?.silent) {
+      if (transient) {
+        window.setTimeout(() => {
+          autoResumedDepositRef.current = '';
+          setDepositRecoveryAttempt((attempt) => attempt + 1);
+        }, 15_000);
+      } else if (!options?.silent) {
         alert(message);
       }
       return false;
@@ -876,7 +887,7 @@ export function Web3Dashboard({
     setDepositFlowStatus('waiting_chain');
     setDepositStatusMessage(`Pending TON deposit found for ${pending.ticketAmount.toFixed(2)} tickets. Resuming confirmation...`);
     confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
-  }, [walletConnected, currentUserId, buyingTickets, authReady]);
+  }, [walletConnected, currentUserId, buyingTickets, authReady, depositRecoveryAttempt]);
 
   useEffect(() => {
     if (!activeProfile) return;
@@ -1208,6 +1219,7 @@ export function Web3Dashboard({
     setIsClaimingDaily(true);
     apiRequest<{
       success: boolean;
+      alreadyClaimed?: boolean;
       xpAwarded: number;
       streak: number;
       rewardTickets: number;
@@ -1216,38 +1228,48 @@ export function Web3Dashboard({
       claimedQuestIds?: string[];
     }>('/api/xp/daily-checkin', {
       method: 'POST',
+      retryOnNetworkError: true,
+      timeoutMs: 90_000,
       body: JSON.stringify({
         userId: currentUserId,
         walletAddress: rawAddress || null,
         telegramInitData,
       }),
     }).then((result) => {
-      if (!result.success) return;
+      if (!result.success && !result.alreadyClaimed) return;
       setDailyXpClaimedToday(true);
       
-      const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
-      const newTx = {
-        id: `tx-${Date.now()}`,
-        event: `Check-in Day ${result.streak || 1}`,
-        value: rewardVal,
-        time: 'Just now',
-        type: 'claim'
-      };
-      setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      if (result.success) {
+        const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
+        const newTx = {
+          id: `tx-${Date.now()}`,
+          event: `Check-in Day ${result.streak || 1}`,
+          value: rewardVal,
+          time: 'Just now',
+          type: 'claim'
+        };
+        setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+      }
       
       if (result.energy) {
         updateProfileEnergy(result.energy);
       }
 
-      return apiRequest<PlayerProfile>('/api/me').then((me) => {
+      return Promise.all([
+        apiRequest<PlayerProfile>('/api/me', { retryOnNetworkError: true }),
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { retryOnNetworkError: true }),
+      ]).then(([me, ledger]) => {
         const normalized = normalizeProfile(me);
         setProfile(normalized);
         setFullProfile(normalized);
         setGoldenTickets(me.availableTickets);
         setHeldTickets(me.heldTickets);
+        setTransactions(ledger.transactions);
       }).catch(() => undefined);
     }).catch((error) => {
-      alert(error.message);
+      if (!isTransientApiError(error)) {
+        alert(error instanceof Error ? error.message : 'Daily check-in failed.');
+      }
     }).finally(() => {
       setIsClaimingDaily(false);
     });
@@ -1453,8 +1475,8 @@ export function Web3Dashboard({
           walletAddress: rawAddress,
           ticketAmount: amount,
         }),
-        retryOnNetworkError: false,
-        timeoutMs: 12_000,
+        retryOnNetworkError: true,
+        timeoutMs: 90_000,
       });
       setPendingWithdrawal({
         id: created.requestId,
@@ -1485,7 +1507,9 @@ export function Web3Dashboard({
       const failedRequestId = withdrawRequestId;
       setWithdrawRequestState('idle');
       setWithdrawRequestId('');
-      setWithdrawStatusMessage(error instanceof Error ? error.message : 'Could not create withdrawal request.');
+      setWithdrawStatusMessage(isTransientApiError(error)
+        ? ''
+        : error instanceof Error ? error.message : 'Could not create withdrawal request.');
       refreshPendingWithdrawal().then((recovered) => {
         if (recovered?.id === failedRequestId) {
           setWithdrawStatusMessage('');
@@ -1672,6 +1696,15 @@ export function Web3Dashboard({
 
       {/* 2. Network Connectivity bar */}
       <div className="flex flex-wrap items-stretch gap-1.5 bg-[#18181c] p-2 pixel-box-sm border-black">
+        <div className="order-1 flex h-[34px] min-w-[72px] max-w-[112px] flex-1 items-center overflow-hidden border-2 border-black bg-black px-1">
+          <img
+            src="/text(logo).jpg"
+            alt="REDOapp"
+            className="h-full w-full object-contain object-left select-none pointer-events-none"
+            style={{ imageRendering: 'auto' }}
+          />
+        </div>
+
         <div className="order-2 grid w-full min-w-0 grid-cols-4 gap-1 font-mono text-left">
           <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
             <span className="block truncate text-[5px] font-bold text-slate-500">XP</span>
@@ -2266,7 +2299,7 @@ export function Web3Dashboard({
                     <input
                       type="number"
                       min="0.01"
-                      step="0.1"
+                      step="0.01"
                       value={depositAmount}
                       onChange={(e) => setDepositAmount(e.target.value)}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
@@ -2669,7 +2702,7 @@ export function Web3Dashboard({
                           <input
                             type="number"
                             min="0.01"
-                            step="0.1"
+                            step="0.01"
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
                             className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono min-w-0"

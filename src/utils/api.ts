@@ -31,6 +31,38 @@ export function wakeBackend() {
   }).catch(() => undefined);
 }
 
+async function probeBackend(timeoutMs = 5_000) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/health`, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function waitForBackendReady(maxWaitMs: number) {
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
+  while (Date.now() < deadline) {
+    if (await probeBackend()) return true;
+    await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+  }
+  return false;
+}
+
+export function isTransientApiError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('Connection was interrupted')
+    || error.message.includes('Server response timed out');
+}
+
 export function getSessionToken() {
   return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';
 }
@@ -197,7 +229,10 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
           message: isTimeout ? 'Request timed out; retrying.' : 'Network error; retrying.',
         });
         wakeBackend();
-        await new Promise((resolve) => window.setTimeout(resolve, 800));
+        // A sleeping Render free service can need about a minute to wake. A
+        // simple health request avoids CORS preflight and tells us when it is
+        // safe to replay an idempotent mutation instead of failing the UI.
+        await waitForBackendReady(Math.min(65_000, timeoutMs));
         continue;
       }
       if (isTimeout) {

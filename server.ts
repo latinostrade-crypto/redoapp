@@ -2759,9 +2759,13 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
     return res.json({
       success: false,
       alreadyClaimed: true,
+      xpAwarded: 0,
       xp: user.xp,
       streak: user.dailyStreak || 0,
       lastDailyXpAt: user.lastDailyXpAt,
+      rewardTickets: 0,
+      rewardEnergy: 0,
+      energy: getEnergyState(user),
     });
   }
 
