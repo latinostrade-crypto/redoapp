@@ -6,6 +6,7 @@
 import React from 'react';
 import { UnoCardType, CardColor, CardValue } from '../types';
 import { RefreshCw, Ban } from 'lucide-react';
+import { CARD_ASSETS_READY_EVENT, getEncodedCardImageUrl } from '../utils/cardAssets';
 
 interface UnoCardProps {
   card: UnoCardType;
@@ -14,91 +15,6 @@ interface UnoCardProps {
   isPlayable?: boolean;
   size?: 'sm' | 'md' | 'lg' | 'responsive';
   indexOffset?: number; // useful for overlapping fanning hand
-}
-
-function getDeterministicHash(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return Math.abs(hash);
-}
-
-function getCardImageUrl(color: CardColor, value: CardValue, id: string): string {
-  if (value === 'wild') {
-    if (color === 'wild') {
-      const hash = getDeterministicHash(id || 'wild');
-      const index = (hash % 4) + 1;
-      return `/card-thumbs/wild ${index}.jpeg`;
-    } else {
-      let colorName = '';
-      if (color === 'red') colorName = 'red';
-      else if (color === 'blue') colorName = 'blue';
-      else if (color === 'yellow') colorName = 'gold';
-      else if (color === 'green') colorName = 'purp';
-      return `/card-thumbs/wild ${colorName}.jpeg`;
-    }
-  }
-
-  if (value === 'wild_draw4') {
-    let colorName = '';
-    if (color === 'wild') {
-      const hash = getDeterministicHash(id || 'draw4');
-      const colors = ['red', 'blue', 'gold', 'purp'];
-      colorName = colors[hash % 4];
-    } else {
-      if (color === 'red') colorName = 'red';
-      else if (color === 'blue') colorName = 'blue';
-      else if (color === 'yellow') colorName = 'gold';
-      else if (color === 'green') colorName = 'purp';
-    }
-    return `/card-thumbs/plus4_${colorName}_v2.jpeg`;
-  }
-
-  // Regular color cards
-  let colorName = '';
-  if (color === 'red') {
-    colorName = 'red';
-  } else if (color === 'blue') {
-    colorName = 'blue';
-  } else if (color === 'yellow') {
-    colorName = 'gold';
-  } else if (color === 'green') {
-    const usePurple = ['1', '2', '5', '6', 'reverse'];
-    if (usePurple.includes(value)) {
-      colorName = 'purple';
-    } else {
-      colorName = 'purp';
-    }
-  }
-
-  if (value === 'draw2') {
-    return `/card-thumbs/plus2_${colorName}_v2.jpeg`;
-  }
-
-  if (value === 'skip') {
-    const skipWord = color === 'green' ? 'rug' : 'Rug';
-    return `/card-thumbs/${skipWord} ${colorName}.jpeg`;
-  }
-
-  if (value === 'reverse') {
-    return `/card-thumbs/Flip ${colorName}.jpeg`;
-  }
-
-  if (value >= '0' && value <= '9') {
-    if (value === '3' && color === 'yellow') {
-      return `/card-thumbs/3gold.jpeg`;
-    }
-    return `/card-thumbs/${value} ${colorName}.jpeg`;
-  }
-
-  return '';
-}
-
-function getEncodedCardImageUrl(color: CardColor, value: CardValue, id: string): string {
-  const path = getCardImageUrl(color, value, id);
-  if (!path) return '';
-  return encodeURI(path);
 }
 
 export const UnoCard: React.FC<UnoCardProps> = ({
@@ -115,6 +31,12 @@ export const UnoCard: React.FC<UnoCardProps> = ({
   React.useEffect(() => {
     setImgError(false);
   }, [card.id, card.color, card.value, isBack]);
+
+  React.useEffect(() => {
+    const restorePreloadedImage = () => setImgError(false);
+    window.addEventListener(CARD_ASSETS_READY_EVENT, restorePreloadedImage);
+    return () => window.removeEventListener(CARD_ASSETS_READY_EVENT, restorePreloadedImage);
+  }, []);
 
   const imageUrl = getEncodedCardImageUrl(color, value, card.id);
 
