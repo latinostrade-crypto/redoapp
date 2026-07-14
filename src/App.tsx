@@ -102,6 +102,8 @@ export default function App() {
   const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
   const isWaitingForPlayers = gameMode === 'pvp' && !!gameState.waitingForPlayers;
   const isHumanTurn = !isWaitingForPlayers && currentActivePlayer?.id === 'player';
+  const connectedPlayerCount = gameState.players.filter((player) => player.isConnected !== false).length;
+  const totalMatchPlayerCount = gameState.players.length;
   const [connectionTimeLeft, setConnectionTimeLeft] = useState(60);
 
   useEffect(() => {
@@ -592,6 +594,9 @@ export default function App() {
               <div className="w-full max-w-xs border-4 border-black bg-slate-950 p-5 text-center shadow-[4px_4px_0_#000]">
                 <div className="text-[11px] font-black uppercase tracking-wider text-[#00d2ff]">Connecting players</div>
                 <div className="mt-3 text-[24px] font-black text-[#ffcc00]">{connectionTimeLeft}s</div>
+                <div className="mt-1 text-[9px] font-black uppercase text-[#00ff66]">
+                  {connectedPlayerCount}/{totalMatchPlayerCount} players connected
+                </div>
                 <div className="mt-3 text-[7px] leading-relaxed text-slate-400">
                   The match starts when everyone connects. If nobody connects, no tickets or energy are charged.
                 </div>

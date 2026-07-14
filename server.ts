@@ -2599,10 +2599,13 @@ function runMatchmakingTick() {
 
       const groupSlice = players.slice(i, i + MAX_MATCH_PLAYERS);
       const oldestPlayer = groupSlice[0];
-      const waitedMs = Date.now() - oldestPlayer.joinedAt;
 
-      const shouldMatch = groupSlice.length >= MAX_MATCH_PLAYERS
-        || (groupSlice.length >= MIN_MATCH_PLAYERS && waitedMs >= MATCHMAKING_TIMEOUT_MS);
+      // A public table supports 2–4 players.  Waiting for a four-player room
+      // (or an arbitrary timeout) after two paid players have matched made a
+      // successful 0.3-ticket pairing look stalled, particularly on mobile.
+      // Start the ready pair immediately; additional players form the next
+      // compatible table instead of being held in limbo.
+      const shouldMatch = groupSlice.length >= MIN_MATCH_PLAYERS;
 
       if (shouldMatch) {
         const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

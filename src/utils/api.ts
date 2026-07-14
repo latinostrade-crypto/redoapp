@@ -283,9 +283,11 @@ if (typeof window !== 'undefined') {
     const detail = (e as CustomEvent<ApiTraceDetail>).detail;
     const { id, path, stage } = detail;
 
+    // Public matchmaking has its own persistent queue card with status,
+    // player count and a timer.  Treating its network request as an app-wide
+    // load hid that card behind a blank LOADING screen for up to several
+    // minutes when a Render instance was waking up.
     const pathsWeCareAbout = [
-      '/api/matchmaker/join',
-      '/api/matchmaker/leave',
       '/api/private-rooms/create',
       '/api/private-rooms/join',
     ];

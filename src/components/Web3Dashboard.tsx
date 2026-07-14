@@ -2636,17 +2636,17 @@ export function Web3Dashboard({
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                       <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
                         <span className="text-[10px] font-black text-[#00d2ff]">
-                          {matchmakingState === 'joining' ? '...' : `${matchmakingTimer}S`}
+                          {`${matchmakingTimer}S`}
                         </span>
                       </div>
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                          {matchmakingState === 'joining' ? 'JOINING QUEUE' : 'QUEUE ACTIVE'}
+                          {matchmakingState === 'joining' ? 'CONNECTING TO QUEUE' : 'QUEUE ACTIVE'}
                         </h3>
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                           {matchmakingState === 'joining'
-                            ? 'Waking backend and reserving your public queue spot. This can take a moment on free hosting.'
-                            : `Match launches instantly with 4 players, or after the timer with at least 2. Current queue: ${queueLength}/${MAX_MATCH_PLAYERS}.`}
+                            ? `You are ready. Players: ${queueLength}/${MIN_MATCH_PLAYERS} minimum. Connecting securely to the match server…`
+                            : `Players connected: ${queueLength}/${MAX_MATCH_PLAYERS}. The table opens immediately when at least ${MIN_MATCH_PLAYERS} players are ready.`}
                         </p>
                       </div>
                       <button
@@ -2844,6 +2844,8 @@ export function Web3Dashboard({
                             sound.playShuffle();
                             wakeBackend();
                             setPublicQueueError('');
+                            setQueueLength(1);
+                            setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
                             setMatchmakingState('joining');
                             apiRequest<{
                               availableTickets: number;
@@ -2897,7 +2899,6 @@ export function Web3Dashboard({
                               const message = error instanceof Error ? error.message : 'Failed to join public queue.';
                               setMatchmakingState('idle');
                               setPublicQueueError(message);
-                              alert(message);
                             });
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
