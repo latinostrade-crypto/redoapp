@@ -216,6 +216,8 @@ interface UserState {
   transactions: TicketLedgerEntry[];
   dailyStreak?: number;
   lootboxClaimedAt?: number | null;
+  matchmakingFailureAt?: number | null;
+  matchmakingFailureReason?: 'timeout' | null;
 }
 
 interface QuestDefinition {
@@ -310,7 +312,7 @@ interface PrivateRoom {
 }
 
 interface MatchmakingStatusPayload {
-  status: 'idle' | 'searching' | 'ready';
+  status: 'idle' | 'searching' | 'ready' | 'expired';
   queueLength?: number;
   playersNeeded?: number;
   countdownSec?: number;
@@ -318,6 +320,8 @@ interface MatchmakingStatusPayload {
   players?: QueuePlayer[];
   stake?: number;
   mode?: MatchMode;
+  message?: string;
+  failedAt?: number;
 }
 
 interface PersistedState {
@@ -2363,7 +2367,11 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
   activeMatch.gameState.turnStartedAt = waitsForPublicPlayers ? undefined : createdAt;
   activeMatches.set(matchId, activeMatch);
   players.forEach((queuedPlayer) => {
+    const user = getUser(queuedPlayer.userId);
+    user.matchmakingFailureAt = null;
+    user.matchmakingFailureReason = null;
     activeMatchByUser.set(queuedPlayer.userId, matchId);
+    schedulePersist({ userId: queuedPlayer.userId });
   });
   schedulePersist({ matchId });
   broadcastMatch(matchId);
@@ -2557,6 +2565,14 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
 
   const player = matchmakingQueue.find((entry) => entry.userId === userId);
   if (!player) {
+    const user = users.get(userId);
+    if (user?.matchmakingFailureReason === 'timeout' && user.matchmakingFailureAt) {
+      return {
+        status: 'expired',
+        message: 'Previous matchmaking attempt expired. No tickets or energy were charged. You can join again.',
+        failedAt: user.matchmakingFailureAt,
+      };
+    }
     return { status: 'idle' };
   }
 
@@ -2578,7 +2594,33 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   };
 }
 
+function expireTimedOutMatchmakingPlayers(now = Date.now()) {
+  const groupSizes = new Map<string, number>();
+  matchmakingQueue.forEach((player) => {
+    const key = `${player.mode}_${player.stake}`;
+    groupSizes.set(key, (groupSizes.get(key) || 0) + 1);
+  });
+  const expired = matchmakingQueue.filter((player) => {
+    const key = `${player.mode}_${player.stake}`;
+    return now - player.joinedAt >= MATCHMAKING_TIMEOUT_MS
+      && (groupSizes.get(key) || 0) < MIN_MATCH_PLAYERS;
+  });
+  if (expired.length === 0) return;
+
+  const expiredUserIds = new Set(expired.map((player) => player.userId));
+  matchmakingQueue = matchmakingQueue.filter((player) => !expiredUserIds.has(player.userId));
+  expired.forEach((player) => {
+    const user = getUser(player.userId);
+    user.matchmakingFailureAt = now;
+    user.matchmakingFailureReason = 'timeout';
+    schedulePersist({ userId: player.userId });
+  });
+  schedulePersist();
+  expired.forEach((player) => broadcastQueue(player.userId));
+}
+
 function runMatchmakingTick() {
+  expireTimedOutMatchmakingPlayers();
   if (matchmakingQueue.length < MIN_MATCH_PLAYERS) return;
 
   const groups = new Map<string, QueuePlayer[]>();
@@ -3040,6 +3082,9 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
   const user = getUser(userId, walletAddress);
   const energyCost = stakeAmount === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
   recalculateEnergy(user);
+  // Remove a previous timed-out queue before considering this new request.
+  // This keeps stale persisted entries from being revived by a late player.
+  expireTimedOutMatchmakingPlayers();
   const activeMatchId = activeMatchByUser.get(userId);
   const existingActiveMatch = activeMatchId ? activeMatches.get(activeMatchId) : null;
   if (existingActiveMatch) {
@@ -3077,6 +3122,8 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
   }
 
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
+  user.matchmakingFailureAt = null;
+  user.matchmakingFailureReason = null;
   matchmakingQueue.push({
     userId,
     username,
@@ -3092,7 +3139,7 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
   matchmakingQueue
     .filter(p => p.stake === stakeAmount && p.mode === mode)
     .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
-  schedulePersist();
+  schedulePersist({ userId });
 
   const queueStatus = tryActivateQueuedMatch(userId);
 
@@ -3146,6 +3193,7 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
 
 app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
+  expireTimedOutMatchmakingPlayers();
 
   const activeTimer = matchmakerCleanupTimers.get(userId);
   if (activeTimer) {
@@ -3167,11 +3215,7 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
     }
   }
 
-  const player = matchmakingQueue.find(p => p.userId === userId);
-  if (!player) {
-    return res.json({ status: 'idle' });
-  }
-  return res.json(tryActivateQueuedMatch(userId));
+  return res.json(tryActivateQueuedMatch(userId) || { status: 'idle' });
 });
 
 function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
@@ -3783,6 +3827,9 @@ app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, r
 
 app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
+  const user = getUser(userId);
+  user.matchmakingFailureAt = null;
+  user.matchmakingFailureReason = null;
   const player = matchmakingQueue.find(p => p.userId === userId);
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   if (player) {
@@ -3790,7 +3837,7 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
       .filter(p => p.stake === player.stake && p.mode === player.mode)
       .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
   }
-  schedulePersist();
+  schedulePersist({ userId });
   broadcastQueue(userId);
   res.json({ success: true });
 });

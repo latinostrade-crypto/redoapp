@@ -383,6 +383,7 @@ export function Web3Dashboard({
   const recoveredActiveMatchRef = useRef('');
   const openingPublicMatchRef = useRef('');
   const publicJoinAttemptRef = useRef(0);
+  const publicJoinStartedAtRef = useRef(0);
   const queueStatusRequestInFlightRef = useRef(false);
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
@@ -950,13 +951,15 @@ export function Web3Dashboard({
   useEffect(() => {
     if (!authReady || matchmakingState !== 'idle' || activeProfile?.activeMatch) return;
     apiRequest<{
-      status: 'idle' | 'searching' | 'ready';
+      status: 'idle' | 'searching' | 'ready' | 'expired';
       queueLength?: number;
       countdownSec?: number;
       matchId?: string;
       stake?: number;
       mode?: 'pvp' | 'private';
       players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+      message?: string;
+      failedAt?: number;
     }>('/api/matchmaker/status', { timeoutMs: 8_000 }).then((result) => {
       const recoveredStake = Number(result.stake ?? result.players?.[0]?.stake ?? 0);
       if (result.status === 'searching') {
@@ -966,6 +969,13 @@ export function Web3Dashboard({
         setQueueLength(result.queueLength || 1);
         setMatchmakingTimer(result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
         setMatchmakingState('searching');
+        return;
+      }
+      if (result.status === 'expired') {
+        setCurrentTab('pvp');
+        setPvpSubMode('public');
+        setMatchmakingState('idle');
+        setPublicQueueError(result.message || 'Previous matchmaking attempt expired. You can join again.');
         return;
       }
       if (result.status === 'ready' && result.matchId) {
@@ -1572,11 +1582,13 @@ export function Web3Dashboard({
     queueStreamRef.current = stream;
 
     const handleQueueStatus = (result: {
-      status: 'idle' | 'searching' | 'ready';
+      status: 'idle' | 'searching' | 'ready' | 'expired';
       queueLength?: number;
       countdownSec?: number;
       matchId?: string;
       players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+      message?: string;
+      failedAt?: number;
     }) => {
       if (disposed) return;
       if (result.status === 'searching') {
@@ -1599,6 +1611,18 @@ export function Web3Dashboard({
         }));
         setMatchmakingState('success');
         onStartGame('pvp', selectedStake);
+      }
+      if (result.status === 'expired') {
+        // Ignore a stored failure from an older attempt if its status request
+        // overtook the new join POST.
+        if (
+          matchmakingState === 'joining'
+          && result.failedAt
+          && result.failedAt < publicJoinStartedAtRef.current
+        ) return;
+        publicJoinAttemptRef.current += 1;
+        setMatchmakingState('idle');
+        setPublicQueueError(result.message || 'Previous matchmaking attempt expired. You can join again.');
       }
       if (result.status === 'idle') {
         // The status request can overtake the initial POST on a cold Render
@@ -1624,11 +1648,13 @@ export function Web3Dashboard({
       if (queueStatusRequestInFlightRef.current || disposed) return;
       queueStatusRequestInFlightRef.current = true;
       apiRequest<{
-        status: 'idle' | 'searching' | 'ready';
+        status: 'idle' | 'searching' | 'ready' | 'expired';
         queueLength?: number;
         countdownSec?: number;
         matchId?: string;
         players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+        message?: string;
+        failedAt?: number;
       }>('/api/matchmaker/status', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 })
         .then(handleQueueStatus)
         .catch(() => undefined)
@@ -2872,6 +2898,7 @@ export function Web3Dashboard({
                             setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
                             const joinAttempt = publicJoinAttemptRef.current + 1;
                             publicJoinAttemptRef.current = joinAttempt;
+                            publicJoinStartedAtRef.current = Date.now();
                             setMatchmakingState('joining');
                             apiRequest<{
                               availableTickets: number;
