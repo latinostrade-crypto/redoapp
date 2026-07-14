@@ -24,7 +24,10 @@ const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'red
 const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
-const MATCHMAKING_TIMEOUT_SEC = 5;
+// Keep the UI in sync with the backend's no-opponent expiry. Compatible pairs
+// still launch immediately; this window only covers cold starts and Telegram
+// WebView reconnects before the other player's join request reaches Render.
+const MATCHMAKING_TIMEOUT_SEC = 75;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
 const PUBLIC_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
@@ -2949,8 +2952,56 @@ export function Web3Dashboard({
                                 return;
                               }
                               setMatchmakingState('searching');
-                            }).catch((error) => {
+                            }).catch(async (error) => {
                               if (publicJoinAttemptRef.current !== joinAttempt) return;
+                              // The server may have accepted the idempotent join
+                              // even when Telegram/WebView dropped the response.
+                              // Ask the authoritative status endpoint before
+                              // showing a false "connection interrupted" error.
+                              try {
+                                const recovered = await apiRequest<{
+                                  status: 'idle' | 'searching' | 'ready' | 'expired';
+                                  queueLength?: number;
+                                  countdownSec?: number;
+                                  matchId?: string;
+                                  players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+                                  message?: string;
+                                }>('/api/matchmaker/status', {
+                                  timeoutMs: 12_000,
+                                  retryOnNetworkError: true,
+                                  networkAttempts: 2,
+                                });
+                                if (publicJoinAttemptRef.current !== joinAttempt) return;
+                                if (recovered.status === 'searching') {
+                                  setQueueLength(recovered.queueLength || 1);
+                                  setMatchmakingTimer(recovered.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
+                                  setMatchmakingState('searching');
+                                  return;
+                                }
+                                if (recovered.status === 'ready' && recovered.matchId) {
+                                  if (openingPublicMatchRef.current === recovered.matchId) return;
+                                  openingPublicMatchRef.current = recovered.matchId;
+                                  localStorage.setItem('redoapp_active_match', JSON.stringify({
+                                    matchId: recovered.matchId,
+                                    mode: 'pvp',
+                                    stake: selectedStake,
+                                    currentUserId,
+                                    players: recovered.players || [],
+                                    createdAt: Date.now(),
+                                  }));
+                                  setMatchmakingState('success');
+                                  onStartGame('pvp', selectedStake);
+                                  return;
+                                }
+                                if (recovered.status === 'expired') {
+                                  setMatchmakingState('idle');
+                                  setPublicQueueError(recovered.message || 'No compatible opponent joined the queue. No tickets or energy were charged.');
+                                  return;
+                                }
+                              } catch {
+                                // The original request error below remains the
+                                // useful message when status cannot be reached.
+                              }
                               const message = error instanceof Error ? error.message : 'Failed to join public queue.';
                               setMatchmakingState('idle');
                               setPublicQueueError(message);

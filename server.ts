@@ -58,7 +58,13 @@ const REFERRED_REWARD_XP = 50;
 const REFERRED_REWARD_ENERGY = 2;
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
-const MATCHMAKING_TIMEOUT_MS = 5_000;
+// A public queue must survive a Render cold start and a Telegram WebView
+// reconnect. Five seconds was shorter than either of those normal events: a
+// player who joined first could be expired before the second player's request
+// reached this process, so a valid 0.3 TKT pair never met in the same queue.
+// This is only the no-opponent expiry; as soon as two compatible players are
+// present runMatchmakingTick starts their table immediately.
+const MATCHMAKING_TIMEOUT_MS = 75_000;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 
