@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
 import { useUnoGame } from './hooks/useUnoGame';
 import { Avatar } from './components/Avatars';
 import { UnoCard } from './components/UnoCard';
@@ -26,6 +26,32 @@ import {
 } from 'lucide-react';
 import { sound } from './utils/sound';
 import { AvatarId, CardColor } from './types';
+
+type FlashlightScene = {
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  radiusX: number;
+  radiusY: number;
+};
+
+function getFlashlightRayPoints(scene: FlashlightScene) {
+  const deltaX = scene.targetX - scene.sourceX;
+  const deltaY = scene.targetY - scene.sourceY;
+  const length = Math.max(Math.hypot(deltaX, deltaY), 1);
+  const perpendicularX = -deltaY / length;
+  const perpendicularY = deltaX / length;
+  const sourceWidth = 2.5;
+  const targetWidth = Math.max(9, Math.min(scene.radiusX * 0.72, 24));
+
+  return [
+    [scene.sourceX + perpendicularX * sourceWidth, scene.sourceY + perpendicularY * sourceWidth],
+    [scene.sourceX - perpendicularX * sourceWidth, scene.sourceY - perpendicularY * sourceWidth],
+    [scene.targetX - perpendicularX * targetWidth, scene.targetY - perpendicularY * targetWidth],
+    [scene.targetX + perpendicularX * targetWidth, scene.targetY + perpendicularY * targetWidth],
+  ].map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ');
+}
 
 export default function App() {
   const firstFreeGameWalletPromptKey = 'redoapp_prompt_connect_wallet_after_free_game';
@@ -156,8 +182,34 @@ export default function App() {
 
   const [flyingCards, setFlyingCards] = useState<FlyingCardAnimation[]>([]);
   const [visualTopCard, setVisualTopCard] = useState<any>(null);
+  const flashlightMaskId = useId().replace(/:/g, '');
   const prevGameStateRef = useRef<any>(null);
   const settlementHandledRef = useRef<string | null>(null);
+
+  const flashlightScene = useMemo<FlashlightScene>(() => {
+    const playedCardInFlight = flyingCards.find((card) => !card.isBack);
+    if (playedCardInFlight) {
+      return {
+        sourceX: playedCardInFlight.startX,
+        sourceY: playedCardInFlight.startY,
+        targetX: playedCardInFlight.endX,
+        targetY: playedCardInFlight.endY,
+        radiusX: 20,
+        radiusY: 18,
+      };
+    }
+
+    const playerScenes: FlashlightScene[] = [
+      { sourceX: 50, sourceY: 99, targetX: 50, targetY: 83, radiusX: 45, radiusY: 16 },
+      { sourceX: 3, sourceY: 55, targetX: 14, targetY: 53, radiusX: 18, radiusY: 16 },
+      { sourceX: 50, sourceY: 1, targetX: 50, targetY: 12, radiusX: 22, radiusY: 12 },
+      { sourceX: 97, sourceY: 55, targetX: 86, targetY: 53, radiusX: 18, radiusY: 16 },
+    ];
+
+    return playerScenes[gameState.currentPlayerIndex] || playerScenes[0];
+  }, [flyingCards, gameState.currentPlayerIndex]);
+  const flashlightRayPoints = getFlashlightRayPoints(flashlightScene);
+  const showFlashlight = gameState.phase === 'playing' && Boolean(currentActivePlayer);
 
   // Fullscreen loading screen state & API request tracking (minimum 3-second display)
   const [activeLoads, setActiveLoads] = useState<string[]>(() => (window as any).redoappActiveLoads || []);
@@ -550,6 +602,71 @@ export default function App() {
       {/* ACTIVE GAMEPLAY CONTAINER: THEMED GEOMETRIC BALANCE FELT PLAY TABLE */}
       {gameState.phase !== 'setup' && (
         <main className="flex-1 w-full max-w-4xl my-1 p-2.5 flex flex-col justify-between gap-2 overflow-hidden z-10 relative bg-[#0c0f12] border-4 border-black shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
+
+          {/* PIXEL FLASHLIGHT: an inverse SVG mask keeps only the active player's ray visible. */}
+          <motion.svg
+            aria-hidden="true"
+            className="absolute inset-0 z-40 h-full w-full pointer-events-none pixel-flashlight-overlay"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            initial={false}
+            animate={{ opacity: showFlashlight ? 1 : 0 }}
+            transition={{ duration: 0.24, ease: 'easeOut' }}
+          >
+            <defs>
+              <mask id={flashlightMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+                <rect width="100" height="100" fill="white" />
+                <motion.polygon
+                  initial={false}
+                  animate={{ points: flashlightRayPoints }}
+                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                  fill="black"
+                />
+                <motion.ellipse
+                  initial={false}
+                  animate={{
+                    cx: flashlightScene.targetX,
+                    cy: flashlightScene.targetY,
+                    rx: flashlightScene.radiusX,
+                    ry: flashlightScene.radiusY,
+                  }}
+                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                  fill="black"
+                />
+              </mask>
+            </defs>
+
+            <rect width="100" height="100" fill="#020305" opacity="0.88" mask={`url(#${flashlightMaskId})`} />
+            <motion.polygon
+              initial={false}
+              animate={{ points: flashlightRayPoints }}
+              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              fill="#ffcc00"
+              opacity="0.16"
+            />
+            <motion.ellipse
+              initial={false}
+              animate={{
+                cx: flashlightScene.targetX,
+                cy: flashlightScene.targetY,
+                rx: Math.max(4, flashlightScene.radiusX - 1.2),
+                ry: Math.max(4, flashlightScene.radiusY - 1.2),
+              }}
+              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              fill="none"
+              stroke="#ffe8a3"
+              strokeWidth="0.45"
+              opacity="0.4"
+            />
+            <motion.circle
+              initial={false}
+              animate={{ cx: flashlightScene.sourceX, cy: flashlightScene.sourceY }}
+              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+              r="2.1"
+              fill="#ffe8a3"
+              opacity="0.42"
+            />
+          </motion.svg>
           
           {/* FLYING CARDS ANIMATION OVERLAY */}
           <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden">
