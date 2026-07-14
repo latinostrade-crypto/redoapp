@@ -189,6 +189,19 @@ interface Web3DashboardProps {
 
 type DepositFlowStatus = 'idle' | 'creating' | 'awaiting_wallet' | 'waiting_chain' | 'confirmed' | 'failed';
 
+type PublicMatchmakerResponse = {
+  availableTickets: number;
+  heldTickets: number;
+  energy?: PlayerProfile['energy'];
+  matchmaker?: {
+    status: 'idle' | 'searching' | 'ready' | 'expired';
+    queueLength?: number;
+    countdownSec?: number;
+    matchId?: string;
+    players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+  };
+};
+
 interface PendingDepositState {
   intentId: string;
   signedBoc: string;
@@ -742,6 +755,53 @@ export function Web3Dashboard({
       iframe.addEventListener('error', () => {
         cleanup();
         reject(new Error('Private room bridge failed to load.'));
+      }, { once: true });
+      window.addEventListener('message', onMessage);
+      document.body.appendChild(iframe);
+    });
+  };
+
+  const joinPublicQueueViaBridge = (payload: {
+    username: string;
+    avatarId: string;
+    walletAddress: string | null;
+    stake: number;
+    mode: 'pvp';
+  }) => {
+    return new Promise<PublicMatchmakerResponse>((resolve, reject) => {
+      const bridgeRequestId = `match-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const params = new URLSearchParams({
+        ...Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value ?? '')])),
+        responseMode: 'iframe',
+        bridgeRequestId,
+        parentOrigin: window.location.origin,
+      });
+      const iframe = document.createElement('iframe');
+      iframe.hidden = true;
+      iframe.src = buildAuthenticatedUrl(`/api/matchmaker/join-beacon?${params.toString()}`);
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Public queue bridge timed out.'));
+      }, 15_000);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        iframe.remove();
+      };
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
+        const data = event.data as { source?: string; requestId?: string; payload?: PublicMatchmakerResponse; error?: string };
+        if (data?.source !== 'redoapp-matchmaker-bridge' || data.requestId !== bridgeRequestId) return;
+        cleanup();
+        if (data.payload) {
+          resolve(data.payload);
+        } else {
+          reject(new Error(data.error || 'Public queue bridge failed.'));
+        }
+      };
+      iframe.addEventListener('error', () => {
+        cleanup();
+        reject(new Error('Public queue bridge failed to load.'));
       }, { once: true });
       window.addEventListener('message', onMessage);
       document.body.appendChild(iframe);
@@ -2903,32 +2963,23 @@ export function Web3Dashboard({
                             publicJoinAttemptRef.current = joinAttempt;
                             publicJoinStartedAtRef.current = Date.now();
                             setMatchmakingState('joining');
-                            apiRequest<{
-                              availableTickets: number;
-                              heldTickets: number;
-                              energy?: PlayerProfile['energy'];
-                              matchmaker?: {
-                                status: 'idle' | 'searching' | 'ready';
-                                queueLength?: number;
-                                countdownSec?: number;
-                                matchId?: string;
-                                players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-                              };
-                            }>('/api/matchmaker/join', {
+                            const joinPayload = {
+                              username: userName,
+                              avatarId: selectedAvatar,
+                              walletAddress: rawAddress || null,
+                              stake: selectedStake,
+                              mode: 'pvp' as const,
+                            };
+                            let joinSettled = false;
+                            apiRequest<PublicMatchmakerResponse>('/api/matchmaker/join', {
                               method: 'POST',
                               retryOnNetworkError: true,
                               networkAttempts: 3,
                               timeoutMs: 45000,
-                              body: JSON.stringify({
-                                userId: currentUserId,
-                                username: userName,
-                                avatarId: selectedAvatar,
-                                walletAddress: rawAddress || null,
-                                stake: selectedStake,
-                                mode: 'pvp',
-                              }),
+                              body: JSON.stringify(joinPayload),
                             }).then((result) => {
-                              if (publicJoinAttemptRef.current !== joinAttempt) return;
+                              if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+                              joinSettled = true;
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               if (result.energy) {
@@ -2953,7 +3004,7 @@ export function Web3Dashboard({
                               }
                               setMatchmakingState('searching');
                             }).catch(async (error) => {
-                              if (publicJoinAttemptRef.current !== joinAttempt) return;
+                              if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
                               // The server may have accepted the idempotent join
                               // even when Telegram/WebView dropped the response.
                               // Ask the authoritative status endpoint before
@@ -3006,6 +3057,44 @@ export function Web3Dashboard({
                               setMatchmakingState('idle');
                               setPublicQueueError(message);
                             });
+                            // The regular JSON POST is preferred, but some Telegram
+                            // WebViews keep its CORS preflight pending forever. Do
+                            // not make a real player wait for that request's 45 s
+                            // timeout: the no-preflight iframe route is idempotent
+                            // and returns the same server-authoritative result.
+                            window.setTimeout(() => {
+                              if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+                              joinPublicQueueViaBridge(joinPayload).then((result) => {
+                                if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+                                joinSettled = true;
+                                setGoldenTickets(result.availableTickets);
+                                setHeldTickets(result.heldTickets);
+                                if (result.energy) {
+                                  updateProfileEnergy(result.energy);
+                                }
+                                setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
+                                setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
+                                if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
+                                  if (openingPublicMatchRef.current === result.matchmaker.matchId) return;
+                                  openingPublicMatchRef.current = result.matchmaker.matchId;
+                                  localStorage.setItem('redoapp_active_match', JSON.stringify({
+                                    matchId: result.matchmaker.matchId,
+                                    mode: 'pvp',
+                                    stake: selectedStake,
+                                    currentUserId,
+                                    players: result.matchmaker.players || [],
+                                    createdAt: Date.now(),
+                                  }));
+                                  setMatchmakingState('success');
+                                  onStartGame('pvp', selectedStake);
+                                  return;
+                                }
+                                setMatchmakingState('searching');
+                              }).catch(() => {
+                                // The direct request keeps retrying and its existing
+                                // recovery path reports a failure if both routes fail.
+                              });
+                            }, 4_000);
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >

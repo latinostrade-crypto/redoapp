@@ -3211,8 +3211,28 @@ app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
   return res.send(`Withdrawal ${request.id} rejected and refunded.`);
 });
 
-app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
-  const { username, avatarId, stake, mode, walletAddress } = req.body as {
+function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  if (input?.responseMode === 'iframe') {
+    const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
+      ? input.parentOrigin
+      : '';
+    if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
+    const message = JSON.stringify({
+      source: 'redoapp-matchmaker-bridge',
+      requestId: String(input.bridgeRequestId || ''),
+      payload,
+    }).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
+  }
+  return res.json(payload);
+}
+
+function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  const { username, avatarId, stake, mode, walletAddress } = input as {
     username: string;
     avatarId: string;
     stake: number;
@@ -3292,7 +3312,7 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
 
   const queueStatus = tryActivateQueuedMatch(userId);
 
-  return res.json({
+  return sendMatchmakerJoinSuccess(req, res, {
     success: true,
     queueLength: matchmakingQueue.filter(p => p.stake === stakeAmount && p.mode === mode).length,
     availableTickets: user.availableTickets,
@@ -3300,7 +3320,13 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
     energy: getEnergyState(user),
     matchmaker: queueStatus,
   });
-});
+}
+
+app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), handleMatchmakerJoin);
+// Telegram WebViews can leave a cross-origin JSON POST pending indefinitely.
+// This idempotent iframe route avoids the preflight and reports the canonical
+// queue state to the parent window, just like private-room creation does.
+app.get('/api/matchmaker/join-beacon', requireAuth, rateLimitMiddleware(10, 60000), handleMatchmakerJoin);
 
 app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
