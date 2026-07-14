@@ -305,6 +305,20 @@ export function useUnoGame() {
     };
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
+  const handleRemoteActionError = useCallback((error: unknown) => {
+    sound.playError();
+    const message = error instanceof Error ? error.message : 'Match action failed.';
+    if (
+      message.includes('It is not your turn')
+      || message.includes('Waiting for all players')
+      || message.includes('Card not found')
+    ) {
+      syncRemoteMatchState().catch(() => undefined);
+      return;
+    }
+    alert(message);
+  }, [syncRemoteMatchState]);
+
   const addLog = useCallback((message: string, type: 'info' | 'play' | 'draw' | 'uno' | 'action' | 'win' = 'info') => {
     setGameState((prev) => {
       const log = createLog(message, type);
@@ -775,10 +789,7 @@ export function useUnoGame() {
           }));
           setWildSelectOpen(false);
           setPendingWildCard(null);
-        }).catch((error) => {
-          sound.playError();
-          alert(error.message);
-        });
+        }).catch(handleRemoteActionError);
         return;
       }
 
@@ -812,10 +823,7 @@ export function useUnoGame() {
             ...prevStats,
             cardsPlayedCount: prevStats.cardsPlayedCount + 1,
           }));
-        }).catch((error) => {
-          sound.playError();
-          alert(error.message);
-        });
+        }).catch(handleRemoteActionError);
       }
       return;
     }
@@ -843,10 +851,7 @@ export function useUnoGame() {
       }).then((result) => {
         setGameState(result.gameState);
         setCardsDrawnThisRound((prev) => prev + 1);
-      }).catch((error) => {
-        sound.playError();
-        alert(error.message);
-      });
+      }).catch(handleRemoteActionError);
       return null;
     }
 
@@ -944,10 +949,7 @@ export function useUnoGame() {
         }),
       }).then((result) => {
         setGameState(result.gameState);
-      }).catch((error) => {
-        sound.playError();
-        alert(error.message);
-      });
+      }).catch(handleRemoteActionError);
       return;
     }
 

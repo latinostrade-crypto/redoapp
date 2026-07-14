@@ -376,6 +376,8 @@ export function Web3Dashboard({
   const queueStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
+  const recoveredActiveMatchRef = useRef('');
+  const openingPublicMatchRef = useRef('');
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
@@ -888,6 +890,8 @@ export function Web3Dashboard({
   useEffect(() => {
     if (activeProfile?.activeMatch) {
       const match = activeProfile.activeMatch;
+      if (recoveredActiveMatchRef.current === match.matchId) return;
+      recoveredActiveMatchRef.current = match.matchId;
       console.log('Server reported active match. Auto-recovering...', match);
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: match.matchId,
@@ -901,6 +905,46 @@ export function Web3Dashboard({
       onStartGame(match.mode, match.stake);
     }
   }, [activeProfile?.activeMatch, currentUserId, onStartGame]);
+
+  // Reloading Telegram must not lose a queue or a match that the server still
+  // owns. Recover it before the user can submit another join request.
+  useEffect(() => {
+    if (!authReady || matchmakingState !== 'idle' || activeProfile?.activeMatch) return;
+    apiRequest<{
+      status: 'idle' | 'searching' | 'ready';
+      queueLength?: number;
+      countdownSec?: number;
+      matchId?: string;
+      stake?: number;
+      mode?: 'pvp' | 'private';
+      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+    }>('/api/matchmaker/status', { timeoutMs: 8_000 }).then((result) => {
+      const recoveredStake = Number(result.stake ?? result.players?.[0]?.stake ?? 0);
+      if (result.status === 'searching') {
+        setCurrentTab('pvp');
+        setPvpSubMode('public');
+        setSelectedStake(recoveredStake);
+        setQueueLength(result.queueLength || 1);
+        setMatchmakingTimer(result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
+        setMatchmakingState('searching');
+        return;
+      }
+      if (result.status === 'ready' && result.matchId) {
+        if (openingPublicMatchRef.current === result.matchId) return;
+        openingPublicMatchRef.current = result.matchId;
+        localStorage.setItem('redoapp_active_match', JSON.stringify({
+          matchId: result.matchId,
+          mode: result.mode || 'pvp',
+          stake: recoveredStake,
+          currentUserId,
+          players: result.players || [],
+          createdAt: Date.now(),
+        }));
+        setMatchmakingState('success');
+        onStartGame(result.mode || 'pvp', recoveredStake);
+      }
+    }).catch(() => undefined);
+  }, [authReady, matchmakingState, activeProfile?.activeMatch, currentUserId, onStartGame]);
 
   const fetchFullProfile = () => {
     if (fullProfileLoading || !getSessionToken()) {
@@ -1469,6 +1513,8 @@ export function Web3Dashboard({
         setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
       }
       if (result.status === 'ready' && result.matchId) {
+        if (openingPublicMatchRef.current === result.matchId) return;
+        openingPublicMatchRef.current = result.matchId;
         setQueueLength(result.players?.length || 1);
         localStorage.setItem('redoapp_active_match', JSON.stringify({
           matchId: result.matchId,
@@ -1624,29 +1670,29 @@ export function Web3Dashboard({
       </div>
 
       {/* 2. Network Connectivity bar */}
-      <div className="flex items-stretch gap-1.5 bg-[#18181c] p-2 pixel-box-sm border-black">
-        <div className="grid min-w-0 flex-1 grid-cols-4 gap-0.5 font-mono text-left">
+      <div className="flex flex-wrap items-stretch gap-1.5 bg-[#18181c] p-2 pixel-box-sm border-black">
+        <div className="order-2 grid w-full min-w-0 grid-cols-4 gap-1 font-mono text-left">
           <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
             <span className="block truncate text-[5px] font-bold text-slate-500">XP</span>
-            <span className="block truncate text-[8px] font-black text-[#00d2ff]">{effectiveXp}</span>
+            <span className="block whitespace-nowrap text-[9px] font-black text-[#00d2ff]">{effectiveXp}</span>
           </div>
           <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
             <span className="block truncate text-[5px] font-bold text-slate-500">TKT</span>
-            <span className="block truncate text-[8px] font-black text-[#ffcc00]">{goldenTickets}</span>
+            <span className="block whitespace-nowrap text-[9px] font-black text-[#ffcc00]">{goldenTickets}</span>
           </div>
           <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
             <span className="block truncate text-[5px] font-bold text-slate-500">LVL</span>
-            <span className="block truncate text-[8px] font-black text-[#ec4899]">{displayLevel}</span>
+            <span className="block whitespace-nowrap text-[9px] font-black text-[#ec4899]">{displayLevel}</span>
           </div>
           <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
             <span className="block truncate text-[5px] font-bold text-slate-500">PWR</span>
-            <span className="flex items-center truncate text-[8px] font-black text-[#00ff66]">
+            <span className="flex items-center whitespace-nowrap text-[9px] font-black text-[#00ff66]">
               <Zap className="w-2 h-2 shrink-0 fill-[#00ff66]" />{energy.energy}/{energy.maxEnergy}
             </span>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="order-1 ml-auto flex min-w-0 items-center justify-end gap-1.5">
           {onOpenRules && (
             <button
               type="button"
@@ -2729,6 +2775,8 @@ export function Web3Dashboard({
                               setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
                               setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
                               if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
+                                if (openingPublicMatchRef.current === result.matchmaker.matchId) return;
+                                openingPublicMatchRef.current = result.matchmaker.matchId;
                                 localStorage.setItem('redoapp_active_match', JSON.stringify({
                                   matchId: result.matchmaker.matchId,
                                   mode: 'pvp',

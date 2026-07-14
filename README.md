@@ -42,7 +42,11 @@ Redoapp is a stake-based Telegram Mini App UNO-style card game. The app combines
 - Authenticated, server-owned match flow.
 - Supports `2`, `3`, or `4` players.
 - Queue is grouped by stake and mode.
-- Ticket stake is held before match start and released or settled by backend logic.
+- Queue entry is idempotent and does not spend tickets or energy.
+- After matchmaking, players get a 60-second connection lobby on the table.
+- Ticket stake and energy are committed atomically when everyone connects, or when the lobby timer expires with at least one connected player.
+- If nobody connects before the lobby timer expires, the match is cancelled without charging either player.
+- Missing players are handed to auto-play only when the table's 60-second connection timer expires. Players who disconnect later receive the same 60-second grace period.
 - Free public queue uses energy; ticket-stake public queue uses reduced energy.
 
 ### Private Rooms

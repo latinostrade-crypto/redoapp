@@ -164,6 +164,7 @@ interface ServerGamePlayer {
   unoDeclared: boolean;
   emotion: 'happy' | 'thinking' | 'worried' | 'angry' | 'celebrating';
   isConnected?: boolean;
+  hasConnected?: boolean;
   disconnectedAt?: number | null;
 }
 
@@ -275,6 +276,7 @@ interface QueuePlayer {
   stake: number;
   mode: MatchMode;
   joinedAt: number;
+  costsCommitted?: boolean;
 }
 
 interface ActiveMatch {
@@ -283,6 +285,9 @@ interface ActiveMatch {
   stake: number;
   players: QueuePlayer[];
   createdAt: number;
+  connectionDeadlineAt?: number;
+  playStartedAt?: number | null;
+  costsCommitted?: boolean;
   settled: boolean;
   gameState: ServerGameState;
   payoutResult?: any;
@@ -307,6 +312,8 @@ interface MatchmakingStatusPayload {
   countdownSec?: number;
   matchId?: string;
   players?: QueuePlayer[];
+  stake?: number;
+  mode?: MatchMode;
 }
 
 interface PersistedState {
@@ -2028,6 +2035,9 @@ function createInitialMatchState(players: QueuePlayer[]): ServerGameState {
     avatarId: player.avatarId,
     hand: [],
     isAi: false,
+    isConnected: false,
+    hasConnected: false,
+    disconnectedAt: null,
     unoDeclared: false,
     emotion: 'happy',
   }));
@@ -2129,11 +2139,16 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       consecutiveDraws: match.gameState.consecutiveDraws,
       accusablePlayers: [],
       turnStartedAt: match.gameState.turnStartedAt,
+      waitingForPlayers: !match.playStartedAt,
+      connectionDeadlineAt: match.connectionDeadlineAt || null,
     },
   };
 }
 
 function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, chosenColor?: CardColor) {
+  if (!match.playStartedAt) {
+    throw new Error('Waiting for all players to connect.');
+  }
   const state = match.gameState;
   if (state.phase !== 'playing') {
     throw new Error('Match is already finished.');
@@ -2201,6 +2216,9 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
 }
 
 function applyDrawAction(match: ActiveMatch, userId: string) {
+  if (!match.playStartedAt) {
+    throw new Error('Waiting for all players to connect.');
+  }
   const state = match.gameState;
   if (state.phase !== 'playing') {
     throw new Error('Match is already finished.');
@@ -2232,6 +2250,9 @@ function applyDrawAction(match: ActiveMatch, userId: string) {
 }
 
 function applyPassAction(match: ActiveMatch, userId: string) {
+  if (!match.playStartedAt) {
+    throw new Error('Waiting for all players to connect.');
+  }
   const state = match.gameState;
   if (state.phase !== 'playing') {
     throw new Error('Match is already finished.');
@@ -2253,16 +2274,21 @@ function applyPassAction(match: ActiveMatch, userId: string) {
 }
 
 function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[], stake: number) {
+  const createdAt = Date.now();
+  const waitsForPublicPlayers = mode === 'pvp';
   const activeMatch: ActiveMatch = {
     matchId,
     mode,
     stake,
     players,
-    createdAt: Date.now(),
+    createdAt,
+    connectionDeadlineAt: waitsForPublicPlayers ? createdAt + 60_000 : undefined,
+    playStartedAt: waitsForPublicPlayers ? null : createdAt,
+    costsCommitted: mode === 'private' || players.every((player) => player.costsCommitted !== false),
     settled: false,
     gameState: createInitialMatchState(players),
   };
-  activeMatch.gameState.turnStartedAt = Date.now();
+  activeMatch.gameState.turnStartedAt = waitsForPublicPlayers ? undefined : createdAt;
   activeMatches.set(matchId, activeMatch);
   players.forEach((queuedPlayer) => {
     activeMatchByUser.set(queuedPlayer.userId, matchId);
@@ -2270,6 +2296,99 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
   schedulePersist({ matchId });
   broadcastMatch(matchId);
   return activeMatch;
+}
+
+function ensureMatchLifecycle(match: ActiveMatch) {
+  // Matches persisted before the connection lobby was introduced already had
+  // their costs committed and gameplay running. Never charge them again.
+  if (match.mode === 'pvp' && match.connectionDeadlineAt === undefined) {
+    match.connectionDeadlineAt = match.createdAt;
+    match.playStartedAt = match.playStartedAt || match.createdAt;
+    match.costsCommitted = true;
+  }
+}
+
+function commitPublicMatchCosts(match: ActiveMatch) {
+  if (match.costsCommitted) return true;
+  const energyCost = match.stake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
+  const entries = match.players
+    .filter((player) => player.costsCommitted === false)
+    .map((player) => ({ player, user: getUser(player.userId) }));
+
+  for (const { user } of entries) {
+    recalculateEnergy(user);
+    if (user.energy < energyCost || (match.stake > 0 && user.availableTickets < match.stake)) {
+      return false;
+    }
+  }
+
+  for (const { player, user } of entries) {
+    spendEnergy(user, energyCost, match.stake === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
+    updateQuestProgress(user.userId, 'spend_energy', energyCost);
+    if (match.stake > 0) {
+      user.availableTickets = round2(user.availableTickets - match.stake);
+      user.heldTickets = round2(user.heldTickets + match.stake);
+      createLedgerEntry(user, {
+        event: 'PVP Match Hold',
+        value: `-${match.stake.toFixed(2)} TKT`,
+        type: 'stake_hold',
+        amount: -match.stake,
+      });
+    }
+    player.joinedAt = match.createdAt;
+    player.costsCommitted = true;
+    schedulePersist({ userId: user.userId });
+  }
+  match.costsCommitted = true;
+  return true;
+}
+
+function cancelUnstartedPublicMatch(match: ActiveMatch) {
+  match.players.forEach((player) => activeMatchByUser.delete(player.userId));
+  activeMatches.delete(match.matchId);
+  schedulePersist({ deleteMatchId: match.matchId });
+}
+
+function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
+  ensureMatchLifecycle(match);
+  if (match.mode !== 'pvp' || match.playStartedAt) return true;
+  const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected);
+  const allConnected = connectedPlayers.length === match.gameState.players.length;
+  const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + 60_000);
+  if (!allConnected && !deadlineReached) return false;
+  if (deadlineReached && connectedPlayers.length === 0) {
+    cancelUnstartedPublicMatch(match);
+    return false;
+  }
+  if (!commitPublicMatchCosts(match)) {
+    cancelUnstartedPublicMatch(match);
+    return false;
+  }
+  if (deadlineReached) {
+    match.gameState.players.forEach((player) => {
+      if (!player.hasConnected) {
+        player.isAi = true;
+        player.isConnected = true;
+        player.disconnectedAt = null;
+      }
+    });
+  }
+  match.playStartedAt = now;
+  match.gameState.turnStartedAt = now;
+  match.gameState.logs = [createServerLog('All available players are ready. Match started.', 'info'), ...match.gameState.logs].slice(0, 50);
+  schedulePersist({ matchId: match.matchId });
+  broadcastMatch(match.matchId);
+  return true;
+}
+
+function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
+  ensureMatchLifecycle(match);
+  const player = match.gameState.players.find((entry) => entry.userId === userId);
+  if (!player || player.isAi) return;
+  player.isConnected = true;
+  player.hasConnected = true;
+  player.disconnectedAt = null;
+  maybeStartPublicMatch(match);
 }
 
 function runServerAiTurn(match: ActiveMatch, playerIndex: number) {
@@ -2358,6 +2477,8 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
         status: 'ready',
         matchId: activeMatch.matchId,
         players: activeMatch.players,
+        stake: activeMatch.stake,
+        mode: activeMatch.mode,
       };
     }
   }
@@ -2380,6 +2501,8 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     queueLength: similarPlayers.length,
     playersNeeded: Math.max(0, MIN_MATCH_PLAYERS - similarPlayers.length),
     countdownSec: Math.max(0, Math.ceil((MATCHMAKING_TIMEOUT_MS - waitedMs) / 1000)),
+    stake: player.stake,
+    mode: player.mode,
   };
 }
 
@@ -2832,26 +2955,35 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
 
   const user = getUser(userId, walletAddress);
   const energyCost = stakeAmount === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
+  recalculateEnergy(user);
+  const activeMatchId = activeMatchByUser.get(userId);
+  const existingActiveMatch = activeMatchId ? activeMatches.get(activeMatchId) : null;
+  if (existingActiveMatch) {
+    return res.json({
+      success: true,
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+      energy: getEnergyState(user),
+      matchmaker: tryActivateQueuedMatch(userId),
+      replayed: true,
+    });
+  }
+  const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
+  if (existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode) {
+    return res.json({
+      success: true,
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+      energy: getEnergyState(user),
+      matchmaker: tryActivateQueuedMatch(userId),
+      replayed: true,
+    });
+  }
   if (stakeAmount > 0 && user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for stake.' });
   }
-
-  try {
-    spendEnergy(user, energyCost, stakeAmount === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
-    updateQuestProgress(user.userId, 'spend_energy', energyCost);
-  } catch (error) {
-    return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
-  }
-
-  if (stakeAmount > 0) {
-    user.availableTickets = round2(user.availableTickets - stakeAmount);
-    user.heldTickets = round2(user.heldTickets + stakeAmount);
-    createLedgerEntry(user, {
-      event: `${mode === 'pvp' ? 'PVP Queue Hold' : 'Private Room Hold'}`,
-      value: `-${stakeAmount.toFixed(2)} TKT`,
-      type: 'stake_hold',
-      amount: -stakeAmount,
-    });
+  if (user.energy < energyCost) {
+    return res.status(400).json({ error: 'Not enough energy.' });
   }
 
   const activeTimer = matchmakerCleanupTimers.get(userId);
@@ -2868,6 +3000,7 @@ app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), (r
     stake: stakeAmount,
     mode,
     joinedAt: Date.now(),
+    costsCommitted: false,
   });
 
   runMatchmakingTick();
@@ -2915,23 +3048,12 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
           const player = matchmakingQueue.find(p => p.userId === userId);
           if (stillNoSubs && player) {
             matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
-            const user = getUser(userId);
-            if (player.stake > 0) {
-              user.heldTickets = round2(user.heldTickets - player.stake);
-              user.availableTickets = round2(user.availableTickets + player.stake);
-              createLedgerEntry(user, {
-                event: 'Queue Timeout Release',
-                value: `+${player.stake.toFixed(2)} TKT`,
-                type: 'stake_release',
-                amount: player.stake,
-              });
-            }
             schedulePersist();
             matchmakingQueue
               .filter(p => p.stake === player.stake && p.mode === player.mode)
               .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
           }
-        }, 15000); // 15 seconds grace period
+        }, 60000); // survive Telegram WebView reloads and slow backend wake-ups
         matchmakerCleanupTimers.set(userId, timer);
       }
     }
@@ -2955,6 +3077,8 @@ app.get('/api/matchmaker/status', requireAuth, (req: AuthenticatedRequest, res) 
         status: 'ready',
         matchId: activeMatch.matchId,
         players: activeMatch.players,
+        stake: activeMatch.stake,
+        mode: activeMatch.mode,
       });
     }
   }
@@ -3464,6 +3588,7 @@ app.get('/api/matches/state/:matchId', requireAuth, (req: AuthenticatedRequest, 
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
   }
+  markMatchPlayerConnected(activeMatch, userId);
   const state = buildPerspectiveState(activeMatch, userId);
   if (!state) {
     return res.status(403).json({ error: 'User is not part of this match.' });
@@ -3478,6 +3603,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
   }
+  markMatchPlayerConnected(activeMatch, userId);
   const state = buildPerspectiveState(activeMatch, userId);
   if (!state) {
     return res.status(403).json({ error: 'User is not part of this match.' });
@@ -3494,6 +3620,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   if (player) {
     const previouslyDisconnected = player.isConnected === false;
     player.isConnected = true;
+    player.hasConnected = true;
     player.disconnectedAt = null;
     if (previouslyDisconnected) {
       activeMatch.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...activeMatch.gameState.logs].slice(0, 50);
@@ -3575,17 +3702,6 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
   const player = matchmakingQueue.find(p => p.userId === userId);
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   if (player) {
-    const user = getUser(player.userId);
-    if (player.stake > 0) {
-      user.heldTickets = round2(user.heldTickets - player.stake);
-      user.availableTickets = round2(user.availableTickets + player.stake);
-      createLedgerEntry(user, {
-        event: 'Stake Hold Released',
-        value: `+${player.stake.toFixed(2)} TKT`,
-        type: 'stake_release',
-        amount: player.stake,
-      });
-    }
     matchmakingQueue
       .filter(p => p.stake === player.stake && p.mode === player.mode)
       .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
@@ -3749,16 +3865,10 @@ setInterval(() => {
       continue;
     }
 
-    const isNewMatch = (now - match.createdAt) < 15000;
+    ensureMatchLifecycle(match);
 
     // Evaluate connection status
     state.players.forEach((player) => {
-      if (isNewMatch) {
-        player.isConnected = true;
-        player.disconnectedAt = null;
-        return;
-      }
-
       const subscribers = matchSubscribers.get(matchId);
       const isConnected = !!subscribers && Array.from(subscribers).some(
         (res) => res.locals.userId === player.userId
@@ -3767,6 +3877,7 @@ setInterval(() => {
       if (isConnected) {
         if (player.isConnected === false) {
           player.isConnected = true;
+          player.hasConnected = true;
           player.disconnectedAt = null;
           state.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...state.logs].slice(0, 50);
           broadcastMatch(matchId);
@@ -3781,8 +3892,8 @@ setInterval(() => {
       }
     });
 
-    if (isNewMatch) {
-      state.turnStartedAt = now;
+    if (match.mode === 'pvp' && !match.playStartedAt) {
+      maybeStartPublicMatch(match, now);
       continue;
     }
 
@@ -3796,8 +3907,7 @@ setInterval(() => {
 
     const elapsedSec = Math.floor((now - state.turnStartedAt) / 1000);
     const turnLimit = 20;
-    const disconnectedWaitDelay = 4;
-    const graceLimit = 30;
+    const graceLimit = 60;
 
     if (currentPlayer.isConnected !== false) {
       if (elapsedSec >= turnLimit) {
@@ -3807,7 +3917,8 @@ setInterval(() => {
         schedulePersist({ matchId });
       }
     } else {
-      if (elapsedSec >= disconnectedWaitDelay) {
+      const disconnectedForSec = currentPlayer.disconnectedAt ? (now - currentPlayer.disconnectedAt) / 1000 : 0;
+      if (disconnectedForSec >= graceLimit) {
         state.logs = [createServerLog(`🤖 ${currentPlayer.username} is offline. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
         runServerAiTurn(match, currentPlayerIndex);
         broadcastMatch(matchId);
@@ -3820,6 +3931,8 @@ setInterval(() => {
         const secsDisconnected = (now - player.disconnectedAt) / 1000;
         if (secsDisconnected >= graceLimit) {
           player.isAi = true;
+          player.isConnected = true;
+          player.disconnectedAt = null;
           state.logs = [createServerLog(`🤖 ${player.username} has been permanently replaced by a bot.`, 'info'), ...state.logs].slice(0, 50);
           broadcastMatch(matchId);
           schedulePersist({ matchId });

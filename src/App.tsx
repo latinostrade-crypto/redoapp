@@ -95,8 +95,22 @@ export default function App() {
     sound.playPop();
   };
 
+  const handleStartGame = useCallback((mode: 'offline' | 'pvp' | 'private', stake: number) => {
+    startGame(selectedAvatar, userName, mode, stake);
+  }, [selectedAvatar, startGame, userName]);
+
   const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
-  const isHumanTurn = currentActivePlayer?.id === 'player';
+  const isWaitingForPlayers = gameMode === 'pvp' && !!gameState.waitingForPlayers;
+  const isHumanTurn = !isWaitingForPlayers && currentActivePlayer?.id === 'player';
+  const [connectionTimeLeft, setConnectionTimeLeft] = useState(60);
+
+  useEffect(() => {
+    if (!isWaitingForPlayers || !gameState.connectionDeadlineAt) return;
+    const update = () => setConnectionTimeLeft(Math.max(0, Math.ceil((gameState.connectionDeadlineAt! - Date.now()) / 1000)));
+    update();
+    const timer = window.setInterval(update, 500);
+    return () => window.clearInterval(timer);
+  }, [isWaitingForPlayers, gameState.connectionDeadlineAt]);
 
   // Calculate playable check for human hand
   const checkPlayable = (card: any) => {
@@ -519,7 +533,7 @@ export default function App() {
               xpNeeded={xpNeeded}
               xpProgressPercentage={xpProgressPercentage}
               playerXp={playerXp}
-              onStartGame={(mode, stake) => startGame(selectedAvatar, userName, mode, stake)}
+              onStartGame={handleStartGame}
               onNameChange={setUserName}
               onAvatarSelect={setSelectedAvatar}
               onOpenRules={() => setRulesOpen(true)}
@@ -572,6 +586,18 @@ export default function App() {
               ))}
             </AnimatePresence>
           </div>
+
+          {isWaitingForPlayers && (
+            <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0c0f12]/90 p-4 font-mono backdrop-blur-sm">
+              <div className="w-full max-w-xs border-4 border-black bg-slate-950 p-5 text-center shadow-[4px_4px_0_#000]">
+                <div className="text-[11px] font-black uppercase tracking-wider text-[#00d2ff]">Connecting players</div>
+                <div className="mt-3 text-[24px] font-black text-[#ffcc00]">{connectionTimeLeft}s</div>
+                <div className="mt-3 text-[7px] leading-relaxed text-slate-400">
+                  The match starts when everyone connects. If nobody connects, no tickets or energy are charged.
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* WAITING FOR OPPONENT IN PRIVATE ROOM OVERLAY */}
           {gameState.players.some((p) => p.name === 'Waiting...') && (
@@ -714,7 +740,7 @@ export default function App() {
               <div className="absolute inset-0 border border-dashed border-[#2e3846] opacity-60"></div>
 
               {/* DYNAMIC TURN TIMER BADGE */}
-              {gameState.phase === 'playing' && (
+              {gameState.phase === 'playing' && !isWaitingForPlayers && (
                 <div className="absolute top-0.5 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none">
                   <div className={`px-2 py-0.5 border border-black font-mono font-black text-[9px] min-[370px]:text-[10px] sm:text-[11px] shadow-[1px_1px_0_#000] text-center transition-all ${
                     turnTimeLeft <= 6 && isHumanTurn

@@ -63,6 +63,8 @@ export interface GameState {
   consecutiveDraws: number; // Tracks draws in current turn
   accusablePlayers: PlayerId[]; // Players with 1 card who have not declared final-card status and can be caught
   turnStartedAt?: number;
+  waitingForPlayers?: boolean;
+  connectionDeadlineAt?: number | null;
 }
 
 export interface GameStats {
