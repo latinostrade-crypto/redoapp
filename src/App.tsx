@@ -200,10 +200,12 @@ export default function App() {
     }
 
     const playerScenes: FlashlightScene[] = [
-      { sourceX: 50, sourceY: 99, targetX: 50, targetY: 83, radiusX: 45, radiusY: 16 },
-      { sourceX: 3, sourceY: 55, targetX: 14, targetY: 53, radiusX: 18, radiusY: 16 },
-      { sourceX: 50, sourceY: 1, targetX: 50, targetY: 12, radiusX: 22, radiusY: 12 },
-      { sourceX: 97, sourceY: 55, targetX: 86, targetY: 53, radiusX: 18, radiusY: 16 },
+      // The human lights their own hand. Bots cast a visible beam from their
+      // avatar toward the table, because their hidden cards are not rendered.
+      { sourceX: 50, sourceY: 100, targetX: 50, targetY: 84, radiusX: 44, radiusY: 13 },
+      { sourceX: 10, sourceY: 48, targetX: 48, targetY: 51, radiusX: 24, radiusY: 16 },
+      { sourceX: 50, sourceY: 15, targetX: 50, targetY: 49, radiusX: 24, radiusY: 17 },
+      { sourceX: 90, sourceY: 48, targetX: 53, targetY: 51, radiusX: 24, radiusY: 16 },
     ];
 
     return playerScenes[gameState.currentPlayerIndex] || playerScenes[0];
@@ -603,7 +605,7 @@ export default function App() {
       {gameState.phase !== 'setup' && (
         <main className="flex-1 w-full max-w-4xl my-1 p-2.5 flex flex-col justify-between gap-2 overflow-hidden z-10 relative bg-[#0c0f12] border-4 border-black shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
 
-          {/* PIXEL FLASHLIGHT: an inverse SVG mask keeps only the active player's ray visible. */}
+          {/* PIXEL FLASHLIGHT: an inverse SVG mask reveals a real cone of light. */}
           <motion.svg
             aria-hidden="true"
             className="absolute inset-0 z-40 h-full w-full pointer-events-none pixel-flashlight-overlay"
@@ -614,57 +616,48 @@ export default function App() {
             transition={{ duration: 0.24, ease: 'easeOut' }}
           >
             <defs>
-              <mask id={flashlightMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+              <mask id={flashlightMaskId} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
                 <rect width="100" height="100" fill="white" />
-                <motion.polygon
-                  initial={false}
-                  animate={{ points: flashlightRayPoints }}
-                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                <polygon
+                  points={flashlightRayPoints}
                   fill="black"
                 />
-                <motion.ellipse
-                  initial={false}
-                  animate={{
-                    cx: flashlightScene.targetX,
-                    cy: flashlightScene.targetY,
-                    rx: flashlightScene.radiusX,
-                    ry: flashlightScene.radiusY,
-                  }}
-                  transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+                <ellipse
+                  cx={flashlightScene.targetX}
+                  cy={flashlightScene.targetY}
+                  rx={flashlightScene.radiusX}
+                  ry={flashlightScene.radiusY}
                   fill="black"
                 />
               </mask>
+              <linearGradient
+                id={`${flashlightMaskId}-beam`}
+                gradientUnits="userSpaceOnUse"
+                x1={flashlightScene.sourceX}
+                y1={flashlightScene.sourceY}
+                x2={flashlightScene.targetX}
+                y2={flashlightScene.targetY}
+              >
+                <stop offset="0%" stopColor="#fff3b0" stopOpacity="0.38" />
+                <stop offset="52%" stopColor="#ffcf4d" stopOpacity="0.20" />
+                <stop offset="100%" stopColor="#ffb703" stopOpacity="0.06" />
+              </linearGradient>
             </defs>
 
-            <rect width="100" height="100" fill="#020305" opacity="0.88" mask={`url(#${flashlightMaskId})`} />
-            <motion.polygon
-              initial={false}
-              animate={{ points: flashlightRayPoints }}
-              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-              fill="#ffcc00"
-              opacity="0.16"
+            <rect width="100" height="100" fill="#020305" opacity="0.76" mask={`url(#${flashlightMaskId})`} />
+            <polygon
+              className="pixel-flashlight-ray"
+              points={flashlightRayPoints}
+              fill={`url(#${flashlightMaskId}-beam)`}
             />
-            <motion.ellipse
-              initial={false}
-              animate={{
-                cx: flashlightScene.targetX,
-                cy: flashlightScene.targetY,
-                rx: Math.max(4, flashlightScene.radiusX - 1.2),
-                ry: Math.max(4, flashlightScene.radiusY - 1.2),
-              }}
-              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-              fill="none"
-              stroke="#ffe8a3"
-              strokeWidth="0.45"
-              opacity="0.4"
-            />
-            <motion.circle
-              initial={false}
-              animate={{ cx: flashlightScene.sourceX, cy: flashlightScene.sourceY }}
-              transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-              r="2.1"
+            <ellipse
+              className="pixel-flashlight-focus"
+              cx={flashlightScene.targetX}
+              cy={flashlightScene.targetY}
+              rx={Math.max(4, flashlightScene.radiusX - 2)}
+              ry={Math.max(4, flashlightScene.radiusY - 2)}
               fill="#ffe8a3"
-              opacity="0.42"
+              opacity="0.07"
             />
           </motion.svg>
           
