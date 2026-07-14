@@ -42,8 +42,8 @@ function getFlashlightRayPoints(scene: FlashlightScene) {
   const length = Math.max(Math.hypot(deltaX, deltaY), 1);
   const perpendicularX = -deltaY / length;
   const perpendicularY = deltaX / length;
-  const sourceWidth = 2.5;
-  const targetWidth = Math.max(9, Math.min(scene.radiusX * 0.72, 24));
+  const sourceWidth = 1.4;
+  const targetWidth = Math.max(10, Math.min(scene.radiusX * 0.56, 22));
 
   return [
     [scene.sourceX + perpendicularX * sourceWidth, scene.sourceY + perpendicularY * sourceWidth],
@@ -202,10 +202,10 @@ export default function App() {
     const playerScenes: FlashlightScene[] = [
       // The human lights their own hand. Bots cast a visible beam from their
       // avatar toward the table, because their hidden cards are not rendered.
-      { sourceX: 50, sourceY: 100, targetX: 50, targetY: 84, radiusX: 44, radiusY: 13 },
-      { sourceX: 10, sourceY: 48, targetX: 48, targetY: 51, radiusX: 24, radiusY: 16 },
-      { sourceX: 50, sourceY: 15, targetX: 50, targetY: 49, radiusX: 24, radiusY: 17 },
-      { sourceX: 90, sourceY: 48, targetX: 53, targetY: 51, radiusX: 24, radiusY: 16 },
+      { sourceX: 50, sourceY: 101, targetX: 50, targetY: 77, radiusX: 38, radiusY: 0 },
+      { sourceX: 10, sourceY: 48, targetX: 48, targetY: 51, radiusX: 22, radiusY: 0 },
+      { sourceX: 50, sourceY: 15, targetX: 50, targetY: 51, radiusX: 22, radiusY: 0 },
+      { sourceX: 90, sourceY: 48, targetX: 53, targetY: 51, radiusX: 22, radiusY: 0 },
     ];
 
     return playerScenes[gameState.currentPlayerIndex] || playerScenes[0];
@@ -622,13 +622,6 @@ export default function App() {
                   points={flashlightRayPoints}
                   fill="black"
                 />
-                <ellipse
-                  cx={flashlightScene.targetX}
-                  cy={flashlightScene.targetY}
-                  rx={flashlightScene.radiusX}
-                  ry={flashlightScene.radiusY}
-                  fill="black"
-                />
               </mask>
               <linearGradient
                 id={`${flashlightMaskId}-beam`}
@@ -644,20 +637,11 @@ export default function App() {
               </linearGradient>
             </defs>
 
-            <rect width="100" height="100" fill="#020305" opacity="0.76" mask={`url(#${flashlightMaskId})`} />
+            <rect width="100" height="100" fill="#020305" opacity="0.62" mask={`url(#${flashlightMaskId})`} />
             <polygon
               className="pixel-flashlight-ray"
               points={flashlightRayPoints}
               fill={`url(#${flashlightMaskId}-beam)`}
-            />
-            <ellipse
-              className="pixel-flashlight-focus"
-              cx={flashlightScene.targetX}
-              cy={flashlightScene.targetY}
-              rx={Math.max(4, flashlightScene.radiusX - 2)}
-              ry={Math.max(4, flashlightScene.radiusY - 2)}
-              fill="#ffe8a3"
-              opacity="0.07"
             />
           </motion.svg>
           
