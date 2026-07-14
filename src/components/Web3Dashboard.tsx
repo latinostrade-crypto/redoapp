@@ -382,6 +382,8 @@ export function Web3Dashboard({
   const launchRoomConsumedRef = useRef(false);
   const recoveredActiveMatchRef = useRef('');
   const openingPublicMatchRef = useRef('');
+  const publicJoinAttemptRef = useRef(0);
+  const queueStatusRequestInFlightRef = useRef(false);
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
   const withdrawalRefreshInFlightRef = useRef(false);
@@ -1563,7 +1565,8 @@ export function Web3Dashboard({
   };
 
   useEffect(() => {
-    if (matchmakingState !== 'searching') return;
+    if (matchmakingState !== 'joining' && matchmakingState !== 'searching') return;
+    let disposed = false;
     queueStreamRef.current?.close();
     const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
     queueStreamRef.current = stream;
@@ -1575,12 +1578,15 @@ export function Web3Dashboard({
       matchId?: string;
       players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
     }) => {
+      if (disposed) return;
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
         setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
+        setMatchmakingState('searching');
       }
       if (result.status === 'ready' && result.matchId) {
         if (openingPublicMatchRef.current === result.matchId) return;
+        publicJoinAttemptRef.current += 1;
         openingPublicMatchRef.current = result.matchId;
         setQueueLength(result.players?.length || 1);
         localStorage.setItem('redoapp_active_match', JSON.stringify({
@@ -1595,41 +1601,50 @@ export function Web3Dashboard({
         onStartGame('pvp', selectedStake);
       }
       if (result.status === 'idle') {
+        // The status request can overtake the initial POST on a cold Render
+        // instance. The join request itself owns the transition out of this
+        // state until the server has confirmed that the player is queued.
+        if (matchmakingState === 'joining') return;
+        publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
         setPublicQueueError('Matchmaking connection lost or timed out. Please try joining again.');
       }
     };
 
     stream.addEventListener('queue-status', (event) => {
-      const result = JSON.parse((event as MessageEvent).data);
-      handleQueueStatus(result);
+      try {
+        const result = JSON.parse((event as MessageEvent).data);
+        handleQueueStatus(result);
+      } catch {
+        // A malformed/replayed SSE frame must not stop the polling fallback.
+      }
     });
 
-    stream.onerror = () => {
+    const requestQueueStatus = () => {
+      if (queueStatusRequestInFlightRef.current || disposed) return;
+      queueStatusRequestInFlightRef.current = true;
       apiRequest<{
         status: 'idle' | 'searching' | 'ready';
         queueLength?: number;
         countdownSec?: number;
         matchId?: string;
         players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      }>('/api/matchmaker/status')
+      }>('/api/matchmaker/status', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 })
         .then(handleQueueStatus)
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          queueStatusRequestInFlightRef.current = false;
+        });
     };
 
+    stream.onerror = requestQueueStatus;
+    requestQueueStatus();
     const pollTimer = window.setInterval(() => {
-      apiRequest<{
-        status: 'idle' | 'searching' | 'ready';
-        queueLength?: number;
-        countdownSec?: number;
-        matchId?: string;
-        players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      }>('/api/matchmaker/status', { timeoutMs: 5000 })
-        .then(handleQueueStatus)
-        .catch(() => undefined);
+      requestQueueStatus();
     }, 3000);
 
     return () => {
+      disposed = true;
       window.clearInterval(pollTimer);
       stream.close();
       if (queueStreamRef.current === stream) {
@@ -1637,6 +1652,14 @@ export function Web3Dashboard({
       }
     };
   }, [matchmakingState, currentUserId, onStartGame, selectedStake]);
+
+  useEffect(() => {
+    if (matchmakingState !== 'joining' && matchmakingState !== 'searching') return;
+    const timer = window.setInterval(() => {
+      setMatchmakingTimer((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [matchmakingState]);
 
   useEffect(() => {
     const incomingRoomCode = initialLaunchRoomCodeRef.current.trim().toUpperCase();
@@ -2653,6 +2676,7 @@ export function Web3Dashboard({
                         type="button"
                         onClick={() => {
                           sound.playPop();
+                          publicJoinAttemptRef.current += 1;
                           apiRequest('/api/matchmaker/leave', {
                             method: 'POST',
                             body: JSON.stringify({ userId: currentUserId }),
@@ -2846,6 +2870,8 @@ export function Web3Dashboard({
                             setPublicQueueError('');
                             setQueueLength(1);
                             setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
+                            const joinAttempt = publicJoinAttemptRef.current + 1;
+                            publicJoinAttemptRef.current = joinAttempt;
                             setMatchmakingState('joining');
                             apiRequest<{
                               availableTickets: number;
@@ -2872,6 +2898,7 @@ export function Web3Dashboard({
                                 mode: 'pvp',
                               }),
                             }).then((result) => {
+                              if (publicJoinAttemptRef.current !== joinAttempt) return;
                               setGoldenTickets(result.availableTickets);
                               setHeldTickets(result.heldTickets);
                               if (result.energy) {
@@ -2896,6 +2923,7 @@ export function Web3Dashboard({
                               }
                               setMatchmakingState('searching');
                             }).catch((error) => {
+                              if (publicJoinAttemptRef.current !== joinAttempt) return;
                               const message = error instanceof Error ? error.message : 'Failed to join public queue.';
                               setMatchmakingState('idle');
                               setPublicQueueError(message);
