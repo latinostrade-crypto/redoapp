@@ -199,6 +199,10 @@ The backend now protects referral state with:
 - Supabase write errors keep their dirty records queued for retry instead of being treated as a successful save
 - production refuses to start without Supabase, because Render's local disk is not durable enough for balances or referrals
 
+### One-Time Referral Reset (2026-07-14)
+
+The production release includes an idempotent Supabase-backed migration named `referrals-reset-2026-07-14`. It clears historical inviter relationships, referral statuses, activation counters and the weekly referral-quest progress for every existing user, allowing them to be invited again. Referral codes remain stable. Wallets, ticket balances, XP, energy and the immutable transaction ledger are deliberately preserved; old financial records are not deleted. Supabase stores a completion marker, so the reset runs exactly once rather than on every restart.
+
 ## XP, Energy, Quests, and Rewards
 
 Implemented:

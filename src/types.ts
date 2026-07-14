@@ -135,6 +135,7 @@ export interface PlayerProfile {
   energy: EnergyState;
   referralCode: string;
   referralLink: string;
+  referralResetAt?: number | null;
   referrals: {
     referredByUserId: string | null;
     status: string | null;

@@ -43,6 +43,9 @@ const UPSTASH_REDIS_REST_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replac
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
 const REFERRAL_CACHE_TTL_SEC = Math.min(300, Math.max(5, Number(process.env.REFERRAL_CACHE_TTL_SEC || '30') || 30));
 const REDIS_CACHE_NAMESPACE = process.env.REDIS_CACHE_NAMESPACE || 'redoapp:v1';
+// Explicit one-time production migration requested on 2026-07-14. The marker
+// is stored in Supabase, so restarts and future deploys cannot repeat it.
+const REFERRAL_RESET_MIGRATION_ID = 'referrals-reset-2026-07-14';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
 const DEFAULT_MAX_ENERGY = 10;
@@ -208,6 +211,7 @@ interface UserState {
   referralActivatedAt?: number | null;
   referralActivationMatchId?: string | null;
   referralsActivated: number;
+  referralResetAt?: number | null;
   completedQuestIds: string[];
   transactions: TicketLedgerEntry[];
   dailyStreak?: number;
@@ -365,6 +369,8 @@ let redisCacheMisses = 0;
 let redisCacheFailures = 0;
 let redisCacheLastErrorLoggedAt = 0;
 const localReferralCacheVersions = new Map<string, number>();
+let referralResetStatus: 'not-run' | 'already-applied' | 'applied' = 'not-run';
+let referralResetAffectedUsers = 0;
 
 function cacheKeyPart(value: string) {
   return crypto.createHash('sha256').update(value).digest('base64url');
@@ -939,6 +945,57 @@ async function loadPersistedState() {
   }
 }
 
+async function applyOneTimeReferralReset() {
+  if (!supabaseAdmin || process.env.NODE_ENV !== 'production') return;
+
+  const markerId = `maintenance:${REFERRAL_RESET_MIGRATION_ID}`;
+  const { data, error } = await supabaseAdmin
+    .from(SUPABASE_STATE_TABLE)
+    .select('id,payload')
+    .eq('id', markerId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not check referral reset marker: ${error.message}`);
+  if (data) {
+    referralResetStatus = 'already-applied';
+    referralResetAffectedUsers = Number((data.payload as { affectedUsers?: number } | null)?.affectedUsers) || 0;
+    return;
+  }
+
+  const resetAt = Date.now();
+  const affectedInviters = new Set<string>();
+  for (const user of users.values()) {
+    if (user.referredByUserId) affectedInviters.add(user.referredByUserId);
+    // Preserve referral codes, wallets, tickets, XP, energy and the immutable
+    // financial ledger. Only the relationship and referral-specific progress
+    // are reset so every existing player can be invited again.
+    user.referredByUserId = undefined;
+    user.referralStatus = undefined;
+    user.referralAssignedAt = undefined;
+    user.referralActivatedAt = undefined;
+    user.referralActivationMatchId = undefined;
+    user.referralsActivated = 0;
+    user.referralResetAt = resetAt;
+    user.completedQuestIds = user.completedQuestIds.filter((id) => id !== 'weekly_invite_1');
+    const progress = questProgressByUser.get(user.userId);
+    if (progress) {
+      questProgressByUser.set(user.userId, progress.filter((entry) => entry.questId !== 'weekly_invite_1'));
+    }
+    schedulePersist({ userId: user.userId });
+  }
+
+  rebuildReferralStats();
+  affectedInviters.forEach(invalidateReferralCache);
+  await persistStateNow();
+  await upsertStateRow(markerId, {
+    appliedAt: resetAt,
+    affectedUsers: users.size,
+    preserved: ['wallets', 'tickets', 'xp', 'energy', 'ledger', 'referralCodes'],
+  });
+  referralResetStatus = 'applied';
+  referralResetAffectedUsers = users.size;
+  console.log(`[Referral reset] Applied ${REFERRAL_RESET_MIGRATION_ID} to ${users.size} users.`);
+}
+
 function getUser(userId: string, walletAddress?: string): UserState {
   const existing = users.get(userId);
   if (existing) {
@@ -1036,6 +1093,10 @@ function hydrateUser(user: UserState): boolean {
   }
   if (!Number.isFinite(user.referralsActivated)) {
     user.referralsActivated = 0;
+    changed = true;
+  }
+  if (user.referralResetAt !== undefined && user.referralResetAt !== null && !Number.isFinite(user.referralResetAt)) {
+    user.referralResetAt = null;
     changed = true;
   }
   if (user.lastDailyEnergyAt === undefined) {
@@ -1147,6 +1208,7 @@ function buildBootstrapProfileResponse(user: UserState) {
     energy: getEnergyState(user),
     referralCode: user.referralCode,
     referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
+    referralResetAt: user.referralResetAt || null,
     dailyStreak: user.dailyStreak || 0,
     lastDailyXpAt: user.lastDailyXpAt,
     lootboxClaimedAt: user.lootboxClaimedAt || null,
@@ -2640,6 +2702,11 @@ app.get('/api/health', (req, res) => {
       misses: redisCacheMisses,
       failures: redisCacheFailures,
     },
+    referralReset: {
+      migrationId: REFERRAL_RESET_MIGRATION_ID,
+      status: referralResetStatus,
+      affectedUsers: referralResetAffectedUsers,
+    },
   });
 });
 
@@ -4002,6 +4069,7 @@ async function bootstrap() {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in production.');
   }
   await loadPersistedState();
+  await applyOneTimeReferralReset();
   ticketingService.reconcilePendingWithdrawals();
   try {
     await ticketingService.recheckPendingWithdrawals();

@@ -53,6 +53,7 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     energy: profile.energy ?? DEFAULT_ENERGY_STATE,
     referralCode: profile.referralCode ?? '',
     referralLink: profile.referralLink ?? '',
+    referralResetAt: profile.referralResetAt ?? null,
     referrals: {
       referredByUserId: profile.referrals?.referredByUserId ?? null,
       status: profile.referrals?.status ?? null,
@@ -427,7 +428,7 @@ export function Web3Dashboard({
   const quests = fullProfile?.quests ?? [];
   const referralStats = fullProfile?.referrals;
   const referralTicketEarnings = transactions
-    .filter((tx: any) => tx.type === 'referral_bonus')
+    .filter((tx: any) => tx.type === 'referral_bonus' && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
   const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - energyNow) / 1000)) : 0;
   const tgProfileName = activeProfile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
@@ -971,7 +972,7 @@ export function Web3Dashboard({
     setReferralInvitesError('');
     const query = new URLSearchParams({ limit: '20' });
     if (cursor) query.set('cursor', cursor);
-    return apiRequest<ReferralPageResponse>(`/api/referrals?${query.toString()}`)
+    return apiRequest<ReferralPageResponse>(`/api/referrals?${query.toString()}`, { timeoutMs: 8_000 })
       .then((page) => {
         setReferralInvites((current) => cursor ? [...current, ...page.invites] : page.invites);
         setReferralInviteCursor(page.nextCursor);
@@ -1893,7 +1894,7 @@ export function Web3Dashboard({
                         </button>
                       )}
                       <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                        <span className="text-slate-400 uppercase">Referral Earnings</span>
+                        <span className="text-slate-400 uppercase">Referral TKT Earnings</span>
                         <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
                       </div>
                       
@@ -1956,7 +1957,7 @@ export function Web3Dashboard({
                                 </div>
                               ))}
                               {referralInvitesLoading && (
-                                <div className="text-[7px] text-slate-500">Loading invited players...</div>
+                                <div className="text-[7px] text-slate-500">Loading invited players (up to 8 seconds)...</div>
                               )}
                               {referralInvitesError && (
                                 <button type="button" onClick={() => loadReferralInvites()} className="text-left text-[7px] text-[#ff8b8b] underline">
