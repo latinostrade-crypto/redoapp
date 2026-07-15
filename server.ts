@@ -205,6 +205,15 @@ interface LootboxClaimRecord {
   message: string;
 }
 
+interface DailyCheckinRecord {
+  claimId: string;
+  claimedAt: number;
+  streak: number;
+  xpAwarded: number;
+  rewardTickets: number;
+  rewardEnergy: number;
+}
+
 interface UserState {
   userId: string;
   telegramId?: number;
@@ -234,6 +243,7 @@ interface UserState {
   completedQuestIds: string[];
   transactions: TicketLedgerEntry[];
   dailyStreak?: number;
+  lastDailyCheckin?: DailyCheckinRecord | null;
   lootboxClaimedAt?: number | null;
   lastLootboxClaim?: LootboxClaimRecord | null;
   matchmakingFailureAt?: number | null;
@@ -1173,6 +1183,19 @@ function hydrateUser(user: UserState): boolean {
   if (user.lastDailyXpAt === undefined) {
     user.lastDailyXpAt = null;
     changed = true;
+  }
+  if (user.lastDailyCheckin !== undefined && user.lastDailyCheckin !== null) {
+    const checkin = user.lastDailyCheckin;
+    const validCheckin = typeof checkin.claimId === 'string'
+      && Number.isFinite(checkin.claimedAt)
+      && Number.isFinite(checkin.streak)
+      && Number.isFinite(checkin.xpAwarded)
+      && Number.isFinite(checkin.rewardTickets)
+      && Number.isFinite(checkin.rewardEnergy);
+    if (!validCheckin) {
+      user.lastDailyCheckin = null;
+      changed = true;
+    }
   }
   if (user.lastLootboxClaim !== undefined && user.lastLootboxClaim !== null) {
     const claim = user.lastLootboxClaim;
@@ -3071,10 +3094,45 @@ app.post('/api/users/sync', async (req, res) => {
   });
 });
 
-app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) => {
-  const { walletAddress } = req.body;
+function buildDailyCheckinResponse(user: UserState, checkin: DailyCheckinRecord, replayed: boolean) {
+  return {
+    success: true,
+    replayed,
+    ...checkin,
+    xp: user.xp,
+    energy: getEnergyState(user),
+    claimedQuestIds: user.completedQuestIds,
+    lastDailyXpAt: checkin.claimedAt,
+  };
+}
+
+function sendDailyCheckinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  if (input?.responseMode === 'iframe') {
+    const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
+      ? input.parentOrigin
+      : '';
+    if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
+    const message = JSON.stringify({
+      source: 'redoapp-daily-checkin-bridge',
+      requestId: String(input.bridgeRequestId || ''),
+      payload,
+    }).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
+  }
+  return res.json(payload);
+}
+
+function handleDailyCheckin(req: AuthenticatedRequest, res: Response) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  const walletAddress = typeof input.walletAddress === 'string' ? input.walletAddress : undefined;
   const user = getUser(getAuthenticatedUserId(req), walletAddress);
   const now = Date.now();
+  const requestedClaimId = typeof input.claimId === 'string'
+    ? input.claimId.trim().slice(0, 120)
+    : '';
 
   const lastDay = user.lastDailyXpAt ? getStartOfUtcDay(user.lastDailyXpAt) : 0;
   const today = getStartOfUtcDay(now);
@@ -3088,7 +3146,11 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
   } else if (today - lastDay > oneDayMs) {
     streak = 1; // reset streak
   } else if (today === lastDay) {
-    return res.json({
+    const savedCheckin = user.lastDailyCheckin;
+    if (savedCheckin && getStartOfUtcDay(savedCheckin.claimedAt) === today) {
+      return sendDailyCheckinSuccess(req, res, buildDailyCheckinResponse(user, savedCheckin, true));
+    }
+    return sendDailyCheckinSuccess(req, res, {
       success: false,
       alreadyClaimed: true,
       xpAwarded: 0,
@@ -3128,18 +3190,28 @@ app.post('/api/xp/daily-checkin', requireAuth, (req: AuthenticatedRequest, res) 
   updateQuestProgress(user.userId, 'spend_energy', 0);
   const claimedQuestIds = claimCompletedQuests(user);
 
-  return res.json({
-    success: true,
-    xpAwarded: reward.xp,
-    xp: user.xp,
-    energy: getEnergyState(user),
-    claimedQuestIds,
+  const checkin: DailyCheckinRecord = {
+    claimId: requestedClaimId || `daily-checkin-${user.userId}-${today}`,
+    claimedAt: now,
     streak,
-    lastDailyXpAt: user.lastDailyXpAt,
+    xpAwarded: reward.xp,
     rewardTickets: reward.tickets,
     rewardEnergy: reward.energy,
+  };
+  user.lastDailyCheckin = checkin;
+  schedulePersist({ userId: user.userId });
+
+  return sendDailyCheckinSuccess(req, res, {
+    ...buildDailyCheckinResponse(user, checkin, false),
+    claimedQuestIds,
   });
-});
+}
+
+app.post('/api/xp/daily-checkin', requireAuth, handleDailyCheckin);
+// Telegram mobile WebViews occasionally leave the JSON POST pending after the
+// server has committed the reward. This idempotent no-preflight route returns
+// the same daily record through postMessage instead of requiring a reload.
+app.get('/api/xp/daily-checkin-beacon', requireAuth, handleDailyCheckin);
 
 app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
   const user = getUser(getAuthenticatedUserId(req));
@@ -3446,7 +3518,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   const activeMatchId = activeMatchByUser.get(userId);
   const existingActiveMatch = activeMatchId ? activeMatches.get(activeMatchId) : null;
   if (existingActiveMatch) {
-    return res.json({
+    return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
       heldTickets: user.heldTickets,
@@ -3457,7 +3529,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
   if (existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode) {
-    return res.json({
+    return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
       heldTickets: user.heldTickets,

@@ -34,6 +34,21 @@ const PUBLIC_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 type PublicStakeOption = typeof PUBLIC_STAKE_OPTIONS[number];
 type PrivateStakeOption = typeof PRIVATE_STAKE_OPTIONS[number];
+type DailyCheckinResponse = {
+  success: boolean;
+  replayed?: boolean;
+  alreadyClaimed?: boolean;
+  claimId?: string;
+  claimedAt?: number;
+  xpAwarded: number;
+  xp: number;
+  streak: number;
+  rewardTickets: number;
+  rewardEnergy: number;
+  energy: any;
+  claimedQuestIds?: string[];
+  lastDailyXpAt?: number | null;
+};
 const NFT_COLLECTION_ADDRESS = 'EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi';
 const NFT_COLLECTION_URL = `https://getgems.io/collection/${NFT_COLLECTION_ADDRESS}`;
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
@@ -86,6 +101,45 @@ function buildTelegramMiniAppLink(startParam: string) {
 
 function buildTelegramMiniAppSchemeLink(startParam: string) {
   return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
+}
+
+function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: string | null }) {
+  return new Promise<DailyCheckinResponse>((resolve, reject) => {
+    const bridgeRequestId = `daily-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const params = new URLSearchParams({
+      claimId: payload.claimId,
+      walletAddress: payload.walletAddress || '',
+      responseMode: 'iframe',
+      bridgeRequestId,
+      parentOrigin: window.location.origin,
+    });
+    const iframe = document.createElement('iframe');
+    iframe.hidden = true;
+    iframe.src = buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`);
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Daily check-in bridge timed out.'));
+    }, 15_000);
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener('message', onMessage);
+      iframe.remove();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
+      const data = event.data as { source?: string; requestId?: string; payload?: DailyCheckinResponse; error?: string };
+      if (data?.source !== 'redoapp-daily-checkin-bridge' || data.requestId !== bridgeRequestId) return;
+      cleanup();
+      if (data.payload) resolve(data.payload);
+      else reject(new Error(data.error || 'Daily check-in bridge failed.'));
+    };
+    iframe.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('Daily check-in bridge failed to load.'));
+    }, { once: true });
+    window.addEventListener('message', onMessage);
+    document.body.appendChild(iframe);
+  });
 }
 
 function buildPrivateRoomSharePayload(roomCode: string) {
@@ -357,6 +411,7 @@ export function Web3Dashboard({
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
   const [dailyClaimStatus, setDailyClaimStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const [dailyClaimMessage, setDailyClaimMessage] = useState('');
+  const [dailyReward, setDailyReward] = useState<{ streak: number; xp: number; tickets: number; energy: number } | null>(null);
   const [showXpDetails, setShowXpDetails] = useState(false);
   const [showReferralDetails, setShowReferralDetails] = useState(false);
   const [showCollectionAddress, setShowCollectionAddress] = useState(false);
@@ -401,7 +456,7 @@ export function Web3Dashboard({
   const openingPublicMatchRef = useRef('');
   const publicJoinAttemptRef = useRef(0);
   const publicJoinStartedAtRef = useRef(0);
-  const queueStatusRequestInFlightRef = useRef(false);
+  const matchmakingStateRef = useRef(matchmakingState);
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
   const withdrawalRefreshInFlightRef = useRef(false);
@@ -414,6 +469,11 @@ export function Web3Dashboard({
     ? (storedUserId || fallbackGuestUserId)
     : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId);
   const activeProfile = fullProfile ?? profile;
+  const publicMatchmakingActive = matchmakingState === 'joining' || matchmakingState === 'searching';
+
+  useEffect(() => {
+    matchmakingStateRef.current = matchmakingState;
+  }, [matchmakingState]);
   const currentUserId = activeProfile?.userId || bootstrapUserId;
 
   useEffect(() => {
@@ -1370,73 +1430,106 @@ export function Web3Dashboard({
     }
   };
 
-  const claimDailyXp = () => {
+  const claimDailyXp = async () => {
     if (dailyXpClaimedToday || isClaimingDaily || !authReady) return;
     sound.playShuffle();
     setIsClaimingDaily(true);
     setDailyClaimStatus('checking');
     setDailyClaimMessage('Checking daily reward...');
-    apiRequest<{
-      success: boolean;
-      alreadyClaimed?: boolean;
-      xpAwarded: number;
-      streak: number;
-      rewardTickets: number;
-      rewardEnergy: number;
-      energy: any;
-      claimedQuestIds?: string[];
-    }>('/api/xp/daily-checkin', {
-      method: 'POST',
-      retryOnNetworkError: true,
-      timeoutMs: 90_000,
-      body: JSON.stringify({
-        userId: currentUserId,
-        walletAddress: rawAddress || null,
-        telegramInitData,
-      }),
-    }).then((result) => {
+    const claimId = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `daily-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      const requestPayload = { claimId, walletAddress: rawAddress || null };
+      let bridgeTimer = 0;
+      const bridgeRequest = new Promise<DailyCheckinResponse>((resolve, reject) => {
+        bridgeTimer = window.setTimeout(() => {
+          claimDailyCheckinViaBridge(requestPayload).then(resolve, reject);
+        }, 2_500);
+      });
+      const directRequest = apiRequest<DailyCheckinResponse>('/api/xp/daily-checkin', {
+        method: 'POST',
+        retryOnNetworkError: true,
+        networkAttempts: 2,
+        timeoutMs: 45_000,
+        body: JSON.stringify(requestPayload),
+      });
+      const result = await Promise.any([directRequest, bridgeRequest]).finally(() => {
+        window.clearTimeout(bridgeTimer);
+      });
       if (!result.success && !result.alreadyClaimed) {
         throw new Error('Daily check-in was not accepted. Please retry.');
       }
       setDailyXpClaimedToday(true);
       setDailyClaimStatus('success');
-      setDailyClaimMessage(result.success ? 'Successful' : 'Already claimed today.');
+      setDailyClaimMessage(result.success ? `Day ${result.streak} reward received.` : 'Already claimed today.');
+      const claimedAt = result.claimedAt ?? result.lastDailyXpAt ?? Date.now();
+      setProfile((previous) => previous ? {
+        ...previous,
+        xp: result.xp ?? previous.xp,
+        dailyStreak: result.streak,
+        lastDailyXpAt: claimedAt,
+        energy: result.energy ?? previous.energy,
+      } : previous);
+      setFullProfile((previous) => previous ? {
+        ...previous,
+        xp: result.xp ?? previous.xp,
+        dailyStreak: result.streak,
+        lastDailyXpAt: claimedAt,
+        energy: result.energy ?? previous.energy,
+      } : previous);
       
       if (result.success) {
+        sound.playVictory();
+        setDailyReward({
+          streak: result.streak || 1,
+          xp: result.xpAwarded,
+          tickets: result.rewardTickets,
+          energy: result.rewardEnergy,
+        });
         const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
         const newTx = {
-          id: `tx-${Date.now()}`,
+          id: `tx-daily-${result.claimId || claimedAt}`,
           event: `Check-in Day ${result.streak || 1}`,
           value: rewardVal,
           time: 'Just now',
           type: 'claim'
         };
-        setTransactions((prev) => [newTx, ...prev].slice(0, 10));
+        setTransactions((previous) => previous.some((entry) => entry.id === newTx.id)
+          ? previous
+          : [newTx, ...previous].slice(0, 10));
       }
       
       if (result.energy) {
         updateProfileEnergy(result.energy);
       }
 
-      return Promise.all([
+      // The primary response is authoritative. Secondary profile/ledger
+      // refreshes must never keep CHECKING/WAIT spinning in a Telegram WebView.
+      setIsClaimingDaily(false);
+      void Promise.allSettled([
         apiRequest<PlayerProfile>('/api/me', { retryOnNetworkError: true }),
         apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { retryOnNetworkError: true }),
-      ]).then(([me, ledger]) => {
+      ]).then(([profileResult, ledgerResult]) => {
+        if (profileResult.status !== 'fulfilled') return;
+        const me = profileResult.value;
         const normalized = normalizeProfile(me);
         setProfile(normalized);
         setFullProfile(normalized);
         setGoldenTickets(me.availableTickets);
         setHeldTickets(me.heldTickets);
-        setTransactions(ledger.transactions);
-      }).catch(() => undefined);
-    }).catch((error) => {
+        if (ledgerResult.status === 'fulfilled') {
+          setTransactions(ledgerResult.value.transactions);
+        }
+      });
+    } catch (error) {
       setDailyClaimStatus('error');
       setDailyClaimMessage(isTransientApiError(error)
         ? 'Could not confirm yet. Tap Check-in to retry.'
         : error instanceof Error ? error.message : 'Daily check-in failed.');
-    }).finally(() => {
+    } finally {
       setIsClaimingDaily(false);
-    });
+    }
   };
 
   const claimDailyReward = () => {
@@ -1740,8 +1833,9 @@ export function Web3Dashboard({
   };
 
   useEffect(() => {
-    if (matchmakingState !== 'joining' && matchmakingState !== 'searching') return;
+    if (!publicMatchmakingActive) return;
     let disposed = false;
+    let statusRequestInFlight = false;
     queueStreamRef.current?.close();
     const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
     queueStreamRef.current = stream;
@@ -1781,7 +1875,7 @@ export function Web3Dashboard({
         // Ignore a stored failure from an older attempt if its status request
         // overtook the new join POST.
         if (
-          matchmakingState === 'joining'
+          matchmakingStateRef.current === 'joining'
           && result.failedAt
           && result.failedAt < publicJoinStartedAtRef.current
         ) return;
@@ -1793,7 +1887,7 @@ export function Web3Dashboard({
         // The status request can overtake the initial POST on a cold Render
         // instance. The join request itself owns the transition out of this
         // state until the server has confirmed that the player is queued.
-        if (matchmakingState === 'joining') return;
+        if (matchmakingStateRef.current === 'joining') return;
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
         setPublicQueueError('Matchmaking connection lost or timed out. Please try joining again.');
@@ -1810,8 +1904,8 @@ export function Web3Dashboard({
     });
 
     const requestQueueStatus = () => {
-      if (queueStatusRequestInFlightRef.current || disposed) return;
-      queueStatusRequestInFlightRef.current = true;
+      if (statusRequestInFlight || disposed) return;
+      statusRequestInFlight = true;
       getPublicQueueStatusViaBridge().catch(() => apiRequest<{
         status: 'idle' | 'searching' | 'ready' | 'expired';
         queueLength?: number;
@@ -1824,7 +1918,7 @@ export function Web3Dashboard({
         .then(handleQueueStatus)
         .catch(() => undefined)
         .finally(() => {
-          queueStatusRequestInFlightRef.current = false;
+          statusRequestInFlight = false;
         });
     };
 
@@ -1842,7 +1936,7 @@ export function Web3Dashboard({
         queueStreamRef.current = null;
       }
     };
-  }, [matchmakingState, currentUserId, onStartGame, selectedStake]);
+  }, [publicMatchmakingActive, currentUserId, onStartGame, selectedStake]);
 
   useEffect(() => {
     if (matchmakingState !== 'joining' && matchmakingState !== 'searching') return;
@@ -3656,6 +3750,62 @@ export function Web3Dashboard({
                   Cancel
                 </button>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* DAILY CHECK-IN REWARD MODAL */}
+      <AnimatePresence>
+        {dailyReward && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-mono select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.7, y: 24, rotate: -3 }}
+              animate={{ scale: 1, y: 0, rotate: 0 }}
+              exit={{ scale: 0.8, y: 16, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+              className="w-full max-w-xs bg-[#101b16] border-4 border-[#00ff66] p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg text-center"
+            >
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap bg-[#00ff66] text-black text-[7px] font-black uppercase px-3 py-0.5 border-2 border-black">
+                DAY {dailyReward.streak} COMPLETE
+              </div>
+              <motion.div
+                initial={{ rotate: -12, scale: 0.6 }}
+                animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.15, 1] }}
+                transition={{ duration: 0.7 }}
+                className="mx-auto mt-2 w-16 h-16 bg-slate-950 border-2 border-black flex items-center justify-center text-[#ffcc00]"
+              >
+                <Gift className="w-9 h-9" />
+              </motion.div>
+              <h3 className="mt-3 text-sm font-black text-[#00ff66] uppercase tracking-wider">Reward received!</h3>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-[9px] font-black">
+                <div className="bg-slate-950 border-2 border-black p-2 text-[#00d2ff] flex items-center justify-center gap-1">
+                  <Sparkles className="w-3.5 h-3.5" /> +{dailyReward.xp} XP
+                </div>
+                <div className="bg-slate-950 border-2 border-black p-2 text-[#00ff66] flex items-center justify-center gap-1">
+                  <Zap className="w-3.5 h-3.5" /> +{dailyReward.energy}
+                </div>
+              </div>
+              {dailyReward.tickets > 0 && (
+                <div className="mt-2 bg-slate-950 border-2 border-black p-2 text-[9px] font-black text-[#ffcc00]">
+                  +{dailyReward.tickets.toFixed(2)} TKT
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playPop();
+                  setDailyReward(null);
+                }}
+                className="mt-4 w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+              >
+                Collect reward
+              </button>
             </motion.div>
           </motion.div>
         )}
