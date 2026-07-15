@@ -850,12 +850,38 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       });
     });
 
-    app.post('/api/tickets/deposit-intent', (req: Request, res: Response) => {
-      const { walletAddress, ticketAmount } = req.body;
+    function sendDepositIntentResponse(
+      req: Request,
+      res: Response,
+      status: number,
+      payload: Record<string, unknown>,
+    ) {
+      const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+      if (input.responseMode === 'iframe') {
+        const parentOrigin = typeof input.parentOrigin === 'string'
+          && (/^https:\/\/[^/]+$/i.test(input.parentOrigin) || /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(input.parentOrigin))
+          ? input.parentOrigin
+          : '';
+        if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
+        const message = JSON.stringify({
+          source: 'redoapp-deposit-bridge',
+          requestId: String(input.bridgeRequestId || ''),
+          ...(status < 400 ? { payload } : { error: String(payload.error || 'Could not prepare the deposit.') }),
+        }).replace(/</g, '\\u003c');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+        return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
+      }
+      return res.status(status).json(payload);
+    }
+
+    function handleDepositIntent(req: Request, res: Response) {
+      const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+      const { walletAddress, ticketAmount } = input;
       const userId = getRequestUserId(req);
       const amount = Number(ticketAmount);
-      if (!userId || !walletAddress || !Number.isFinite(amount) || amount <= 0) {
-        return res.status(400).json({ error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
+      if (!userId || typeof walletAddress !== 'string' || !walletAddress || !Number.isFinite(amount) || amount <= 0) {
+        return sendDepositIntentResponse(req, res, 400, { error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
       }
       deps.getUser(userId, walletAddress);
       const roundedTicketAmount = deps.round2(amount);
@@ -873,7 +899,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
           reusableIntent.paymentPayload = buildDepositPaymentPayload(reusableIntent.paymentReference);
           deps.schedulePersist({ depositId: reusableIntent.id });
         }
-        return res.json({
+        return sendDepositIntentResponse(req, res, 200, {
           intentId: reusableIntent.id,
           marketingWallet: config.marketingWallet,
           ticketAmount: reusableIntent.ticketAmount,
@@ -899,7 +925,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       intent.paymentPayload = buildDepositPaymentPayload(intent.paymentReference);
       deps.depositIntents.set(intent.id, intent);
       deps.schedulePersist({ depositId: intent.id, userId: intent.userId });
-      return res.json({
+      return sendDepositIntentResponse(req, res, 200, {
         intentId: intent.id,
         marketingWallet: config.marketingWallet,
         ticketAmount: intent.ticketAmount,
@@ -907,7 +933,13 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         status: intent.status,
         paymentPayload: intent.paymentPayload,
       });
-    });
+    }
+
+    app.post('/api/tickets/deposit-intent', handleDepositIntent);
+    // Idempotent no-preflight recovery for Telegram/iOS WebViews. The normal
+    // POST remains available, while this rendered iframe channel avoids a
+    // stalled credentialed CORS preflight and reuses an existing intent.
+    app.get('/api/tickets/deposit-intent-beacon', handleDepositIntent);
 
     app.post('/api/tickets/deposit-confirm', async (req: Request, res: Response) => {
       const { intentId, signedBoc } = req.body;

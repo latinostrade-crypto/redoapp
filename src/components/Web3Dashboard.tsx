@@ -49,6 +49,14 @@ type DailyCheckinResponse = {
   claimedQuestIds?: string[];
   lastDailyXpAt?: number | null;
 };
+
+type DepositIntentResponse = {
+  intentId: string;
+  marketingWallet: string;
+  tonAmount: number;
+  ticketAmount: number;
+  paymentPayload: string;
+};
 const NFT_COLLECTION_ADDRESS = 'EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi';
 const NFT_COLLECTION_URL = `https://getgems.io/collection/${NFT_COLLECTION_ADDRESS}`;
 const FIRST_FREE_GAME_WALLET_PROMPT_KEY = 'redoapp_prompt_connect_wallet_after_free_game';
@@ -103,6 +111,23 @@ function buildTelegramMiniAppSchemeLink(startParam: string) {
   return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
 }
 
+function createWebViewBridgeIframe() {
+  const iframe = document.createElement('iframe');
+  // `hidden` maps to display:none. iOS WKWebView can postpone navigation of
+  // such frames until another visibility event, so keep it rendered offscreen.
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.tabIndex = -1;
+  iframe.style.position = 'fixed';
+  iframe.style.width = '1px';
+  iframe.style.height = '1px';
+  iframe.style.left = '-10000px';
+  iframe.style.top = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  iframe.style.border = '0';
+  return iframe;
+}
+
 function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: string | null }) {
   return new Promise<DailyCheckinResponse>((resolve, reject) => {
     const bridgeRequestId = `daily-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -113,20 +138,7 @@ function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: s
       bridgeRequestId,
       parentOrigin: window.location.origin,
     });
-    const iframe = document.createElement('iframe');
-    // Do not use the HTML `hidden` attribute here. iOS WKWebView may defer a
-    // display:none iframe navigation until another tab/visibility event,
-    // leaving the check-in button on WAIT even though the server committed it.
-    iframe.setAttribute('aria-hidden', 'true');
-    iframe.tabIndex = -1;
-    iframe.style.position = 'fixed';
-    iframe.style.width = '1px';
-    iframe.style.height = '1px';
-    iframe.style.left = '-10000px';
-    iframe.style.top = '0';
-    iframe.style.opacity = '0';
-    iframe.style.pointerEvents = 'none';
-    iframe.style.border = '0';
+    const iframe = createWebViewBridgeIframe();
     iframe.src = buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`);
     const timeout = window.setTimeout(() => {
       cleanup();
@@ -148,6 +160,44 @@ function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: s
     iframe.addEventListener('error', () => {
       cleanup();
       reject(new Error('Daily check-in bridge failed to load.'));
+    }, { once: true });
+    window.addEventListener('message', onMessage);
+    document.body.appendChild(iframe);
+  });
+}
+
+function createDepositIntentViaBridge(payload: { walletAddress: string; ticketAmount: number }) {
+  return new Promise<DepositIntentResponse>((resolve, reject) => {
+    const bridgeRequestId = `deposit-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const params = new URLSearchParams({
+      walletAddress: payload.walletAddress,
+      ticketAmount: String(payload.ticketAmount),
+      responseMode: 'iframe',
+      bridgeRequestId,
+      parentOrigin: window.location.origin,
+    });
+    const iframe = createWebViewBridgeIframe();
+    iframe.src = buildAuthenticatedUrl(`/api/tickets/deposit-intent-beacon?${params.toString()}`);
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Deposit request bridge timed out.'));
+    }, 12_000);
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener('message', onMessage);
+      iframe.remove();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
+      const data = event.data as { source?: string; requestId?: string; payload?: DepositIntentResponse; error?: string };
+      if (data?.source !== 'redoapp-deposit-bridge' || data.requestId !== bridgeRequestId) return;
+      cleanup();
+      if (data.payload) resolve(data.payload);
+      else reject(new Error(data.error || 'Could not prepare the deposit.'));
+    };
+    iframe.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('Deposit request bridge failed to load.'));
     }, { once: true });
     window.addEventListener('message', onMessage);
     document.body.appendChild(iframe);
@@ -333,8 +383,14 @@ export function Web3Dashboard({
   }, [currentTab]);
 
   const [tonConnectUI] = useTonConnectUI();
-  const rawAddress = useTonAddress();
-  const rawWalletAddress = useTonAddress(false);
+  const hookWalletAddress = useTonAddress();
+  const hookRawWalletAddress = useTonAddress(false);
+  const [walletSdkAddress, setWalletSdkAddress] = useState(() => tonConnectUI.account?.address || '');
+  // TonConnect's SDK account is authoritative immediately after returning
+  // from an external wallet. The React address hook can lag until a WebView
+  // reload/visibility update, so use the SDK snapshot as an instant fallback.
+  const rawAddress = hookWalletAddress || walletSdkAddress;
+  const rawWalletAddress = hookRawWalletAddress || walletSdkAddress;
   const walletConnected = !!rawAddress;
   const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
   
@@ -370,8 +426,16 @@ export function Web3Dashboard({
   const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
+    const applyWalletSnapshot = (address: string) => {
+      setWalletSdkAddress(address);
+      setIsConnecting(false);
+      if (address) {
+        localStorage.setItem('redoapp_wallet_address', address);
+        setShowConnectModal(false);
+      }
+    };
     const stopStatusListener = tonConnectUI.onStatusChange(
-      () => setIsConnecting(false),
+      (wallet) => applyWalletSnapshot(wallet?.account.address || ''),
       () => setIsConnecting(false)
     );
     const stopModalListener = tonConnectUI.onModalStateChange(() => {
@@ -380,11 +444,19 @@ export function Web3Dashboard({
       // wallet status events are the authoritative lifecycle signals.
       setIsConnecting(false);
     });
-    tonConnectUI.connectionRestored.finally(() => setIsConnecting(false));
+    const reconcileWallet = () => applyWalletSnapshot(tonConnectUI.account?.address || '');
+    tonConnectUI.connectionRestored.finally(reconcileWallet);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') reconcileWallet();
+    };
+    window.addEventListener('focus', reconcileWallet);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     const safetyTimer = window.setTimeout(() => setIsConnecting(false), 8_000);
     return () => {
       stopStatusListener();
       stopModalListener();
+      window.removeEventListener('focus', reconcileWallet);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       window.clearTimeout(safetyTimer);
     };
   }, [tonConnectUI]);
@@ -804,8 +876,7 @@ export function Web3Dashboard({
         bridgeRequestId,
         parentOrigin: window.location.origin,
       });
-      const iframe = document.createElement('iframe');
-      iframe.hidden = true;
+      const iframe = createWebViewBridgeIframe();
       iframe.src = buildAuthenticatedUrl(`/api/private-rooms/create-beacon?${params.toString()}`);
       const timeout = window.setTimeout(() => {
         cleanup();
@@ -851,8 +922,7 @@ export function Web3Dashboard({
         bridgeRequestId,
         parentOrigin: window.location.origin,
       });
-      const iframe = document.createElement('iframe');
-      iframe.hidden = true;
+      const iframe = createWebViewBridgeIframe();
       iframe.src = buildAuthenticatedUrl(`/api/matchmaker/join-beacon?${params.toString()}`);
       const timeout = window.setTimeout(() => {
         cleanup();
@@ -899,8 +969,7 @@ export function Web3Dashboard({
         bridgeRequestId,
         parentOrigin: window.location.origin,
       });
-      const iframe = document.createElement('iframe');
-      iframe.hidden = true;
+      const iframe = createWebViewBridgeIframe();
       iframe.src = buildAuthenticatedUrl(`/api/matchmaker/status-beacon?${params.toString()}`);
       const timeout = window.setTimeout(() => {
         cleanup();
@@ -1772,14 +1841,29 @@ export function Web3Dashboard({
     setDepositFlowStatus('creating');
     setDepositStatusMessage('Preparing deposit request...');
     try {
-      const intent = await apiRequest<{ intentId: string; marketingWallet: string; tonAmount: number; ticketAmount: number; paymentPayload: string }>('/api/tickets/deposit-intent', {
-        method: 'POST',
-        body: JSON.stringify({
-          userId: currentUserId,
-          walletAddress: rawAddress,
-          ticketAmount: amount,
-        }),
+      const intentPayload = { walletAddress: rawAddress, ticketAmount: amount };
+      const bridgeIntent = createDepositIntentViaBridge(intentPayload);
+      let directIntentTimer = 0;
+      const directIntentFallback = new Promise<DepositIntentResponse>((resolve, reject) => {
+        directIntentTimer = window.setTimeout(() => {
+          apiRequest<DepositIntentResponse>('/api/tickets/deposit-intent', {
+            method: 'POST',
+            retryOnNetworkError: true,
+            networkAttempts: 1,
+            timeoutMs: 8_000,
+            body: JSON.stringify(intentPayload),
+          }).then(resolve, reject);
+        }, 2_000);
       });
+      const intent = await Promise.any([bridgeIntent, directIntentFallback])
+        .catch((error) => {
+          if (error instanceof AggregateError) {
+            const usefulError = error.errors.find((entry) => entry instanceof Error);
+            if (usefulError) throw usefulError;
+          }
+          throw error;
+        })
+        .finally(() => window.clearTimeout(directIntentTimer));
       setDepositFlowStatus('awaiting_wallet');
       setDepositStatusMessage(`Confirm ${intent.tonAmount.toFixed(2)} TON in your wallet for ${intent.ticketAmount.toFixed(2)} tickets.`);
       const transaction = await tonConnectUI.sendTransaction({
@@ -1807,9 +1891,12 @@ export function Web3Dashboard({
     } catch (e) {
       console.error(e);
       const message = e instanceof Error ? e.message : 'Ticket purchase failed.';
+      const transient = isTransientApiError(e) || message.includes('timed out') || message.includes('bridge failed');
       setDepositFlowStatus('failed');
-      setDepositStatusMessage(message);
-      alert(message);
+      setDepositStatusMessage(transient
+        ? 'Could not prepare the deposit yet. No TON was sent. Tap Deposit to retry safely.'
+        : message);
+      if (!transient) alert(message);
     } finally {
       setBuyingTickets(false);
     }
