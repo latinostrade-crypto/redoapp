@@ -26,10 +26,11 @@ services:
   # Web Service: Express Node Backend
   - type: web
     name: yoapp-backend
-    env: node
+    runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npm run start
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
