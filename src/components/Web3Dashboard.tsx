@@ -114,12 +114,24 @@ function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: s
       parentOrigin: window.location.origin,
     });
     const iframe = document.createElement('iframe');
-    iframe.hidden = true;
+    // Do not use the HTML `hidden` attribute here. iOS WKWebView may defer a
+    // display:none iframe navigation until another tab/visibility event,
+    // leaving the check-in button on WAIT even though the server committed it.
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.tabIndex = -1;
+    iframe.style.position = 'fixed';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.left = '-10000px';
+    iframe.style.top = '0';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    iframe.style.border = '0';
     iframe.src = buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`);
     const timeout = window.setTimeout(() => {
       cleanup();
       reject(new Error('Daily check-in bridge timed out.'));
-    }, 15_000);
+    }, 10_000);
     const cleanup = () => {
       window.clearTimeout(timeout);
       window.removeEventListener('message', onMessage);
@@ -1443,21 +1455,23 @@ export function Web3Dashboard({
       : `daily-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
       const requestPayload = { claimId, walletAddress: rawAddress || null };
-      let bridgeTimer = 0;
-      const bridgeRequest = new Promise<DailyCheckinResponse>((resolve, reject) => {
-        bridgeTimer = window.setTimeout(() => {
-          claimDailyCheckinViaBridge(requestPayload).then(resolve, reject);
-        }, 2_500);
+      // The iframe GET is deliberately primary: it avoids the credentialed
+      // CORS POST/preflight path that intermittently stalls in Telegram iOS.
+      const bridgeRequest = claimDailyCheckinViaBridge(requestPayload);
+      let directFallbackTimer = 0;
+      const directFallback = new Promise<DailyCheckinResponse>((resolve, reject) => {
+        directFallbackTimer = window.setTimeout(() => {
+          apiRequest<DailyCheckinResponse>('/api/xp/daily-checkin', {
+            method: 'POST',
+            retryOnNetworkError: true,
+            networkAttempts: 1,
+            timeoutMs: 8_000,
+            body: JSON.stringify(requestPayload),
+          }).then(resolve, reject);
+        }, 2_000);
       });
-      const directRequest = apiRequest<DailyCheckinResponse>('/api/xp/daily-checkin', {
-        method: 'POST',
-        retryOnNetworkError: true,
-        networkAttempts: 2,
-        timeoutMs: 45_000,
-        body: JSON.stringify(requestPayload),
-      });
-      const result = await Promise.any([directRequest, bridgeRequest]).finally(() => {
-        window.clearTimeout(bridgeTimer);
+      const result = await Promise.any([bridgeRequest, directFallback]).finally(() => {
+        window.clearTimeout(directFallbackTimer);
       });
       if (!result.success && !result.alreadyClaimed) {
         throw new Error('Daily check-in was not accepted. Please retry.');
@@ -1528,7 +1542,10 @@ export function Web3Dashboard({
     const minimumLoadingTime = new Promise((resolve) => window.setTimeout(resolve, 900));
 
     try {
-      const refresh = Promise.allSettled([
+      // The response above already contains authoritative XP/energy/streak.
+      // Refresh the full profile and ledger in the background, but never hold
+      // a full-screen input-blocking layer open for network completion.
+      void Promise.allSettled([
         apiRequest<PlayerProfile>('/api/me', {
           retryOnNetworkError: true,
           networkAttempts: 1,
@@ -1553,7 +1570,7 @@ export function Web3Dashboard({
           setTransactions(ledgerResult.value.transactions);
         }
       });
-      await Promise.all([minimumLoadingTime, refresh]);
+      await minimumLoadingTime;
     } finally {
       // Even if Telegram interrupts the refresh request, the authoritative
       // reward was already applied locally and the UI must always unlock.
@@ -1570,6 +1587,28 @@ export function Web3Dashboard({
     }, 2_400);
     return () => window.clearTimeout(autoFinishTimer);
   }, [dailyReward]);
+
+  useEffect(() => {
+    if (!isClaimingDaily) return;
+    const claimSafetyTimer = window.setTimeout(() => {
+      setIsClaimingDaily(false);
+      setDailyClaimStatus((current) => current === 'checking' ? 'error' : current);
+      setDailyClaimMessage((current) => current === 'Checking daily reward...'
+        ? 'Confirmation is taking longer than expected. Tap Check-in to recover the saved reward.'
+        : current);
+    }, 12_000);
+    return () => window.clearTimeout(claimSafetyTimer);
+  }, [isClaimingDaily]);
+
+  useEffect(() => {
+    if (!dailyRewardSyncing) return;
+    const syncSafetyTimer = window.setTimeout(() => {
+      setDailyRewardSyncing(false);
+      setIsClaimingDaily(false);
+      dailyRewardSyncInFlightRef.current = false;
+    }, 3_000);
+    return () => window.clearTimeout(syncSafetyTimer);
+  }, [dailyRewardSyncing]);
 
   const claimDailyReward = () => {
     if (isClaimingDaily || dailyXpClaimedToday) return;
