@@ -412,6 +412,7 @@ export function Web3Dashboard({
   const [dailyClaimStatus, setDailyClaimStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const [dailyClaimMessage, setDailyClaimMessage] = useState('');
   const [dailyReward, setDailyReward] = useState<{ streak: number; xp: number; tickets: number; energy: number } | null>(null);
+  const [dailyRewardSyncing, setDailyRewardSyncing] = useState(false);
   const [showXpDetails, setShowXpDetails] = useState(false);
   const [showReferralDetails, setShowReferralDetails] = useState(false);
   const [showCollectionAddress, setShowCollectionAddress] = useState(false);
@@ -460,6 +461,7 @@ export function Web3Dashboard({
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
   const withdrawalRefreshInFlightRef = useRef(false);
+  const dailyRewardSyncInFlightRef = useRef(false);
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
   // Wallet connection is account metadata, never application identity.
@@ -1504,24 +1506,9 @@ export function Web3Dashboard({
         updateProfileEnergy(result.energy);
       }
 
-      // The primary response is authoritative. Secondary profile/ledger
-      // refreshes must never keep CHECKING/WAIT spinning in a Telegram WebView.
+      // The primary response is authoritative and immediately releases the
+      // check-in buttons. A bounded refresh runs after the reward animation.
       setIsClaimingDaily(false);
-      void Promise.allSettled([
-        apiRequest<PlayerProfile>('/api/me', { retryOnNetworkError: true }),
-        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { retryOnNetworkError: true }),
-      ]).then(([profileResult, ledgerResult]) => {
-        if (profileResult.status !== 'fulfilled') return;
-        const me = profileResult.value;
-        const normalized = normalizeProfile(me);
-        setProfile(normalized);
-        setFullProfile(normalized);
-        setGoldenTickets(me.availableTickets);
-        setHeldTickets(me.heldTickets);
-        if (ledgerResult.status === 'fulfilled') {
-          setTransactions(ledgerResult.value.transactions);
-        }
-      });
     } catch (error) {
       setDailyClaimStatus('error');
       setDailyClaimMessage(isTransientApiError(error)
@@ -1531,6 +1518,58 @@ export function Web3Dashboard({
       setIsClaimingDaily(false);
     }
   };
+
+  const finishDailyReward = async () => {
+    if (dailyRewardSyncInFlightRef.current) return;
+    dailyRewardSyncInFlightRef.current = true;
+    setDailyReward(null);
+    setDailyRewardSyncing(true);
+    setIsClaimingDaily(false);
+    const minimumLoadingTime = new Promise((resolve) => window.setTimeout(resolve, 900));
+
+    try {
+      const refresh = Promise.allSettled([
+        apiRequest<PlayerProfile>('/api/me', {
+          retryOnNetworkError: true,
+          networkAttempts: 1,
+          timeoutMs: 8_000,
+        }),
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', {
+          retryOnNetworkError: true,
+          networkAttempts: 1,
+          timeoutMs: 8_000,
+        }),
+      ]).then(([profileResult, ledgerResult]) => {
+        if (profileResult.status === 'fulfilled') {
+          const me = profileResult.value;
+          const normalized = normalizeProfile(me);
+          setProfile(normalized);
+          setFullProfile(normalized);
+          setGoldenTickets(me.availableTickets);
+          setHeldTickets(me.heldTickets);
+          if (me.energy) updateProfileEnergy(me.energy);
+        }
+        if (ledgerResult.status === 'fulfilled') {
+          setTransactions(ledgerResult.value.transactions);
+        }
+      });
+      await Promise.all([minimumLoadingTime, refresh]);
+    } finally {
+      // Even if Telegram interrupts the refresh request, the authoritative
+      // reward was already applied locally and the UI must always unlock.
+      setDailyRewardSyncing(false);
+      setIsClaimingDaily(false);
+      dailyRewardSyncInFlightRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!dailyReward) return;
+    const autoFinishTimer = window.setTimeout(() => {
+      void finishDailyReward();
+    }, 2_400);
+    return () => window.clearTimeout(autoFinishTimer);
+  }, [dailyReward]);
 
   const claimDailyReward = () => {
     if (isClaimingDaily || dailyXpClaimedToday) return;
@@ -3762,6 +3801,7 @@ export function Web3Dashboard({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            onClick={() => void finishDailyReward()}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-mono select-none"
           >
             <motion.div
@@ -3769,6 +3809,7 @@ export function Web3Dashboard({
               animate={{ scale: 1, y: 0, rotate: 0 }}
               exit={{ scale: 0.8, y: 16, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+              onClick={(event) => event.stopPropagation()}
               className="w-full max-w-xs bg-[#101b16] border-4 border-[#00ff66] p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg text-center"
             >
               <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap bg-[#00ff66] text-black text-[7px] font-black uppercase px-3 py-0.5 border-2 border-black">
@@ -3800,12 +3841,40 @@ export function Web3Dashboard({
                 type="button"
                 onClick={() => {
                   sound.playPop();
-                  setDailyReward(null);
+                  void finishDailyReward();
                 }}
+                style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
                 className="mt-4 w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
               >
                 Collect reward
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* BOUNDED POST-REWARD SYNC: always unmounts, even on WebView network loss */}
+      <AnimatePresence>
+        {dailyRewardSyncing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0c0f12]/95 p-4 font-mono select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="w-full max-w-xs border-4 border-black bg-slate-950 p-5 text-center shadow-[5px_5px_0_#000]"
+            >
+              <Loader2 className="mx-auto h-9 w-9 animate-spin text-[#00d2ff]" />
+              <div className="mt-3 text-[10px] font-black uppercase tracking-wider text-[#00ff66]">
+                Updating rewards
+              </div>
+              <div className="mt-1 text-[7px] text-slate-400">
+                Syncing XP, energy and activity...
+              </div>
             </motion.div>
           </motion.div>
         )}
