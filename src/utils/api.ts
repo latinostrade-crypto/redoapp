@@ -85,7 +85,11 @@ export function buildAuthHeaders(init?: HeadersInit) {
   return {
     ...(init || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
+    // The bootstrap request validates the current Telegram account and issues
+    // a session token. Prefer that token afterwards: initData can expire while
+    // an iOS Mini App stays open, and sending both made the backend reject the
+    // still-valid session because it deliberately validates initData first.
+    ...(!token && telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
   };
 }
 
@@ -94,7 +98,7 @@ export function buildAuthenticatedUrl(path: string) {
   const telegramInitData = getTelegramInitData();
   const params = new URLSearchParams();
   if (token) params.set('sessionToken', token);
-  if (telegramInitData) params.set('telegramInitData', telegramInitData);
+  else if (telegramInitData) params.set('telegramInitData', telegramInitData);
   if (!params.size) return `${API_BASE_URL}${path}`;
   const separator = path.includes('?') ? '&' : '?';
   return `${API_BASE_URL}${path}${separator}${params.toString()}`;

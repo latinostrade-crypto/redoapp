@@ -166,6 +166,36 @@ function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: s
   });
 }
 
+async function claimDailyCheckinViaSimpleGet(payload: { claimId: string; walletAddress: string | null }) {
+  const params = new URLSearchParams({
+    claimId: payload.claimId,
+    walletAddress: payload.walletAddress || '',
+  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 8_000);
+  try {
+    // A query-authenticated GET is a CORS-simple request: no JSON body,
+    // custom auth header, or preflight that Telegram iOS can strand.
+    const response = await fetch(
+      buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`),
+      {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
+      },
+    );
+    const rawBody = await response.text();
+    const result = rawBody ? JSON.parse(rawBody) as DailyCheckinResponse & { error?: string } : null;
+    if (!response.ok) {
+      throw new Error(result?.error || `Daily check-in failed with status ${response.status}.`);
+    }
+    if (!result) throw new Error('Daily check-in returned an empty response.');
+    return result;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function createDepositIntentViaBridge(payload: { walletAddress: string; ticketAmount: number }) {
   return new Promise<DepositIntentResponse>((resolve, reject) => {
     const bridgeRequestId = `deposit-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -496,7 +526,6 @@ export function Web3Dashboard({
   const [dailyClaimStatus, setDailyClaimStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
   const [dailyClaimMessage, setDailyClaimMessage] = useState('');
   const [dailyReward, setDailyReward] = useState<{ streak: number; xp: number; tickets: number; energy: number } | null>(null);
-  const [dailyRewardSyncing, setDailyRewardSyncing] = useState(false);
   const [showXpDetails, setShowXpDetails] = useState(false);
   const [showReferralDetails, setShowReferralDetails] = useState(false);
   const [showCollectionAddress, setShowCollectionAddress] = useState(false);
@@ -545,7 +574,6 @@ export function Web3Dashboard({
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
   const withdrawalRefreshInFlightRef = useRef(false);
-  const dailyRewardSyncInFlightRef = useRef(false);
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
   // Wallet connection is account metadata, never application identity.
@@ -1524,9 +1552,16 @@ export function Web3Dashboard({
       : `daily-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
       const requestPayload = { claimId, walletAddress: rawAddress || null };
-      // The iframe GET is deliberately primary: it avoids the credentialed
-      // CORS POST/preflight path that intermittently stalls in Telegram iOS.
-      const bridgeRequest = claimDailyCheckinViaBridge(requestPayload);
+      // Use three idempotent transports with the same claim id. The simple
+      // GET is normally fastest; iframe and JSON POST recover WebView-specific
+      // failures without ever crediting the reward twice.
+      const simpleGetRequest = claimDailyCheckinViaSimpleGet(requestPayload);
+      let bridgeFallbackTimer = 0;
+      const bridgeFallback = new Promise<DailyCheckinResponse>((resolve, reject) => {
+        bridgeFallbackTimer = window.setTimeout(() => {
+          claimDailyCheckinViaBridge(requestPayload).then(resolve, reject);
+        }, 600);
+      });
       let directFallbackTimer = 0;
       const directFallback = new Promise<DailyCheckinResponse>((resolve, reject) => {
         directFallbackTimer = window.setTimeout(() => {
@@ -1539,7 +1574,8 @@ export function Web3Dashboard({
           }).then(resolve, reject);
         }, 2_000);
       });
-      const result = await Promise.any([bridgeRequest, directFallback]).finally(() => {
+      const result = await Promise.any([simpleGetRequest, bridgeFallback, directFallback]).finally(() => {
+        window.clearTimeout(bridgeFallbackTimer);
         window.clearTimeout(directFallbackTimer);
       });
       if (!result.success && !result.alreadyClaimed) {
@@ -1602,60 +1638,44 @@ export function Web3Dashboard({
     }
   };
 
-  const finishDailyReward = async () => {
-    if (dailyRewardSyncInFlightRef.current) return;
-    dailyRewardSyncInFlightRef.current = true;
+  const finishDailyReward = () => {
+    // The check-in response has already applied the authoritative XP, streak
+    // and energy. Close the modal synchronously so no network request can keep
+    // an input-blocking overlay on screen.
     setDailyReward(null);
-    setDailyRewardSyncing(true);
     setIsClaimingDaily(false);
-    const minimumLoadingTime = new Promise((resolve) => window.setTimeout(resolve, 900));
+    setDailyClaimStatus('success');
+    setDailyClaimMessage('Reward collected.');
 
-    try {
-      // The response above already contains authoritative XP/energy/streak.
-      // Refresh the full profile and ledger in the background, but never hold
-      // a full-screen input-blocking layer open for network completion.
-      void Promise.allSettled([
-        apiRequest<PlayerProfile>('/api/me', {
-          retryOnNetworkError: true,
-          networkAttempts: 1,
-          timeoutMs: 8_000,
-        }),
-        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', {
-          retryOnNetworkError: true,
-          networkAttempts: 1,
-          timeoutMs: 8_000,
-        }),
-      ]).then(([profileResult, ledgerResult]) => {
-        if (profileResult.status === 'fulfilled') {
-          const me = profileResult.value;
-          const normalized = normalizeProfile(me);
-          setProfile(normalized);
-          setFullProfile(normalized);
-          setGoldenTickets(me.availableTickets);
-          setHeldTickets(me.heldTickets);
-          if (me.energy) updateProfileEnergy(me.energy);
-        }
-        if (ledgerResult.status === 'fulfilled') {
-          setTransactions(ledgerResult.value.transactions);
-        }
-      });
-      await minimumLoadingTime;
-    } finally {
-      // Even if Telegram interrupts the refresh request, the authoritative
-      // reward was already applied locally and the UI must always unlock.
-      setDailyRewardSyncing(false);
-      setIsClaimingDaily(false);
-      dailyRewardSyncInFlightRef.current = false;
-    }
+    // Ledger/profile reconciliation is useful but non-blocking. Local state
+    // already reflects the committed response, so a failed refresh is silent
+    // and the next normal profile sync will reconcile it.
+    void Promise.allSettled([
+      apiRequest<PlayerProfile>('/api/me', {
+        retryOnNetworkError: true,
+        networkAttempts: 1,
+        timeoutMs: 8_000,
+      }),
+      apiRequest<{ transactions: any[] }>('/api/tickets/ledger', {
+        retryOnNetworkError: true,
+        networkAttempts: 1,
+        timeoutMs: 8_000,
+      }),
+    ]).then(([profileResult, ledgerResult]) => {
+      if (profileResult.status === 'fulfilled') {
+        const me = profileResult.value;
+        const normalized = normalizeProfile(me);
+        setProfile(normalized);
+        setFullProfile(normalized);
+        setGoldenTickets(me.availableTickets);
+        setHeldTickets(me.heldTickets);
+        if (me.energy) updateProfileEnergy(me.energy);
+      }
+      if (ledgerResult.status === 'fulfilled') {
+        setTransactions(ledgerResult.value.transactions);
+      }
+    });
   };
-
-  useEffect(() => {
-    if (!dailyReward) return;
-    const autoFinishTimer = window.setTimeout(() => {
-      void finishDailyReward();
-    }, 2_400);
-    return () => window.clearTimeout(autoFinishTimer);
-  }, [dailyReward]);
 
   useEffect(() => {
     if (!isClaimingDaily) return;
@@ -1668,16 +1688,6 @@ export function Web3Dashboard({
     }, 12_000);
     return () => window.clearTimeout(claimSafetyTimer);
   }, [isClaimingDaily]);
-
-  useEffect(() => {
-    if (!dailyRewardSyncing) return;
-    const syncSafetyTimer = window.setTimeout(() => {
-      setDailyRewardSyncing(false);
-      setIsClaimingDaily(false);
-      dailyRewardSyncInFlightRef.current = false;
-    }, 3_000);
-    return () => window.clearTimeout(syncSafetyTimer);
-  }, [dailyRewardSyncing]);
 
   const claimDailyReward = () => {
     if (isClaimingDaily || dailyXpClaimedToday) return;
@@ -3927,7 +3937,7 @@ export function Web3Dashboard({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => void finishDailyReward()}
+            onClick={finishDailyReward}
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 font-mono select-none"
           >
             <motion.div
@@ -3967,40 +3977,13 @@ export function Web3Dashboard({
                 type="button"
                 onClick={() => {
                   sound.playPop();
-                  void finishDailyReward();
+                  finishDailyReward();
                 }}
                 style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
                 className="mt-4 w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
               >
                 Collect reward
               </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* BOUNDED POST-REWARD SYNC: always unmounts, even on WebView network loss */}
-      <AnimatePresence>
-        {dailyRewardSyncing && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0c0f12]/95 p-4 font-mono select-none"
-          >
-            <motion.div
-              initial={{ scale: 0.92, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
-              className="w-full max-w-xs border-4 border-black bg-slate-950 p-5 text-center shadow-[5px_5px_0_#000]"
-            >
-              <Loader2 className="mx-auto h-9 w-9 animate-spin text-[#00d2ff]" />
-              <div className="mt-3 text-[10px] font-black uppercase tracking-wider text-[#00ff66]">
-                Updating rewards
-              </div>
-              <div className="mt-1 text-[7px] text-slate-400">
-                Syncing XP, energy and activity...
-              </div>
             </motion.div>
           </motion.div>
         )}
