@@ -150,6 +150,14 @@ export interface PlayerProfile {
   claimedQuestIds?: string[];
   dailyStreak?: number;
   lastDailyXpAt?: number | null;
+  lastDailyCheckin?: {
+    claimId: string;
+    claimedAt: number;
+    streak: number;
+    xpAwarded: number;
+    rewardTickets: number;
+    rewardEnergy: number;
+  } | null;
   lootboxClaimedAt?: number | null;
   lootboxAvailable?: boolean;
   activeMatch?: {

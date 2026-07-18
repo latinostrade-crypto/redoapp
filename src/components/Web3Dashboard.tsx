@@ -98,6 +98,7 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     claimedQuestIds: profile.claimedQuestIds ?? [],
     dailyStreak: profile.dailyStreak ?? 0,
     lastDailyXpAt: profile.lastDailyXpAt ?? null,
+    lastDailyCheckin: profile.lastDailyCheckin ?? null,
     lootboxClaimedAt: profile.lootboxClaimedAt ?? null,
     lootboxAvailable: profile.lootboxAvailable ?? false,
     activeMatch: profile.activeMatch ?? null,
@@ -129,22 +130,22 @@ function createWebViewBridgeIframe() {
   return iframe;
 }
 
-function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: string | null }) {
+function requestDailyCheckinViaBridge(
+  path: string,
+  params: URLSearchParams,
+  timeoutMs = 10_000,
+) {
   return new Promise<DailyCheckinResponse>((resolve, reject) => {
     const bridgeRequestId = `daily-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const params = new URLSearchParams({
-      claimId: payload.claimId,
-      walletAddress: payload.walletAddress || '',
-      responseMode: 'iframe',
-      bridgeRequestId,
-      parentOrigin: window.location.origin,
-    });
+    params.set('responseMode', 'iframe');
+    params.set('bridgeRequestId', bridgeRequestId);
+    params.set('parentOrigin', window.location.origin);
     const iframe = createWebViewBridgeIframe();
-    iframe.src = buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`);
+    iframe.src = buildAuthenticatedUrl(`${path}?${params.toString()}`);
     const timeout = window.setTimeout(() => {
       cleanup();
       reject(new Error('Daily check-in bridge timed out.'));
-    }, 10_000);
+    }, timeoutMs);
     const cleanup = () => {
       window.clearTimeout(timeout);
       window.removeEventListener('message', onMessage);
@@ -167,15 +168,25 @@ function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: s
   });
 }
 
-function claimDailyCheckinViaScript(payload: { claimId: string; walletAddress: string | null }) {
-  return new Promise<DailyCheckinResponse>((resolve, reject) => {
-    const callbackName = `__redoappDaily_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const params = new URLSearchParams({
+function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: string | null }) {
+  return requestDailyCheckinViaBridge(
+    '/api/xp/daily-checkin-beacon',
+    new URLSearchParams({
       claimId: payload.claimId,
       walletAddress: payload.walletAddress || '',
-      responseMode: 'script',
-      callback: callbackName,
-    });
+    }),
+  );
+}
+
+function requestDailyCheckinViaScript(
+  path: string,
+  params: URLSearchParams,
+  timeoutMs = 8_000,
+) {
+  return new Promise<DailyCheckinResponse>((resolve, reject) => {
+    const callbackName = `__redoappDaily_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    params.set('responseMode', 'script');
+    params.set('callback', callbackName);
     const script = document.createElement('script');
     let timeoutId = 0;
     const cleanup = () => {
@@ -188,7 +199,7 @@ function claimDailyCheckinViaScript(payload: { claimId: string; walletAddress: s
       resolve(result);
     };
     script.async = true;
-    script.src = buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`);
+    script.src = buildAuthenticatedUrl(`${path}?${params.toString()}`);
     script.addEventListener('error', () => {
       cleanup();
       reject(new Error('Daily check-in script callback failed to load.'));
@@ -196,9 +207,81 @@ function claimDailyCheckinViaScript(payload: { claimId: string; walletAddress: s
     timeoutId = window.setTimeout(() => {
       cleanup();
       reject(new Error('Daily check-in script callback timed out.'));
-    }, 8_000);
+    }, timeoutMs);
     document.head.appendChild(script);
   });
+}
+
+function claimDailyCheckinViaScript(payload: { claimId: string; walletAddress: string | null }) {
+  return requestDailyCheckinViaScript(
+    '/api/xp/daily-checkin-beacon',
+    new URLSearchParams({
+      claimId: payload.claimId,
+      walletAddress: payload.walletAddress || '',
+    }),
+  );
+}
+
+function getDailyCheckinStatusViaScript(walletAddress: string | null) {
+  return requestDailyCheckinViaScript(
+    '/api/xp/daily-checkin-status',
+    new URLSearchParams({ walletAddress: walletAddress || '' }),
+    5_000,
+  );
+}
+
+function getDailyCheckinStatusViaBridge(walletAddress: string | null) {
+  return requestDailyCheckinViaBridge(
+    '/api/xp/daily-checkin-status',
+    new URLSearchParams({ walletAddress: walletAddress || '' }),
+    5_000,
+  );
+}
+
+async function getDailyCheckinStatusViaSimpleGet(walletAddress: string | null) {
+  const params = new URLSearchParams({ walletAddress: walletAddress || '' });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(
+      buildAuthenticatedUrl(`/api/xp/daily-checkin-status?${params.toString()}`),
+      { method: 'GET', cache: 'no-store', signal: controller.signal },
+    );
+    const rawBody = await response.text();
+    const result = rawBody ? JSON.parse(rawBody) as DailyCheckinResponse & { error?: string } : null;
+    if (!response.ok) throw new Error(result?.error || `Daily status failed with status ${response.status}.`);
+    if (!result) throw new Error('Daily status returned an empty response.');
+    return result;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function recoverCommittedDailyCheckin(walletAddress: string | null) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 900));
+    }
+    try {
+      const requireCommitted = (request: Promise<DailyCheckinResponse>) => request.then((status) => {
+        if (!status.success && !status.alreadyClaimed) {
+          throw new Error('Daily check-in is not committed yet.');
+        }
+        return status;
+      });
+      return await Promise.any([
+        requireCommitted(getDailyCheckinStatusViaScript(walletAddress)),
+        requireCommitted(getDailyCheckinStatusViaBridge(walletAddress)),
+        requireCommitted(getDailyCheckinStatusViaSimpleGet(walletAddress)),
+      ]);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Daily check-in status could not be confirmed.');
 }
 
 async function claimDailyCheckinViaSimpleGet(payload: { claimId: string; walletAddress: string | null }) {
@@ -1616,7 +1699,17 @@ export function Web3Dashboard({
           }).then(resolve, reject);
         }, 2_000);
       });
-      const result = await Promise.any([scriptRequest, simpleGetFallback, bridgeFallback, directFallback]).finally(() => {
+      // The mutation may be committed even when Telegram WKWebView loses its
+      // response. Polling the read-only status endpoint prevents the UI from
+      // reverting to CHECK-IN after the ledger has already awarded the day.
+      const committedStatusRecovery = recoverCommittedDailyCheckin(rawAddress || null);
+      const result = await Promise.any([
+        scriptRequest,
+        simpleGetFallback,
+        bridgeFallback,
+        directFallback,
+        committedStatusRecovery,
+      ]).finally(() => {
         window.clearTimeout(simpleGetFallbackTimer);
         window.clearTimeout(bridgeFallbackTimer);
         window.clearTimeout(directFallbackTimer);
@@ -1630,6 +1723,14 @@ export function Web3Dashboard({
         xp: result.xp ?? previous.xp,
         dailyStreak: result.streak,
         lastDailyXpAt: claimedAt,
+        lastDailyCheckin: result.success ? {
+          claimId: result.claimId || claimId,
+          claimedAt,
+          streak: result.streak,
+          xpAwarded: result.xpAwarded,
+          rewardTickets: result.rewardTickets,
+          rewardEnergy: result.rewardEnergy,
+        } : previous.lastDailyCheckin,
         energy: result.energy ?? previous.energy,
       } : previous);
       setFullProfile((previous) => previous ? {
@@ -1637,6 +1738,14 @@ export function Web3Dashboard({
         xp: result.xp ?? previous.xp,
         dailyStreak: result.streak,
         lastDailyXpAt: claimedAt,
+        lastDailyCheckin: result.success ? {
+          claimId: result.claimId || claimId,
+          claimedAt,
+          streak: result.streak,
+          xpAwarded: result.xpAwarded,
+          rewardTickets: result.rewardTickets,
+          rewardEnergy: result.rewardEnergy,
+        } : previous.lastDailyCheckin,
         energy: result.energy ?? previous.energy,
       } : previous);
       

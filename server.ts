@@ -1315,6 +1315,7 @@ function buildBootstrapProfileResponse(user: UserState) {
     referralResetAt: user.referralResetAt || null,
     dailyStreak: user.dailyStreak || 0,
     lastDailyXpAt: user.lastDailyXpAt,
+    lastDailyCheckin: user.lastDailyCheckin || null,
     lootboxClaimedAt: user.lootboxClaimedAt || null,
     lootboxAvailable: isLootboxAvailable(user),
     activeMatch: activeMatchInfo,
@@ -3130,6 +3131,9 @@ function sendDailyCheckinSuccess(req: Request, res: Response, payload: Record<st
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
+    // Helmet's default X-Frame-Options blocks this intentionally embedded
+    // bridge on the separate frontend origin unless it is removed here.
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
@@ -3224,6 +3228,31 @@ app.post('/api/xp/daily-checkin', requireAuth, handleDailyCheckin);
 // server has committed the reward. This idempotent no-preflight route returns
 // the same daily record through postMessage instead of requiring a reload.
 app.get('/api/xp/daily-checkin-beacon', requireAuth, handleDailyCheckin);
+
+app.get('/api/xp/daily-checkin-status', requireAuth, (req: AuthenticatedRequest, res) => {
+  const input = req.query as Record<string, unknown>;
+  const walletAddress = typeof input.walletAddress === 'string' ? input.walletAddress : undefined;
+  const user = getUser(getAuthenticatedUserId(req), walletAddress);
+  const today = getStartOfUtcDay(Date.now());
+  const savedCheckin = user.lastDailyCheckin;
+
+  if (savedCheckin && getStartOfUtcDay(savedCheckin.claimedAt) === today) {
+    return sendDailyCheckinSuccess(req, res, buildDailyCheckinResponse(user, savedCheckin, true));
+  }
+
+  const alreadyClaimed = Boolean(user.lastDailyXpAt && getStartOfUtcDay(user.lastDailyXpAt) === today);
+  return sendDailyCheckinSuccess(req, res, {
+    success: false,
+    alreadyClaimed,
+    xpAwarded: 0,
+    xp: user.xp,
+    streak: user.dailyStreak || 0,
+    rewardTickets: 0,
+    rewardEnergy: 0,
+    energy: getEnergyState(user),
+    lastDailyXpAt: user.lastDailyXpAt,
+  });
+});
 
 app.get('/api/me', requireAuth, (req: AuthenticatedRequest, res) => {
   const user = getUser(getAuthenticatedUserId(req));
