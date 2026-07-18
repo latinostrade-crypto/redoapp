@@ -3091,8 +3091,8 @@ function broadcastQueue(userId: string) {
   subscribers.forEach((response) => sendSse(response, 'queue-status', payload));
 }
 
-app.get('/api/health', (req, res) => {
-  res.json({
+function buildOperationalHealthStatus() {
+  return {
     status: 'healthy',
     time: new Date().toISOString(),
     service: 'redoapp-backend',
@@ -3113,7 +3113,18 @@ app.get('/api/health', (req, res) => {
       total: referralPayouts.size,
       pending: Array.from(referralPayouts.values()).filter((payout) => payout.status === 'pending').length,
     },
-  });
+  };
+}
+
+// Render only needs a successful response here. Keep the public check free of
+// operational counters and payout state, which belong behind administrator auth.
+app.get('/api/health', (req, res) => {
+  const health = buildOperationalHealthStatus();
+  res.json({ status: health.status, time: health.time, service: health.service });
+});
+
+app.get('/api/admin/health', requireAdmin, (req, res) => {
+  res.json(buildOperationalHealthStatus());
 });
 
 function csvCell(value: unknown) {

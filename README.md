@@ -401,6 +401,8 @@ This survives normal restarts, but it is not a replacement for a managed externa
 
 ## Main API Areas
 
+- `GET /api/health` public liveness check; it intentionally returns only basic service status
+- `GET /api/admin/health` full operational status; requires the existing admin credential
 - `POST /api/users/sync`
 - `GET /api/me`
 - `POST /api/xp/daily-checkin`
