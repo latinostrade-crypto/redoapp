@@ -410,6 +410,10 @@ const referralStatsByInviter = new Map<string, ReferralStats>();
 const referralPayouts = new Map<string, ReferralPayoutRecord>();
 let telegramFlushPromise: Promise<void> | null = null;
 const localDepositPaymentClaims = new Map<string, string>();
+// Durable claims are loaded on startup. Keeping this small index in memory
+// avoids retrying an intentional duplicate insert for every confirmed deposit
+// during each background reconciliation pass.
+const durableDepositPaymentClaims = new Map<string, string>();
 let persistTimer: NodeJS.Timeout | null = null;
 let persistRetryTimer: NodeJS.Timeout | null = null;
 const supabaseAdmin: SupabaseClient | null = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
@@ -764,13 +768,20 @@ async function claimDepositPayment(claimKey: string, intentId: string) {
   if (!normalizedKey || !intentId) throw new Error('Deposit payment claim requires a key and intent id.');
 
   if (supabaseAdmin) {
+    const cachedOwner = durableDepositPaymentClaims.get(normalizedKey);
+    if (cachedOwner) {
+      return { claimed: false, ownerIntentId: cachedOwner };
+    }
     const rowId = `payment-claim:${crypto.createHash('sha256').update(normalizedKey).digest('hex')}`;
     const { error } = await supabaseAdmin.from(SUPABASE_STATE_TABLE).insert({
       id: rowId,
       payload: { claimKey: normalizedKey, intentId, createdAt: Date.now() },
       updated_at: new Date().toISOString(),
     });
-    if (!error) return { claimed: true, ownerIntentId: intentId };
+    if (!error) {
+      durableDepositPaymentClaims.set(normalizedKey, intentId);
+      return { claimed: true, ownerIntentId: intentId };
+    }
     if (error.code !== '23505') {
       throw new Error(`Could not atomically reserve TON payment: ${error.message}`);
     }
@@ -781,7 +792,9 @@ async function claimDepositPayment(claimKey: string, intentId: string) {
       .single();
     if (lookupError) throw new Error(`Could not read existing TON payment claim: ${lookupError.message}`);
     const payload = data?.payload as { intentId?: string } | undefined;
-    return { claimed: false, ownerIntentId: payload?.intentId || 'unknown' };
+    const ownerIntentId = payload?.intentId || 'unknown';
+    durableDepositPaymentClaims.set(normalizedKey, ownerIntentId);
+    return { claimed: false, ownerIntentId };
   }
 
   const existing = localDepositPaymentClaims.get(normalizedKey);
@@ -871,6 +884,7 @@ function applySnapshot(snapshot: PersistedState) {
   privateRooms.clear();
   questProgressByUser.clear();
   referralPayouts.clear();
+  durableDepositPaymentClaims.clear();
   telegramNotifications.splice(0, telegramNotifications.length);
 
   snapshot.users?.forEach((user) => {
@@ -900,6 +914,7 @@ async function loadPersistedState() {
       privateRooms.clear();
       questProgressByUser.clear();
       referralPayouts.clear();
+      durableDepositPaymentClaims.clear();
       telegramNotifications.splice(0, telegramNotifications.length);
 
       // Read the legacy snapshot even after granular rows have appeared. The
@@ -987,6 +1002,20 @@ async function loadPersistedState() {
         const payout = row.payload as ReferralPayoutRecord;
         if (payout?.id && payout.status && payout.matchId) {
           referralPayouts.set(payout.id, payout);
+        }
+      });
+
+      // 8. Load permanent TON payment claims before the background deposit
+      // reconciliation starts. Without this index every successful claim was
+      // retried as a duplicate INSERT every 15 seconds, generating avoidable
+      // 409s and noisy Supabase error telemetry.
+      const paymentClaimsData = await loadSupabaseRowsByPrefix('payment-claim:');
+      paymentClaimsData.forEach((row) => {
+        const claim = row.payload as { claimKey?: string; intentId?: string } | null;
+        const claimKey = claim?.claimKey?.trim().toLowerCase();
+        const ownerIntentId = claim?.intentId?.trim();
+        if (claimKey && ownerIntentId) {
+          durableDepositPaymentClaims.set(claimKey, ownerIntentId);
         }
       });
 
