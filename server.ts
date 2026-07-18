@@ -28,7 +28,9 @@ const TELEGRAM_APP_SHORT_NAME = process.env.TELEGRAM_APP_SHORT_NAME || 'app';
 const BACKEND_PUBLIC_URL = (process.env.BACKEND_PUBLIC_URL || 'https://yoapp-backend.onrender.com').replace(/\/$/, '');
 const WITHDRAWAL_OPERATOR_CHAT_ID = Number(process.env.WITHDRAWAL_OPERATOR_CHAT_ID || '5152039743');
 const WITHDRAWAL_OPERATOR_USERNAME = process.env.WITHDRAWAL_OPERATOR_USERNAME || 'allin_gram';
-const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '86400');
+// Telegram initData is a launch credential, not a long-lived session. Keep its
+// replay window short; authenticated players receive a separate signed session.
+const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '900');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 // A dedicated session secret prevents compromise of another integration secret from minting sessions.
