@@ -3660,6 +3660,12 @@ function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<
 
 function sendMatchmakerStatusSuccess(req: Request, res: Response, payload: object) {
   const input = req.query as Record<string, unknown>;
+  // Status is user-specific and changes from searching to ready without the
+  // URL changing. Prevent Render's static rewrite/CDN and embedded WebViews
+  // from reusing an earlier queue response.
+  res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   if (input.responseMode === 'script') {
     const callback = typeof input.callback === 'string' ? input.callback : '';
     if (!/^__redoappQueue_[A-Za-z0-9_]+$/.test(callback)) {
@@ -3923,6 +3929,64 @@ app.get('/api/matchmaker/status', requireAuth, handleMatchmakerStatus);
 // Same queue truth as /status, but delivered without a credentialed CORS
 // preflight so a Telegram WebView cannot miss the ready transition.
 app.get('/api/matchmaker/status-beacon', requireAuth, handleMatchmakerStatus);
+
+// A finite server-side wait is the most reliable ready signal for Telegram
+// iOS/iMe WebViews. Unlike SSE through a Static Site rewrite, this request
+// completes normally as soon as the authoritative matchId exists, so neither
+// CDN streaming behaviour nor throttled client polling can hide the table.
+app.get('/api/matchmaker/wait-beacon', requireAuth, rateLimitMiddleware(12, 60_000, 'user'), (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const requestedWaitMs = Number(req.query.waitMs);
+  const waitMs = Number.isFinite(requestedWaitMs)
+    ? Math.max(1_000, Math.min(65_000, requestedWaitMs))
+    : 60_000;
+  const startedAt = Date.now();
+  let settled = false;
+  let observedQueue = false;
+  let interval: NodeJS.Timeout | null = null;
+  let timeout: NodeJS.Timeout | null = null;
+
+  const cleanup = () => {
+    if (interval) clearInterval(interval);
+    if (timeout) clearTimeout(timeout);
+    interval = null;
+    timeout = null;
+  };
+  const finish = (payload: MatchmakingStatusPayload) => {
+    if (settled || res.writableEnded) return;
+    settled = true;
+    cleanup();
+    sendMatchmakerStatusSuccess(req, res, payload);
+  };
+  const check = () => {
+    if (settled || res.writableEnded) return;
+    expireTimedOutMatchmakingPlayers();
+    const status = tryActivateQueuedMatch(userId) || { status: 'idle' as const };
+    if (status.status === 'searching') observedQueue = true;
+    if (
+      status.status === 'ready'
+      || status.status === 'expired'
+      || (status.status === 'idle' && observedQueue)
+      || Date.now() - startedAt >= waitMs
+    ) {
+      finish(status);
+    }
+  };
+
+  const activeTimer = matchmakerCleanupTimers.get(userId);
+  if (activeTimer) {
+    clearTimeout(activeTimer);
+    matchmakerCleanupTimers.delete(userId);
+  }
+
+  res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.on('close', cleanup);
+  interval = setInterval(check, 250);
+  timeout = setTimeout(check, waitMs);
+  check();
+});
 // Keep the queue observer on the backend origin. Some iOS Telegram-compatible
 // WebViews suspend cross-origin EventSource/fetch while the wallet or another
 // embedded page is active, but continue running a rendered iframe.
@@ -4560,6 +4624,9 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
 
 function sendMatchStateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = req.query as Record<string, unknown>;
+  res.setHeader('Cache-Control', 'private, no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   if (input.responseMode === 'iframe') {
     const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
       ? input.parentOrigin
@@ -4597,6 +4664,10 @@ app.get('/api/matches/state/:matchId', requireAuth, handleMatchState);
 // A no-preflight state read for Telegram WebViews. It both returns the
 // player's perspective and records the connection heartbeat.
 app.get('/api/matches/state-beacon/:matchId', requireAuth, handleMatchState);
+// Same finite state response under the matchmaker rewrite. This lets the
+// mobile client render the first table frame without a second cross-origin
+// iframe after matchmaking has completed.
+app.get('/api/matchmaker/match-state/:matchId', requireAuth, handleMatchState);
 
 app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
   const { matchId } = req.params;

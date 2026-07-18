@@ -24,7 +24,7 @@ import {
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
-import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
+import { apiRequest, buildAuthenticatedUrl, getSessionToken } from '../utils/api';
 
 function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: GameState }> {
   return new Promise((resolve, reject) => {
@@ -71,6 +71,56 @@ function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: G
     iframe.addEventListener('error', () => {
       cleanup();
       reject(new Error('Match state bridge failed to load.'));
+    }, { once: true });
+    window.addEventListener('message', onMessage);
+    document.body.appendChild(iframe);
+  });
+}
+
+function fetchRemoteMatchStateViaSameOriginBridge(matchId: string): Promise<{ gameState: GameState }> {
+  return new Promise((resolve, reject) => {
+    const requestId = `same-origin-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const params = new URLSearchParams({
+      responseMode: 'iframe',
+      bridgeRequestId: requestId,
+      parentOrigin: window.location.origin,
+      requestId,
+    });
+    const sessionToken = getSessionToken();
+    const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
+    if (sessionToken) params.set('sessionToken', sessionToken);
+    else if (telegramInitData) params.set('telegramInitData', telegramInitData);
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.tabIndex = -1;
+    iframe.style.position = 'fixed';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.left = '-10000px';
+    iframe.style.top = '0';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    iframe.style.border = '0';
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      window.removeEventListener('message', onMessage);
+      iframe.remove();
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== iframe.contentWindow) return;
+      const data = event.data as { source?: string; requestId?: string; payload?: { gameState?: GameState } } | null;
+      if (data?.source !== 'redoapp-match-state-bridge' || data.requestId !== requestId || !data.payload?.gameState) return;
+      cleanup();
+      resolve(data.payload as { gameState: GameState });
+    };
+    const timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Same-origin match state bridge timed out.'));
+    }, 8_000);
+    iframe.src = `/match-api/match-state/${encodeURIComponent(matchId)}?${params.toString()}`;
+    iframe.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('Same-origin match state bridge failed to load.'));
     }, { once: true });
     window.addEventListener('message', onMessage);
     document.body.appendChild(iframe);
@@ -217,12 +267,19 @@ export function useUnoGame() {
       // a fallback for browsers that block embedded frames.
       let result: { gameState: GameState };
       try {
-        result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
+        const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        result = isLocalHost
+          ? await fetchRemoteMatchStateViaBridge(activeMatch.matchId)
+          : await fetchRemoteMatchStateViaSameOriginBridge(activeMatch.matchId);
       } catch {
-        result = await apiRequest<{ gameState: GameState }>(
-          `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
-          { timeoutMs: 8_000 },
-        );
+        try {
+          result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
+        } catch {
+          result = await apiRequest<{ gameState: GameState }>(
+            `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
+            { timeoutMs: 8_000 },
+          );
+        }
       }
       setGameState(result.gameState);
       setRemoteSessionActive(true);

@@ -67,6 +67,9 @@ matches before making any promise about 1,000 simultaneous users.
 - Supports `2`, `3`, or `4` players.
 - Queue is grouped by stake and mode.
 - Queue entry is idempotent and does not spend tickets or energy.
+- Mobile queue-to-table delivery uses a finite server-side wait response in
+  addition to SSE and polling, so Telegram/iMe WebViews do not need a manual
+  page reload when the backend has already created the match.
 - After matchmaking, players get a 60-second connection lobby on the table.
 - Ticket stake and energy are committed atomically when everyone connects, or when the lobby timer expires with at least one connected player.
 - If nobody connects before the lobby timer expires, the match is cancelled without charging either player.
