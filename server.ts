@@ -3677,6 +3677,72 @@ function sendMatchmakerStatusSuccess(req: Request, res: Response, payload: objec
   return res.json(payload);
 }
 
+function sendMatchmakerWatchPage(req: Request, res: Response) {
+  const input = req.query as Record<string, unknown>;
+  const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
+    ? input.parentOrigin
+    : '';
+  const bridgeRequestId = typeof input.bridgeRequestId === 'string' && /^queue-watch-[A-Za-z0-9_-]+$/.test(input.bridgeRequestId)
+    ? input.bridgeRequestId
+    : '';
+  if (!parentOrigin || !bridgeRequestId) {
+    return res.status(400).json({ error: 'Invalid matchmaking watch bridge.' });
+  }
+
+  const serializedParentOrigin = JSON.stringify(parentOrigin);
+  const serializedRequestId = JSON.stringify(bridgeRequestId).replace(/</g, '\\u003c');
+  res.removeHeader('X-Frame-Options');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors *; base-uri 'none'"
+  );
+  return res.type('html').send(`<!doctype html>
+<meta charset="utf-8">
+<script>
+(() => {
+  const parentOrigin = ${serializedParentOrigin};
+  const requestId = ${serializedRequestId};
+  const auth = new URLSearchParams(location.search);
+  auth.delete('parentOrigin');
+  auth.delete('bridgeRequestId');
+  const query = auth.toString();
+  const post = (payload) => parent.postMessage({
+    source: 'redoapp-matchmaker-watch-bridge',
+    requestId,
+    payload
+  }, parentOrigin);
+  let pollInFlight = false;
+  let lastStreamMessageAt = 0;
+  const poll = async () => {
+    if (pollInFlight || (lastStreamMessageAt && Date.now() - lastStreamMessageAt < 3000)) return;
+    pollInFlight = true;
+    try {
+      const response = await fetch('/api/matchmaker/status?' + query, {
+        cache: 'no-store',
+        credentials: 'same-origin'
+      });
+      if (response.ok) post(await response.json());
+    } catch {}
+    finally { pollInFlight = false; }
+  };
+  try {
+    const stream = new EventSource('/api/matchmaker/stream?' + query);
+    stream.addEventListener('queue-status', (event) => {
+      lastStreamMessageAt = Date.now();
+      try { post(JSON.parse(event.data)); } catch {}
+    });
+    stream.onerror = () => {
+      lastStreamMessageAt = 0;
+      poll();
+    };
+  } catch {}
+  poll();
+  setInterval(poll, 1500);
+})();
+</script>`);
+}
+
 function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   const { username, avatarId, stake, mode, walletAddress } = input as {
@@ -3844,6 +3910,10 @@ app.get('/api/matchmaker/status', requireAuth, handleMatchmakerStatus);
 // Same queue truth as /status, but delivered without a credentialed CORS
 // preflight so a Telegram WebView cannot miss the ready transition.
 app.get('/api/matchmaker/status-beacon', requireAuth, handleMatchmakerStatus);
+// Keep the queue observer on the backend origin. Some iOS Telegram-compatible
+// WebViews suspend cross-origin EventSource/fetch while the wallet or another
+// embedded page is active, but continue running a rendered iframe.
+app.get('/api/matchmaker/watch', requireAuth, sendMatchmakerWatchPage);
 
 function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;

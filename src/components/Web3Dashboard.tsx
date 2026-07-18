@@ -696,6 +696,7 @@ export function Web3Dashboard({
   const openingPublicMatchRef = useRef('');
   const publicJoinAttemptRef = useRef(0);
   const publicJoinStartedAtRef = useRef(0);
+  const publicQueueDeadlineAtRef = useRef(0);
   const matchmakingStateRef = useRef(matchmakingState);
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
@@ -2243,16 +2244,22 @@ export function Web3Dashboard({
   useEffect(() => {
     if (!publicMatchmakingActive) return;
     let disposed = false;
-    let statusRequestInFlight = false;
+    let scriptRequestInFlight = false;
+    let bridgeRequestInFlight = false;
+    let fetchRequestInFlight = false;
+    let lastQueueStatusAt = 0;
     queueStreamRef.current?.close();
     const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
     queueStreamRef.current = stream;
 
     const handleQueueStatus = (result: PublicQueueStatus) => {
       if (disposed) return;
+      lastQueueStatusAt = Date.now();
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
-        setMatchmakingTimer(typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC);
+        const countdownSec = typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC;
+        publicQueueDeadlineAtRef.current = Date.now() + countdownSec * 1000;
+        setMatchmakingTimer(countdownSec);
         setMatchmakingState('searching');
       }
       if (result.status === 'ready' && result.matchId) {
@@ -2304,35 +2311,91 @@ export function Web3Dashboard({
       }
     });
 
-    const requestQueueStatus = () => {
-      if (statusRequestInFlight || disposed) return;
-      statusRequestInFlight = true;
-      // Script callbacks are not subject to CORS/preflight and continue to
-      // navigate reliably in iOS Telegram even when EventSource is suspended.
-      // The iframe and authenticated fetch remain independent fallbacks.
-      getPublicQueueStatusViaScript()
-        .catch(() => getPublicQueueStatusViaBridge())
-        .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
+    const requestQueueStatus = (force = false) => {
+      if (disposed) return;
+      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 4500) return;
+      // Run every transport independently. A suspended script request in an
+      // iOS Telegram-compatible WebView must not block the rendered iframe or
+      // the regular fetch from observing that the match is already ready.
+      if (!scriptRequestInFlight) {
+        scriptRequestInFlight = true;
+        getPublicQueueStatusViaScript()
+          .then(handleQueueStatus)
+          .catch(() => undefined)
+          .finally(() => {
+            scriptRequestInFlight = false;
+          });
+      }
+      if (!bridgeRequestInFlight) {
+        bridgeRequestInFlight = true;
+        getPublicQueueStatusViaBridge()
+          .then(handleQueueStatus)
+          .catch(() => undefined)
+          .finally(() => {
+            bridgeRequestInFlight = false;
+          });
+      }
+      if (!fetchRequestInFlight) {
+        fetchRequestInFlight = true;
+        apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
           timeoutMs: 8_000,
           retryOnNetworkError: true,
           networkAttempts: 2,
-        }))
-        .then(handleQueueStatus)
-        .catch(() => undefined)
-        .finally(() => {
-          statusRequestInFlight = false;
-        });
+        })
+          .then(handleQueueStatus)
+          .catch(() => undefined)
+          .finally(() => {
+            fetchRequestInFlight = false;
+          });
+      }
     };
 
-    stream.onerror = requestQueueStatus;
+    const watchRequestId = `queue-watch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const watchParams = new URLSearchParams({
+      bridgeRequestId: watchRequestId,
+      parentOrigin: window.location.origin,
+    });
+    const watchFrame = createWebViewBridgeIframe();
+    watchFrame.src = buildAuthenticatedUrl(`/api/matchmaker/watch?${watchParams.toString()}`);
+    const handleWatchMessage = (event: MessageEvent) => {
+      if (event.origin !== new URL(API_BASE_URL).origin || event.source !== watchFrame.contentWindow) return;
+      const data = event.data as {
+        source?: string;
+        requestId?: string;
+        payload?: PublicQueueStatus;
+      };
+      if (
+        data?.source !== 'redoapp-matchmaker-watch-bridge'
+        || data.requestId !== watchRequestId
+        || !data.payload
+      ) return;
+      handleQueueStatus(data.payload);
+    };
+    window.addEventListener('message', handleWatchMessage);
+    document.body.appendChild(watchFrame);
+
+    stream.onerror = () => requestQueueStatus(true);
     requestQueueStatus();
     const pollTimer = window.setInterval(() => {
       requestQueueStatus();
     }, 3000);
+    const handleResume = () => requestQueueStatus(true);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') requestQueueStatus(true);
+    };
+    const telegramWebApp = (window as any).Telegram?.WebApp;
+    telegramWebApp?.onEvent?.('activated', handleResume);
+    window.addEventListener('pageshow', handleResume);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       disposed = true;
       window.clearInterval(pollTimer);
+      telegramWebApp?.offEvent?.('activated', handleResume);
+      window.removeEventListener('pageshow', handleResume);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('message', handleWatchMessage);
+      watchFrame.remove();
       stream.close();
       if (queueStreamRef.current === stream) {
         queueStreamRef.current = null;
@@ -2342,8 +2405,12 @@ export function Web3Dashboard({
 
   useEffect(() => {
     if (matchmakingState !== 'joining' && matchmakingState !== 'searching') return;
+    if (!publicQueueDeadlineAtRef.current) {
+      publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
+    }
     const timer = window.setInterval(() => {
-      setMatchmakingTimer((current) => Math.max(0, current - 1));
+      const remaining = Math.max(0, Math.ceil((publicQueueDeadlineAtRef.current - Date.now()) / 1000));
+      setMatchmakingTimer(remaining);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [matchmakingState]);
@@ -3576,6 +3643,7 @@ export function Web3Dashboard({
                             setPublicQueueError('');
                             setQueueLength(1);
                             setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
+                            publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
                             const joinAttempt = publicJoinAttemptRef.current + 1;
                             publicJoinAttemptRef.current = joinAttempt;
                             publicJoinStartedAtRef.current = Date.now();
