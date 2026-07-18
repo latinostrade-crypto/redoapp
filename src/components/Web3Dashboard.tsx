@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
-import { AvatarId, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
+import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
 import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
@@ -549,6 +549,7 @@ type PublicQueueStatus = {
   players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
   message?: string;
   failedAt?: number;
+  gameState?: GameState;
 };
 
 interface PendingDepositState {
@@ -811,6 +812,7 @@ export function Web3Dashboard({
         stake: matchedStake,
         currentUserId,
         players: result.players || [],
+        initialGameState: result.gameState || null,
         createdAt: Date.now(),
       }));
       openingPublicMatchRef.current = result.matchId;
@@ -1550,6 +1552,7 @@ export function Web3Dashboard({
             mode: match.mode,
             stake: match.stake,
             players: match.players,
+            gameState: match.gameState,
           }, match.stake);
         });
       } else {
@@ -1560,6 +1563,7 @@ export function Web3Dashboard({
           roomCode: (match as any).roomCode || null,
           currentUserId,
           players: match.players,
+          initialGameState: match.gameState || null,
           createdAt: Date.now(),
         }));
         onStartGame(match.mode, match.stake);

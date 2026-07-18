@@ -391,6 +391,9 @@ interface MatchmakingStatusPayload {
   mode?: MatchMode;
   message?: string;
   failedAt?: number;
+  // The first player-specific table snapshot travels with `ready`. Mobile
+  // Telegram WebViews must not need a second request before rendering cards.
+  gameState?: Record<string, unknown>;
 }
 
 interface PersistedState {
@@ -1343,11 +1346,13 @@ function buildBootstrapProfileResponse(user: UserState) {
     const match = activeMatches.get(activeMatchId);
     if (match) {
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
+      const perspective = buildPerspectiveState(match, user.userId);
       activeMatchInfo = {
         matchId: match.matchId,
         mode: match.mode,
         stake: match.stake,
         roomCode: associatedRoom ? associatedRoom.roomCode : null,
+        gameState: perspective?.gameState,
         players: match.players.map(p => ({
           userId: p.userId,
           username: p.username,
@@ -2869,12 +2874,14 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     if (activeMatch) {
+      const perspective = buildPerspectiveState(activeMatch, userId);
       return {
         status: 'ready',
         matchId: activeMatch.matchId,
         players: activeMatch.players,
         stake: activeMatch.stake,
         mode: activeMatch.mode,
+        gameState: perspective?.gameState,
       };
     }
   }
@@ -3912,12 +3919,14 @@ function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     if (activeMatch) {
+      const perspective = buildPerspectiveState(activeMatch, userId);
       return sendMatchmakerStatusSuccess(req, res, {
         status: 'ready',
         matchId: activeMatch.matchId,
         players: activeMatch.players,
         stake: activeMatch.stake,
         mode: activeMatch.mode,
+        gameState: perspective?.gameState,
       });
     }
   }

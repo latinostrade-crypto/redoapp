@@ -164,6 +164,8 @@ export interface PlayerProfile {
     matchId: string;
     mode: 'pvp' | 'private';
     stake: number;
+    roomCode?: string | null;
+    gameState?: GameState;
     players: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
   } | null;
 }

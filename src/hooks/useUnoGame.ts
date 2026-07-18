@@ -623,10 +623,19 @@ export function useUnoGame() {
     }
 
     if ((mode === 'pvp' || mode === 'private') && localStorage.getItem('redoapp_active_match')) {
+      let initialRemoteState: GameState | null = null;
       try {
         const activeMatch = JSON.parse(localStorage.getItem('redoapp_active_match')!);
         remoteMatchIdRef.current = activeMatch.matchId;
         remoteUserIdRef.current = activeMatch.currentUserId;
+        const initialStateIsFresh = Date.now() - Number(activeMatch.createdAt || 0) < 30_000;
+        if (
+          initialStateIsFresh
+          && activeMatch.initialGameState
+          && isCompleteRemoteTableState(activeMatch.initialGameState)
+        ) {
+          initialRemoteState = activeMatch.initialGameState as GameState;
+        }
         setRemoteSessionActive(true);
       } catch (e) {
         console.error(e);
@@ -642,7 +651,7 @@ export function useUnoGame() {
         realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
         privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
       }));
-      setGameState({
+      setGameState(initialRemoteState || {
         deck: [],
         discardPile: [],
         players: [],
@@ -1349,11 +1358,18 @@ export function useUnoGame() {
         if (activeMatch.matchId) {
           setGameMode(activeMatch.mode || 'pvp');
           setActiveStake(activeMatch.stake || 0);
-          setGameState((prev) => ({
-            ...prev,
-            phase: 'playing',
-            logs: [createLog('Reconnecting to active match...', 'info')],
-          }));
+          const initialStateIsFresh = Date.now() - Number(activeMatch.createdAt || 0) < 30_000;
+          setGameState(
+            initialStateIsFresh
+              && activeMatch.initialGameState
+              && isCompleteRemoteTableState(activeMatch.initialGameState)
+              ? activeMatch.initialGameState as GameState
+              : (prev) => ({
+                  ...prev,
+                  phase: 'playing',
+                  logs: [createLog('Reconnecting to active match...', 'info')],
+                }),
+          );
           setRemoteSessionActive(true);
           syncRemoteMatchState();
         }
