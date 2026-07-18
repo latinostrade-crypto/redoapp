@@ -457,13 +457,19 @@ type PublicMatchmakerResponse = {
   availableTickets: number;
   heldTickets: number;
   energy?: PlayerProfile['energy'];
-  matchmaker?: {
-    status: 'idle' | 'searching' | 'ready' | 'expired';
-    queueLength?: number;
-    countdownSec?: number;
-    matchId?: string;
-    players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-  };
+  matchmaker?: PublicQueueStatus;
+};
+
+type PublicQueueStatus = {
+  status: 'idle' | 'searching' | 'ready' | 'expired';
+  queueLength?: number;
+  countdownSec?: number;
+  matchId?: string;
+  stake?: number;
+  mode?: 'pvp' | 'private';
+  players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
+  message?: string;
+  failedAt?: number;
 };
 
 interface PendingDepositState {
@@ -1102,15 +1108,7 @@ export function Web3Dashboard({
   };
 
   const getPublicQueueStatusViaBridge = () => {
-    return new Promise<{
-      status: 'idle' | 'searching' | 'ready' | 'expired';
-      queueLength?: number;
-      countdownSec?: number;
-      matchId?: string;
-      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      message?: string;
-      failedAt?: number;
-    }>((resolve, reject) => {
+    return new Promise<PublicQueueStatus>((resolve, reject) => {
       const bridgeRequestId = `queue-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const params = new URLSearchParams({
         responseMode: 'iframe',
@@ -1153,6 +1151,38 @@ export function Web3Dashboard({
       }, { once: true });
       window.addEventListener('message', onMessage);
       document.body.appendChild(iframe);
+    });
+  };
+
+  const getPublicQueueStatusViaScript = () => {
+    return new Promise<PublicQueueStatus>((resolve, reject) => {
+      const callbackName = `__redoappQueue_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const params = new URLSearchParams({
+        responseMode: 'script',
+        callback: callbackName,
+      });
+      const script = document.createElement('script');
+      let timeoutId = 0;
+      const cleanup = () => {
+        window.clearTimeout(timeoutId);
+        delete (window as any)[callbackName];
+        script.remove();
+      };
+      (window as any)[callbackName] = (result: PublicQueueStatus) => {
+        cleanup();
+        resolve(result);
+      };
+      script.async = true;
+      script.src = buildAuthenticatedUrl(`/api/matchmaker/status-beacon?${params.toString()}`);
+      script.addEventListener('error', () => {
+        cleanup();
+        reject(new Error('Public queue status callback failed to load.'));
+      }, { once: true });
+      timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Public queue status callback timed out.'));
+      }, 8_000);
+      document.head.appendChild(script);
     });
   };
 
@@ -1405,49 +1435,42 @@ export function Web3Dashboard({
   // owns. Recover it before the user can submit another join request.
   useEffect(() => {
     if (!authReady || matchmakingState !== 'idle' || activeProfile?.activeMatch) return;
-    apiRequest<{
-      status: 'idle' | 'searching' | 'ready' | 'expired';
-      queueLength?: number;
-      countdownSec?: number;
-      matchId?: string;
-      stake?: number;
-      mode?: 'pvp' | 'private';
-      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      message?: string;
-      failedAt?: number;
-    }>('/api/matchmaker/status', { timeoutMs: 8_000 }).then((result) => {
-      const recoveredStake = Number(result.stake ?? result.players?.[0]?.stake ?? 0);
-      if (result.status === 'searching') {
-        setCurrentTab('pvp');
-        setPvpSubMode('public');
-        setSelectedStake(recoveredStake);
-        setQueueLength(result.queueLength || 1);
-        setMatchmakingTimer(result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
-        setMatchmakingState('searching');
-        return;
-      }
-      if (result.status === 'expired') {
-        setCurrentTab('pvp');
-        setPvpSubMode('public');
-        setMatchmakingState('idle');
-        setPublicQueueError(result.message || 'Previous matchmaking attempt expired. You can join again.');
-        return;
-      }
-      if (result.status === 'ready' && result.matchId) {
-        if (openingPublicMatchRef.current === result.matchId) return;
-        openingPublicMatchRef.current = result.matchId;
-        localStorage.setItem('redoapp_active_match', JSON.stringify({
-          matchId: result.matchId,
-          mode: result.mode || 'pvp',
-          stake: recoveredStake,
-          currentUserId,
-          players: result.players || [],
-          createdAt: Date.now(),
-        }));
-        setMatchmakingState('success');
-        onStartGame(result.mode || 'pvp', recoveredStake);
-      }
-    }).catch(() => undefined);
+    getPublicQueueStatusViaScript()
+      .catch(() => getPublicQueueStatusViaBridge())
+      .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 }))
+      .then((result) => {
+        const recoveredStake = Number(result.stake ?? result.players?.[0]?.stake ?? 0);
+        if (result.status === 'searching') {
+          setCurrentTab('pvp');
+          setPvpSubMode('public');
+          setSelectedStake(recoveredStake);
+          setQueueLength(result.queueLength || 1);
+          setMatchmakingTimer(result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
+          setMatchmakingState('searching');
+          return;
+        }
+        if (result.status === 'expired') {
+          setCurrentTab('pvp');
+          setPvpSubMode('public');
+          setMatchmakingState('idle');
+          setPublicQueueError(result.message || 'Previous matchmaking attempt expired. You can join again.');
+          return;
+        }
+        if (result.status === 'ready' && result.matchId) {
+          if (openingPublicMatchRef.current === result.matchId) return;
+          openingPublicMatchRef.current = result.matchId;
+          localStorage.setItem('redoapp_active_match', JSON.stringify({
+            matchId: result.matchId,
+            mode: result.mode || 'pvp',
+            stake: recoveredStake,
+            currentUserId,
+            players: result.players || [],
+            createdAt: Date.now(),
+          }));
+          setMatchmakingState('success');
+          onStartGame(result.mode || 'pvp', recoveredStake);
+        }
+      }).catch(() => undefined);
   }, [authReady, matchmakingState, activeProfile?.activeMatch, currentUserId, onStartGame]);
 
   const fetchFullProfile = () => {
@@ -2225,15 +2248,7 @@ export function Web3Dashboard({
     const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
     queueStreamRef.current = stream;
 
-    const handleQueueStatus = (result: {
-      status: 'idle' | 'searching' | 'ready' | 'expired';
-      queueLength?: number;
-      countdownSec?: number;
-      matchId?: string;
-      players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-      message?: string;
-      failedAt?: number;
-    }) => {
+    const handleQueueStatus = (result: PublicQueueStatus) => {
       if (disposed) return;
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
@@ -2242,19 +2257,20 @@ export function Web3Dashboard({
       }
       if (result.status === 'ready' && result.matchId) {
         if (openingPublicMatchRef.current === result.matchId) return;
+        const matchedStake = Number(result.stake ?? result.players?.find((player) => player.userId === currentUserId)?.stake ?? selectedStake);
         publicJoinAttemptRef.current += 1;
         openingPublicMatchRef.current = result.matchId;
         setQueueLength(result.players?.length || 1);
         localStorage.setItem('redoapp_active_match', JSON.stringify({
           matchId: result.matchId,
           mode: 'pvp',
-          stake: selectedStake,
+          stake: matchedStake,
           currentUserId,
           players: result.players || [],
           createdAt: Date.now(),
         }));
         setMatchmakingState('success');
-        onStartGame('pvp', selectedStake);
+        onStartGame('pvp', matchedStake);
       }
       if (result.status === 'expired') {
         // Ignore a stored failure from an older attempt if its status request
@@ -2291,15 +2307,16 @@ export function Web3Dashboard({
     const requestQueueStatus = () => {
       if (statusRequestInFlight || disposed) return;
       statusRequestInFlight = true;
-      getPublicQueueStatusViaBridge().catch(() => apiRequest<{
-        status: 'idle' | 'searching' | 'ready' | 'expired';
-        queueLength?: number;
-        countdownSec?: number;
-        matchId?: string;
-        players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-        message?: string;
-        failedAt?: number;
-      }>('/api/matchmaker/status', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 }))
+      // Script callbacks are not subject to CORS/preflight and continue to
+      // navigate reliably in iOS Telegram even when EventSource is suspended.
+      // The iframe and authenticated fetch remain independent fallbacks.
+      getPublicQueueStatusViaScript()
+        .catch(() => getPublicQueueStatusViaBridge())
+        .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
+          timeoutMs: 8_000,
+          retryOnNetworkError: true,
+          networkAttempts: 2,
+        }))
         .then(handleQueueStatus)
         .catch(() => undefined)
         .finally(() => {
@@ -3610,18 +3627,13 @@ export function Web3Dashboard({
                               // Ask the authoritative status endpoint before
                               // showing a false "connection interrupted" error.
                               try {
-                                const recovered = await apiRequest<{
-                                  status: 'idle' | 'searching' | 'ready' | 'expired';
-                                  queueLength?: number;
-                                  countdownSec?: number;
-                                  matchId?: string;
-                                  players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-                                  message?: string;
-                                }>('/api/matchmaker/status', {
-                                  timeoutMs: 12_000,
-                                  retryOnNetworkError: true,
-                                  networkAttempts: 2,
-                                });
+                                const recovered = await getPublicQueueStatusViaScript()
+                                  .catch(() => getPublicQueueStatusViaBridge())
+                                  .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
+                                    timeoutMs: 12_000,
+                                    retryOnNetworkError: true,
+                                    networkAttempts: 2,
+                                  }));
                                 if (publicJoinAttemptRef.current !== joinAttempt) return;
                                 if (recovered.status === 'searching') {
                                   setQueueLength(recovered.queueLength || 1);
@@ -3694,7 +3706,7 @@ export function Web3Dashboard({
                                 // The direct request keeps retrying and its existing
                                 // recovery path reports a failure if both routes fail.
                               });
-                            }, 4_000);
+                            }, 1_000);
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >

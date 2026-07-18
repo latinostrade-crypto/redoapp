@@ -55,7 +55,18 @@ function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: G
       reject(new Error('Match state bridge timed out.'));
     }, 12_000);
     iframe.setAttribute('aria-hidden', 'true');
-    iframe.style.display = 'none';
+    // iOS WKWebView may defer navigation for display:none frames until the
+    // next visibility/layout event. Keep the bridge rendered offscreen so the
+    // first authoritative table state arrives without a manual page reload.
+    iframe.tabIndex = -1;
+    iframe.style.position = 'fixed';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.left = '-10000px';
+    iframe.style.top = '0';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    iframe.style.border = '0';
     iframe.src = url.toString();
     iframe.addEventListener('error', () => {
       cleanup();

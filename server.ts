@@ -3578,6 +3578,7 @@ function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
@@ -3587,6 +3588,18 @@ function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<
 
 function sendMatchmakerStatusSuccess(req: Request, res: Response, payload: object) {
   const input = req.query as Record<string, unknown>;
+  if (input.responseMode === 'script') {
+    const callback = typeof input.callback === 'string' ? input.callback : '';
+    if (!/^__redoappQueue_[A-Za-z0-9_]+$/.test(callback)) {
+      return res.status(400).json({ error: 'Invalid matchmaking callback.' });
+    }
+    const serializedPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.type('application/javascript').send(
+      `window[${JSON.stringify(callback)}](${serializedPayload});`
+    );
+  }
   if (input.responseMode === 'iframe') {
     const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
       ? input.parentOrigin
@@ -3597,6 +3610,7 @@ function sendMatchmakerStatusSuccess(req: Request, res: Response, payload: objec
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
@@ -4414,6 +4428,7 @@ function sendMatchStateSuccess(req: Request, res: Response, payload: Record<stri
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
