@@ -104,6 +104,15 @@ export default function App() {
   const isHumanTurn = !isWaitingForPlayers && currentActivePlayer?.id === 'player';
   const connectedPlayerCount = gameState.players.filter((player) => player.isConnected !== false).length;
   const totalMatchPlayerCount = gameState.players.length;
+  const isRemoteTableHydrating =
+    (gameMode === 'pvp' || gameMode === 'private')
+    && gameState.phase !== 'setup'
+    && gameState.phase !== 'game_over'
+    && (
+      gameState.players.length < 2
+      || !gameState.players.some((player) => player.id === 'player')
+      || gameState.discardPile.length === 0
+    );
   const [connectionTimeLeft, setConnectionTimeLeft] = useState(60);
   const [isLeavingUnstartedMatch, setIsLeavingUnstartedMatch] = useState(false);
   const hasWaitingPrivatePlayers = gameMode === 'private'
@@ -479,7 +488,7 @@ export default function App() {
       gameState.phase === 'setup' ? 'min-h-screen justify-start overflow-y-auto pb-8 sm:pb-12' : 'h-screen max-h-screen justify-start overflow-hidden'
     }`}>
       
-      {showLoadingScreen && (
+      {(showLoadingScreen || isRemoteTableHydrating) && (
         <LoadingScreen />
       )}
       {/* Pixelated grid background in setup mode */}

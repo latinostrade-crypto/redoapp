@@ -127,6 +127,57 @@ function fetchRemoteMatchStateViaSameOriginBridge(matchId: string): Promise<{ ga
   });
 }
 
+async function fetchRemoteMatchStateViaSameOriginJson(
+  matchId: string,
+  timeoutMs = 6_000,
+): Promise<{ gameState: GameState }> {
+  const params = new URLSearchParams({
+    requestId: `same-origin-json-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  });
+  const sessionToken = getSessionToken();
+  const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
+  if (sessionToken) params.set('sessionToken', sessionToken);
+  else if (telegramInitData) params.set('telegramInitData', telegramInitData);
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // This endpoint is rewritten by the static frontend to the backend. It is
+    // deliberately same-origin and header-free: iOS/iMe can suspend the
+    // credentialed cross-origin request and hidden iframe navigation, while a
+    // finite same-origin JSON response completes normally.
+    const response = await fetch(
+      `/match-api/match-state/${encodeURIComponent(matchId)}?${params.toString()}`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      },
+    );
+    const payload = await response.json() as { gameState?: GameState; error?: string };
+    if (!response.ok) {
+      throw new Error(`${payload.error || 'Match state request failed.'} [${response.status} match-state]`);
+    }
+    if (!payload.gameState) {
+      throw new Error('Match state response is incomplete.');
+    }
+    return payload as { gameState: GameState };
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function isCompleteRemoteTableState(gameState: GameState) {
+  return gameState.phase === 'game_over'
+    || (
+      gameState.players.length >= 2
+      && gameState.players.some((player) => player.id === 'player')
+      && gameState.discardPile.length > 0
+    );
+}
+
 const INITIAL_STATS: GameStats = {
   gamesPlayed: 0,
   gamesWon: 0,
@@ -262,24 +313,31 @@ export function useUnoGame() {
       remoteMatchIdRef.current = activeMatch.matchId;
       remoteUserIdRef.current = activeMatch.currentUserId;
       // Telegram WebViews can indefinitely hold a credentialed CORS request
-      // before it reaches the backend. The iframe route has no preflight and
-      // is therefore the primary match-connection path; direct fetch remains
-      // a fallback for browsers that block embedded frames.
+      // or a hidden iframe before either reaches the backend. Production uses
+      // a finite, same-origin JSON response first and retains both bridge
+      // transports as recovery paths for older clients.
       let result: { gameState: GameState };
       try {
         const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
         result = isLocalHost
           ? await fetchRemoteMatchStateViaBridge(activeMatch.matchId)
-          : await fetchRemoteMatchStateViaSameOriginBridge(activeMatch.matchId);
+          : await fetchRemoteMatchStateViaSameOriginJson(activeMatch.matchId);
       } catch {
         try {
-          result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
+          result = await fetchRemoteMatchStateViaSameOriginBridge(activeMatch.matchId);
         } catch {
-          result = await apiRequest<{ gameState: GameState }>(
-            `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
-            { timeoutMs: 8_000 },
-          );
+          try {
+            result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
+          } catch {
+            result = await apiRequest<{ gameState: GameState }>(
+              `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
+              { timeoutMs: 8_000 },
+            );
+          }
         }
+      }
+      if (!isCompleteRemoteTableState(result.gameState)) {
+        throw new Error('Match table is not ready yet.');
       }
       setGameState(result.gameState);
       setRemoteSessionActive(true);
