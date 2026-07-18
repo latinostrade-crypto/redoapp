@@ -28,6 +28,7 @@ export interface Player {
   name: string;
   avatar: AvatarId;
   hand: UnoCardType[];
+  handCount?: number;
   isAi: boolean;
   unoDeclared: boolean;
   // Emotion indicator to make the game hilarious and cartoonish!
@@ -48,7 +49,9 @@ export interface GameLog {
 
 export interface GameState {
   deck: UnoCardType[];
+  deckCount?: number;
   discardPile: UnoCardType[];
+  discardCount?: number;
   players: Player[];
   currentPlayerIndex: number;
   direction: 1 | -1; // 1 is clockwise (increasing index), -1 is counter-clockwise

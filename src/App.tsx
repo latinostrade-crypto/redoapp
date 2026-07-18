@@ -56,6 +56,8 @@ export default function App() {
   const getDisplayName = (p: any) => {
     return p.name;
   };
+  const getHandCount = (player: any) => Number(player?.handCount ?? player?.hand?.length ?? 0);
+  const getDiscardCount = (state: any) => Number(state?.discardCount ?? state?.discardPile?.length ?? 0);
 
   // Level Progression Calculation
   const playerXp = stats.xp || 0;
@@ -378,7 +380,7 @@ export default function App() {
     const current = gameState;
 
     // Detect Played Card
-    if (current.discardPile && prev.discardPile && current.discardPile.length > prev.discardPile.length) {
+    if (current.discardPile && prev.discardPile && getDiscardCount(current) > getDiscardCount(prev)) {
       const playedCard = current.discardPile[current.discardPile.length - 1];
       const activePlayerIndex = prev.currentPlayerIndex;
       const activePlayer = prev.players[activePlayerIndex];
@@ -432,7 +434,7 @@ export default function App() {
     if (current.players && prev.players) {
       current.players.forEach((currPlayer: any) => {
         const prevPlayer = prev.players.find((p: any) => p.id === currPlayer.id);
-        if (prevPlayer && currPlayer.hand && prevPlayer.hand && currPlayer.hand.length > prevPlayer.hand.length) {
+        if (prevPlayer && currPlayer.hand && prevPlayer.hand && getHandCount(currPlayer) > getHandCount(prevPlayer)) {
           const newlyDrawnCard = currPlayer.hand[currPlayer.hand.length - 1];
           
           let endX = 50;
@@ -749,7 +751,7 @@ export default function App() {
                   <div className="bg-black text-white px-2 py-0.5 border border-black text-[9px] font-mono flex items-center gap-1.5 shadow-[2px_2px_0_#000] max-w-[170px] truncate">
                     <span className="truncate">{getDisplayName(pandaPlayer)}</span>
                     <span className="bg-[#ff4b4b] text-black px-1 border border-black text-[8px] font-black">
-                      🎴 {pandaPlayer.hand.length}
+                      🎴 {getHandCount(pandaPlayer)}
                     </span>
                     {isOffline && (
                       <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse">🔌 OFF</span>
@@ -783,7 +785,7 @@ export default function App() {
                     
                     <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000] max-w-[85px] truncate">
                       <span className="max-w-[80px] truncate text-center">{getDisplayName(leftPlayer)}</span>
-                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {leftPlayer.hand.length} CARDS</span>
+                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {getHandCount(leftPlayer)} CARDS</span>
                       {isOffline && (
                         <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">🔌 OFF</span>
                       )}
@@ -863,7 +865,7 @@ export default function App() {
                     </button>
                   </div>
                   <span className="text-[8px] min-[370px]:text-[9px] font-mono font-bold text-slate-450 bg-black px-1.5 border border-black/40">
-                    {gameState.deck.length} REM
+                    {gameState.deckCount ?? gameState.deck.length} REM
                   </span>
                 </div>
 
@@ -926,7 +928,7 @@ export default function App() {
                     
                     <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000] max-w-[85px] truncate">
                       <span className="max-w-[80px] truncate text-center">{getDisplayName(rightPlayer)}</span>
-                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {rightPlayer.hand.length} CARDS</span>
+                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {getHandCount(rightPlayer)} CARDS</span>
                       {isOffline && (
                         <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">🔌 OFF</span>
                       )}

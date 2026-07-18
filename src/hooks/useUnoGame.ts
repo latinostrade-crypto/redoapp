@@ -472,6 +472,9 @@ export function useUnoGame() {
       remoteMatchStreamLastEventAtRef.current = Date.now();
       setGameState(payload.gameState);
     });
+    stream.addEventListener('heartbeat', () => {
+      remoteMatchStreamLastEventAtRef.current = Date.now();
+    });
 
     stream.addEventListener('match-cancelled', () => {
       stream.close();
@@ -503,9 +506,9 @@ export function useUnoGame() {
     };
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
-  // SSE is preferred for instant moves. Only fall back to bridge polling when
-  // Telegram has actually cut the stream; unconditional full-state polling
-  // was needlessly re-rendering the table while a player was tapping cards.
+  // SSE is preferred for instant moves. A full perspective includes every
+  // hand, card and recent log, so fallback polling must stay sparse and only
+  // run after a genuinely stale stream.
   useEffect(() => {
     if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || gameState.phase === 'game_over') {
       return;
@@ -513,7 +516,7 @@ export function useUnoGame() {
     let syncing = false;
     const refresh = () => {
       const streamIsFresh = remoteMatchStreamLastEventAtRef.current > 0
-        && Date.now() - remoteMatchStreamLastEventAtRef.current < 6_000;
+        && Date.now() - remoteMatchStreamLastEventAtRef.current < 25_000;
       if (streamIsFresh) return;
       if (syncing) return;
       syncing = true;
@@ -521,7 +524,7 @@ export function useUnoGame() {
         syncing = false;
       });
     };
-    const timer = window.setInterval(refresh, 1_500);
+    const timer = window.setInterval(refresh, 5_000);
     return () => window.clearInterval(timer);
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 

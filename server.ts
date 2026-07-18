@@ -427,6 +427,13 @@ const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
+const lastSsePayloadByResponse = new WeakMap<Response, Map<string, string>>();
+const realtimeTraffic = {
+  framesSent: 0,
+  framesDeduplicated: 0,
+  payloadBytesSent: 0,
+  heartbeatsSent: 0,
+};
 const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
 const referralStatsByInviter = new Map<string, ReferralStats>();
 const referralPayouts = new Map<string, ReferralPayoutRecord>();
@@ -2322,7 +2329,7 @@ const ticketingService = createTicketingService({
   schedulePersist,
   withdrawalRequests,
 }, {
-  backgroundRecheckIntervalMs: 15_000,
+  backgroundRecheckIntervalMs: 60_000,
   depositIntentTtlMs: 15 * 60 * 1000,
   enableChainVerification: ENABLE_CHAIN_VERIFICATION,
   marketingWallet: MARKETING_WALLET,
@@ -2476,20 +2483,14 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
     const sourcePlayer = match.gameState.players[originalIndex];
     const localId = offset === 0 ? 'player' : `ai${offset}` as 'ai1' | 'ai2' | 'ai3';
     const revealFullHand = match.gameState.phase === 'game_over';
-    const visibleHand = offset === 0 || revealFullHand
-      ? sourcePlayer.hand
-      : sourcePlayer.hand.map((card, cardIndex) => ({
-          id: `${sourcePlayer.userId}-hidden-${cardIndex}`,
-          color: 'wild' as CardColor,
-          value: 'wild' as CardValue,
-          score: 0,
-        }));
+    const visibleHand = offset === 0 || revealFullHand ? sourcePlayer.hand : [];
 
     return {
       id: localId,
       name: sourcePlayer.username,
       avatar: sourcePlayer.avatarId,
       hand: visibleHand,
+      handCount: sourcePlayer.hand.length,
       isAi: sourcePlayer.isAi,
       unoDeclared: sourcePlayer.unoDeclared,
       emotion: sourcePlayer.emotion,
@@ -2511,13 +2512,10 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
     mode: match.mode,
     stake: match.stake,
     gameState: {
-      deck: match.gameState.deck.map((card, index) => ({
-        id: `deck-${index}`,
-        color: 'wild' as CardColor,
-        value: 'wild' as CardValue,
-        score: 0,
-      })),
-      discardPile: match.gameState.discardPile,
+      deck: [],
+      deckCount: match.gameState.deck.length,
+      discardPile: match.gameState.discardPile.slice(-1),
+      discardCount: match.gameState.discardPile.length,
       players: rotatedPlayers,
       currentPlayerIndex,
       direction: match.gameState.direction,
@@ -2525,7 +2523,9 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       activeValue: match.gameState.activeValue,
       phase: match.gameState.phase,
       winnerId: localWinnerId,
-      logs: match.gameState.logs,
+      // The table does not render the full server audit trail. Keep a short
+      // reconnect context while the authoritative match retains all 50 logs.
+      logs: match.gameState.logs.slice(0, 10),
       drawCountAccumulator: 0,
       unoShoutCooldown: {},
       dealerId: 'ai1',
@@ -3001,9 +3001,22 @@ function runMatchmakingTick() {
   }
 }
 
-function sendSse(response: Response, event: string, payload: unknown) {
+function sendSse(response: Response, event: string, payload: unknown, dedupe = true) {
+  if (response.writableEnded || response.destroyed) return false;
+  const serializedPayload = JSON.stringify(payload);
+  const eventPayloads = lastSsePayloadByResponse.get(response) || new Map<string, string>();
+  if (dedupe && eventPayloads.get(event) === serializedPayload) {
+    realtimeTraffic.framesDeduplicated += 1;
+    return false;
+  }
+  eventPayloads.set(event, serializedPayload);
+  lastSsePayloadByResponse.set(response, eventPayloads);
   response.write(`event: ${event}\n`);
-  response.write(`data: ${JSON.stringify(payload)}\n\n`);
+  response.write(`data: ${serializedPayload}\n\n`);
+  realtimeTraffic.framesSent += 1;
+  realtimeTraffic.payloadBytesSent += Buffer.byteLength(serializedPayload);
+  if (event === 'heartbeat') realtimeTraffic.heartbeatsSent += 1;
+  return true;
 }
 
 function subscribeToChannel(store: Map<string, Set<Response>>, key: string, response: Response) {
@@ -3157,6 +3170,12 @@ function buildOperationalHealthStatus() {
     referralPayoutAudit: {
       total: referralPayouts.size,
       pending: Array.from(referralPayouts.values()).filter((payout) => payout.status === 'pending').length,
+    },
+    realtimeTraffic: {
+      ...realtimeTraffic,
+      queueSubscribers: Array.from(queueSubscribers.values()).reduce((total, entries) => total + entries.size, 0),
+      privateRoomSubscribers: Array.from(privateRoomSubscribers.values()).reduce((total, entries) => total + entries.size, 0),
+      matchSubscribers: Array.from(matchSubscribers.values()).reduce((total, entries) => total + entries.size, 0),
     },
   };
 }
@@ -3621,7 +3640,7 @@ app.post('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
   if (!request) return res.status(404).send('Withdrawal request not found.');
   if (request.status === 'rejected') return res.status(400).send('Withdrawal was cancelled or expired. Do not send it.');
   if (request.status === 'completed') return res.send(`Withdrawal ${request.id} is already verified on-chain.`);
-  await ticketingService.recheckPendingWithdrawals();
+  await ticketingService.recheckPendingWithdrawals(0);
   const verifiedRequest = withdrawalRequests.get(requestId);
   if (verifiedRequest?.status !== 'completed') {
     return res.status(409).send('The matching TON transaction is not indexed yet. Wait a few seconds and retry verification.');
@@ -3992,7 +4011,7 @@ app.get('/api/matchmaker/wait-beacon', requireAuth, rateLimitMiddleware(12, 60_0
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.on('close', cleanup);
-  interval = setInterval(check, 250);
+  interval = setInterval(check, 1_000);
   timeout = setTimeout(check, waitMs);
   check();
 });
@@ -4938,9 +4957,19 @@ setInterval(() => {
 
 setInterval(() => {
   runMatchmakingTick();
-  const queuedUserIds = [...new Set(matchmakingQueue.map((player) => player.userId))];
-  queuedUserIds.forEach((userId) => broadcastQueue(userId));
 }, 1000);
+
+// Keep long-lived streams healthy with a tiny event instead of forcing clients
+// to download complete queue, room or match snapshots when nothing changed.
+setInterval(() => {
+  const responses = new Set<Response>();
+  [queueSubscribers, privateRoomSubscribers, matchSubscribers].forEach((store) => {
+    store.forEach((subscribers) => subscribers.forEach((response) => responses.add(response)));
+  });
+  responses.forEach((response) => {
+    sendSse(response, 'heartbeat', { t: Date.now() }, false);
+  });
+}, 15_000);
 
 setInterval(() => {
   const now = Date.now();

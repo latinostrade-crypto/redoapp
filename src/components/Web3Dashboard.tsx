@@ -942,7 +942,7 @@ export function Web3Dashboard({
     if (!authReady || !pendingWithdrawal) return;
     const timer = window.setInterval(() => {
       refreshPendingWithdrawal().catch(() => undefined);
-    }, 10_000);
+    }, 30_000);
     return () => window.clearInterval(timer);
   }, [authReady, pendingWithdrawal?.id, refreshPendingWithdrawal]);
 
@@ -1529,11 +1529,18 @@ export function Web3Dashboard({
   useEffect(() => {
     if (!activeProfile) return;
     refreshPendingDeposits().catch(() => undefined);
+  }, [currentUserId, activeProfile?.userId]);
+
+  useEffect(() => {
+    const hasPendingDeposit = pendingDeposits.length > 0
+      || !!readPendingDeposit()
+      || depositFlowStatus === 'waiting_chain';
+    if (!activeProfile || !hasPendingDeposit) return;
     const timer = window.setInterval(() => {
       refreshPendingDeposits().catch(() => undefined);
-    }, 15000);
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, [currentUserId, activeProfile]);
+  }, [currentUserId, activeProfile?.userId, pendingDeposits.length, depositFlowStatus]);
 
   // Auto-recover active match if server reports the player is already in one
   useEffect(() => {
@@ -2373,10 +2380,7 @@ export function Web3Dashboard({
   useEffect(() => {
     if (!publicMatchmakingActive) return;
     let disposed = false;
-    let scriptRequestInFlight = false;
-    let bridgeRequestInFlight = false;
-    let fetchRequestInFlight = false;
-    let sameOriginRequestInFlight = false;
+    let statusRequestInFlight = false;
     let lastQueueStatusAt = 0;
     queueStreamRef.current?.close();
     const stream = new EventSource(buildMatchmakerDeliveryUrl('stream'));
@@ -2426,83 +2430,30 @@ export function Web3Dashboard({
         // A malformed/replayed SSE frame must not stop the polling fallback.
       }
     });
+    stream.addEventListener('heartbeat', () => {
+      lastQueueStatusAt = Date.now();
+    });
 
     const requestQueueStatus = (force = false) => {
       if (disposed) return;
-      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 4500) return;
-      // Run every transport independently. A suspended script request in an
-      // iOS Telegram-compatible WebView must not block the rendered iframe or
-      // the regular fetch from observing that the match is already ready.
-      if (!scriptRequestInFlight) {
-        scriptRequestInFlight = true;
-        getPublicQueueStatusViaScript()
-          .then(handleQueueStatus)
-          .catch(() => undefined)
-          .finally(() => {
-            scriptRequestInFlight = false;
-          });
-      }
-      if (!sameOriginRequestInFlight) {
-        sameOriginRequestInFlight = true;
-        getPublicQueueStatusViaSameOrigin()
-          .then(handleQueueStatus)
-          .catch(() => undefined)
-          .finally(() => {
-            sameOriginRequestInFlight = false;
-          });
-      }
-      if (!bridgeRequestInFlight) {
-        bridgeRequestInFlight = true;
-        getPublicQueueStatusViaBridge()
-          .then(handleQueueStatus)
-          .catch(() => undefined)
-          .finally(() => {
-            bridgeRequestInFlight = false;
-          });
-      }
-      if (!fetchRequestInFlight) {
-        fetchRequestInFlight = true;
-        apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
+      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 12_000) return;
+      if (statusRequestInFlight) return;
+      statusRequestInFlight = true;
+      // Use one finite same-origin recovery request. Parallel script, iframe,
+      // direct-fetch and watch transports multiplied every queue check without
+      // adding new server truth.
+      getPublicQueueStatusViaSameOrigin()
+        .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
           timeoutMs: 8_000,
           retryOnNetworkError: true,
-          networkAttempts: 2,
-        })
-          .then(handleQueueStatus)
-          .catch(() => undefined)
-          .finally(() => {
-            fetchRequestInFlight = false;
-          });
-      }
+          networkAttempts: 1,
+        }))
+        .then(handleQueueStatus)
+        .catch(() => undefined)
+        .finally(() => {
+          statusRequestInFlight = false;
+        });
     };
-
-    const watchRequestId = `queue-watch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const watchParams = new URLSearchParams({
-      bridgeRequestId: watchRequestId,
-      parentOrigin: window.location.origin,
-    });
-    const watchFrame = createWebViewBridgeIframe();
-    // The persistent watch page performs its own relative same-backend
-    // EventSource/fetch calls, so keep this fallback on the backend origin.
-    // The primary status, script, iframe and stream channels above use the
-    // frontend-origin Render rewrite.
-    watchFrame.src = buildAuthenticatedUrl(`/api/matchmaker/watch?${watchParams.toString()}`);
-    const watchOrigin = new URL(watchFrame.src, window.location.origin).origin;
-    const handleWatchMessage = (event: MessageEvent) => {
-      if (event.origin !== watchOrigin || event.source !== watchFrame.contentWindow) return;
-      const data = event.data as {
-        source?: string;
-        requestId?: string;
-        payload?: PublicQueueStatus;
-      };
-      if (
-        data?.source !== 'redoapp-matchmaker-watch-bridge'
-        || data.requestId !== watchRequestId
-        || !data.payload
-      ) return;
-      handleQueueStatus(data.payload);
-    };
-    window.addEventListener('message', handleWatchMessage);
-    document.body.appendChild(watchFrame);
 
     let waitBridgeDisposed = false;
     const runWaitBridge = () => {
@@ -2524,7 +2475,7 @@ export function Web3Dashboard({
     requestQueueStatus();
     const pollTimer = window.setInterval(() => {
       requestQueueStatus();
-    }, 3000);
+    }, 12_000);
     const handleResume = () => requestQueueStatus(true);
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') requestQueueStatus(true);
@@ -2541,8 +2492,6 @@ export function Web3Dashboard({
       telegramWebApp?.offEvent?.('activated', handleResume);
       window.removeEventListener('pageshow', handleResume);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('message', handleWatchMessage);
-      watchFrame.remove();
       stream.close();
       if (queueStreamRef.current === stream) {
         queueStreamRef.current = null;
@@ -2582,12 +2531,26 @@ export function Web3Dashboard({
     privateRoomStreamRef.current?.close();
     const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
     privateRoomStreamRef.current = stream;
-
-
+    let lastRoomEventAt = 0;
+    let roomStatusRequestInFlight = false;
+    const requestRoomStatus = () => {
+      if (roomStatusRequestInFlight) return;
+      roomStatusRequestInFlight = true;
+      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode), { timeoutMs: 5000 })
+        .then(applyPrivateRoomState)
+        .catch(() => undefined)
+        .finally(() => {
+          roomStatusRequestInFlight = false;
+        });
+    };
 
     stream.addEventListener('private-room', (event) => {
+      lastRoomEventAt = Date.now();
       const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
       applyPrivateRoomState(result);
+    });
+    stream.addEventListener('heartbeat', () => {
+      lastRoomEventAt = Date.now();
     });
 
     stream.addEventListener('private-room-cancelled', () => {
@@ -2603,14 +2566,14 @@ export function Web3Dashboard({
     });
 
     stream.onerror = () => {
-      // Handled by the 3-second polling timer
+      lastRoomEventAt = 0;
+      requestRoomStatus();
     };
 
     const pollTimer = window.setInterval(() => {
-      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode), { timeoutMs: 5000 })
-        .then(applyPrivateRoomState)
-        .catch(() => undefined);
-    }, 3000);
+      if (lastRoomEventAt && Date.now() - lastRoomEventAt < 20_000) return;
+      requestRoomStatus();
+    }, 10_000);
 
     return () => {
       window.clearInterval(pollTimer);

@@ -484,17 +484,28 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       : null;
   }
 
-  async function recheckPendingWithdrawals() {
+  async function recheckPendingWithdrawals(minimumIntervalMs = 60_000) {
     reconcilePendingWithdrawals();
+    const now = Date.now();
+    const latePayoutAuditWindowMs = 48 * 60 * 60 * 1000;
     const candidates = Array.from(deps.withdrawalRequests.values()).filter((request) => (
-      (request.status === 'pending' || request.status === 'rejected') && !request.outboundMessageHash
+      (request.status === 'pending'
+        || (
+          request.status === 'rejected'
+          && now - Number(request.completedAt || request.createdAt) <= latePayoutAuditWindowMs
+        ))
+      && !request.outboundMessageHash
+      && (!request.lastChainCheckAt || now - request.lastChainCheckAt >= minimumIntervalMs)
     ));
     if (!candidates.length) return 0;
     const headers: Record<string, string> = config.tonApiKey ? { Authorization: `Bearer ${config.tonApiKey}` } : {};
     const transactionsByWallet = new Map<string, Array<Record<string, unknown>>>();
     const wallets = [...new Set(candidates.map((request) => request.walletAddress))];
     await Promise.all(wallets.map(async (walletAddress) => {
-      const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(walletAddress)}/transactions?limit=100&sort_order=desc`;
+      // A withdrawal has a unique comment and is checked from its creation
+      // time. Twenty recent transactions are sufficient for the operator flow
+      // and avoid downloading a 100-transaction wallet history every minute.
+      const requestUrl = `${config.tonApiBaseUrl.replace(/\/$/, '')}/blockchain/accounts/${encodeURIComponent(walletAddress)}/transactions?limit=20&sort_order=desc`;
       try {
         let response = await fetch(requestUrl, { headers, signal: AbortSignal.timeout(12_000) });
         if (response.status === 401 && config.tonApiKey) {
@@ -512,7 +523,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     }));
     let completedCount = 0;
     for (const request of candidates) {
-      request.lastChainCheckAt = Date.now();
+      request.lastChainCheckAt = now;
       const transactions = transactionsByWallet.get(request.walletAddress) || [];
       const transaction = transactions.find((entry) => {
         const timestamp = Number(entry.utime || entry.now || 0) * 1000;
@@ -1138,7 +1149,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (request.status === 'rejected') {
         return res.status(400).json({ error: 'Withdrawal request was already rejected.' });
       }
-      recheckPendingWithdrawals().then(() => {
+      recheckPendingWithdrawals(0).then(() => {
         if (request.status !== 'completed') {
           return res.status(409).json({ error: 'Matching on-chain withdrawal payment was not found.' });
         }

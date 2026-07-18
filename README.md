@@ -339,6 +339,28 @@ Relevant endpoints:
 - `GET /api/private-rooms/stream/:roomCode`
 - `GET /api/matches/stream/:matchId`
 
+### Traffic Budget
+
+Realtime delivery is event-driven:
+
+- queue, private-room, and match snapshots are sent only when state changes
+- a 15-second SSE heartbeat keeps Telegram WebViews connected without sending
+  a complete game snapshot
+- public matchmaking uses one SSE stream plus one finite server wait; stale
+  status recovery is sequential and no faster than every 12 seconds
+- private-room polling runs only when its SSE stream has been silent
+- live-match full-state recovery runs only when both state events and
+  heartbeats are stale
+- remote match snapshots send deck/discard/hidden-hand counts instead of
+  serializing every invisible card
+- pending deposit and withdrawal polling only runs while work is pending
+- TonAPI withdrawal reconciliation is limited to 20 recent transactions and
+  no more than once per minute in the background
+
+Run `npm run test:traffic` with the normal lint/build release checks. The guard
+fails if the high-frequency fan-out transports or full hidden-card snapshots
+are accidentally reintroduced.
+
 ## Persistence
 
 ### Supabase Mode
