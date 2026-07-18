@@ -22,6 +22,13 @@ services:
       - path: /index.html
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+    routes:
+      # Keep the read-only public-queue delivery on the Mini App origin.
+      # iMe/iOS WKWebView can suspend cross-origin status transports even
+      # after the backend has already placed the player at a table.
+      - type: rewrite
+        source: /match-api/*
+        destination: https://yoapp-backend.onrender.com/api/matchmaker/*
 
   # Web Service: Express Node Backend
   - type: web

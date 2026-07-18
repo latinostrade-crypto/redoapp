@@ -253,7 +253,7 @@ Implemented:
 - Daily energy reward.
 - Daily quests.
 - Weekly referral quest.
-- Lootbox claim after enough daily quest completion.
+- Lootbox claim only after every current-day daily quest is complete.
 - Quest rewards credited through server-side user state and ledger entries.
 
 Quest metrics:

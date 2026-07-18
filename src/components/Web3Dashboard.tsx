@@ -113,6 +113,33 @@ function buildTelegramMiniAppSchemeLink(startParam: string) {
   return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
 }
 
+function buildMatchmakerDeliveryUrl(endpoint: 'status' | 'status-beacon' | 'stream', params?: URLSearchParams) {
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const base = isLocalHost
+    ? `${API_BASE_URL}/api/matchmaker/${endpoint}`
+    : `/match-api/${endpoint}`;
+  const query = new URLSearchParams(params);
+  const sessionToken = getSessionToken();
+  const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
+  if (sessionToken) query.set('sessionToken', sessionToken);
+  else if (telegramInitData) query.set('telegramInitData', telegramInitData);
+  return query.size ? `${base}?${query.toString()}` : base;
+}
+
+async function getPublicQueueStatusViaSameOrigin(): Promise<PublicQueueStatus> {
+  const response = await fetch(buildMatchmakerDeliveryUrl('status'), {
+    method: 'GET',
+    cache: 'no-store',
+    credentials: 'same-origin',
+  });
+  const rawBody = await response.text();
+  const data = rawBody ? JSON.parse(rawBody) : null;
+  if (!response.ok) {
+    throw new Error(data?.error || `Matchmaking status failed with ${response.status}.`);
+  }
+  return data as PublicQueueStatus;
+}
+
 function createWebViewBridgeIframe() {
   const iframe = document.createElement('iframe');
   // `hidden` maps to display:none. iOS WKWebView can postpone navigation of
@@ -752,6 +779,12 @@ export function Web3Dashboard({
     setFullProfile((prev) => prev ? { ...prev, energy: nextEnergy } : prev);
   };
   const quests = fullProfile?.quests ?? [];
+  const dailyQuests = quests.filter((quest) => quest.kind === 'daily');
+  const lootboxReady = Boolean(
+    activeProfile?.lootboxAvailable
+    && dailyQuests.length > 0
+    && dailyQuests.every((quest) => quest.completed)
+  );
   const referralStats = fullProfile?.referrals;
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus' && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
@@ -1117,7 +1150,8 @@ export function Web3Dashboard({
         parentOrigin: window.location.origin,
       });
       const iframe = createWebViewBridgeIframe();
-      iframe.src = buildAuthenticatedUrl(`/api/matchmaker/status-beacon?${params.toString()}`);
+      iframe.src = buildMatchmakerDeliveryUrl('status-beacon', params);
+      const expectedOrigin = new URL(iframe.src, window.location.origin).origin;
       const timeout = window.setTimeout(() => {
         cleanup();
         reject(new Error('Public queue status bridge timed out.'));
@@ -1128,7 +1162,7 @@ export function Web3Dashboard({
         iframe.remove();
       };
       const onMessage = (event: MessageEvent) => {
-        if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
+        if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
         const data = event.data as { source?: string; requestId?: string; payload?: {
           status: 'idle' | 'searching' | 'ready' | 'expired';
           queueLength?: number;
@@ -1174,7 +1208,7 @@ export function Web3Dashboard({
         resolve(result);
       };
       script.async = true;
-      script.src = buildAuthenticatedUrl(`/api/matchmaker/status-beacon?${params.toString()}`);
+      script.src = buildMatchmakerDeliveryUrl('status-beacon', params);
       script.addEventListener('error', () => {
         cleanup();
         reject(new Error('Public queue status callback failed to load.'));
@@ -1436,7 +1470,8 @@ export function Web3Dashboard({
   // owns. Recover it before the user can submit another join request.
   useEffect(() => {
     if (!authReady || matchmakingState !== 'idle' || activeProfile?.activeMatch) return;
-    getPublicQueueStatusViaScript()
+    getPublicQueueStatusViaSameOrigin()
+      .catch(() => getPublicQueueStatusViaScript())
       .catch(() => getPublicQueueStatusViaBridge())
       .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 }))
       .then((result) => {
@@ -2247,9 +2282,10 @@ export function Web3Dashboard({
     let scriptRequestInFlight = false;
     let bridgeRequestInFlight = false;
     let fetchRequestInFlight = false;
+    let sameOriginRequestInFlight = false;
     let lastQueueStatusAt = 0;
     queueStreamRef.current?.close();
-    const stream = new EventSource(buildAuthenticatedUrl('/api/matchmaker/stream'));
+    const stream = new EventSource(buildMatchmakerDeliveryUrl('stream'));
     queueStreamRef.current = stream;
 
     const handleQueueStatus = (result: PublicQueueStatus) => {
@@ -2326,6 +2362,15 @@ export function Web3Dashboard({
             scriptRequestInFlight = false;
           });
       }
+      if (!sameOriginRequestInFlight) {
+        sameOriginRequestInFlight = true;
+        getPublicQueueStatusViaSameOrigin()
+          .then(handleQueueStatus)
+          .catch(() => undefined)
+          .finally(() => {
+            sameOriginRequestInFlight = false;
+          });
+      }
       if (!bridgeRequestInFlight) {
         bridgeRequestInFlight = true;
         getPublicQueueStatusViaBridge()
@@ -2356,9 +2401,14 @@ export function Web3Dashboard({
       parentOrigin: window.location.origin,
     });
     const watchFrame = createWebViewBridgeIframe();
+    // The persistent watch page performs its own relative same-backend
+    // EventSource/fetch calls, so keep this fallback on the backend origin.
+    // The primary status, script, iframe and stream channels above use the
+    // frontend-origin Render rewrite.
     watchFrame.src = buildAuthenticatedUrl(`/api/matchmaker/watch?${watchParams.toString()}`);
+    const watchOrigin = new URL(watchFrame.src, window.location.origin).origin;
     const handleWatchMessage = (event: MessageEvent) => {
-      if (event.origin !== new URL(API_BASE_URL).origin || event.source !== watchFrame.contentWindow) return;
+      if (event.origin !== watchOrigin || event.source !== watchFrame.contentWindow) return;
       const data = event.data as {
         source?: string;
         requestId?: string;
@@ -2881,7 +2931,7 @@ export function Web3Dashboard({
                   </div>
                   )}
                   
-                  {activeProfile?.lootboxAvailable && (
+                  {lootboxReady && (
                     <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 font-mono animate-pulse-soft">
                       <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -3695,7 +3745,8 @@ export function Web3Dashboard({
                               // Ask the authoritative status endpoint before
                               // showing a false "connection interrupted" error.
                               try {
-                                const recovered = await getPublicQueueStatusViaScript()
+                                const recovered = await getPublicQueueStatusViaSameOrigin()
+                                  .catch(() => getPublicQueueStatusViaScript())
                                   .catch(() => getPublicQueueStatusViaBridge())
                                   .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
                                     timeoutMs: 12_000,

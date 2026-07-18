@@ -1310,21 +1310,30 @@ function getEnergyState(user: UserState) {
   };
 }
 
+function getDailyQuestCompletion(userId: string, now = Date.now()) {
+  const todayStart = getStartOfUtcDay(now);
+  const dailyQuests = QUEST_DEFINITIONS.filter((quest) => quest.kind === 'daily');
+  const progressList = getQuestProgress(userId);
+  const completed = dailyQuests.filter((quest) => {
+    const progress = progressList.find((entry) => entry.questId === quest.id);
+    return !!progress
+      && getStartOfUtcDay(progress.updatedAt) === todayStart
+      && progress.progress >= quest.target;
+  }).length;
+  return {
+    completed,
+    total: dailyQuests.length,
+    allCompleted: dailyQuests.length > 0 && completed === dailyQuests.length,
+  };
+}
+
 function isLootboxAvailable(user: UserState): boolean {
   const now = Date.now();
   const todayStart = getStartOfUtcDay(now);
   if (user.lootboxClaimedAt && getStartOfUtcDay(user.lootboxClaimedAt) === todayStart) {
     return false;
   }
-  const progressList = getQuestProgress(user.userId);
-  let completedDailyQuestsCount = 0;
-  for (const quest of QUEST_DEFINITIONS.filter(q => q.kind === 'daily')) {
-    const prog = progressList.find(p => p.questId === quest.id);
-    if (prog && getStartOfUtcDay(prog.updatedAt) === todayStart && prog.progress >= quest.target) {
-      completedDailyQuestsCount++;
-    }
-  }
-  return completedDailyQuestsCount >= 3;
+  return getDailyQuestCompletion(user.userId, now).allCompleted;
 }
 
 function buildBootstrapProfileResponse(user: UserState) {
@@ -1522,9 +1531,19 @@ function updateQuestProgress(userId: string, metric: QuestDefinition['metric'], 
 function claimCompletedQuests(user: UserState) {
   const progressList = getQuestProgress(user.userId);
   const claimed: string[] = [];
+  const now = Date.now();
   for (const quest of QUEST_DEFINITIONS) {
     const progress = progressList.find((entry) => entry.questId === quest.id);
-    if (!progress || progress.claimed || progress.progress < quest.target) {
+    const currentBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
+    const progressBoundary = progress
+      ? (quest.kind === 'daily' ? getStartOfUtcDay(progress.updatedAt) : getStartOfUtcWeek(progress.updatedAt))
+      : null;
+    if (
+      !progress
+      || progressBoundary !== currentBoundary
+      || progress.claimed
+      || progress.progress < quest.target
+    ) {
       continue;
     }
     progress.claimed = true;
@@ -3463,17 +3482,11 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
     });
   }
 
-  const progressList = getQuestProgress(user.userId);
-  let completedDailyQuestsCount = 0;
-  for (const quest of QUEST_DEFINITIONS.filter(q => q.kind === 'daily')) {
-    const prog = progressList.find(p => p.questId === quest.id);
-    if (prog && getStartOfUtcDay(prog.updatedAt) === todayStart && prog.progress >= quest.target) {
-      completedDailyQuestsCount++;
-    }
-  }
-
-  if (completedDailyQuestsCount < 3) {
-    return res.status(400).json({ error: `You need to complete at least 3 daily quests. Currently completed: ${completedDailyQuestsCount}` });
+  const dailyQuestCompletion = getDailyQuestCompletion(user.userId, now);
+  if (!dailyQuestCompletion.allCompleted) {
+    return res.status(400).json({
+      error: `Complete all daily quests before opening the chest. Currently completed: ${dailyQuestCompletion.completed}/${dailyQuestCompletion.total}.`,
+    });
   }
 
   const roll = Math.random();
