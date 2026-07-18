@@ -4923,11 +4923,24 @@ setInterval(() => {
   }
 }, 3600000); // 1 hour
 
-if (process.env.NODE_ENV === 'production' && (!process.env.TELEGRAM_BOT_TOKEN || process.env.APP_SESSION_SECRET === 'local-dev-session-secret')) {
-  console.warn('[Warning] Insecure secrets detected in production environment!');
+function assertProductionBootstrapConfiguration() {
+  if (process.env.NODE_ENV !== 'production') return;
+  const missing = [
+    ['TELEGRAM_BOT_TOKEN', TELEGRAM_BOT_TOKEN],
+    ['APP_SESSION_SECRET', APP_SESSION_SECRET],
+    ['ADMIN_API_KEY', ADMIN_API_KEY],
+    ['TON_API_KEY', TON_API_KEY],
+  ]
+    .filter(([, value]) => !value || value === 'local-dev-session-secret')
+    .map(([key]) => key);
+
+  if (missing.length > 0) {
+    throw new Error(`Missing or insecure production configuration: ${missing.join(', ')}`);
+  }
 }
 
 async function bootstrap() {
+  assertProductionBootstrapConfiguration();
   // Render's local filesystem is ephemeral. Starting production without the
   // managed Supabase store would make referral links, balances and payouts
   // disappear on a cold restart, so fail fast instead of accepting money.

@@ -521,8 +521,9 @@ Backend service:
 
 - type: web
 - runtime: Node
-- build command: `npm install`
+- build command: `npm ci`
 - start command: `npm run start`
+- health-check path: `/api/health`
 - `TELEGRAM_BOT_TOKEN` must be configured
 - `APP_SESSION_SECRET` should be configured
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` should be configured for production persistence
@@ -531,6 +532,9 @@ Operational notes:
 
 - The backend must remain a single non-sleeping instance until live state,
   timers, queues, and SSE fan-out are externalized.
+- Authenticated match and private-room actions are rate-limited per player,
+  not by a shared mobile or Render-edge IP. Expired in-process rate-limit keys
+  are pruned periodically.
 - Configure production log retention, error alerts, uptime checks, and a
   rollback path to the immediately preceding successful deploy.
 - Keep a separate staging environment with its own bot, wallets, Supabase
