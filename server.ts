@@ -104,17 +104,34 @@ app.use(compression({
 }));
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-function rateLimitMiddleware(limit: number, windowMs: number, scope = 'ip') {
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+let rateLimitLastCleanupAt = 0;
+
+function pruneExpiredRateLimits(now: number) {
+  if (now - rateLimitLastCleanupAt < RATE_LIMIT_CLEANUP_INTERVAL_MS) return;
+  rateLimitLastCleanupAt = now;
+  for (const [key, entry] of rateLimitMap) {
+    if (now >= entry.resetAt) rateLimitMap.delete(key);
+  }
+}
+
+type RateLimitScope = 'ip' | 'user';
+
+function rateLimitMiddleware(limit: number, windowMs: number, scope: RateLimitScope = 'ip') {
   return (req: Request, res: Response, next: NextFunction) => {
     const authenticatedUserId = (req as AuthenticatedRequest).authUserId;
-    // Ticket endpoints are authenticated. Limiting them by a shared mobile/NAT
-    // IP made one user's recovery polling block every other user on Telegram.
-    const subject = scope === 'user' && authenticatedUserId ? authenticatedUserId : (req.ip || 'global');
+    // Authenticated Telegram/session requests must not share a budget because
+    // mobile networks and Render's edge can put many players behind one IP.
+    // Unauthenticated traffic deliberately remains IP-scoped.
+    const subject = scope === 'user' && authenticatedUserId
+      ? `user:${authenticatedUserId}`
+      : `ip:${req.ip || 'global'}`;
     // Keep independent endpoint budgets. Read-side ticket polling must never
     // consume the budget for a user-initiated deposit or withdrawal.
     const routeKey = `${req.method}:${req.baseUrl}${req.path}`;
     const key = `${scope}:${subject}:${routeKey}`;
     const now = Date.now();
+    pruneExpiredRateLimits(now);
     const client = rateLimitMap.get(key);
     if (!client || now > client.resetAt) {
       rateLimitMap.set(key, { count: 1, resetAt: now + windowMs });
@@ -3752,11 +3769,11 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   });
 }
 
-app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000), handleMatchmakerJoin);
+app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handleMatchmakerJoin);
 // Telegram WebViews can leave a cross-origin JSON POST pending indefinitely.
 // This idempotent iframe route avoids the preflight and reports the canonical
 // queue state to the parent window, just like private-room creation does.
-app.get('/api/matchmaker/join-beacon', requireAuth, rateLimitMiddleware(10, 60000), handleMatchmakerJoin);
+app.get('/api/matchmaker/join-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handleMatchmakerJoin);
 
 app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
@@ -4037,12 +4054,12 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   });
 }
 
-app.post('/api/private-rooms/create', optionalAuth, rateLimitMiddleware(10, 60000), handlePrivateRoomCreate);
-app.get('/api/private-rooms/create-beacon', optionalAuth, handlePrivateRoomCreate);
+app.post('/api/private-rooms/create', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
+app.get('/api/private-rooms/create-beacon', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
 
 const joinFailuresMap = new Map<string, { count: number; lockedUntil: number }>();
 
-app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000), (req: AuthenticatedRequest, res) => {
+app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), (req: AuthenticatedRequest, res) => {
   const { roomCode, username, avatarId, walletAddress } = req.body as {
     roomCode: string;
     userId?: string;
@@ -4055,7 +4072,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000)
     return res.status(400).json({ error: 'Missing private room user id.' });
   }
 
-  const lockoutKey = req.ip || userId || 'global';
+  const lockoutKey = req.authUserId ? `user:${req.authUserId}` : `ip:${req.ip || userId || 'global'}`;
   const failure = joinFailuresMap.get(lockoutKey);
   if (failure && Date.now() < failure.lockedUntil) {
     return res.status(403).json({ error: 'Too many failed attempts. Try again later.' });
