@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
 import {
@@ -163,6 +164,40 @@ function claimDailyCheckinViaBridge(payload: { claimId: string; walletAddress: s
     }, { once: true });
     window.addEventListener('message', onMessage);
     document.body.appendChild(iframe);
+  });
+}
+
+function claimDailyCheckinViaScript(payload: { claimId: string; walletAddress: string | null }) {
+  return new Promise<DailyCheckinResponse>((resolve, reject) => {
+    const callbackName = `__redoappDaily_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const params = new URLSearchParams({
+      claimId: payload.claimId,
+      walletAddress: payload.walletAddress || '',
+      responseMode: 'script',
+      callback: callbackName,
+    });
+    const script = document.createElement('script');
+    let timeoutId = 0;
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      delete (window as any)[callbackName];
+      script.remove();
+    };
+    (window as any)[callbackName] = (result: DailyCheckinResponse) => {
+      cleanup();
+      resolve(result);
+    };
+    script.async = true;
+    script.src = buildAuthenticatedUrl(`/api/xp/daily-checkin-beacon?${params.toString()}`);
+    script.addEventListener('error', () => {
+      cleanup();
+      reject(new Error('Daily check-in script callback failed to load.'));
+    }, { once: true });
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Daily check-in script callback timed out.'));
+    }, 8_000);
+    document.head.appendChild(script);
   });
 }
 
@@ -444,9 +479,10 @@ export function Web3Dashboard({
   const [referralInvitesLoading, setReferralInvitesLoading] = useState(false);
   const [referralInvitesError, setReferralInvitesError] = useState('');
   const [isClaimingDaily, setIsClaimingDaily] = useState(false);
-  const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>(() => (
-    profile && getSessionToken() ? 'ready' : 'idle'
-  ));
+  // Cached profile data can render immediately, but authenticated mutations
+  // must wait for /users/sync to refresh the two-hour session token. Otherwise
+  // a user reopening the Mini App can tap CLAIM with an expired cached token.
+  const [bootstrapState, setBootstrapState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [bootstrapError, setBootstrapError] = useState('');
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [apiTrace, setApiTrace] = useState<ApiTraceDetail | null>(null);
@@ -1552,15 +1588,21 @@ export function Web3Dashboard({
       : `daily-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     try {
       const requestPayload = { claimId, walletAddress: rawAddress || null };
-      // Use three idempotent transports with the same claim id. The simple
-      // GET is normally fastest; iframe and JSON POST recover WebView-specific
-      // failures without ever crediting the reward twice.
-      const simpleGetRequest = claimDailyCheckinViaSimpleGet(requestPayload);
+      // A cross-origin script callback is primary because Telegram iOS can
+      // defer both fetch completion and iframe postMessage until another UI
+      // event. All fallbacks use the same idempotent claim id.
+      const scriptRequest = claimDailyCheckinViaScript(requestPayload);
+      let simpleGetFallbackTimer = 0;
+      const simpleGetFallback = new Promise<DailyCheckinResponse>((resolve, reject) => {
+        simpleGetFallbackTimer = window.setTimeout(() => {
+          claimDailyCheckinViaSimpleGet(requestPayload).then(resolve, reject);
+        }, 700);
+      });
       let bridgeFallbackTimer = 0;
       const bridgeFallback = new Promise<DailyCheckinResponse>((resolve, reject) => {
         bridgeFallbackTimer = window.setTimeout(() => {
           claimDailyCheckinViaBridge(requestPayload).then(resolve, reject);
-        }, 600);
+        }, 1_400);
       });
       let directFallbackTimer = 0;
       const directFallback = new Promise<DailyCheckinResponse>((resolve, reject) => {
@@ -1574,16 +1616,14 @@ export function Web3Dashboard({
           }).then(resolve, reject);
         }, 2_000);
       });
-      const result = await Promise.any([simpleGetRequest, bridgeFallback, directFallback]).finally(() => {
+      const result = await Promise.any([scriptRequest, simpleGetFallback, bridgeFallback, directFallback]).finally(() => {
+        window.clearTimeout(simpleGetFallbackTimer);
         window.clearTimeout(bridgeFallbackTimer);
         window.clearTimeout(directFallbackTimer);
       });
       if (!result.success && !result.alreadyClaimed) {
         throw new Error('Daily check-in was not accepted. Please retry.');
       }
-      setDailyXpClaimedToday(true);
-      setDailyClaimStatus('success');
-      setDailyClaimMessage(result.success ? `Day ${result.streak} reward received.` : 'Already claimed today.');
       const claimedAt = result.claimedAt ?? result.lastDailyXpAt ?? Date.now();
       setProfile((previous) => previous ? {
         ...previous,
@@ -1602,11 +1642,20 @@ export function Web3Dashboard({
       
       if (result.success) {
         sound.playVictory();
-        setDailyReward({
-          streak: result.streak || 1,
-          xp: result.xpAwarded,
-          tickets: result.rewardTickets,
-          energy: result.rewardEnergy,
+        // Commit the modal to the DOM in the same callback task. This avoids
+        // WKWebView waiting for a tab click before painting React's batched
+        // async updates.
+        flushSync(() => {
+          setDailyXpClaimedToday(true);
+          setDailyClaimStatus('success');
+          setDailyClaimMessage(`Day ${result.streak} reward received.`);
+          setDailyReward({
+            streak: result.streak || 1,
+            xp: result.xpAwarded,
+            tickets: result.rewardTickets,
+            energy: result.rewardEnergy,
+          });
+          setIsClaimingDaily(false);
         });
         const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
         const newTx = {
@@ -1619,6 +1668,13 @@ export function Web3Dashboard({
         setTransactions((previous) => previous.some((entry) => entry.id === newTx.id)
           ? previous
           : [newTx, ...previous].slice(0, 10));
+      } else {
+        flushSync(() => {
+          setDailyXpClaimedToday(true);
+          setDailyClaimStatus('success');
+          setDailyClaimMessage('Already claimed today.');
+          setIsClaimingDaily(false);
+        });
       }
       
       if (result.energy) {

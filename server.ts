@@ -3108,6 +3108,18 @@ function buildDailyCheckinResponse(user: UserState, checkin: DailyCheckinRecord,
 
 function sendDailyCheckinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  if (input?.responseMode === 'script') {
+    const callback = typeof input.callback === 'string' ? input.callback : '';
+    if (!/^__redoappDaily_[A-Za-z0-9_]+$/.test(callback)) {
+      return res.status(400).json({ error: 'Invalid daily check-in callback.' });
+    }
+    const serializedPayload = JSON.stringify(payload).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.type('application/javascript').send(
+      `window[${JSON.stringify(callback)}](${serializedPayload});`
+    );
+  }
   if (input?.responseMode === 'iframe') {
     const parentOrigin = typeof input.parentOrigin === 'string' && /^https:\/\/[^/]+$/i.test(input.parentOrigin)
       ? input.parentOrigin
