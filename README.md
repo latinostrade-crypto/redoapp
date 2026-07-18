@@ -28,6 +28,30 @@ Redoapp is a stake-based Telegram Mini App UNO-style card game. The app combines
 - Persistence: Supabase service-role JSON state rows, with local `data/runtime-state.json` fallback.
 - Deployment target: Render static frontend plus Render web backend.
 
+## Production Status and Operating Envelope
+
+The current build is a strong MVP: practice, private rooms, public PVP, wallet
+flows, referrals, and live match recovery are implemented. `npm run lint` and
+`npm run build` pass in this repository.
+
+The deployed topology is currently:
+
+- frontend: `https://redoapp.onrender.com`
+- backend: `https://yoapp-backend.onrender.com`
+- TON Connect manifest: `https://redoapp.onrender.com/tonconnect-manifest.json`
+
+The app is ready for a small, monitored closed beta after the launch gates
+below are completed. It is **not yet ready to scale horizontally**: active
+queues, SSE subscribers, match timers, withdrawal-action tokens, and rate-limit
+counters live in the Node process. Run one non-sleeping backend instance while
+this is true. Before adding a second instance, move this coordination state to
+a shared durable store and add pub/sub for realtime events.
+
+`1,000 users` should be planned as a staged target, not as a switch. A single
+well-instrumented instance can support a small beta and 1,000 registered users
+if concurrent play is modest; it must be load-tested with realistic concurrent
+matches before making any promise about 1,000 simultaneous users.
+
 ## Core Modes
 
 ### Practice
@@ -284,6 +308,20 @@ Important security rule:
 
 - user identifiers from the client are not trusted when Telegram `initData` or session auth can determine the canonical user.
 
+Production requirements:
+
+- Require valid Telegram `initData` for every production account bootstrap;
+  retain guest identities only for local development.
+- Set a dedicated, high-entropy `APP_SESSION_SECRET`. The backend must refuse
+  to start in production when it is absent.
+- Set `TELEGRAM_INITDATA_MAX_AGE_SEC` to a short replay window (recommendation:
+  5–15 minutes), then rely on the two-hour signed session for an open game.
+- Keep bearer/session credentials out of URLs. The current SSE and iframe
+  recovery paths use query parameters because Telegram WebViews can block
+  preflighted requests; replace them with short-lived, single-use stream/bridge
+  tokens and redact the legacy parameter names in every proxy and application
+  log until then.
+
 ## Realtime
 
 The backend uses Server-Sent Events for:
@@ -332,6 +370,21 @@ data/runtime-state.json
 ```
 
 This survives normal restarts, but it is not a replacement for a managed external database in production.
+
+### Production Data Rules
+
+- Production must use the active Supabase project and a service-role key stored
+  only in Render secrets; never put it in frontend variables or a committed
+  file.
+- Take automated daily backups and rehearse a restore to a separate project
+  before admitting paid users. Keep a dated export of the ticket ledger and
+  referral-payout audit.
+- `app_state` is currently a JSONB persistence envelope, not a normalized
+  transactional ledger. For the next scale step, migrate balances, ledger
+  entries, matches, deposits, withdrawals, referrals, and notification outbox
+  records to separate tables with unique constraints and explicit ownership.
+- Do not use the local JSON fallback for production balances, tickets, or
+  payouts.
 
 ## Important Files
 
@@ -411,6 +464,28 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - `REFERRAL_CACHE_TTL_SEC` optional, default `30` (range: 5-300)
 - `REDIS_CACHE_NAMESPACE` optional, default `redoapp:v1`
 
+### Required Production Configuration
+
+Before enabling deposits, withdrawals, or ticket-stake PVP, verify all of the
+following in the deployed Render environment (not only in `.env.example`):
+
+- `NODE_ENV=production`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` point
+  to the same active Supabase project.
+- `APP_SESSION_SECRET`, `ADMIN_API_KEY`, `TELEGRAM_BOT_TOKEN`, and `TON_API_KEY`
+  are present, unique secrets managed by Render.
+- `ENABLE_CHAIN_VERIFICATION=true` and `TON_VERIFICATION_MODE=tonapi`. The app
+  must fail closed if TON verification is unavailable; never credit tickets
+  from a client-supplied signed BOC alone.
+- `MARKETING_WALLET` and `WITHDRAWAL_SENDER_WALLET` are reviewed, funded,
+  operator-controlled wallets on the intended network.
+- `BACKEND_PUBLIC_URL`, `VITE_API_BASE_URL`, BotFather Main App URL, and the
+  TonConnect manifest use the canonical production URLs above.
+- The service is non-sleeping and has enough memory/CPU for the tested load;
+  free-tier cold starts are not suitable for paid live matches.
+- A shared, expiring production rate-limit store is configured before running
+  more than one backend instance. The current in-process limiter does not
+  coordinate instances.
+
 ## Telegram Setup
 
 BotFather should be configured so that:
@@ -418,6 +493,9 @@ BotFather should be configured so that:
 - Main App is enabled.
 - Main App points to the deployed frontend URL.
 - Direct Link exists for the configured app short name, currently `app`.
+- The production domain, terms of use, and privacy-policy URLs are real public
+  pages. The TonConnect manifest currently points both legal links at the app
+  root; replace those placeholders before public launch.
 
 Valid examples:
 
@@ -446,6 +524,16 @@ Backend service:
 - `TELEGRAM_BOT_TOKEN` must be configured
 - `APP_SESSION_SECRET` should be configured
 - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` should be configured for production persistence
+
+Operational notes:
+
+- The backend must remain a single non-sleeping instance until live state,
+  timers, queues, and SSE fan-out are externalized.
+- Configure production log retention, error alerts, uptime checks, and a
+  rollback path to the immediately preceding successful deploy.
+- Keep a separate staging environment with its own bot, wallets, Supabase
+  project, and secrets. Do not test deposits or withdrawals against production
+  balances.
 
 Canonical production frontend URL:
 
@@ -498,6 +586,48 @@ Current known build note:
 
 - Vite warns that the main JS chunk is larger than `500 kB`; this is a bundle optimization task, not a functional failure.
 
+### Release Gate
+
+Run the automated checks on every release:
+
+```bash
+npm run lint
+npm run build
+```
+
+Before deploying a paid-production release, run the same environment through:
+
+```bash
+npm run check:production-config
+```
+
+The command never prints secret values. It verifies the required production
+secrets, HTTPS endpoints, strict TON verification, and a 1–15 minute Telegram
+`initData` replay window.
+
+Then run a manual Telegram acceptance test on Android and iOS using real launch
+links:
+
+1. Main app opens, respects the Telegram viewport, and has no obscured buttons.
+2. Fresh Telegram account syncs once and receives the correct referral or room
+   `startapp` parameter.
+3. Practice works without wallet or backend dependency.
+4. Two, three, and four-player public and private matches survive a reload,
+   reconnect, and an abandoned player; tickets and energy are charged once.
+5. A real deposit is credited only after its matching TON transaction is
+   finalized; a duplicate BOC/transaction is rejected.
+6. A withdrawal is visible to the operator, its on-chain payment is verified,
+   and cancellation/refund is idempotent.
+7. An account cannot read another account's profile, ledger, room, queue, or
+   match state by changing a URL, body field, or stream parameter.
+8. Supabase persistence is verified after a controlled backend restart.
+
+Automate these flows before opening the beta beyond trusted testers. Prioritize
+server tests for ticket ledger invariants, deposit uniqueness, settlement,
+referral payout, withdrawal state transitions, and auth/authorization; add a
+small Telegram-browser E2E smoke suite for launch, wallet return, room links,
+and reconnect.
+
 ## Completed
 
 - Offline gameplay.
@@ -520,11 +650,50 @@ Current known build note:
 
 ## Still Remaining
 
-- Automated on-chain withdrawal execution.
-- Stronger reconnect recovery and UX around abandoned rooms.
-- Automated tests for settlement, referrals, wallet flows, and persistence load.
-- Bundle size optimization.
-- Backend modularization beyond `server.ts`.
+### Block paid public launch until these are closed
+
+1. Enforce a short Telegram `initData` replay window and fail startup without a
+   dedicated session secret.
+2. Remove long-lived bearer credentials from query strings; use expiring,
+   single-use stream/bridge tokens instead.
+3. Restrict CORS to the production frontend and the specifically required
+   Telegram WebView cases. It currently reflects arbitrary request origins.
+4. Move withdrawal operator-action tokens out of process or replace them with
+   an authenticated operator workflow. In-memory tokens disappear on a backend
+   restart; operator links must be short-lived, one-time, and auditable.
+5. Publish real Terms of Use, Privacy Policy, support contact, and age/market
+   eligibility information. Obtain legal review for every jurisdiction in
+   which stake-based play, deposits, or withdrawals will be offered.
+6. Add alerting, durable backups plus a tested restore procedure, and a
+   documented incident/rollback runbook.
+7. Complete automated authorization, settlement, deposit, withdrawal,
+   referral, and persistence tests.
+
+### Required before horizontal scale or high concurrency
+
+- Replace process-local matches, queues, timers, rate limits, SSE subscriber
+  tracking, and operator tokens with shared infrastructure (for example Redis
+  plus a durable job/outbox system), then add pub/sub for cross-instance SSE.
+- Normalize financial and game entities from JSONB state rows into transactional
+  tables with idempotency keys, unique constraints, and auditable state
+  transitions.
+- Load-test the production-sized backend with realistic long-lived SSE
+  connections, reconnects, and concurrent game actions. Record p50/p95 latency,
+  error rate, memory, CPU, and Supabase/TON API failure behaviour.
+- Split the large client bundle and measure first playable time on mid-range
+  Android Telegram clients.
+
+### Recommended rollout to the first 1,000 users
+
+| Phase | Audience | What must be true to advance |
+| --- | --- | --- |
+| Internal | 10–20 trusted accounts | Every money and reconnect case is manually reconciled; no unresolved ledger discrepancy. |
+| Closed beta | 50–100 invited accounts | Daily monitoring, support channel, backups, and rollback have been exercised. Paid flows stay capped. |
+| Public beta | 250–300 accounts | Automated critical-path tests, alerts, and a successful load test are in place. Review abuse, support volume, and retention weekly. |
+| First 1,000 | Gradual invitations | Shared-state/concurrency plan is proven or traffic is held to the tested single-instance envelope; operational owner is on call for payments and incidents. |
+
+Keep kill switches for deposits, withdrawals, paid PVP, referrals, and new-room
+creation so a problem can be contained without taking practice mode offline.
 
 ## Documentation Workflow
 
