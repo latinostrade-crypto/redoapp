@@ -670,6 +670,7 @@ export function Web3Dashboard({
   const [privateJoinCode, setPrivateJoinCode] = useState(() => initialLaunchRoomCodeRef.current);
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomCreateState, setPrivateRoomCreateState] = useState<'idle' | 'creating' | 'waiting' | 'error'>('idle');
+  const [privateRoomCanceling, setPrivateRoomCanceling] = useState(false);
   const [privateRoomError, setPrivateRoomError] = useState('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
@@ -1261,6 +1262,50 @@ export function Web3Dashboard({
         .then(finishCreate)
         .catch(failCreate);
     }, 9000);
+  };
+
+  const cancelWaitingPrivateRoom = async () => {
+    if (privateRoomCanceling || !privateRoomCode) return;
+    setPrivateRoomCanceling(true);
+    setPrivateRoomError('');
+    try {
+      const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+      let matchId = '';
+      try {
+        matchId = activeMatchRaw ? String(JSON.parse(activeMatchRaw)?.matchId || '') : '';
+      } catch {
+        matchId = '';
+      }
+      await apiRequest('/api/matches/leave-unstarted', {
+        method: 'POST',
+        timeoutMs: 12_000,
+        retryOnNetworkError: true,
+        networkAttempts: 1,
+        body: JSON.stringify({ matchId, roomCode: privateRoomCode }),
+      });
+      privateRoomStreamRef.current?.close();
+      privateRoomStreamRef.current = null;
+      localStorage.removeItem('redoapp_active_match');
+      recoveredActiveMatchRef.current = '';
+      setGeneratedLink('');
+      setPrivateRoomCode('');
+      setPrivateJoinCode('');
+      setPrivateRoomPlayersCount(0);
+      setPrivateRoomStatus('idle');
+      setPrivateRoomCreateState('idle');
+      const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000 }).catch(() => null);
+      if (me) {
+        const normalized = normalizeProfile(me);
+        setProfile(normalized);
+        setFullProfile(normalized);
+        setGoldenTickets(me.availableTickets);
+        setHeldTickets(me.heldTickets);
+      }
+    } catch (error) {
+      setPrivateRoomError(error instanceof Error ? error.message : 'Could not cancel the waiting room.');
+    } finally {
+      setPrivateRoomCanceling(false);
+    }
   };
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
@@ -2312,6 +2357,18 @@ export function Web3Dashboard({
     stream.addEventListener('private-room', (event) => {
       const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
       applyPrivateRoomState(result);
+    });
+
+    stream.addEventListener('private-room-cancelled', () => {
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
+      setGeneratedLink('');
+      setPrivateRoomCode('');
+      setPrivateJoinCode('');
+      setPrivateRoomPlayersCount(0);
+      setPrivateRoomStatus('idle');
+      setPrivateRoomCreateState('idle');
+      setPrivateRoomError('The waiting room was cancelled.');
     });
 
     stream.onerror = () => {
@@ -3991,6 +4048,16 @@ export function Web3Dashboard({
                           <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
                             Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</span>
                           </div>
+                          {privateRoomStatus === 'waiting' && (
+                            <button
+                              type="button"
+                              onClick={cancelWaitingPrivateRoom}
+                              disabled={privateRoomCanceling}
+                              className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive disabled:opacity-60 disabled:cursor-wait"
+                            >
+                              {privateRoomCanceling ? 'Cancelling...' : 'Cancel Room & Leave'}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>

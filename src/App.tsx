@@ -105,6 +105,9 @@ export default function App() {
   const connectedPlayerCount = gameState.players.filter((player) => player.isConnected !== false).length;
   const totalMatchPlayerCount = gameState.players.length;
   const [connectionTimeLeft, setConnectionTimeLeft] = useState(60);
+  const [isLeavingUnstartedMatch, setIsLeavingUnstartedMatch] = useState(false);
+  const hasWaitingPrivatePlayers = gameMode === 'private'
+    && gameState.players.some((player) => player.name === 'Waiting...');
 
   useEffect(() => {
     if (!isWaitingForPlayers || !gameState.connectionDeadlineAt) return;
@@ -113,6 +116,40 @@ export default function App() {
     const timer = window.setInterval(update, 500);
     return () => window.clearInterval(timer);
   }, [isWaitingForPlayers, gameState.connectionDeadlineAt]);
+
+  const leaveUnstartedMatch = useCallback(async () => {
+    if (isLeavingUnstartedMatch) return;
+    const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+    let activeMatch: { matchId?: string; roomCode?: string } = {};
+    try {
+      activeMatch = activeMatchRaw ? JSON.parse(activeMatchRaw) : {};
+    } catch {
+      activeMatch = {};
+    }
+
+    setIsLeavingUnstartedMatch(true);
+    try {
+      await apiRequest('/api/matches/leave-unstarted', {
+        method: 'POST',
+        timeoutMs: 12_000,
+        retryOnNetworkError: true,
+        networkAttempts: 1,
+        body: JSON.stringify({
+          matchId: activeMatch.matchId || '',
+          roomCode: activeMatch.roomCode || '',
+        }),
+      });
+      // Cached profiles can still contain the just-cancelled activeMatch and
+      // otherwise reopen it before the fresh bootstrap response arrives.
+      localStorage.removeItem('redoapp_profile_cache');
+      localStorage.removeItem('redoapp_full_profile_cache');
+      returnToLobby();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not leave the waiting room. Please retry.');
+    } finally {
+      setIsLeavingUnstartedMatch(false);
+    }
+  }, [isLeavingUnstartedMatch, returnToLobby]);
 
   // Calculate playable check for human hand
   const checkPlayable = (card: any) => {
@@ -468,10 +505,14 @@ export default function App() {
           {/* Global Controls */}
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
+              onClick={async () => {
                 sound.playPop();
                 if (gameState.phase === 'game_over') {
                   returnToLobby();
+                  return;
+                }
+                if (hasWaitingPrivatePlayers || isWaitingForPlayers) {
+                  await leaveUnstartedMatch();
                   return;
                 }
                 if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
@@ -668,6 +709,14 @@ export default function App() {
                   className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border-2 border-black cursor-pointer shadow-[3px_3px_0_#000] hover:translate-y-0.5 hover:shadow-[1px_1px_0_#000] transition-all"
                 >
                   Invite Friend ➔
+                </button>
+                <button
+                  type="button"
+                  onClick={leaveUnstartedMatch}
+                  disabled={isLeavingUnstartedMatch}
+                  className="w-full py-2 bg-[#ff4b4b] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border-2 border-black cursor-pointer shadow-[3px_3px_0_#000] disabled:opacity-60 disabled:cursor-wait"
+                >
+                  {isLeavingUnstartedMatch ? 'Leaving...' : 'Leave & Cancel Room'}
                 </button>
               </div>
             </div>

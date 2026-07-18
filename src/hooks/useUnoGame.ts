@@ -347,6 +347,23 @@ export function useUnoGame() {
       setGameState(payload.gameState);
     });
 
+    stream.addEventListener('match-cancelled', () => {
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
+      remoteMatchIdRef.current = null;
+      remoteUserIdRef.current = null;
+      setRemoteSessionActive(false);
+      setGameMode('offline');
+      setActiveStake(0);
+      setGameState((previous) => ({
+        ...previous,
+        phase: 'setup',
+        players: [],
+        winnerId: null,
+        logs: [],
+      }));
+    });
+
     stream.onerror = () => {
       remoteMatchStreamLastEventAtRef.current = 0;
       syncRemoteMatchState().catch(() => undefined);

@@ -2596,22 +2596,25 @@ function applyPassAction(match: ActiveMatch, userId: string) {
 
 function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[], stake: number) {
   const createdAt = Date.now();
-  const waitsForPublicPlayers = mode === 'pvp';
+  const waitsForPrivatePlayers = mode === 'private'
+    && players.some((player) => player.userId.startsWith('waiting_for_player_'));
+  const waitsForPlayers = mode === 'pvp' || waitsForPrivatePlayers;
   const activeMatch: ActiveMatch = {
     matchId,
     mode,
     stake,
     players,
     createdAt,
-    connectionDeadlineAt: waitsForPublicPlayers ? createdAt + 60_000 : undefined,
-    playStartedAt: waitsForPublicPlayers ? null : createdAt,
-    costsCommitted: mode === 'private' || players.every((player) => player.costsCommitted !== false),
+    connectionDeadlineAt: mode === 'pvp' ? createdAt + 60_000 : undefined,
+    playStartedAt: waitsForPlayers ? null : createdAt,
+    costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
     gameState: createInitialMatchState(players),
   };
-  activeMatch.gameState.turnStartedAt = waitsForPublicPlayers ? undefined : createdAt;
+  activeMatch.gameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
   activeMatches.set(matchId, activeMatch);
   players.forEach((queuedPlayer) => {
+    if (queuedPlayer.userId.startsWith('waiting_for_player_')) return;
     const user = getUser(queuedPlayer.userId);
     user.matchmakingFailureAt = null;
     user.matchmakingFailureReason = null;
@@ -2963,6 +2966,75 @@ function broadcastPrivateRoom(roomCode: string) {
   if (!room || !subscribers) return;
   const payload = buildPrivateRoomPayload(room);
   subscribers.forEach((response) => sendSse(response, 'private-room', payload));
+}
+
+function broadcastMatchCancelled(matchId: string, reason: string) {
+  const subscribers = matchSubscribers.get(matchId);
+  if (!subscribers) return;
+  subscribers.forEach((response) => {
+    sendSse(response, 'match-cancelled', { matchId, reason });
+    response.end();
+  });
+  matchSubscribers.delete(matchId);
+}
+
+function privateRoomHasOpenSeats(room: PrivateRoom) {
+  const match = room.matchId ? activeMatches.get(room.matchId) : null;
+  return room.players.length < room.targetPlayers
+    || Boolean(match?.players.some((player) => player.userId.startsWith('waiting_for_player_')));
+}
+
+function refundPrivateRoomReservation(player: QueuePlayer, roomCode: string, reason: string) {
+  if (!player.costsCommitted) return;
+  const user = getUser(player.userId);
+  if (player.stake > 0) {
+    user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
+    user.availableTickets = round2(user.availableTickets + player.stake);
+    createLedgerEntry(user, {
+      id: `private-room-refund:${roomCode}:${player.userId}`,
+      event: reason,
+      value: `+${player.stake.toFixed(2)} TKT`,
+      type: 'stake_release',
+      amount: player.stake,
+    });
+    rewardEnergy(
+      user,
+      1,
+      'Private Room Energy Refund',
+      `private-room-energy-refund:${roomCode}:${player.userId}`,
+    );
+  }
+  player.costsCommitted = false;
+  schedulePersist({ userId: player.userId });
+}
+
+function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
+  const entries = players
+    .filter((player) => player.costsCommitted !== true)
+    .map((player) => ({ player, user: getUser(player.userId) }));
+  for (const { user } of entries) {
+    recalculateEnergy(user);
+    if (room.stake > 0 && (user.availableTickets < room.stake || user.energy < 1)) {
+      return false;
+    }
+  }
+  for (const { player, user } of entries) {
+    if (room.stake > 0) {
+      spendEnergy(user, 1, 'Private Room Energy');
+      updateQuestProgress(user.userId, 'spend_energy', 1);
+      user.availableTickets = round2(user.availableTickets - room.stake);
+      user.heldTickets = round2(user.heldTickets + room.stake);
+      createLedgerEntry(user, {
+        event: 'Private Room Hold',
+        value: `-${room.stake.toFixed(2)} TKT`,
+        type: 'stake_hold',
+        amount: -room.stake,
+      });
+    }
+    player.costsCommitted = true;
+    schedulePersist({ userId: user.userId });
+  }
+  return true;
 }
 
 function broadcastMatch(matchId: string) {
@@ -3763,6 +3835,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     stake: stakeAmount,
     mode: 'private',
     joinedAt: Date.now(),
+    costsCommitted: false,
   };
   const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
     room.hostUserId === userId &&
@@ -3782,11 +3855,11 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       schedulePersist({ roomCode: normalizedRequestedCode, deleteRoomCode: oldRoomCode });
     }
 
-    // Upgrade legacy waiting status to started and provision match with placeholders
+    // Upgrade legacy rooms by provisioning an unstarted match with placeholders.
     if (!existingWaitingRoom.matchId) {
       const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       existingWaitingRoom.matchId = matchId;
-      existingWaitingRoom.status = 'started';
+      existingWaitingRoom.status = 'waiting';
       
       const matchPlayers: QueuePlayer[] = [hostPlayer];
       for (let i = 1; i < targetPlayersCount; i++) {
@@ -3797,6 +3870,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
           stake: stakeAmount,
           mode: 'private',
           joinedAt: Date.now(),
+          costsCommitted: false,
         });
       }
       activateMatch(matchId, 'private', matchPlayers, stakeAmount);
@@ -3809,7 +3883,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
       stake: existingWaitingRoom.stake,
       targetPlayers: existingWaitingRoom.targetPlayers,
-      status: 'started',
+      status: existingWaitingRoom.status,
       matchId: existingWaitingRoom.matchId,
       playersCount: existingWaitingRoom.players.length,
       availableTickets: existingUser.availableTickets,
@@ -3843,24 +3917,9 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   if (user.availableTickets < stakeAmount) {
     return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
   }
-  if (stakeAmount > 0) {
-    try {
-      spendEnergy(user, 1, 'Private Room Energy');
-      updateQuestProgress(user.userId, 'spend_energy', 1);
-    } catch (error) {
-      return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
-    }
-  }
-
-  if (stakeAmount > 0) {
-    user.availableTickets = round2(user.availableTickets - stakeAmount);
-    user.heldTickets = round2(user.heldTickets + stakeAmount);
-    createLedgerEntry(user, {
-      event: 'Private Room Hold',
-      value: `-${stakeAmount.toFixed(2)} TKT`,
-      type: 'stake_hold',
-      amount: -stakeAmount,
-    });
+  recalculateEnergy(user);
+  if (stakeAmount > 0 && user.energy < 1) {
+    return res.status(400).json({ error: 'Not enough energy.' });
   }
 
 
@@ -3887,6 +3946,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       stake: stakeAmount,
       mode: 'private',
       joinedAt: Date.now(),
+      costsCommitted: false,
     });
   }
 
@@ -3900,7 +3960,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     hostUserId: userId,
     players: [hostPlayer],
     createdAt: Date.now(),
-    status: 'started',
+    status: 'waiting',
     matchId,
   });
   schedulePersist({ roomCode });
@@ -3912,7 +3972,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
-    status: 'started',
+    status: 'waiting',
     matchId,
     playersCount: 1,
     availableTickets: user.availableTickets,
@@ -3985,27 +4045,12 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000)
   }
 
   const user = getUser(userId, walletAddress);
-  if (room.stake > 0) {
-    try {
-      spendEnergy(user, 1, 'Private Room Energy');
-      updateQuestProgress(user.userId, 'spend_energy', 1);
-    } catch (error) {
-      return res.status(400).json({ error: error instanceof Error ? error.message : 'Energy spend failed.' });
-    }
-  }
   if (user.availableTickets < room.stake) {
     return res.status(400).json({ error: 'Insufficient available tickets for this private room.' });
   }
-
-  if (room.stake > 0) {
-    user.availableTickets = round2(user.availableTickets - room.stake);
-    user.heldTickets = round2(user.heldTickets + room.stake);
-    createLedgerEntry(user, {
-      event: 'Private Room Hold',
-      value: `-${room.stake.toFixed(2)} TKT`,
-      type: 'stake_hold',
-      amount: -room.stake,
-    });
+  recalculateEnergy(user);
+  if (room.stake > 0 && user.energy < 1) {
+    return res.status(400).json({ error: 'Not enough energy.' });
   }
 
   const newPlayer: QueuePlayer = {
@@ -4015,7 +4060,21 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000)
     stake: room.stake,
     mode: 'private',
     joinedAt: Date.now(),
+    costsCommitted: false,
   };
+
+  const completesRoom = room.players.length + 1 >= room.targetPlayers;
+  if (match?.costsCommitted) {
+    // Rooms created before deferred private-room charging already reserved
+    // their existing players. Mark only those historical entries as paid so
+    // completing the room cannot debit them a second time.
+    room.players.forEach((player) => {
+      if (player.costsCommitted === undefined) player.costsCommitted = true;
+    });
+  }
+  if (completesRoom && !commitPrivateRoomCosts(room, [...room.players, newPlayer])) {
+    return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
+  }
 
   room.players.push(newPlayer);
 
@@ -4038,7 +4097,11 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000)
 
       const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
       if (!anyLeft) {
-        match.gameState.turnStartedAt = Date.now();
+        const startedAt = Date.now();
+        room.status = 'started';
+        match.costsCommitted = true;
+        match.playStartedAt = startedAt;
+        match.gameState.turnStartedAt = startedAt;
       }
     }
   }
@@ -4063,6 +4126,123 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000)
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
   });
+});
+
+app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const requestedMatchId = typeof req.body?.matchId === 'string' ? req.body.matchId : '';
+  const requestedRoomCode = typeof req.body?.roomCode === 'string'
+    ? req.body.roomCode.trim().toUpperCase()
+    : '';
+  const mappedMatchId = activeMatchByUser.get(userId) || '';
+  const matchId = requestedMatchId || mappedMatchId;
+  const match = matchId ? activeMatches.get(matchId) : null;
+  const room = requestedRoomCode
+    ? privateRooms.get(requestedRoomCode)
+    : Array.from(privateRooms.values()).find((candidate) => candidate.matchId === matchId);
+
+  if (!match && !room) {
+    activeMatchByUser.delete(userId);
+    return res.json({ success: true, alreadyLeft: true });
+  }
+
+  if (room) {
+    const roomMatch = room.matchId ? activeMatches.get(room.matchId) : match;
+    if (!privateRoomHasOpenSeats(room)) {
+      return res.status(409).json({ error: 'The private match has already started and cannot be cancelled.' });
+    }
+    const leavingPlayer = room.players.find((player) => player.userId === userId);
+    if (!leavingPlayer) {
+      activeMatchByUser.delete(userId);
+      return res.json({ success: true, alreadyLeft: true });
+    }
+    if (roomMatch?.costsCommitted) {
+      room.players.forEach((player) => {
+        if (player.costsCommitted === undefined) player.costsCommitted = true;
+      });
+    }
+
+    if (room.hostUserId === userId) {
+      room.players.forEach((player) => {
+        refundPrivateRoomReservation(player, room.roomCode, 'Private Room Cancel Refund');
+        if (activeMatchByUser.get(player.userId) === room.matchId) {
+          activeMatchByUser.delete(player.userId);
+        }
+      });
+      const subscribers = privateRoomSubscribers.get(room.roomCode);
+      subscribers?.forEach((response) => {
+        sendSse(response, 'private-room-cancelled', {
+          roomCode: room.roomCode,
+          reason: 'The host cancelled the room.',
+        });
+        response.end();
+      });
+      privateRoomSubscribers.delete(room.roomCode);
+      if (room.matchId) {
+        broadcastMatchCancelled(room.matchId, 'The host cancelled the room.');
+        activeMatches.delete(room.matchId);
+      }
+      privateRooms.delete(room.roomCode);
+      schedulePersist({
+        deleteRoomCode: room.roomCode,
+        deleteMatchId: room.matchId,
+      });
+      await persistStateNow();
+      return res.json({ success: true, cancelled: true });
+    }
+
+    refundPrivateRoomReservation(leavingPlayer, room.roomCode, 'Private Room Leave Refund');
+    room.players = room.players.filter((player) => player.userId !== userId);
+    activeMatchByUser.delete(userId);
+    if (roomMatch) {
+      const playerIndex = roomMatch.players.findIndex((player) => player.userId === userId);
+      if (playerIndex >= 0) {
+        const placeholderUserId = `waiting_for_player_${playerIndex}_${Date.now()}`;
+        roomMatch.players[playerIndex] = {
+          userId: placeholderUserId,
+          username: 'Waiting...',
+          avatarId: 'koala',
+          stake: room.stake,
+          mode: 'private',
+          joinedAt: Date.now(),
+          costsCommitted: false,
+        };
+        const statePlayer = roomMatch.gameState.players.find((player) => player.userId === userId);
+        if (statePlayer) {
+          statePlayer.userId = placeholderUserId;
+          statePlayer.username = 'Waiting...';
+          statePlayer.avatarId = 'koala';
+        }
+        roomMatch.playStartedAt = null;
+        roomMatch.gameState.turnStartedAt = undefined;
+        roomMatch.costsCommitted = false;
+        room.status = 'waiting';
+      }
+    }
+    schedulePersist({ roomCode: room.roomCode, matchId: room.matchId });
+    broadcastPrivateRoom(room.roomCode);
+    if (room.matchId) broadcastMatch(room.matchId);
+    await persistStateNow();
+    return res.json({ success: true, left: true });
+  }
+
+  if (match?.mode === 'pvp') {
+    if (!match.players.some((player) => player.userId === userId)) {
+      return res.status(403).json({ error: 'You are not a participant in this match.' });
+    }
+    ensureMatchLifecycle(match);
+    if (match.playStartedAt) {
+      return res.status(409).json({ error: 'The public match has already started and cannot be cancelled.' });
+    }
+    match.players.forEach((player) => activeMatchByUser.delete(player.userId));
+    broadcastMatchCancelled(match.matchId, 'A player left before the match started.');
+    activeMatches.delete(match.matchId);
+    schedulePersist({ deleteMatchId: match.matchId });
+    await persistStateNow();
+    return res.json({ success: true, cancelled: true });
+  }
+
+  return res.status(409).json({ error: 'This match has already started and cannot be cancelled.' });
 });
 
 app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
@@ -4134,22 +4314,30 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
               const timer = setTimeout(() => {
                 const roomToDisband = privateRooms.get(roomCode);
                 if (roomToDisband && roomToDisband.status === 'waiting') {
+                  const matchToCancel = roomToDisband.matchId
+                    ? activeMatches.get(roomToDisband.matchId)
+                    : null;
+                  if (matchToCancel?.costsCommitted) {
+                    roomToDisband.players.forEach((player) => {
+                      if (player.costsCommitted === undefined) player.costsCommitted = true;
+                    });
+                  }
                   roomToDisband.players.forEach(p => {
-                    if (p.stake > 0) {
-                      const user = getUser(p.userId);
-                      user.heldTickets = round2(user.heldTickets - p.stake);
-                      user.availableTickets = round2(user.availableTickets + p.stake);
-                      createLedgerEntry(user, {
-                        event: 'Private Room Host Leave Release',
-                        value: `+${p.stake.toFixed(2)} TKT`,
-                        type: 'stake_release',
-                        amount: p.stake,
-                      });
+                    refundPrivateRoomReservation(p, roomCode, 'Private Room Host Leave Release');
+                    if (activeMatchByUser.get(p.userId) === roomToDisband.matchId) {
+                      activeMatchByUser.delete(p.userId);
                     }
                   });
+                  if (roomToDisband.matchId) {
+                    broadcastMatchCancelled(roomToDisband.matchId, 'The waiting room expired.');
+                    activeMatches.delete(roomToDisband.matchId);
+                  }
                   privateRooms.delete(roomCode);
                   privateRoomCleanupTimers.delete(roomCode);
-                  schedulePersist({ deleteRoomCode: roomCode });
+                  schedulePersist({
+                    deleteRoomCode: roomCode,
+                    deleteMatchId: roomToDisband.matchId,
+                  });
                   broadcastPrivateRoom(roomCode);
                 }
               }, 60000); // 60 seconds grace period
@@ -4164,20 +4352,43 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
                 if (roomToUpdate && roomToUpdate.status === 'waiting') {
                   const playerToBoot = roomToUpdate.players.find(p => p.userId === userId);
                   if (playerToBoot) {
-                    roomToUpdate.players = roomToUpdate.players.filter(p => p.userId !== userId);
-                    schedulePersist({ roomCode });
-                    if (playerToBoot.stake > 0) {
-                      const user = getUser(userId);
-                      user.heldTickets = round2(user.heldTickets - playerToBoot.stake);
-                      user.availableTickets = round2(user.availableTickets + playerToBoot.stake);
-                      createLedgerEntry(user, {
-                        event: 'Private Room Leave Release',
-                        value: `+${playerToBoot.stake.toFixed(2)} TKT`,
-                        type: 'stake_release',
-                        amount: playerToBoot.stake,
-                      });
+                    const matchToUpdate = roomToUpdate.matchId
+                      ? activeMatches.get(roomToUpdate.matchId)
+                      : null;
+                    if (matchToUpdate?.costsCommitted && playerToBoot.costsCommitted === undefined) {
+                      playerToBoot.costsCommitted = true;
                     }
+                    roomToUpdate.players = roomToUpdate.players.filter(p => p.userId !== userId);
+                    refundPrivateRoomReservation(playerToBoot, roomCode, 'Private Room Leave Release');
+                    activeMatchByUser.delete(userId);
+                    if (matchToUpdate) {
+                      const playerIndex = matchToUpdate.players.findIndex((player) => player.userId === userId);
+                      if (playerIndex >= 0) {
+                        const placeholderUserId = `waiting_for_player_${playerIndex}_${Date.now()}`;
+                        matchToUpdate.players[playerIndex] = {
+                          userId: placeholderUserId,
+                          username: 'Waiting...',
+                          avatarId: 'koala',
+                          stake: roomToUpdate.stake,
+                          mode: 'private',
+                          joinedAt: Date.now(),
+                          costsCommitted: false,
+                        };
+                        const statePlayer = matchToUpdate.gameState.players.find((player) => player.userId === userId);
+                        if (statePlayer) {
+                          statePlayer.userId = placeholderUserId;
+                          statePlayer.username = 'Waiting...';
+                          statePlayer.avatarId = 'koala';
+                        }
+                        matchToUpdate.playStartedAt = null;
+                        matchToUpdate.gameState.turnStartedAt = undefined;
+                        matchToUpdate.costsCommitted = false;
+                        roomToUpdate.status = 'waiting';
+                      }
+                    }
+                    schedulePersist({ roomCode, matchId: roomToUpdate.matchId });
                     broadcastPrivateRoom(roomCode);
+                    if (roomToUpdate.matchId) broadcastMatch(roomToUpdate.matchId);
                   }
                 }
                 privateRoomCleanupTimers.delete(playerTimerKey);
