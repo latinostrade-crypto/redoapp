@@ -61,16 +61,6 @@ export function ComicScene({
     const dustCanvas = root.querySelector<HTMLCanvasElement>('[data-dust-canvas]');
     const dustSources = gsap.utils.toArray<HTMLImageElement>('[data-dust-source]', root);
     const dustVisuals = gsap.utils.toArray<HTMLElement>('[data-dust-visual]', root);
-    const nextRoot = root.parentElement?.nextElementSibling?.querySelector<HTMLElement>(
-      '.comic-scene',
-    );
-    const nextStage = nextRoot?.querySelector<HTMLElement>('[data-comic-stage]') ?? null;
-    const nextDustSources = nextRoot
-      ? gsap.utils.toArray<HTMLImageElement>('[data-dust-source]', nextRoot)
-      : [];
-    const nextDustVisuals = nextRoot
-      ? gsap.utils.toArray<HTMLElement>('[data-dust-visual]', nextRoot)
-      : [];
     const comicVisuals = dustVisuals
       .filter((element) => element.dataset.dustRole !== 'primary')
       .sort((left, right) => {
@@ -91,11 +81,12 @@ export function ComicScene({
         gsap.set(images[0], { autoAlpha: 1, scale: 1 });
         gsap.set(images.slice(1), { autoAlpha: 0, scale: 1.018 });
         gsap.set(assemblyLayer, { autoAlpha: 1, scale: 1 });
-        gsap.set(backdrop, { autoAlpha: 1 });
-        gsap.set(frame, { autoAlpha: 1 });
+        const ownsInitialFrame = sceneIndex === 0;
+        gsap.set(backdrop, { autoAlpha: ownsInitialFrame ? 1 : 0 });
+        gsap.set(frame, { autoAlpha: ownsInitialFrame ? 1 : 0 });
         gsap.set(dustVisuals, { autoAlpha: 0 });
         gsap.set(copy, {
-          autoAlpha: 1,
+          autoAlpha: ownsInitialFrame ? 1 : 0,
           clipPath: 'inset(0 0% 0 0)',
           x: 0,
         });
@@ -123,9 +114,6 @@ export function ComicScene({
               canvas: dustCanvas,
               images: dustSources,
               visualElements: dustVisuals,
-              nextImages: nextDustSources,
-              nextVisualElements: nextDustVisuals,
-              nextReferenceElement: nextStage,
               isMobile,
               seed: (sceneIndex + 1) * 7919,
             })
@@ -157,6 +145,21 @@ export function ComicScene({
           },
           0,
         );
+
+        if (sceneIndex > 0) {
+          const entranceDuration = isMobile ? 0.105 : 0.09;
+          const domHandoffAt = entranceDuration * 0.78;
+          dustWindows.push({
+            start: 0,
+            duration: entranceDuration,
+            outgoing: -1,
+            incoming: 0,
+            incomingVisualTime: 0,
+            incomingVisualKind: 'primary',
+            mode: 'gather',
+          });
+          timeline.set([backdrop, frame, copy], { autoAlpha: 1 }, domHandoffAt);
+        }
 
         const revealCount = Math.max(1, images.length - 1);
         const transitionDuration =
@@ -314,11 +317,8 @@ export function ComicScene({
             outgoing: images.length - 1,
             incoming: 0,
             outgoingVisualTime: 1,
-            incomingVisualTime: 0,
-            incomingSource: 'next',
             outgoingVisualKind: 'all',
-            incomingVisualKind: 'primary',
-            bridge: true,
+            mode: 'scatter',
           });
           timeline.set(
             [backdrop, frame, ...dustVisuals],

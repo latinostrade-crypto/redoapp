@@ -5,11 +5,9 @@ export interface DustTransitionWindow {
   incoming: number;
   outgoingVisualTime?: number;
   incomingVisualTime?: number;
-  outgoingSource?: 'current' | 'next';
-  incomingSource?: 'current' | 'next';
   outgoingVisualKind?: 'all' | 'primary';
   incomingVisualKind?: 'all' | 'primary';
-  bridge?: boolean;
+  mode?: 'morph' | 'scatter' | 'gather';
 }
 
 interface DustParticle {
@@ -38,9 +36,6 @@ interface ParticleDustOptions {
   canvas: HTMLCanvasElement;
   images: HTMLImageElement[];
   visualElements: HTMLElement[];
-  nextImages?: HTMLImageElement[];
-  nextVisualElements?: HTMLElement[];
-  nextReferenceElement?: HTMLElement | null;
   isMobile: boolean;
   seed: number;
 }
@@ -472,7 +467,6 @@ function drawMorphField(
   rawProgress: number,
   showTrails: boolean,
   seed: number,
-  bridge: boolean,
 ) {
   const outgoingCount = outgoing.particles.length;
   const incomingCount = incoming.particles.length;
@@ -540,18 +534,14 @@ function drawMorphField(
         source.dustSize + (target.size - source.dustSize) * rise,
       );
       colorProgress = rise;
-      if (bridge) {
-        context.globalAlpha = 1;
-      } else {
-        const fadeStart = isInterface ? 0.96 : 0.78;
-        const fadeEnd = isInterface ? 1 : 0.84;
-        context.globalAlpha =
-          rawProgress > fadeStart
-            ? 1 - clamp01(
-                (rawProgress - fadeStart) / Math.max(0.01, fadeEnd - fadeStart),
-              )
-            : 1;
-      }
+      const fadeStart = isInterface ? 0.96 : 0.78;
+      const fadeEnd = isInterface ? 1 : 0.84;
+      context.globalAlpha =
+        rawProgress > fadeStart
+          ? 1 - clamp01(
+              (rawProgress - fadeStart) / Math.max(0.01, fadeEnd - fadeStart),
+            )
+          : 1;
       motion = rise;
     }
 
@@ -577,13 +567,73 @@ function drawMorphField(
   return count;
 }
 
+function drawFloorHandoffField(
+  context: CanvasRenderingContext2D,
+  field: DustField,
+  rawProgress: number,
+  mode: 'scatter' | 'gather',
+  showTrails: boolean,
+  seed: number,
+) {
+  const fractureEnd = 0.08;
+  const settleEnd = mode === 'gather' ? 0.78 : 1;
+  let drawn = 0;
+
+  for (let index = 0; index < field.particles.length; index += 1) {
+    const particle = field.particles[index];
+    const noiseA = seededUnit(seed + index * 23.71);
+    const noiseB = seededUnit(seed + index * 31.17);
+    const pileX = Math.min(
+      field.width + 40,
+      Math.max(-40, particle.x + (noiseA - 0.5) * field.width * 0.28),
+    );
+    const pileY = field.height * 0.88 + noiseB * field.height * 0.16;
+    const phaseProgress =
+      mode === 'scatter'
+        ? clamp01((rawProgress - fractureEnd) / (settleEnd - fractureEnd))
+        : clamp01(rawProgress / settleEnd);
+    const travel = smoothstep(phaseProgress);
+    const direction = mode === 'scatter' ? travel : 1 - travel;
+    const arc = Math.sin(travel * Math.PI) * (noiseA - 0.5) * 24;
+    const x = particle.x + (pileX - particle.x) * direction + arc;
+    const y = particle.y + (pileY - particle.y) * direction;
+    const fracture =
+      mode === 'scatter'
+        ? smoothstep(clamp01(rawProgress / fractureEnd))
+        : 1 - travel;
+    const size = Math.max(
+      0.45,
+      particle.size + (particle.dustSize - particle.size) * fracture,
+    );
+    const handoffAlpha =
+      mode === 'gather' && rawProgress > settleEnd
+        ? 1 - clamp01((rawProgress - settleEnd) / (1 - settleEnd))
+        : 1;
+
+    if (handoffAlpha <= 0.01) continue;
+    context.globalAlpha = handoffAlpha;
+    context.fillStyle = particle.color;
+    context.fillRect(Math.round(x), Math.round(y), size, size);
+
+    if (showTrails && travel > 0.12 && travel < 0.92 && particle.size > 1.2) {
+      context.globalAlpha = handoffAlpha * 0.26;
+      context.fillRect(
+        Math.round(x - (pileX - particle.x) * 0.018),
+        Math.round(y - (pileY - particle.y) * 0.018),
+        Math.max(0.4, size * 0.44),
+        Math.max(0.4, size * 0.44),
+      );
+    }
+    drawn += 1;
+  }
+
+  return drawn;
+}
+
 export function createParticleDustRenderer({
   canvas,
   images,
   visualElements,
-  nextImages = [],
-  nextVisualElements = [],
-  nextReferenceElement = null,
   isMobile,
   seed,
 }: ParticleDustOptions) {
@@ -591,20 +641,6 @@ export function createParticleDustRenderer({
   const imageFields = new Map<string, DustField>();
   const interfaceFields = new Map<string, DustField>();
   const compositeFields = new Map<string, DustField>();
-  const sources = {
-    current: {
-      images,
-      visualElements,
-      referenceElement: canvas as HTMLElement,
-    },
-    next: nextReferenceElement
-      ? {
-          images: nextImages,
-          visualElements: nextVisualElements,
-          referenceElement: nextReferenceElement,
-        }
-      : null,
-  };
   const connection = (navigator as Navigator & {
     connection?: { saveData?: boolean };
   }).connection;
@@ -648,22 +684,20 @@ export function createParticleDustRenderer({
     clear();
   };
 
-  const getImageField = (sourceName: 'current' | 'next', imageIndex: number) => {
+  const getImageField = (imageIndex: number) => {
     if (imageIndex < 0) return null;
-    const source = sources[sourceName];
-    if (!source) return null;
-    const key = `${sourceName}:${imageIndex}`;
+    const key = String(imageIndex);
     const cached = imageFields.get(key);
     if (cached && cached.width === width && cached.height === height) return cached;
-    const image = source.images[imageIndex];
+    const image = images[imageIndex];
     if (!image) return null;
     const field = createImageField(
       image,
-      source.referenceElement,
+      canvas as HTMLElement,
       width,
       height,
       imageTargetCount,
-      seed + imageIndex * 1013 + (sourceName === 'next' ? 4099 : 0),
+      seed + imageIndex * 1013,
       isMobile,
     );
     if (field) imageFields.set(key, field);
@@ -671,25 +705,22 @@ export function createParticleDustRenderer({
   };
 
   const getInterfaceField = (
-    sourceName: 'current' | 'next',
     visualTime: number | undefined,
     visualKind: 'all' | 'primary',
   ) => {
     if (visualTime === undefined || visualTime < 0) return null;
-    const source = sources[sourceName];
-    if (!source) return null;
     const timeKey = Math.round(visualTime * 1000);
-    const key = `${sourceName}:${visualKind}:${timeKey}`;
+    const key = `${visualKind}:${timeKey}`;
     const cached = interfaceFields.get(key);
     if (cached && cached.width === width && cached.height === height) return cached;
     const field = createInterfaceField(
-      source.referenceElement,
-      source.visualElements,
+      canvas as HTMLElement,
+      visualElements,
       visualTime,
       width,
       height,
       interfaceTargetCount,
-      seed + timeKey * 17 + (sourceName === 'next' ? 4099 : 0),
+      seed + timeKey * 17,
       isMobile,
       visualKind,
     );
@@ -698,16 +729,15 @@ export function createParticleDustRenderer({
   };
 
   const getCompositeField = (
-    sourceName: 'current' | 'next',
     imageIndex: number,
     visualTime: number | undefined,
     visualKind: 'all' | 'primary',
   ) => {
-    const key = `${sourceName}:${imageIndex}:${visualKind}:${visualTime === undefined ? 'none' : Math.round(visualTime * 1000)}`;
+    const key = `${imageIndex}:${visualKind}:${visualTime === undefined ? 'none' : Math.round(visualTime * 1000)}`;
     const cached = compositeFields.get(key);
     if (cached && cached.width === width && cached.height === height) return cached;
-    const imageField = getImageField(sourceName, imageIndex);
-    const interfaceField = getInterfaceField(sourceName, visualTime, visualKind);
+    const imageField = getImageField(imageIndex);
+    const interfaceField = getInterfaceField(visualTime, visualKind);
     if (!imageField && !interfaceField) return null;
     const field = {
       width,
@@ -734,18 +764,35 @@ export function createParticleDustRenderer({
     const progress = clamp01((time - active.start) / active.duration);
     let drawn = 0;
     const outgoing = getCompositeField(
-      active.outgoingSource ?? 'current',
       active.outgoing,
       active.outgoingVisualTime,
       active.outgoingVisualKind ?? 'all',
     );
     const incoming = getCompositeField(
-      active.incomingSource ?? 'current',
       active.incoming,
       active.incomingVisualTime,
       active.incomingVisualKind ?? 'all',
     );
-    if (outgoing && incoming) {
+    const mode = active.mode ?? 'morph';
+    if (mode === 'scatter' && outgoing) {
+      drawn = drawFloorHandoffField(
+        context,
+        outgoing,
+        progress,
+        'scatter',
+        !lowPower,
+        seed + Math.round(active.start * 10000),
+      );
+    } else if (mode === 'gather' && incoming) {
+      drawn = drawFloorHandoffField(
+        context,
+        incoming,
+        progress,
+        'gather',
+        !lowPower,
+        seed + Math.round(active.start * 10000),
+      );
+    } else if (outgoing && incoming) {
       drawn = drawMorphField(
         context,
         outgoing,
@@ -753,7 +800,6 @@ export function createParticleDustRenderer({
         progress,
         !lowPower,
         seed + Math.round(active.start * 10000),
-        active.bridge ?? false,
       );
     } else {
       if (outgoing && progress <= 0.72) {
@@ -784,8 +830,7 @@ export function createParticleDustRenderer({
     clearFields();
     render(lastTime, lastWindows);
   };
-  const allImages = [...images, ...nextImages];
-  allImages.forEach((image) => image.addEventListener('load', handleImageLoad));
+  images.forEach((image) => image.addEventListener('load', handleImageLoad));
 
   const resizeObserver = new ResizeObserver(() => {
     resize();
@@ -798,7 +843,7 @@ export function createParticleDustRenderer({
     render,
     destroy() {
       resizeObserver.disconnect();
-      allImages.forEach((image) => image.removeEventListener('load', handleImageLoad));
+      images.forEach((image) => image.removeEventListener('load', handleImageLoad));
       clearFields();
       clear();
     },
