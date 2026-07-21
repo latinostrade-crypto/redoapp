@@ -1,5 +1,21 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen:wght@400;700&display=swap');
 @import "tailwindcss";
+
+html,
+body {
+  margin: 0;
+  background: #02050a;
+  scrollbar-color: #2d596b #02050a;
+}
+
+html::-webkit-scrollbar {
+  width: 10px;
+  background: #02050a;
+}
+
+html::-webkit-scrollbar-thumb {
+  border: 2px solid #02050a;
+  background: #2d596b;
+}
 
 @theme {
   --font-sans: "Silkscreen", "Outfit", system-ui, sans-serif;

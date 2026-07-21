@@ -4,6 +4,9 @@ Redoapp is a stake-based Telegram Mini App UNO-style card game. The app combines
 
 ## Current Product Surface
 
+- Public scroll-driven pixel-art web comic with seven reversible scenes,
+  responsive choreography, reduced-motion fallback, and a real handoff into
+  the game.
 - Telegram Mini App launch through BotFather direct links.
 - Offline practice mode against bots.
 - Public PVP matchmaking with ticket stakes.
@@ -21,12 +24,63 @@ Redoapp is a stake-based Telegram Mini App UNO-style card game. The app combines
 ## Stack
 
 - Frontend: React 19 + Vite.
+- Story motion: GSAP + ScrollTrigger.
 - Backend: Express in `server.ts`.
 - Ticket helpers: `server/tickets.ts`.
 - Game state: `src/hooks/useUnoGame.ts` plus server-authoritative PVP/private match state.
 - Wallet: TonConnect UI.
 - Persistence: Supabase service-role JSON state rows, with local `data/runtime-state.json` fallback.
 - Deployment target: Render static frontend plus Render web backend.
+
+## Interactive Comic Website
+
+Normal browser visits now open a seven-chapter interactive comic before the
+game. The story uses the original vertical pixel-art images in
+`FOR AI/WEBSITE`, while the existing Telegram game remains a separate
+lazy-loaded surface.
+
+### Local routes
+
+- `http://localhost:3000/` — story for a normal browser.
+- `http://localhost:3000/?story=1` — force the story, including in visual QA.
+- `http://localhost:3000/?play=1` — open the existing game directly.
+- A real Telegram Mini App launch still opens the game directly.
+
+Every story game CTA, including “Skip to game”, opens the referred Telegram
+Mini App at
+`https://t.me/redo_appbot/app?startapp=ref_KNVPOU`. The `?play=1` route remains
+available for direct local game development and QA.
+
+### Edit the story
+
+- `src/data/comicScenes.ts` — scene order, image paths, copy, bubbles, sound
+  effects, facts, desktop/mobile scroll length, and motion preset.
+- `src/types/comic.ts` — typed scene configuration.
+- `src/components/comic/ComicScene.tsx` — reversible GSAP/ScrollTrigger
+  timeline and transition presets.
+- `src/components/comic/ParticleDust.tsx` and `dustRenderer.ts` — reusable
+  fine-particle canvas disassembly/assembly used by every image transition.
+- `src/components/comic/comic.css` — desktop/mobile compositions, comic
+  typography, panels, safe areas, and reduced-motion presentation.
+- `src/components/comic/ReducedMotionExperience.tsx` — semantic static
+  fallback.
+- `src/RootApp.tsx` and `src/GameSurface.tsx` — story/game routing and
+  lazy-loading boundary.
+
+The implementation constraints and design decisions are documented in:
+
+- `AGENTS.md`
+- `docs/brief-analysis.md`
+- `docs/asset-inventory.md`
+- `docs/storyboard.md`
+- `docs/motion-system.md`
+- `docs/performance-plan.md`
+- `docs/qa-report.md`
+
+When adding or reordering scenes, keep every important caption as HTML, provide
+an accurate `alt`, preserve the mobile coordinates, and test scrolling in both
+directions. The 12 source JPEGs are opaque complete compositions, so animate
+their crops and masks rather than treating characters as transparent layers.
 
 ## Production Status and Operating Envelope
 

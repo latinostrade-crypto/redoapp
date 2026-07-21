@@ -2,10 +2,13 @@ node_modules/
 build/
 dist/
 coverage/
+output/
 .DS_Store
 *.log
 .env*
 !.env.example
-data/
+/data/
 docs/local/
 *.local.md
+
+.vercel
