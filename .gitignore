@@ -12,3 +12,4 @@ docs/local/
 *.local.md
 
 .vercel
+.playwright-cli/

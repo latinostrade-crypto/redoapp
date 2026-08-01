@@ -1,5 +1,13 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import './root.css';
+import { cleanErrorMessage } from './utils/api';
+
+if (typeof window !== 'undefined') {
+  const originalAlert = window.alert;
+  window.alert = (message: any) => {
+    originalAlert(cleanErrorMessage(message));
+  };
+}
 
 const ComicExperience = lazy(() => import('./components/comic/ComicExperience'));
 const GameSurface = lazy(() => import('./GameSurface'));

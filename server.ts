@@ -29,12 +29,15 @@ const BACKEND_PUBLIC_URL = (process.env.BACKEND_PUBLIC_URL || 'https://yoapp-bac
 const WITHDRAWAL_OPERATOR_CHAT_ID = Number(process.env.WITHDRAWAL_OPERATOR_CHAT_ID || '5152039743');
 const WITHDRAWAL_OPERATOR_USERNAME = process.env.WITHDRAWAL_OPERATOR_USERNAME || 'allin_gram';
 // Telegram initData is a launch credential, not a long-lived session. Keep its
-// replay window short; authenticated players receive a separate signed session.
-const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '900');
+// replay window short (5 minutes default); authenticated players receive a separate signed session.
+const TELEGRAM_INITDATA_MAX_AGE_SEC = Number(process.env.TELEGRAM_INITDATA_MAX_AGE_SEC || '300');
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 // A dedicated session secret prevents compromise of another integration secret from minting sessions.
-const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || (process.env.NODE_ENV === 'production' ? '' : crypto.randomBytes(32).toString('base64url'));
+if (process.env.NODE_ENV === 'production' && (!process.env.APP_SESSION_SECRET || process.env.APP_SESSION_SECRET.trim().length < 32)) {
+  throw new Error('FATAL: APP_SESSION_SECRET must be set and at least 32 characters long in production.');
+}
+const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || crypto.randomBytes(32).toString('base64url');
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
 const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
@@ -70,11 +73,23 @@ const MATCHMAKING_TIMEOUT_MS = 75_000;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 
-// Authentication is token-based and the API does not use cookies. Reflecting the
-// caller origin is safe here and supports Telegram iOS WebViews that send `null`
-// or a Telegram-managed origin instead of the public Mini App URL.
+const ALLOWED_ORIGINS = [
+  'https://redoapp.onrender.com',
+  'https://redoapp-backend.onrender.com',
+  'https://yoapp-backend.onrender.com',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+
+// Authentication is token-based and the API does not use cookies.
+// Reflecting verified origins or null (Telegram iOS WebViews) protects against arbitrary cross-origin site calls.
 app.use(cors({
-  origin: true,
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin || origin === 'null' || ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.onrender.com') || origin.startsWith('https://t.me')) {
+      return callback(null, true);
+    }
+    callback(new Error('CORS request blocked by origin security policy.'));
+  },
   credentials: false,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-session-token', 'x-telegram-init-data', 'x-admin-api-key'],
@@ -147,6 +162,9 @@ function rateLimitMiddleware(limit: number, windowMs: number, scope: RateLimitSc
 }
 
 app.use(express.urlencoded({ extended: false, limit: '16kb', parameterLimit: 50 }));
+
+// Apply global baseline rate limiting to all requests
+app.use(rateLimitMiddleware(120, 60 * 1000, 'ip'));
 
 function validatePayload(body: any, schema: Record<string, string>) {
   if (!body || typeof body !== 'object') {

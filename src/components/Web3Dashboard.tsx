@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -2724,7 +2724,7 @@ export function Web3Dashboard({
 
       {bootstrapState === 'error' && (
         <div className="flex items-center gap-2 bg-[#2a0d0d] border border-black px-3 py-2 text-[8px] leading-relaxed text-[#ffb3b3] font-mono">
-          <span className="flex-1">{bootstrapError}</span>
+          <span className="flex-1">{cleanErrorMessage(bootstrapError, 'bootstrap')}</span>
           <button
             type="button"
             onClick={() => {
@@ -3861,7 +3861,7 @@ export function Web3Dashboard({
 
                         {publicQueueError && (
                           <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
-                            {publicQueueError}
+                            {cleanErrorMessage(publicQueueError, 'matchmaker')}
                           </div>
                         )}
                       </div>
@@ -4114,7 +4114,7 @@ export function Web3Dashboard({
 
                       {privateRoomError && (
                         <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
-                          {privateRoomError}
+                          {cleanErrorMessage(privateRoomError, 'private-room')}
                         </div>
                       )}
 

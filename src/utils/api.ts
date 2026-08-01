@@ -320,3 +320,46 @@ if (typeof window !== 'undefined') {
     }
   });
 }
+
+export function isUserAdmin(): boolean {
+  if (typeof window === 'undefined') return false;
+  const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
+  if (!tgUser) return false;
+  const matchesId = String(tgUser.id) === '5152039743';
+  const matchesUsername = tgUser.username?.toLowerCase() === 'allin_gram';
+  return matchesId || matchesUsername;
+}
+
+export function cleanErrorMessage(error: unknown, context?: 'bootstrap' | 'matchmaker' | 'private-room'): string {
+  if (!error) return '';
+  const message = error instanceof Error ? error.message : String(error);
+  if (isUserAdmin()) {
+    return message;
+  }
+  
+  // Hide details for normal users
+  if (context === 'bootstrap') {
+    return 'Failed to connect to the game server. Please try again.';
+  }
+  if (context === 'matchmaker') {
+    return 'Failed to join matchmaking. Please try again.';
+  }
+  if (context === 'private-room') {
+    return 'Failed to join the private room. Please try again.';
+  }
+
+  // Strip bracketed technical details (e.g. [503 /api/users/sync])
+  const cleanMsg = message.replace(/\s*\[[^\]]+\]/g, '');
+  
+  if (
+    cleanMsg.includes('failed with status') || 
+    cleanMsg.includes('Request failed') || 
+    cleanMsg.includes('invalid JSON') || 
+    cleanMsg.includes('invalid response')
+  ) {
+    return 'Something went wrong. Please check your connection and try again.';
+  }
+  
+  return cleanMsg;
+}
+

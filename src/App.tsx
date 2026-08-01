@@ -500,9 +500,6 @@ export default function App() {
             backgroundImage: 'radial-gradient(circle, #f8fafc 1.5px, transparent 1.5px)',
             backgroundSize: '20px 20px'
           }}></div>
-
-          <div className="absolute top-[8%] left-[8%] text-slate-800/10 text-7xl font-black font-mono select-none">WEB3</div>
-          <div className="absolute bottom-[8%] right-[8%] text-slate-800/10 text-7xl font-black font-mono select-none">PIXEL</div>
         </div>
       )}
 

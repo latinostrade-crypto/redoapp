@@ -68,7 +68,7 @@ services:
       - key: WITHDRAWAL_OPERATOR_USERNAME
         value: allin_gram
       - key: TELEGRAM_INITDATA_MAX_AGE_SEC
-        value: 900
+        value: 300
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
