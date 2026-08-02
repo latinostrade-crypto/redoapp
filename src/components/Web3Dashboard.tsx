@@ -65,6 +65,7 @@ const PROFILE_CACHE_STORAGE_KEY = 'redoapp_profile_cache';
 const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
 const NFT_EVENT_VERIFICATION_STORAGE_KEY = 'redoapp_nft_event_verifications';
 const DASHBOARD_TAB_STORAGE_KEY = 'redoapp_dashboard_tab';
+const PROMO_EVENT_DISMISSED_KEY = 'redoapp_ayanami_promo_dismissed';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
 type DashboardTab = 'profile' | 'events' | 'pvp' | 'rewards';
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
@@ -760,6 +761,32 @@ export function Web3Dashboard({
   const [privateRoomError, setPrivateRoomError] = useState('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [showPromoModal, setShowPromoModal] = useState<boolean>(() => {
+    try {
+      return !sessionStorage.getItem(PROMO_EVENT_DISMISSED_KEY);
+    } catch {
+      return true;
+    }
+  });
+
+  const dismissPromoModal = useCallback((goToEvents = false) => {
+    sound.playPop();
+    try {
+      sessionStorage.setItem(PROMO_EVENT_DISMISSED_KEY, 'true');
+    } catch {}
+    setShowPromoModal(false);
+    if (goToEvents) {
+      setCurrentTab('events');
+    }
+  }, [setCurrentTab]);
+
+  useEffect(() => {
+    if (!showPromoModal) return;
+    const timer = setTimeout(() => {
+      dismissPromoModal(false);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [showPromoModal, dismissPromoModal]);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
   const [lootboxClaimMessage, setLootboxClaimMessage] = useState('');
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
@@ -3407,31 +3434,56 @@ export function Web3Dashboard({
           {currentTab === 'events' && (
             <motion.div
               key="events"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="w-full space-y-3 py-3"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="w-full space-y-3 py-2 text-center select-none"
             >
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 relative">
+              {/* Main Event Card */}
+              <div className="bg-[#12161f] border-2 border-black pixel-box-sm p-4 space-y-4 relative shadow-[4px_4px_0_#000] overflow-hidden">
 
-
-                <div className="mx-auto w-10 h-10 bg-slate-950 border border-black flex items-center justify-center text-[#ffcc00]">
-                  <Trophy className="w-5 h-5" />
+                {/* Hero Banner with Original Ayanami Plush Collection Image */}
+                <div className="relative mx-auto w-full max-w-[280px] aspect-square rounded bg-slate-950 border-2 border-black overflow-hidden shadow-[inset_0_0_15px_rgba(0,210,255,0.3)] group">
+                  <img
+                    src="/ayanami-plush.png"
+                    alt="Ayanami Plush Sticker Collection"
+                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = '/logo-for-events.png';
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/30 to-transparent flex flex-col justify-end p-3 text-left">
+                    <span className="text-[8px] font-black text-[#00d2ff] font-mono uppercase tracking-wider">
+                      OFFICIAL NFT COLLECTION
+                    </span>
+                    <h2 className="text-sm font-black text-white font-mono uppercase tracking-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+                      AYANAMI PLUSH
+                    </h2>
+                  </div>
                 </div>
 
-                <div className="space-y-1 font-mono">
-                  <h3 className="font-black text-xs text-slate-100 uppercase">
-                    NFT HOLDER SEASON
+                {/* Title & Subtitle */}
+                <div className="space-y-1.5 font-mono">
+                  <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wide">
+                    AYANAMI PLUSH STICKER TOURNAMENT
                   </h3>
-                  <p className="text-[9px] text-slate-455 leading-relaxed font-sans max-w-xs mx-auto">
-                    A seasonal event is being prepared for wallets that hold at least one sticker NFT from the selected collection.
+                  <p className="text-[9px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
+                    Exclusive seasonal championship for holders of at least 1 sticker NFT from the official Ayanami Plush collection on TON!
                   </p>
                 </div>
 
-                <div className="bg-black p-3 border border-black text-left text-[8px] font-mono space-y-2 text-slate-400">
-                  <div className="flex justify-between">
-                    <span>Required:</span>
-                    <span className="text-[#00ff66] font-bold">1+ sticker NFT</span>
+                {/* Winner Prize Pool Condition (Highlight Text in Red) */}
+                <div className="bg-red-950/40 border-2 border-red-600/70 p-3 rounded-sm text-center font-mono shadow-[inset_0_0_8px_rgba(255,0,0,0.2)]">
+                  <p className="text-[10px] font-black text-red-500 uppercase tracking-wide leading-relaxed drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+                    The winners will share the prize pool generated from fees.
+                  </p>
+                </div>
+
+                {/* Contract & Verification Section */}
+                <div className="bg-black/90 p-3 border border-black text-left text-[8px] font-mono space-y-2 text-slate-300 shadow-[inset_0_0_10px_rgba(0,0,0,0.5)]">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400 font-mono">Target Collection:</span>
+                    <span className="text-[#00ff66] font-bold">1+ Sticker NFT</span>
                   </div>
                   <div className="pt-1.5 border-t border-slate-800 space-y-1.5">
                     <button
@@ -3440,9 +3492,9 @@ export function Web3Dashboard({
                         sound.playPop();
                         setShowCollectionAddress(!showCollectionAddress);
                       }}
-                      className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#00d2ff] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
+                      className="w-full py-1.5 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#00d2ff] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
                     >
-                      <span>COLLECTION CONTRACT</span>
+                      <span>CONTRACT ADDRESS</span>
                       <span className="text-[6px] text-slate-400">{showCollectionAddress ? '▲ COLLAPSE' : '▼ SHOW'}</span>
                     </button>
                     {showCollectionAddress && (
@@ -3466,22 +3518,23 @@ export function Web3Dashboard({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 gap-2 font-mono">
                   <button
                     type="button"
                     onClick={verifyNftEventEligibility}
                     disabled={nftCheckState === 'signing' || nftCheckState === 'checking'}
-                    className={`py-2 text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono disabled:opacity-60 disabled:cursor-not-allowed ${
-                      nftCheckState === 'verified' ? 'bg-[#00ff66]' : 'bg-[#ffcc00]'
+                    className={`py-2.5 text-black font-black text-[9.5px] uppercase tracking-wider pixel-btn-interactive border-2 border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono disabled:opacity-60 disabled:cursor-not-allowed ${
+                      nftCheckState === 'verified' ? 'bg-[#00ff66]' : 'bg-[#ffcc00] hover:bg-[#ffe066]'
                     }`}
                   >
                     {nftCheckState === 'signing'
-                      ? 'Sign...'
+                      ? 'Signing...'
                       : nftCheckState === 'checking'
                       ? 'Checking...'
                       : nftCheckState === 'verified'
-                      ? 'Verified'
-                      : 'Check Me'}
+                      ? '✓ Verified Holder'
+                      : 'Check Eligibility'}
                   </button>
                   <button
                     type="button"
@@ -3489,14 +3542,14 @@ export function Web3Dashboard({
                       sound.playPop();
                       window.open(NFT_COLLECTION_URL, '_blank', 'noopener,noreferrer');
                     }}
-                    className="py-2 bg-[#00d2ff] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono"
+                    className="py-2.5 bg-[#00d2ff] hover:bg-[#33dcff] text-black font-black text-[9.5px] uppercase tracking-wider pixel-btn-interactive border-2 border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono"
                   >
-                    Collection
+                    Getgems Collection
                   </button>
                 </div>
 
                 {nftCheckMessage && (
-                  <div className={`bg-black border border-black px-2 py-1.5 text-[7.5px] leading-relaxed font-mono text-left ${
+                  <div className={`bg-black border border-black px-2.5 py-2 text-[8px] leading-relaxed font-mono text-left ${
                     nftCheckState === 'verified' ? 'text-[#00ff66]' : nftCheckState === 'missing' ? 'text-[#ffcc00]' : 'text-[#ffb3b3]'
                   }`}>
                     {nftCheckMessage}
@@ -4421,6 +4474,82 @@ export function Web3Dashboard({
                   className="w-full py-2.5 bg-[#ffcc00] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                 >
                   Collect Drops
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PROMO ANNOUNCEMENT MODAL FOR AYANAMI PLUSH STICKER TOURNAMENT */}
+      <AnimatePresence>
+        {showPromoModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 font-mono select-none"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 16 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 16, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 22 }}
+              className="w-full max-w-xs bg-[#12161f] border-2 border-black p-4 relative shadow-[6px_6px_0_#000] pixel-box-lg flex flex-col gap-3 text-center overflow-hidden"
+            >
+              {/* Close Button (Top-Right X) */}
+              <button
+                type="button"
+                onClick={() => dismissPromoModal(false)}
+                className="absolute top-3 right-3 w-6 h-6 bg-slate-950 border border-slate-700 hover:bg-slate-800 text-slate-300 flex items-center justify-center text-xs font-bold font-mono cursor-pointer z-10"
+              >
+                ✕
+              </button>
+
+              {/* Promo Banner Image */}
+              <div className="relative mx-auto mt-1 w-full max-w-[170px] aspect-square rounded bg-slate-950 border-2 border-black overflow-hidden shadow-[inset_0_0_10px_rgba(0,210,255,0.3)]">
+                <img
+                  src="/ayanami-plush.png"
+                  alt="Ayanami Plush Sticker Collection"
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = '/logo-for-events.png';
+                  }}
+                />
+              </div>
+
+              {/* Title & Description */}
+              <div className="space-y-1">
+                <h3 className="font-black text-xs text-slate-100 uppercase tracking-wide">
+                  AYANAMI PLUSH TOURNAMENT
+                </h3>
+                <p className="text-[8.5px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
+                  Holders of at least <strong className="text-[#00ff66]">1 Ayanami Plush NFT sticker</strong> get exclusive access to the tournament!
+                </p>
+              </div>
+
+              {/* Winner Prize Pool Condition Box */}
+              <div className="bg-red-950/40 border border-red-600/60 p-2.5 rounded-sm text-center font-mono">
+                <p className="text-[9px] font-black text-red-500 uppercase tracking-wide leading-relaxed">
+                  The winners will share the prize pool generated from fees.
+                </p>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex flex-col gap-1.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => dismissPromoModal(true)}
+                  className="w-full py-2 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[10px] uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+                >
+                  Explore Event & Verify
+                </button>
+                <button
+                  type="button"
+                  onClick={() => dismissPromoModal(false)}
+                  className="w-full py-1.5 bg-slate-950 hover:bg-slate-900 text-slate-400 border border-slate-800 pixel-btn-interactive text-[8.5px] font-bold uppercase font-mono"
+                >
+                  Close
                 </button>
               </div>
             </motion.div>
