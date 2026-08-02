@@ -340,7 +340,14 @@ export function useUnoGame() {
         throw new Error('Match table is not ready yet.');
       }
       setGameState(result.gameState);
-      setRemoteSessionActive(true);
+      if (result.gameState.phase === 'game_over') {
+        localStorage.removeItem('redoapp_active_match');
+        remoteMatchIdRef.current = null;
+        remoteUserIdRef.current = null;
+        setRemoteSessionActive(false);
+      } else {
+        setRemoteSessionActive(true);
+      }
       return true;
     } catch (error) {
       console.error('Remote match state sync failed', error);

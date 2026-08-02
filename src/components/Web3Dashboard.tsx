@@ -1573,6 +1573,10 @@ export function Web3Dashboard({
   useEffect(() => {
     if (activeProfile?.activeMatch) {
       const match = activeProfile.activeMatch;
+      if (match.gameState?.phase === 'game_over') {
+        localStorage.removeItem('redoapp_active_match');
+        return;
+      }
       if (recoveredActiveMatchRef.current === match.matchId) return;
       recoveredActiveMatchRef.current = match.matchId;
       console.log('Server reported active match. Auto-recovering...', match);

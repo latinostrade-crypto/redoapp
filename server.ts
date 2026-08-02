@@ -1369,7 +1369,7 @@ function buildBootstrapProfileResponse(user: UserState) {
   let activeMatchInfo = null;
   if (activeMatchId) {
     const match = activeMatches.get(activeMatchId);
-    if (match) {
+    if (match && !match.settled && match.gameState.phase !== 'game_over') {
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
       const perspective = buildPerspectiveState(match, user.userId);
       activeMatchInfo = {
@@ -1385,6 +1385,8 @@ function buildBootstrapProfileResponse(user: UserState) {
           stake: p.stake
         })),
       };
+    } else {
+      activeMatchByUser.delete(user.userId);
     }
   }
 
@@ -2891,7 +2893,7 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   const activeMatchId = activeMatchByUser.get(userId);
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
-    if (activeMatch) {
+    if (activeMatch && !activeMatch.settled && activeMatch.gameState.phase !== 'game_over') {
       const perspective = buildPerspectiveState(activeMatch, userId);
       return {
         status: 'ready',
@@ -2901,6 +2903,8 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
         mode: activeMatch.mode,
         gameState: perspective?.gameState,
       };
+    } else {
+      activeMatchByUser.delete(userId);
     }
   }
 
@@ -3955,7 +3959,7 @@ function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
   const activeMatchId = activeMatchByUser.get(userId);
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
-    if (activeMatch) {
+    if (activeMatch && !activeMatch.settled && activeMatch.gameState.phase !== 'game_over') {
       const perspective = buildPerspectiveState(activeMatch, userId);
       return sendMatchmakerStatusSuccess(req, res, {
         status: 'ready',
@@ -3965,6 +3969,8 @@ function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
         mode: activeMatch.mode,
         gameState: perspective?.gameState,
       });
+    } else {
+      activeMatchByUser.delete(userId);
     }
   }
 
@@ -4492,23 +4498,47 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
     return res.json({ success: true, left: true });
   }
 
-  if (match?.mode === 'pvp') {
+  if (match) {
     if (!match.players.some((player) => player.userId === userId)) {
-      return res.status(403).json({ error: 'You are not a participant in this match.' });
+      activeMatchByUser.delete(userId);
+      return res.json({ success: true, alreadyLeft: true });
     }
     ensureMatchLifecycle(match);
-    if (match.playStartedAt) {
-      return res.status(409).json({ error: 'The public match has already started and cannot be cancelled.' });
+    if (!match.playStartedAt) {
+      match.players.forEach((player) => activeMatchByUser.delete(player.userId));
+      broadcastMatchCancelled(match.matchId, 'A player left before the match started.');
+      activeMatches.delete(match.matchId);
+      schedulePersist({ deleteMatchId: match.matchId });
+      await persistStateNow();
+      return res.json({ success: true, cancelled: true });
     }
-    match.players.forEach((player) => activeMatchByUser.delete(player.userId));
-    broadcastMatchCancelled(match.matchId, 'A player left before the match started.');
-    activeMatches.delete(match.matchId);
-    schedulePersist({ deleteMatchId: match.matchId });
+
+    activeMatchByUser.delete(userId);
+    const pInState = match.gameState.players.find((p) => p.userId === userId);
+    if (pInState) {
+      pInState.isAi = true;
+      pInState.isConnected = true;
+      pInState.disconnectedAt = null;
+      match.gameState.logs = [
+        createServerLog(`🔌 ${pInState.username} left the match and was replaced by a bot.`, 'info'),
+        ...match.gameState.logs,
+      ].slice(0, 50);
+    }
+    const allBots = match.gameState.players.every((p) => p.isAi);
+    if (allBots) {
+      match.gameState.phase = 'game_over';
+      match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      settleMatchHelper(match);
+    } else {
+      schedulePersist({ matchId: match.matchId });
+      broadcastMatch(match.matchId);
+    }
     await persistStateNow();
-    return res.json({ success: true, cancelled: true });
+    return res.json({ success: true, left: true, convertedToBot: true });
   }
 
-  return res.status(409).json({ error: 'This match has already started and cannot be cancelled.' });
+  activeMatchByUser.delete(userId);
+  return res.json({ success: true, alreadyLeft: true });
 });
 
 app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
@@ -4992,7 +5022,21 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   for (const [matchId, match] of activeMatches.entries()) {
-    if (match.gameState.phase !== 'playing') continue;
+    if (match.settled || match.gameState.phase !== 'playing') {
+      match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      continue;
+    }
+
+    const matchAgeMs = now - match.createdAt;
+    if (matchAgeMs > 15 * 60 * 1000) {
+      const allBotsOrOffline = match.gameState.players.every((p) => p.isAi || p.isConnected === false);
+      if (allBotsOrOffline) {
+        match.gameState.phase = 'game_over';
+        match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+        settleMatchHelper(match);
+        continue;
+      }
+    }
 
     const state = match.gameState;
     const hasPlaceholders = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
@@ -5026,11 +5070,15 @@ setInterval(() => {
           broadcastMatch(matchId);
         }
       } else {
-        if (player.isConnected !== false && !player.isAi) {
-          player.isConnected = false;
-          player.disconnectedAt = now;
-          state.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...state.logs].slice(0, 50);
-          broadcastMatch(matchId);
+        if (!player.isAi) {
+          if (player.isConnected !== false) {
+            player.isConnected = false;
+            player.disconnectedAt = now;
+            state.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...state.logs].slice(0, 50);
+            broadcastMatch(matchId);
+          } else if (!player.disconnectedAt) {
+            player.disconnectedAt = now;
+          }
         }
       }
     });
@@ -5060,7 +5108,8 @@ setInterval(() => {
         schedulePersist({ matchId });
       }
     } else {
-      const disconnectedForSec = currentPlayer.disconnectedAt ? (now - currentPlayer.disconnectedAt) / 1000 : 0;
+      const disconnectedAt = currentPlayer.disconnectedAt || match.createdAt;
+      const disconnectedForSec = Math.max(0, (now - disconnectedAt) / 1000);
       if (disconnectedForSec >= graceLimit) {
         state.logs = [createServerLog(`🤖 ${currentPlayer.username} is offline. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
         runServerAiTurn(match, currentPlayerIndex);
@@ -5070,12 +5119,14 @@ setInterval(() => {
     }
 
     state.players.forEach((player) => {
-      if (player.isConnected === false && !player.isAi && player.disconnectedAt) {
-        const secsDisconnected = (now - player.disconnectedAt) / 1000;
+      if (player.isConnected === false && !player.isAi) {
+        const disconnectedAt = player.disconnectedAt || match.createdAt;
+        const secsDisconnected = Math.max(0, (now - disconnectedAt) / 1000);
         if (secsDisconnected >= graceLimit) {
           player.isAi = true;
           player.isConnected = true;
           player.disconnectedAt = null;
+          activeMatchByUser.delete(player.userId);
           state.logs = [createServerLog(`🤖 ${player.username} has been permanently replaced by a bot.`, 'info'), ...state.logs].slice(0, 50);
           broadcastMatch(matchId);
           schedulePersist({ matchId });

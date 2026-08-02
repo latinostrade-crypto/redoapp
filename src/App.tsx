@@ -524,7 +524,7 @@ export default function App() {
                   return;
                 }
                 if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
-                  returnToLobby();
+                  await leaveUnstartedMatch();
                 }
               }}
               className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
