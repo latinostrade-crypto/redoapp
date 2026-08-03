@@ -352,8 +352,8 @@ export function useUnoGame() {
     } catch (error) {
       console.error('Remote match state sync failed', error);
       const errorMsg = error instanceof Error ? error.message : '';
-      const isFatal = errorMsg.includes('[404') || errorMsg.includes('[403') || errorMsg.includes('[400') || errorMsg.includes('Forbidden') || errorMsg.includes('Not found');
-      if (isFatal) {
+      const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished');
+      if (isNotFoundOrSettled) {
         localStorage.removeItem('redoapp_active_match');
         remoteMatchIdRef.current = null;
         remoteUserIdRef.current = null;
@@ -364,6 +364,14 @@ export function useUnoGame() {
           players: [],
           winnerId: null,
         }));
+      } else {
+        // Transient error or session still initializing during reload:
+        // Keep active match state and retry sync shortly instead of dumping user to menu.
+        window.setTimeout(() => {
+          if (localStorage.getItem('redoapp_active_match')) {
+            syncRemoteMatchState().catch(() => undefined);
+          }
+        }, 1500);
       }
       return false;
     }

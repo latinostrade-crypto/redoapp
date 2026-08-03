@@ -2859,22 +2859,13 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const allConnected = connectedPlayers.length === match.gameState.players.length;
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + 60_000);
   if (!allConnected && !deadlineReached) return false;
-  if (deadlineReached && connectedPlayers.length === 0) {
+  if (deadlineReached && !allConnected) {
     cancelUnstartedPublicMatch(match);
     return false;
   }
   if (!commitPublicMatchCosts(match)) {
     cancelUnstartedPublicMatch(match);
     return false;
-  }
-  if (deadlineReached) {
-    match.gameState.players.forEach((player) => {
-      if (!player.hasConnected) {
-        player.isAi = true;
-        player.isConnected = true;
-        player.disconnectedAt = null;
-      }
-    });
   }
   match.playStartedAt = now;
   match.gameState.turnStartedAt = now;
@@ -2887,11 +2878,19 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
 function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   ensureMatchLifecycle(match);
   const player = match.gameState.players.find((entry) => entry.userId === userId);
-  if (!player || player.isAi) return;
+  if (!player) return;
+  const wasAi = player.isAi;
+  player.isAi = false;
   player.isConnected = true;
   player.hasConnected = true;
   player.lastSeenAt = Date.now();
   player.disconnectedAt = null;
+  activeMatchByUser.set(userId, match.matchId);
+  if (wasAi) {
+    match.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected and took back control.`, 'info'), ...match.gameState.logs].slice(0, 50);
+    schedulePersist({ matchId: match.matchId });
+    broadcastMatch(match.matchId);
+  }
   maybeStartPublicMatch(match);
 }
 
