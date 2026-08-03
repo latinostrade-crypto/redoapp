@@ -134,17 +134,34 @@ type RateLimitScope = 'ip' | 'user';
 
 function rateLimitMiddleware(limit: number, windowMs: number, scope: RateLimitScope = 'ip') {
   return (req: Request, res: Response, next: NextFunction) => {
-    const authenticatedUserId = (req as AuthenticatedRequest).authUserId;
-    // Authenticated Telegram/session requests must not share a budget because
-    // mobile networks and Render's edge can put many players behind one IP.
-    // Unauthenticated traffic deliberately remains IP-scoped.
-    const subject = scope === 'user' && authenticatedUserId
+    let authenticatedUserId = (req as AuthenticatedRequest).authUserId;
+    if (!authenticatedUserId) {
+      try {
+        const telegramInitData = extractTelegramInitData(req);
+        const auth = verifyTelegramInitData(telegramInitData);
+        if (auth) {
+          authenticatedUserId = `tg:${auth.id}`;
+          (req as AuthenticatedRequest).authUserId = authenticatedUserId;
+        } else {
+          const sessionToken = extractSessionToken(req);
+          const session = verifySessionToken(sessionToken);
+          if (session) {
+            authenticatedUserId = session.userId;
+            (req as AuthenticatedRequest).authUserId = authenticatedUserId;
+          }
+        }
+      } catch {
+        // Ignore parsing errors in rate limiter resolution
+      }
+    }
+    const effectiveScope = authenticatedUserId ? 'user' : scope;
+    const subject = effectiveScope === 'user' && authenticatedUserId
       ? `user:${authenticatedUserId}`
       : `ip:${req.ip || 'global'}`;
     // Keep independent endpoint budgets. Read-side ticket polling must never
     // consume the budget for a user-initiated deposit or withdrawal.
     const routeKey = `${req.method}:${req.baseUrl}${req.path}`;
-    const key = `${scope}:${subject}:${routeKey}`;
+    const key = `${effectiveScope}:${subject}:${routeKey}`;
     const now = Date.now();
     pruneExpiredRateLimits(now);
     const client = rateLimitMap.get(key);
@@ -678,21 +695,51 @@ async function upsertStateRow(id: string, payload: unknown) {
   if (error) throw new Error(`Supabase upsert failed for ${id}: ${error.message}`);
 }
 
+async function upsertStateRowsBulk(rows: Array<{ id: string; payload: unknown; updated_at: string }>) {
+  if (rows.length === 0) return;
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    const { error } = await supabaseAdmin!
+      .from(SUPABASE_STATE_TABLE)
+      .upsert(batch, { onConflict: 'id' });
+    if (error) throw new Error(`Supabase bulk upsert failed for batch of ${batch.length} rows: ${error.message}`);
+  }
+}
+
 async function persistDirtyRows<T>(
   dirty: Set<string>,
   versions: Map<string, number>,
   rowPrefix: string,
   getValue: (id: string) => T | undefined,
 ) {
-  for (const id of Array.from(dirty)) {
+  const ids = Array.from(dirty);
+  if (ids.length === 0) return;
+
+  const rowsToUpsert: Array<{ id: string; payload: unknown; updated_at: string }> = [];
+  const pendingAcks: Array<{ id: string; version: number }> = [];
+  const nowIso = new Date().toISOString();
+
+  for (const id of ids) {
     const version = versions.get(id) || 0;
     const value = getValue(id);
     if (value === undefined) {
       acknowledgeDirty(dirty, versions, id, version);
       continue;
     }
-    await upsertStateRow(`${rowPrefix}${id}`, value);
-    acknowledgeDirty(dirty, versions, id, version);
+    rowsToUpsert.push({
+      id: `${rowPrefix}${id}`,
+      payload: value,
+      updated_at: nowIso,
+    });
+    pendingAcks.push({ id, version });
+  }
+
+  if (rowsToUpsert.length > 0) {
+    await upsertStateRowsBulk(rowsToUpsert);
+    for (const ack of pendingAcks) {
+      acknowledgeDirty(dirty, versions, ack.id, ack.version);
+    }
   }
 }
 
@@ -731,24 +778,26 @@ async function persistStateNowInternal() {
       // from the capped in-profile transaction display.
       await persistDirtyRows(dirtyReferralPayouts, dirtyReferralPayoutVersions, 'referral-payout:', (payoutId) => referralPayouts.get(payoutId));
 
-      // 7. Delete removed matches
-      for (const matchId of Array.from(deletedMatches)) {
+      // 7. Delete removed matches in bulk
+      const matchIdsToDelete = Array.from(deletedMatches);
+      if (matchIdsToDelete.length > 0) {
         const { error } = await supabaseAdmin
           .from(SUPABASE_STATE_TABLE)
           .delete()
-          .eq('id', `match:${matchId}`);
-        if (error) throw new Error(`Supabase delete failed for match:${matchId}: ${error.message}`);
-        deletedMatches.delete(matchId);
+          .in('id', matchIdsToDelete.map(id => `match:${id}`));
+        if (error) throw new Error(`Supabase delete failed for matches: ${error.message}`);
+        matchIdsToDelete.forEach(id => deletedMatches.delete(id));
       }
 
-      // 8. Delete removed private rooms
-      for (const roomCode of Array.from(deletedPrivateRooms)) {
+      // 8. Delete removed private rooms in bulk
+      const roomCodesToDelete = Array.from(deletedPrivateRooms);
+      if (roomCodesToDelete.length > 0) {
         const { error } = await supabaseAdmin
           .from(SUPABASE_STATE_TABLE)
           .delete()
-          .eq('id', `room:${roomCode}`);
-        if (error) throw new Error(`Supabase delete failed for room:${roomCode}: ${error.message}`);
-        deletedPrivateRooms.delete(roomCode);
+          .in('id', roomCodesToDelete.map(code => `room:${code}`));
+        if (error) throw new Error(`Supabase delete failed for rooms: ${error.message}`);
+        roomCodesToDelete.forEach(code => deletedPrivateRooms.delete(code));
       }
 
       // 9. Persist global state (queue, notifications)
