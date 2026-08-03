@@ -162,6 +162,14 @@ export default function App() {
     }
   }, [isLeavingUnstartedMatch, returnToLobby]);
 
+  useEffect(() => {
+    if (!isWaitingForPlayers || !gameState.connectionDeadlineAt) return;
+    const deadlinePastMs = Date.now() - gameState.connectionDeadlineAt;
+    if (deadlinePastMs > 2500) {
+      leaveUnstartedMatch().catch(() => returnToLobby());
+    }
+  }, [isWaitingForPlayers, gameState.connectionDeadlineAt, connectionTimeLeft, leaveUnstartedMatch, returnToLobby]);
+
   // Calculate playable check for human hand
   const checkPlayable = (card: any) => {
     if (!isHumanTurn) return false;

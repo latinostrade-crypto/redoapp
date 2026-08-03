@@ -2846,8 +2846,16 @@ function commitPublicMatchCosts(match: ActiveMatch) {
   return true;
 }
 
-function cancelUnstartedPublicMatch(match: ActiveMatch) {
-  match.players.forEach((player) => activeMatchByUser.delete(player.userId));
+function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all players connected in time. Match cancelled.') {
+  broadcastMatchCancelled(match.matchId, reason);
+  match.players.forEach((player) => {
+    activeMatchByUser.delete(player.userId);
+    const user = users.get(player.userId);
+    if (user) {
+      user.matchmakingFailureAt = Date.now();
+      user.matchmakingFailureReason = 'timeout';
+    }
+  });
   activeMatches.delete(match.matchId);
   schedulePersist({ deleteMatchId: match.matchId });
 }
@@ -2860,11 +2868,11 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + 60_000);
   if (!allConnected && !deadlineReached) return false;
   if (deadlineReached && !allConnected) {
-    cancelUnstartedPublicMatch(match);
+    cancelUnstartedPublicMatch(match, 'Not all players connected in time. Match cancelled.');
     return false;
   }
   if (!commitPublicMatchCosts(match)) {
-    cancelUnstartedPublicMatch(match);
+    cancelUnstartedPublicMatch(match, 'Match costs could not be committed. Match cancelled.');
     return false;
   }
   match.playStartedAt = now;
