@@ -1830,7 +1830,7 @@ function flushTelegramNotifications() {
   return telegramFlushPromise;
 }
 
-function verifyTelegramInitData(initData: string): TelegramAuthPayload | null {
+function verifyTelegramInitData(initData: string, maxAgeSec: number = TELEGRAM_INITDATA_MAX_AGE_SEC): TelegramAuthPayload | null {
   if (!initData || !TELEGRAM_BOT_TOKEN) {
     return null;
   }
@@ -1849,7 +1849,7 @@ function verifyTelegramInitData(initData: string): TelegramAuthPayload | null {
   }
   const authDate = Number(params.get('auth_date') || '0');
   const nowSec = Math.floor(Date.now() / 1000);
-  if (!authDate || nowSec - authDate > TELEGRAM_INITDATA_MAX_AGE_SEC) {
+  if (!authDate || nowSec - authDate > maxAgeSec) {
     return null;
   }
   const rawUser = params.get('user');
@@ -1937,8 +1937,8 @@ function extractTelegramInitData(req: Request) {
 
 function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   // Telegram initData is bound to the currently opened Mini App account. When
-  // both credentials are present, prefer it over a cached session token that
-  // may belong to an account previously opened in the same WebView.
+  // both credentials are present, prefer a fresh valid initData over a cached session token.
+  // BUT if initData has expired while staying in the same app session, fall back to checking the session token!
   const telegramInitData = extractTelegramInitData(req);
   const auth = verifyTelegramInitData(telegramInitData);
   if (auth) {
@@ -1947,13 +1947,14 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
     applyTelegramAuth(user, auth);
     return next();
   }
-  if (telegramInitData) {
-    return res.status(401).json({ error: 'Telegram authentication is invalid or expired.' });
-  }
-  const session = verifySessionToken(extractSessionToken(req));
+  const sessionToken = extractSessionToken(req);
+  const session = verifySessionToken(sessionToken);
   if (session) {
     req.authUserId = session.userId;
     return next();
+  }
+  if (telegramInitData) {
+    return res.status(401).json({ error: 'Telegram authentication is invalid or expired.' });
   }
   return res.status(401).json({ error: 'Authentication required.' });
 }
@@ -1967,8 +1968,8 @@ function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFuncti
     applyTelegramAuth(user, auth);
     return next();
   }
-  if (telegramInitData) return next();
-  const session = verifySessionToken(extractSessionToken(req));
+  const sessionToken = extractSessionToken(req);
+  const session = verifySessionToken(sessionToken);
   if (session) {
     req.authUserId = session.userId;
     return next();
@@ -2008,17 +2009,44 @@ function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
   }
 }
 
-function resolveCanonicalUserId(body: { userId?: string; telegramInitData?: string; walletAddress?: string }) {
-  const auth = body.telegramInitData ? verifyTelegramInitData(body.telegramInitData) : null;
+function resolveCanonicalUserId(
+  body: { userId?: string; telegramInitData?: string; walletAddress?: string; sessionToken?: string },
+  req?: Request
+) {
+  let auth = body.telegramInitData ? verifyTelegramInitData(body.telegramInitData) : null;
   if (auth) {
     return {
       userId: `tg:${auth.id}`,
       auth,
+      isSessionFallback: false,
     };
+  }
+  const sessionToken = body.sessionToken || (req ? extractSessionToken(req) : null);
+  const session = verifySessionToken(sessionToken);
+  if (session) {
+    if (body.telegramInitData) {
+      auth = verifyTelegramInitData(body.telegramInitData, 86400);
+    }
+    return {
+      userId: session.userId,
+      auth: auth && `tg:${auth.id}` === session.userId ? auth : null,
+      isSessionFallback: true,
+    };
+  }
+  if (body.telegramInitData) {
+    auth = verifyTelegramInitData(body.telegramInitData, 86400);
+    if (auth) {
+      return {
+        userId: `tg:${auth.id}`,
+        auth,
+        isSessionFallback: false,
+      };
+    }
   }
   return {
     userId: body.userId || '',
     auth: null,
+    isSessionFallback: false,
   };
 }
 
@@ -3356,11 +3384,11 @@ app.get('/api/admin/referrals/payouts.csv', requireAdmin, (req, res) => {
 
 app.post('/api/users/sync', async (req, res) => {
   const { walletAddress, telegramInitData, startParam } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string; startParam?: string };
-  const resolved = resolveCanonicalUserId(req.body);
+  const resolved = resolveCanonicalUserId(req.body, req);
   if (!resolved.userId) {
     return res.status(400).json({ error: 'Missing userId.' });
   }
-  const canIssueSessionToken = !!resolved.auth || resolved.userId.startsWith('guest:');
+  const canIssueSessionToken = !!resolved.auth || resolved.isSessionFallback || resolved.userId.startsWith('guest:');
   const user = getUser(resolved.userId, walletAddress);
   if (resolved.auth) {
     applyTelegramAuth(user, resolved.auth);

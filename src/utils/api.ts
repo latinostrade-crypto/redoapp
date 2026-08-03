@@ -125,13 +125,18 @@ function refreshApiSession(signal?: AbortSignal) {
     const telegramInitData = getTelegramInitData();
     const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
     const fallbackGuestUserId = storedUserId.startsWith('guest:') ? storedUserId : 'guest:guest';
+    const currentSessionToken = getSessionToken();
     const response = await fetch(`${API_BASE_URL}/api/users/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(currentSessionToken ? { Authorization: `Bearer ${currentSessionToken}` } : {}),
+      },
       body: JSON.stringify({
         userId: telegramInitData ? (storedUserId || fallbackGuestUserId) : fallbackGuestUserId,
         walletAddress: localStorage.getItem('redoapp_wallet_address') || null,
         telegramInitData,
+        sessionToken: currentSessionToken || null,
         startParam: null,
       }),
       signal,
@@ -185,7 +190,6 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
         const rawBody = await response.text();
         const data = rawBody ? JSON.parse(rawBody) : null;
         if (response.status === 401 && !skipAuthRefresh && path !== '/api/users/sync') {
-          setSessionToken(null);
           const refreshed = await refreshApiSession(controller.signal);
           if (refreshed) {
             // Close this trace before the retried request creates a new one;
@@ -198,6 +202,8 @@ export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promis
               message: 'Session refreshed; retrying request.',
             });
             return apiRequest<T>(path, { ...(init || {}), skipAuthRefresh: true });
+          } else {
+            setSessionToken(null);
           }
         }
         if (!response.ok) {
