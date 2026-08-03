@@ -139,7 +139,7 @@ export default function ComicExperience() {
 
       <footer className="comic-footer">
         <span>REDOAPP © 2026</span>
-        <a href="https://redoapp.onrender.com" target="_blank" rel="noreferrer">
+        <a href="https://redoapp.org" target="_blank" rel="noreferrer">
           WEB APP
         </a>
         <a href={TELEGRAM_APP_URL} target="_blank" rel="noreferrer">

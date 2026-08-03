@@ -75,6 +75,10 @@ const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 
 const ALLOWED_ORIGINS = [
+  'https://redoapp.org',
+  'https://www.redoapp.org',
+  'https://redoapp.website',
+  'https://www.redoapp.website',
   'https://redoapp.onrender.com',
   'https://redoapp-backend.onrender.com',
   'https://yoapp-backend.onrender.com',
@@ -86,7 +90,15 @@ const ALLOWED_ORIGINS = [
 // Reflecting verified origins or null (Telegram iOS WebViews) protects against arbitrary cross-origin site calls.
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    if (!origin || origin === 'null' || ALLOWED_ORIGINS.includes(origin) || origin.endsWith('.onrender.com') || origin.startsWith('https://t.me')) {
+    if (
+      !origin ||
+      origin === 'null' ||
+      ALLOWED_ORIGINS.includes(origin) ||
+      origin.endsWith('.onrender.com') ||
+      origin.endsWith('.redoapp.org') ||
+      origin.endsWith('.redoapp.website') ||
+      origin.startsWith('https://t.me')
+    ) {
       return callback(null, true);
     }
     callback(new Error('CORS request blocked by origin security policy.'));

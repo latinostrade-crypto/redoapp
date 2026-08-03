@@ -2,6 +2,9 @@ services:
   # Static Site: React Vite Frontend
   - type: static
     name: redoapp
+    domains:
+      - redoapp.org
+      - www.redoapp.org
     buildCommand: npm run build
     publishPath: dist
     envVars:
