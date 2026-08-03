@@ -71,7 +71,7 @@ const MAX_MATCH_PLAYERS = 4;
 // This is only the no-opponent expiry; as soon as two compatible players are
 // present runMatchmakingTick starts their table immediately.
 const MATCHMAKING_TIMEOUT_MS = 75_000;
-const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
+const PUBLIC_FREE_MATCH_ENERGY_COST = 2;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 
 const ALLOWED_ORIGINS = [

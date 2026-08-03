@@ -29,7 +29,8 @@ const MAX_MATCH_PLAYERS = 4;
 // still launch immediately; this window only covers cold starts and Telegram
 // WebView reconnects before the other player's join request reaches Render.
 const MATCHMAKING_TIMEOUT_SEC = 75;
-const PUBLIC_FREE_MATCH_ENERGY_COST = 5;
+const PUBLIC_FREE_MATCH_ENERGY_COST = 2;
+const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 const STAKE_OPTIONS = [0.3, 0.5, 1, 5, 10, 30] as const;
 const PUBLIC_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
 const PRIVATE_STAKE_OPTIONS = [0, ...STAKE_OPTIONS] as const;
@@ -3793,8 +3794,11 @@ export function Web3Dashboard({
                               alert(message);
                               return;
                             }
-                            if (selectedStake === 0 && energy.energy < PUBLIC_FREE_MATCH_ENERGY_COST) {
-                              const message = `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`;
+                            const requiredEnergy = selectedStake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
+                            if (energy.energy < requiredEnergy) {
+                              const message = selectedStake === 0
+                                ? `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`
+                                : `You need ${PUBLIC_STAKE_MATCH_ENERGY_COST} energy to join a public game.`;
                               setPublicQueueError(message);
                               alert(message);
                               return;
