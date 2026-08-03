@@ -14,7 +14,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 10000;
-const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQAihtS9I5lalYn9G8aRgyBq8UNLNC7N-aODCJJUdX4zKGDj';
+const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQCQoVn3iML7nn2a6ts97Xo1wGV21r3QCBHfPy51l0UQbXdw';
 const WITHDRAWAL_SENDER_WALLET = process.env.WITHDRAWAL_SENDER_WALLET || MARKETING_WALLET;
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
 const MIN_WITHDRAW_TICKETS = 0.5;
