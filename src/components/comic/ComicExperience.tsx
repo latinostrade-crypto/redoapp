@@ -84,28 +84,30 @@ export default function ComicExperience() {
       </a>
 
       <header className="comic-topbar">
-        <a href="#before-the-first-move" className="comic-topbar__brand" aria-label="Redoapp story start">
-          <img src="/text(logo).jpg" alt="Redoapp" width={938} height={201} />
-          <span>INTERACTIVE STORY</span>
-        </a>
-        <nav aria-label="Story actions">
-          <a
-            className="comic-topbar__telegram"
-            href={TELEGRAM_APP_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            TELEGRAM
+        <div className="comic-topbar__inner">
+          <a href="#before-the-first-move" className="comic-topbar__brand" aria-label="Redoapp story start">
+            <img src="/text(logo).jpg" alt="Redoapp" width={938} height={201} />
+            <span>INTERACTIVE STORY</span>
           </a>
-          <a
-            className="comic-topbar__play"
-            href={TELEGRAM_APP_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            SKIP TO GAME <span aria-hidden="true">→</span>
-          </a>
-        </nav>
+          <nav aria-label="Story actions">
+            <a
+              className="comic-topbar__telegram"
+              href={TELEGRAM_APP_URL}
+              target="_blank"
+              rel="noreferrer"
+            >
+              TELEGRAM
+            </a>
+            <a
+              className="comic-topbar__play"
+              href={TELEGRAM_APP_URL}
+              target="_blank"
+              rel="noreferrer"
+            >
+              SKIP TO GAME <span aria-hidden="true">→</span>
+            </a>
+          </nav>
+        </div>
       </header>
 
       {!reducedMotion && (
