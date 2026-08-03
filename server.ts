@@ -3940,10 +3940,20 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     });
   }
   if (stakeAmount > 0 && user.availableTickets < stakeAmount) {
-    return res.status(400).json({ error: 'Insufficient available tickets for stake.' });
+    return res.status(400).json({
+      error: 'Insufficient available tickets for stake.',
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+      energy: getEnergyState(user),
+    });
   }
   if (user.energy < energyCost) {
-    return res.status(400).json({ error: 'Not enough energy.' });
+    return res.status(400).json({
+      error: `Not enough energy. Free match requires ${energyCost} energy.`,
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+      energy: getEnergyState(user),
+    });
   }
 
   const activeTimer = matchmakerCleanupTimers.get(userId);

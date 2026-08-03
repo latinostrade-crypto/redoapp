@@ -333,33 +333,41 @@ export function isUserAdmin(): boolean {
 export function cleanErrorMessage(error: unknown, context?: 'bootstrap' | 'matchmaker' | 'private-room'): string {
   if (!error) return '';
   const message = error instanceof Error ? error.message : String(error);
+  const cleanMsg = message.replace(/\s*\[[^\]]+\]/g, '').trim();
+
   if (isUserAdmin()) {
-    return message;
+    return cleanMsg || message;
   }
   
-  // Hide details for normal users
+  if (
+    cleanMsg.includes('energy') ||
+    cleanMsg.includes('ticket') ||
+    cleanMsg.includes('stake') ||
+    cleanMsg.includes('expired') ||
+    cleanMsg.includes('cancelled') ||
+    cleanMsg.includes('syncing') ||
+    cleanMsg.includes('wallet') ||
+    cleanMsg.includes('Not enough') ||
+    cleanMsg.includes('Insufficient')
+  ) {
+    return cleanMsg;
+  }
+
   if (context === 'bootstrap') {
     return 'Failed to connect to the game server. Please try again.';
   }
-  if (context === 'matchmaker') {
-    return 'Failed to join matchmaking. Please try again.';
-  }
-  if (context === 'private-room') {
-    return 'Failed to join the private room. Please try again.';
-  }
 
-  // Strip bracketed technical details (e.g. [503 /api/users/sync])
-  const cleanMsg = message.replace(/\s*\[[^\]]+\]/g, '');
-  
   if (
     cleanMsg.includes('failed with status') || 
     cleanMsg.includes('Request failed') || 
     cleanMsg.includes('invalid JSON') || 
-    cleanMsg.includes('invalid response')
+    cleanMsg.includes('invalid response') ||
+    cleanMsg.includes('Failed to fetch') ||
+    cleanMsg.includes('NetworkError')
   ) {
     return 'Something went wrong. Please check your connection and try again.';
   }
   
-  return cleanMsg;
+  return cleanMsg || 'Matchmaking request failed. Please try again.';
 }
 

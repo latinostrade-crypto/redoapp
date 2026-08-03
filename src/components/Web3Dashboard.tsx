@@ -3846,6 +3846,7 @@ export function Web3Dashboard({
                               setMatchmakingState('searching');
                             }).catch(async (error) => {
                               if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+                              fetchFullProfile().catch(() => undefined);
                               // The server may have accepted the idempotent join
                               // even when Telegram/WebView dropped the response.
                               // Ask the authoritative status endpoint before
