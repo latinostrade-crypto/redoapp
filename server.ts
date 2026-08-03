@@ -53,6 +53,7 @@ const REDIS_CACHE_NAMESPACE = process.env.REDIS_CACHE_NAMESPACE || 'redoapp:v1';
 const REFERRAL_RESET_MIGRATION_ID = 'referrals-reset-2026-07-14';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
+const DEFAULT_REFERRER_CODE = (process.env.DEFAULT_REFERRER_CODE || 'KNVPOU').trim().toUpperCase();
 const DEFAULT_MAX_ENERGY = 10;
 const DEFAULT_ENERGY_REGEN_INTERVAL_SEC = 30 * 60;
 const DAILY_ENERGY_REWARD = 3;
@@ -2028,17 +2029,38 @@ function getPrivateRoomUserId(req: AuthenticatedRequest, input: Record<string, u
   return '';
 }
 
+function ensureDefaultAmbassador(): UserState | null {
+  if (!DEFAULT_REFERRER_CODE) return null;
+  let ambassador = findUserByReferralCode(DEFAULT_REFERRER_CODE);
+  if (!ambassador) {
+    const ambassadorUserId = `ambassador:${DEFAULT_REFERRER_CODE.toLowerCase()}`;
+    ambassador = getUser(ambassadorUserId);
+    ambassador.referralCode = DEFAULT_REFERRER_CODE;
+    schedulePersist({ userId: ambassadorUserId });
+  }
+  return ambassador;
+}
+
 function assignReferralIfNeeded(user: UserState, startParam?: string) {
-  if (!startParam || user.referredByUserId || !/^ref_/i.test(startParam)) {
+  if (user.referredByUserId) {
     return;
   }
-  const referralCode = startParam.replace(/^ref_/i, '').trim().toUpperCase();
-  const inviter = findUserByReferralCode(referralCode);
+
+  let inviter: UserState | null = null;
+  if (startParam && /^ref_/i.test(startParam)) {
+    const referralCode = startParam.replace(/^ref_/i, '').trim().toUpperCase();
+    inviter = findUserByReferralCode(referralCode);
+  }
+
+  // Fallback to Default Ambassador if user joined organically without a referral link
   if (!inviter || inviter.userId === user.userId) {
-    user.referralStatus = 'rejected';
-    schedulePersist({ userId: user.userId });
+    inviter = ensureDefaultAmbassador();
+  }
+
+  if (!inviter || inviter.userId === user.userId) {
     return;
   }
+
   user.referredByUserId = inviter.userId;
   user.referralStatus = 'pending';
   user.referralAssignedAt = Date.now();
