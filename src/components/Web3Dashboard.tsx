@@ -2199,14 +2199,6 @@ export function Web3Dashboard({
     setNftCheckMessage('');
     try {
       sound.playPop();
-      setNftCheckState('signing');
-      await tonConnectUI.signData({
-        type: 'text',
-        text: `REDOapp NFT event check\nWallet: ${rawAddress}\nCollection: ${NFT_COLLECTION_ADDRESS}\nTime: ${new Date().toISOString()}`,
-        network: '-239',
-        from: rawWalletAddress || undefined,
-      } as any);
-
       setNftCheckState('checking');
       const response = await fetch(
         `https://tonapi.io/v2/accounts/${encodeURIComponent(rawAddress)}/nfts?collection=${encodeURIComponent(NFT_COLLECTION_ADDRESS)}&limit=1`,
