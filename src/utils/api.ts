@@ -99,9 +99,14 @@ export function buildAuthenticatedUrl(path: string) {
   const params = new URLSearchParams();
   if (token) params.set('sessionToken', token);
   else if (telegramInitData) params.set('telegramInitData', telegramInitData);
-  if (!params.size) return `${API_BASE_URL}${path}`;
-  const separator = path.includes('?') ? '&' : '?';
-  return `${API_BASE_URL}${path}${separator}${params.toString()}`;
+  const isAbsolute = path.startsWith('http://') || path.startsWith('https://');
+  const isSameOriginRewrite = path.startsWith('/match-api/');
+  const targetUrl = isAbsolute || isSameOriginRewrite
+    ? path
+    : `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+  if (!params.size) return targetUrl;
+  const separator = targetUrl.includes('?') ? '&' : '?';
+  return `${targetUrl}${separator}${params.toString()}`;
 }
 
 type ApiRequestInit = RequestInit & {
