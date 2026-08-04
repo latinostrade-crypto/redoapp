@@ -1098,7 +1098,7 @@ export default function App() {
               onClick={cancelWildSelect}
               className="w-full mt-3 py-2.5 bg-[#2a2d32] hover:bg-[#3f434a] text-slate-200 font-black text-xs border-2 border-black pixel-btn-interactive uppercase tracking-wider shadow-[2px_2px_0_#000000] transition-colors"
             >
-              CANCEL / ОТМЕНА
+              CANCEL
             </button>
           </div>
         </div>
