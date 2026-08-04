@@ -664,20 +664,42 @@ export default function App() {
           {/* WAITING FOR OPPONENT IN PRIVATE ROOM OVERLAY */}
           {gameState.players.some((p) => p.name === 'Waiting...') && (
             <div className="absolute inset-0 bg-[#0c0f12]/85 backdrop-blur-md z-30 flex items-center justify-center p-4 select-none font-mono">
-              <div className="w-full max-w-xs bg-slate-950 border-4 border-black p-5 text-center shadow-[4px_4px_0_#000] pixel-box-sm flex flex-col gap-4 relative overflow-hidden">
+              <div className="w-full max-w-xs bg-slate-950 border-4 border-black p-5 text-center shadow-[4px_4px_0_#000] pixel-box-sm flex flex-col gap-3 relative overflow-hidden">
                 <div className="absolute inset-0 pointer-events-none bg-radial from-transparent to-black/20 opacity-30"></div>
                 
-                <div className="w-12 h-12 mx-auto bg-slate-900 border-2 border-black flex items-center justify-center animate-pulse">
-                  <span className="text-xl">⏳</span>
+                <div className="w-10 h-10 mx-auto bg-slate-900 border-2 border-black flex items-center justify-center animate-pulse">
+                  <span className="text-lg">⏳</span>
                 </div>
                 
                 <h3 className="text-[11px] font-black text-[#ffcc00] uppercase tracking-widest leading-none">
-                  Waiting for Opponent...
+                  Waiting for Players ({gameState.players.filter((p) => p.name !== 'Waiting...').length}/{gameState.players.length})
                 </h3>
                 
                 <p className="text-[8px] text-slate-400 font-sans leading-normal px-2">
-                  Share the link or code with your friend. The game table is ready and waiting for them.
+                  {gameState.players.filter((p) => p.name === 'Waiting...').length === 1
+                    ? 'Need 1 more player to auto-start the match.'
+                    : `Need ${gameState.players.filter((p) => p.name === 'Waiting...').length} more players to auto-start the match.`}
                 </p>
+
+                {/* Player Slots List */}
+                <div className="flex flex-col gap-1 text-[9px] text-left bg-slate-900 p-2 border border-slate-800 rounded">
+                  {gameState.players.map((p, index) => {
+                    const isJoined = p.name !== 'Waiting...';
+                    return (
+                      <div key={p.id || index} className="flex items-center justify-between py-0.5">
+                        <div className="flex items-center gap-1.5 truncate pr-2">
+                          <Avatar id={p.avatar} size={22} />
+                          <span className={isJoined ? "font-bold text-white truncate" : "text-slate-500 italic text-[8px] truncate"}>
+                            {isJoined ? getDisplayName(p) : `Slot ${index + 1}: Waiting...`}
+                          </span>
+                        </div>
+                        <span className={isJoined ? "text-[#00ff66] font-black text-[8px] shrink-0" : "text-[#ffcc00] animate-pulse text-[8px] shrink-0"}>
+                          {isJoined ? (index === 0 ? 'HOST' : 'READY') : 'WAITING'}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
 
                 {(() => {
                   const activeMatchRaw = localStorage.getItem('redoapp_active_match');

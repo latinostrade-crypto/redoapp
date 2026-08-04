@@ -4237,11 +4237,15 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     joinedAt: Date.now(),
     costsCommitted: false,
   };
-  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
-    room.hostUserId === userId &&
-    room.stake === stakeAmount &&
-    room.targetPlayers === targetPlayersCount &&
-    (room.status === 'waiting' || room.status === 'started'));
+  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) => {
+    if (room.hostUserId !== userId || room.stake !== stakeAmount || room.targetPlayers !== targetPlayersCount) {
+      return false;
+    }
+    if (room.status !== 'waiting') return false;
+    const match = room.matchId ? activeMatches.get(room.matchId) : null;
+    if (match && (match.settled || match.gameState.phase === 'game_over')) return false;
+    return true;
+  });
   if (existingWaitingRoom) {
     if (normalizedRequestedCode && existingWaitingRoom.roomCode !== normalizedRequestedCode) {
       const collision = privateRooms.get(normalizedRequestedCode);
@@ -4674,6 +4678,12 @@ app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
   }
+  if (room.matchId) {
+    const match = activeMatches.get(room.matchId);
+    if (match && (match.settled || match.gameState.phase === 'game_over')) {
+      return res.status(404).json({ error: 'Private room has finished.' });
+    }
+  }
 
   return res.json({
     roomCode: room.roomCode,
@@ -5080,6 +5090,23 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   flushTelegramNotifications().catch((error) => {
     console.error('Telegram notification flush failed', error);
   });
+
+  // Clean up and complete any associated private room
+  const associatedRoom = Array.from(privateRooms.values()).find((r) => r.matchId === activeMatch.matchId);
+  if (associatedRoom) {
+    const roomCode = associatedRoom.roomCode;
+    const subscribers = privateRoomSubscribers.get(roomCode);
+    subscribers?.forEach((response) => {
+      sendSse(response, 'private-room-completed', {
+        roomCode,
+        reason: 'The match has concluded.',
+      });
+      response.end();
+    });
+    privateRoomSubscribers.delete(roomCode);
+    privateRooms.delete(roomCode);
+    schedulePersist({ deleteRoomCode: roomCode });
+  }
 
   scheduleMatchCleanup(activeMatch.matchId);
 }

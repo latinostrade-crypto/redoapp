@@ -358,6 +358,7 @@ export function useUnoGame() {
         remoteMatchIdRef.current = null;
         remoteUserIdRef.current = null;
         setRemoteSessionActive(false);
+        window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
         setGameState((prev) => ({
           ...prev,
           phase: 'setup',
@@ -1419,6 +1420,7 @@ export function useUnoGame() {
     remoteUserIdRef.current = null;
     setRemoteSessionActive(false);
     localStorage.removeItem('redoapp_active_match');
+    window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     setCardsPlayedThisRound(0);
     setCardsDrawnThisRound(0);
     setLeaderboard([]);

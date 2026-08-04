@@ -761,6 +761,7 @@ export function Web3Dashboard({
   const [privateRoomCanceling, setPrivateRoomCanceling] = useState(false);
   const [privateRoomError, setPrivateRoomError] = useState('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
+  const [privateRoomPlayersList, setPrivateRoomPlayersList] = useState<PrivateRoomPlayer[]>([]);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState<boolean>(() => {
     try {
@@ -1096,8 +1097,34 @@ export function Web3Dashboard({
       });
   };
 
+  const resetPrivateRoomState = useCallback(() => {
+    privateRoomStreamRef.current?.close();
+    privateRoomStreamRef.current = null;
+    setGeneratedLink('');
+    setPrivateRoomCode('');
+    setPrivateJoinCode('');
+    setPrivateRoomPlayersCount(0);
+    setPrivateRoomPlayersList([]);
+    setPrivateRoomStatus('idle');
+    setPrivateRoomCreateState('idle');
+    setPrivateRoomError('');
+  }, []);
+
+  useEffect(() => {
+    const handleMatchEnded = () => {
+      resetPrivateRoomState();
+    };
+    window.addEventListener('redoapp:match-ended', handleMatchEnded);
+    return () => {
+      window.removeEventListener('redoapp:match-ended', handleMatchEnded);
+    };
+  }, [resetPrivateRoomState]);
+
   const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string | null; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
     setPrivateRoomPlayersCount(result.playersCount);
+    if (Array.isArray(result.players)) {
+      setPrivateRoomPlayersList(result.players);
+    }
     if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
     }
@@ -1112,9 +1139,10 @@ export function Web3Dashboard({
         createdAt: Date.now(),
       }));
       setPrivateRoomStatus('ready');
+      setPrivateRoomCreateState('idle');
       onStartGame('private', privateRoomStake);
     }
-  }, [privateRoomStake, currentUserId, onStartGame]);
+  }, [privateRoomStake, currentUserId, onStartGame, privateRoomCode]);
 
   const applyPrivateRoomJoin = (result: PrivateRoomResponse, roomCodeToUse: string) => {
     setShowRoomDisclaimer(false);
@@ -1465,16 +1493,9 @@ export function Web3Dashboard({
         networkAttempts: 1,
         body: JSON.stringify({ matchId, roomCode: privateRoomCode }),
       });
-      privateRoomStreamRef.current?.close();
-      privateRoomStreamRef.current = null;
       localStorage.removeItem('redoapp_active_match');
       recoveredActiveMatchRef.current = '';
-      setGeneratedLink('');
-      setPrivateRoomCode('');
-      setPrivateJoinCode('');
-      setPrivateRoomPlayersCount(0);
-      setPrivateRoomStatus('idle');
-      setPrivateRoomCreateState('idle');
+      resetPrivateRoomState();
       const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000 }).catch(() => null);
       if (me) {
         const normalized = normalizeProfile(me);
@@ -2580,13 +2601,14 @@ export function Web3Dashboard({
     stream.addEventListener('private-room-cancelled', () => {
       stream.close();
       localStorage.removeItem('redoapp_active_match');
-      setGeneratedLink('');
-      setPrivateRoomCode('');
-      setPrivateJoinCode('');
-      setPrivateRoomPlayersCount(0);
-      setPrivateRoomStatus('idle');
-      setPrivateRoomCreateState('idle');
+      resetPrivateRoomState();
       setPrivateRoomError('The waiting room was cancelled.');
+    });
+
+    stream.addEventListener('private-room-completed', () => {
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
+      resetPrivateRoomState();
     });
 
     stream.onerror = () => {
@@ -4257,8 +4279,47 @@ export function Web3Dashboard({
                         >
                           {privateRoomStatus === 'waiting' ? 'Waiting For Players' : 'Enter Room'}
                         </button>
-                          <div className="bg-black p-2 border border-black text-[8px] text-slate-400">
-                            Room code: <span className="text-[#00d2ff] font-black">{privateRoomCode || 'pending'}</span> · Players: <span className="text-[#ffcc00] font-black">{privateRoomPlayersCount}/{privateRoomTargetPlayers}</span>
+                          <div className="bg-black p-2.5 border border-black space-y-2 text-[9px]">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[#ffcc00] font-black uppercase text-[9px]">
+                                ROOM: {privateRoomCode || 'PENDING'}
+                              </span>
+                              <span className="text-[#00ff66] font-bold text-[9px]">
+                                {privateRoomPlayersCount}/{privateRoomTargetPlayers} PLAYERS
+                              </span>
+                            </div>
+
+                            <div className="text-[8px] font-mono">
+                              {privateRoomTargetPlayers - privateRoomPlayersCount > 0 ? (
+                                <span className="text-[#ffcc00] animate-pulse">
+                                  ⏳ Waiting for {privateRoomTargetPlayers - privateRoomPlayersCount} more player{privateRoomTargetPlayers - privateRoomPlayersCount > 1 ? 's' : ''}...
+                                </span>
+                              ) : (
+                                <span className="text-[#00ff66] font-bold">
+                                  ✅ Table full! Launching match...
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-1 pt-1">
+                              {Array.from({ length: privateRoomTargetPlayers }).map((_, idx) => {
+                                const player = privateRoomPlayersList[idx];
+                                const isJoined = Boolean(player);
+                                return (
+                                  <div key={idx} className="flex items-center justify-between bg-slate-900 border border-slate-800 p-1.5 px-2 rounded-sm">
+                                    <div className="flex items-center gap-1.5 truncate pr-2">
+                                      <Avatar id={player ? player.avatarId : 'koala'} size={20} />
+                                      <span className={isJoined ? "font-bold text-white text-[9px] truncate" : "text-slate-500 italic text-[8px] truncate"}>
+                                        {player ? player.username : `Slot ${idx + 1}: Waiting...`}
+                                      </span>
+                                    </div>
+                                    <span className={isJoined ? "text-[#00ff66] font-black text-[8px] shrink-0" : "text-[#ffcc00] animate-pulse text-[8px] shrink-0"}>
+                                      {isJoined ? (idx === 0 ? 'HOST' : 'READY') : 'WAITING'}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                           {privateRoomStatus === 'waiting' && (
                             <button
