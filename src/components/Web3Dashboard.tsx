@@ -1591,12 +1591,17 @@ export function Web3Dashboard({
     return () => window.clearInterval(timer);
   }, [currentUserId, activeProfile?.userId, pendingDeposits.length, depositFlowStatus]);
 
-  // Auto-recover active match if server reports the player is already in one
+  // Auto-recover active match if server reports the player is already in an in-progress match
   useEffect(() => {
     if (activeProfile?.activeMatch) {
       const match = activeProfile.activeMatch;
       if (match.gameState?.phase === 'game_over') {
         localStorage.removeItem('redoapp_active_match');
+        return;
+      }
+      const hasPlaceholders = match.players?.some((p) => p.userId?.startsWith('waiting_for_player_'));
+      if (hasPlaceholders) {
+        // Unstarted waiting room: do not auto-launch into game table
         return;
       }
       if (recoveredActiveMatchRef.current === match.matchId) return;

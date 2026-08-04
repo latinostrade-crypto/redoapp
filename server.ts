@@ -1431,7 +1431,8 @@ function buildBootstrapProfileResponse(user: UserState) {
   let activeMatchInfo = null;
   if (activeMatchId) {
     const match = activeMatches.get(activeMatchId);
-    if (match && !match.settled && match.gameState.phase !== 'game_over') {
+    const hasPlaceholders = match?.players.some((p) => p.userId.startsWith('waiting_for_player_'));
+    if (match && !match.settled && match.gameState.phase !== 'game_over' && (!hasPlaceholders || match.playStartedAt)) {
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
       const perspective = buildPerspectiveState(match, user.userId);
       activeMatchInfo = {
@@ -4237,64 +4238,48 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     joinedAt: Date.now(),
     costsCommitted: false,
   };
-  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) => {
-    if (room.hostUserId !== userId || room.stake !== stakeAmount || room.targetPlayers !== targetPlayersCount) {
-      return false;
-    }
-    if (room.status !== 'waiting') return false;
-    const match = room.matchId ? activeMatches.get(room.matchId) : null;
-    if (match && (match.settled || match.gameState.phase === 'game_over')) return false;
-    return true;
-  });
+  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
+    room.hostUserId === userId && room.status === 'waiting'
+  );
   if (existingWaitingRoom) {
-    if (normalizedRequestedCode && existingWaitingRoom.roomCode !== normalizedRequestedCode) {
-      const collision = privateRooms.get(normalizedRequestedCode);
-      if (collision && collision.hostUserId !== userId) {
-        return res.status(409).json({ error: 'Requested room code is already in use.' });
+    if (existingWaitingRoom.stake === stakeAmount && existingWaitingRoom.targetPlayers === targetPlayersCount) {
+      if (normalizedRequestedCode && existingWaitingRoom.roomCode !== normalizedRequestedCode) {
+        const collision = privateRooms.get(normalizedRequestedCode);
+        if (collision && collision.hostUserId !== userId) {
+          return res.status(409).json({ error: 'Requested room code is already in use.' });
+        }
+        const oldRoomCode = existingWaitingRoom.roomCode;
+        privateRooms.delete(oldRoomCode);
+        existingWaitingRoom.roomCode = normalizedRequestedCode;
+        privateRooms.set(normalizedRequestedCode, existingWaitingRoom);
+        schedulePersist({ roomCode: normalizedRequestedCode, deleteRoomCode: oldRoomCode });
       }
-      const oldRoomCode = existingWaitingRoom.roomCode;
-      privateRooms.delete(oldRoomCode);
-      existingWaitingRoom.roomCode = normalizedRequestedCode;
-      privateRooms.set(normalizedRequestedCode, existingWaitingRoom);
-      schedulePersist({ roomCode: normalizedRequestedCode, deleteRoomCode: oldRoomCode });
-    }
 
-    // Upgrade legacy rooms by provisioning an unstarted match with placeholders.
-    if (!existingWaitingRoom.matchId) {
-      const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      existingWaitingRoom.matchId = matchId;
-      existingWaitingRoom.status = 'waiting';
-      
-      const matchPlayers: QueuePlayer[] = [hostPlayer];
-      for (let i = 1; i < targetPlayersCount; i++) {
-        matchPlayers.push({
-          userId: `waiting_for_player_${i}`,
-          username: 'Waiting...',
-          avatarId: 'koala',
-          stake: stakeAmount,
-          mode: 'private',
-          joinedAt: Date.now(),
-          costsCommitted: false,
-        });
+      const existingUser = getUser(userId, walletAddress);
+      return sendPrivateRoomCreateSuccess(req, res, {
+        success: true,
+        roomCode: existingWaitingRoom.roomCode,
+        telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
+        stake: existingWaitingRoom.stake,
+        targetPlayers: existingWaitingRoom.targetPlayers,
+        status: existingWaitingRoom.status,
+        matchId: existingWaitingRoom.matchId || null,
+        playersCount: existingWaitingRoom.players.length,
+        availableTickets: existingUser.availableTickets,
+        heldTickets: existingUser.heldTickets,
+        energy: getEnergyState(existingUser),
+        recovered: true,
+      });
+    } else {
+      // Room settings changed (e.g. from 4 players to 2 or 3 players): cancel previous unstarted room
+      const oldCode = existingWaitingRoom.roomCode;
+      const oldMatchId = existingWaitingRoom.matchId;
+      privateRooms.delete(oldCode);
+      if (oldMatchId) {
+        activeMatches.delete(oldMatchId);
+        activeMatchByUser.delete(userId);
       }
-      activateMatch(matchId, 'private', matchPlayers, stakeAmount);
     }
-
-    const existingUser = getUser(userId, walletAddress);
-    return sendPrivateRoomCreateSuccess(req, res, {
-      success: true,
-      roomCode: existingWaitingRoom.roomCode,
-      telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
-      stake: existingWaitingRoom.stake,
-      targetPlayers: existingWaitingRoom.targetPlayers,
-      status: existingWaitingRoom.status,
-      matchId: existingWaitingRoom.matchId,
-      playersCount: existingWaitingRoom.players.length,
-      availableTickets: existingUser.availableTickets,
-      heldTickets: existingUser.heldTickets,
-      energy: getEnergyState(existingUser),
-      recovered: true,
-    });
   }
   if (normalizedRequestId) {
     const existingRoom = Array.from(privateRooms.values()).find((room) =>
