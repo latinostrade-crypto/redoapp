@@ -38,6 +38,7 @@ export default function App() {
     drawCard,
     passTurn,
     selectWildColor,
+    cancelWildSelect,
     leaderboard,
     cardsPlayedThisRound,
     cardsDrawnThisRound,
@@ -1051,8 +1052,14 @@ export default function App() {
 
       {/* WILD COLOR PICKER MODAL SELECTOR OVERLAY */}
       {wildSelectOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#0c0f12] text-white border-4 border-black p-5 w-full max-w-sm text-center shadow-[6px_6px_0_#000000] font-mono">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 animate-fade-in"
+          onClick={cancelWildSelect}
+        >
+          <div
+            className="bg-[#0c0f12]/95 text-white border-4 border-black p-5 w-full max-w-sm text-center shadow-[6px_6px_0_#000000] font-mono"
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 className="text-xs font-black text-white mb-1 uppercase tracking-wider">
               :: SELECT SUIT ::
             </h3>
@@ -1086,6 +1093,13 @@ export default function App() {
                 Purple Suit
               </button>
             </div>
+
+            <button
+              onClick={cancelWildSelect}
+              className="w-full mt-3 py-2.5 bg-[#2a2d32] hover:bg-[#3f434a] text-slate-200 font-black text-xs border-2 border-black pixel-btn-interactive uppercase tracking-wider shadow-[2px_2px_0_#000000] transition-colors"
+            >
+              CANCEL / ОТМЕНА
+            </button>
           </div>
         </div>
       )}

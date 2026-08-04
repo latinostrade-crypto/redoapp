@@ -1047,6 +1047,13 @@ export function useUnoGame() {
     }
   }, [gameMode, pendingWildCard, playCard, remoteSessionActive, saveStats]);
 
+  // Cancel wild color selection and return card to hand
+  const cancelWildSelect = useCallback(() => {
+    sound.playPop();
+    setWildSelectOpen(false);
+    setPendingWildCard(null);
+  }, []);
+
   // Initiate Playing wild card (Human)
   const initiatePlayCard = useCallback((card: UnoCardType) => {
     if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive && remoteMatchIdRef.current && remoteUserIdRef.current) {
@@ -1453,6 +1460,7 @@ export function useUnoGame() {
     wildSelectOpen,
     pendingWildCard,
     setWildSelectOpen,
+    cancelWildSelect,
     startGame,
     playCard: initiatePlayCard,
     drawCard,
