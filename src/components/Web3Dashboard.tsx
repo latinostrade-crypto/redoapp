@@ -3792,6 +3792,109 @@ export function Web3Dashboard({
                       </div>
                     )}
 
+                    {/* TOURNAMENT BRACKET & MATCH TABLES GRID */}
+                    {tournamentData.matches && tournamentData.matches.length > 0 && (
+                      <div className="space-y-2 pt-2 border-t border-slate-800">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-black uppercase text-[#ffcc00] flex items-center gap-1">
+                            <Trophy className="w-3.5 h-3.5" /> ROUND {tournamentData.currentRound || 1} MATCH TABLES
+                          </span>
+                          <span className="text-[7.5px] text-slate-400 font-mono">
+                            {tournamentData.matches.length} TABLES LIVE
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {tournamentData.matches.map((match) => {
+                            const isMyMatch = match.playerIds.includes(currentUserId);
+                            const activeMatchObj = activeProfile?.activeMatch;
+                            const isMatchReady = isMyMatch && (activeMatchObj?.matchId === match.matchId || activeMatchObj?.matchId === `tourn-${tournamentData.id}-r${match.round}-m${match.tableIndex}`);
+
+                            return (
+                              <div
+                                key={match.matchId}
+                                className={`p-2.5 border-2 rounded-sm space-y-2 transition-all ${
+                                  isMyMatch
+                                    ? 'bg-[#16271c] border-[#00ff66] shadow-[0_0_10px_rgba(0,255,102,0.2)]'
+                                    : 'bg-black/60 border-slate-800 opacity-85'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between text-[8px] font-mono">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className={`font-black px-1.5 py-0.5 border ${
+                                      isMyMatch ? 'bg-[#00ff66] text-black border-black font-bold' : 'bg-slate-800 text-slate-300 border-slate-700'
+                                    }`}>
+                                      TABLE #{match.tableIndex}
+                                    </span>
+                                    {isMyMatch && (
+                                      <span className="bg-[#ffcc00] text-black font-black px-1 text-[7px] uppercase tracking-wider animate-pulse">
+                                        YOUR ROOM
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-slate-400 uppercase font-bold">
+                                    {match.status === 'completed' ? '🏁 FINISHED' : match.status === 'in_progress' ? '⚔️ IN MATCH' : '⏳ READY'}
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-1 bg-slate-950 p-2 border border-slate-900 rounded-sm">
+                                  {match.playerIds.map((pid, idx) => {
+                                    const isMe = pid === currentUserId;
+                                    const pObj = tournamentData.participants.find((p) => p.userId === pid);
+                                    const name = pObj?.username || pid.replace(/^tg:/, '');
+                                    const isWinner = match.winnerId === pid;
+
+                                    return (
+                                      <div
+                                        key={pid}
+                                        className={`flex items-center gap-1.5 text-[8px] p-1 rounded ${
+                                          isMe
+                                            ? 'text-[#00ff66] font-bold bg-[#00ff66]/10 border border-[#00ff66]/30'
+                                            : 'text-slate-300'
+                                        }`}
+                                      >
+                                        <Avatar id={pObj?.avatarId || 'rabbit'} size={14} />
+                                        <span className="truncate flex-1 font-mono">
+                                          P{idx + 1}: {name} {isMe ? '(You)' : ''}
+                                        </span>
+                                        {isWinner && <span>👑</span>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                {isMyMatch && match.status !== 'completed' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      sound.playPop();
+                                      if (activeMatchObj) {
+                                        openPublicMatch({
+                                          status: 'ready',
+                                          matchId: activeMatchObj.matchId,
+                                          mode: activeMatchObj.mode,
+                                          stake: activeMatchObj.stake,
+                                          players: activeMatchObj.players,
+                                          gameState: activeMatchObj.gameState,
+                                        }, activeMatchObj.stake);
+                                      } else {
+                                        // Fallback: poll or open pvp table
+                                        setCurrentTab('pvp');
+                                        setPvpSubMode('public');
+                                      }
+                                    }}
+                                    className="w-full py-2 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
+                                  >
+                                    <span>🎮</span> ENTER MATCH TABLE #{match.tableIndex} ➔
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Registration / Entry Action Button */}
                     {tournamentData.status === 'upcoming' ? (
                       <button
