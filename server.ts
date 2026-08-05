@@ -3939,8 +3939,21 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
   const minutes = Number(startInMinutes) || 60;
   const ticketCost = Math.max(0, Number(entryTicketCost) || 0);
 
+  // Preserve registered participants if updating an upcoming tournament
+  const existingParticipants = (currentTournament && currentTournament.status === 'upcoming')
+    ? currentTournament.participants
+    : [];
+
+  const existingMatches = (currentTournament && currentTournament.status === 'upcoming')
+    ? currentTournament.matches
+    : [];
+
+  const tournamentId = (currentTournament && currentTournament.status === 'upcoming')
+    ? currentTournament.id
+    : `tourn-${Date.now()}`;
+
   currentTournament = {
-    id: `tourn-${Date.now()}`,
+    id: tournamentId,
     title: title || 'REDO CARTOON CHAMPIONSHIP',
     description: description || 'Official REDO card tournament!',
     nftLink: nftLink || 'https://getgems.io',
@@ -3950,15 +3963,16 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     rules: rules || '10s turn timer. Single elimination tables.',
     maxPlayers: Number(maxPlayers) || 32,
     entryTicketCost: ticketCost,
-    participants: [],
-    matches: [],
+    participants: existingParticipants,
+    matches: existingMatches,
     currentRound: 1,
-    winnerUserId: null,
-    winnerName: null,
-    winnerAvatar: null,
-    finishedAt: null,
-    createdAt: Date.now(),
+    winnerUserId: currentTournament?.winnerUserId || null,
+    winnerName: currentTournament?.winnerName || null,
+    winnerAvatar: currentTournament?.winnerAvatar || null,
+    finishedAt: currentTournament?.finishedAt || null,
+    createdAt: currentTournament?.createdAt || Date.now(),
   };
+
 
 
   schedulePersist();

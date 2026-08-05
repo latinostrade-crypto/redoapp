@@ -3871,9 +3871,42 @@ export function Web3Dashboard({
                             </div>
                           </div>
 
+                          {/* Quick Timer Presets */}
+                          <div className="flex gap-1 items-center pt-0.5 flex-wrap">
+                            <span className="text-[7px] text-slate-400">Timer:</span>
+                            <button
+                              type="button"
+                              onClick={() => setAdminMinutes('5')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '5' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              5m
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAdminMinutes('15')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '15' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              15m
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAdminMinutes('60')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '60' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              1h
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAdminMinutes('1440')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '1440' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              24h
+                            </button>
+                          </div>
+
                           {/* Quick Ticket Presets */}
-                          <div className="flex gap-1 items-center pt-0.5">
-                            <span className="text-[7px] text-slate-400">Presets:</span>
+                          <div className="flex gap-1 items-center pt-0.5 flex-wrap">
+                            <span className="text-[7px] text-slate-400">Fee:</span>
                             <button
                               type="button"
                               onClick={() => setAdminTicketCost('0')}
@@ -3903,6 +3936,7 @@ export function Web3Dashboard({
                               5 TKT
                             </button>
                           </div>
+
 
                           <input
                             type="text"
