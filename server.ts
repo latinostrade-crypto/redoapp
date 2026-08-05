@@ -3871,15 +3871,44 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
 
   const existingIdx = currentTournament.participants.findIndex((p) => p.userId === userId);
   if (existingIdx >= 0) {
-    // Unregister
+    // Unregister and refund tickets if ticket-based entry
+    if (currentTournament.entryTicketCost > 0) {
+      user.availableTickets += currentTournament.entryTicketCost;
+      user.transactions.unshift({
+        id: `tx-tourn-refund-${Date.now()}`,
+        userId,
+        event: 'Tournament Fee Refund',
+        value: `+${currentTournament.entryTicketCost} TKT`,
+        amount: currentTournament.entryTicketCost,
+        createdAt: Date.now(),
+        type: 'reward',
+      });
+    }
     currentTournament.participants.splice(existingIdx, 1);
-    schedulePersist();
-    return res.json({ success: true, registered: false, tournament: { ...currentTournament, isRegistered: false } });
+    schedulePersist({ userId });
+    return res.json({ success: true, registered: false, tournament: { ...currentTournament, isRegistered: false }, availableTickets: user.availableTickets });
   }
 
   if (currentTournament.participants.length >= currentTournament.maxPlayers) {
     return res.status(400).json({ error: 'Tournament is full.' });
   }
+
+  if (currentTournament.entryTicketCost > 0) {
+    if (user.availableTickets < currentTournament.entryTicketCost) {
+      return res.status(400).json({ error: `Insufficient tickets. Entry requires ${currentTournament.entryTicketCost} TKT.` });
+    }
+    user.availableTickets -= currentTournament.entryTicketCost;
+    user.transactions.unshift({
+      id: `tx-tourn-fee-${Date.now()}`,
+      userId,
+      event: 'Tournament Entry Fee',
+      value: `-${currentTournament.entryTicketCost} TKT`,
+      amount: -currentTournament.entryTicketCost,
+      createdAt: Date.now(),
+      type: 'stake_hold',
+    });
+  }
+
 
   currentTournament.participants.push({
     userId,
@@ -3889,8 +3918,8 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
     chatId: user.telegramChatId,
   });
 
-  schedulePersist();
-  return res.json({ success: true, registered: true, tournament: { ...currentTournament, isRegistered: true } });
+  schedulePersist({ userId });
+  return res.json({ success: true, registered: true, tournament: { ...currentTournament, isRegistered: true }, availableTickets: user.availableTickets });
 });
 
 app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60000, 'user'), (req, res) => {
@@ -3905,10 +3934,11 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-
-  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers } = req.body || {};
+  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost } = req.body || {};
 
   const minutes = Number(startInMinutes) || 60;
+  const ticketCost = Math.max(0, Number(entryTicketCost) || 0);
+
   currentTournament = {
     id: `tourn-${Date.now()}`,
     title: title || 'REDO CARTOON CHAMPIONSHIP',
@@ -3919,7 +3949,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     status: 'upcoming',
     rules: rules || '10s turn timer. Single elimination tables.',
     maxPlayers: Number(maxPlayers) || 32,
-    entryTicketCost: 0,
+    entryTicketCost: ticketCost,
     participants: [],
     matches: [],
     currentRound: 1,
@@ -3929,6 +3959,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     finishedAt: null,
     createdAt: Date.now(),
   };
+
 
   schedulePersist();
   return res.json({ success: true, tournament: currentTournament });

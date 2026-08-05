@@ -799,6 +799,7 @@ export function Web3Dashboard({
   const [adminTitle, setAdminTitle] = useState('');
   const [adminNftLink, setAdminNftLink] = useState('');
   const [adminMinutes, setAdminMinutes] = useState('60');
+  const [adminTicketCost, setAdminTicketCost] = useState('0');
   const [adminRules, setAdminRules] = useState('');
   const [adminSubmitting, setAdminSubmitting] = useState(false);
 
@@ -813,6 +814,7 @@ export function Web3Dashboard({
           title: adminTitle.trim() || 'WEEKLY SMASH CHAMPIONSHIP',
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
+          entryTicketCost: Number(adminTicketCost) || 0,
           rules: adminRules.trim() || '10s turn timer. Single elimination tables.',
           maxPlayers: 32,
         }),
@@ -827,6 +829,7 @@ export function Web3Dashboard({
       setAdminSubmitting(false);
     }
   };
+
 
 
 
@@ -3763,8 +3766,8 @@ export function Web3Dashboard({
                         {tournamentData.rules}
                       </p>
                       <div className="flex justify-between items-center text-[7.5px] pt-1 text-slate-400 border-t border-slate-900">
+                        <span>Entry Fee: <strong className={tournamentData.entryTicketCost > 0 ? "text-[#ffcc00]" : "text-[#00ff66]"}>{tournamentData.entryTicketCost > 0 ? `${tournamentData.entryTicketCost} TKT` : 'FREE ENTRY'}</strong></span>
                         <span>Participants: <strong>{tournamentData.participants.length} / {tournamentData.maxPlayers}</strong></span>
-                        <span>Max per table: <strong>4 Players (10s turn)</strong></span>
                       </div>
                     </div>
 
@@ -3804,8 +3807,8 @@ export function Web3Dashboard({
                         {tournRegistering
                           ? 'Updating...'
                           : tournamentData.isRegistered
-                          ? 'Cancel Registration'
-                          : 'Register for Tournament'}
+                          ? `Cancel Registration ${tournamentData.entryTicketCost > 0 ? `(Refund ${tournamentData.entryTicketCost} TKT)` : ''}`
+                          : `Register for Tournament ${tournamentData.entryTicketCost > 0 ? `(${tournamentData.entryTicketCost} TKT)` : '(FREE)'}`}
                       </button>
                     ) : (
                       <button
@@ -3821,47 +3824,98 @@ export function Web3Dashboard({
                       </button>
                     )}
 
+
                     {/* ADMIN TOURNAMENT CREATOR PANEL (For @allin_gram) */}
                     {(profile?.telegramUsername?.toLowerCase().replace('@', '') === 'allin_gram' || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username?.toLowerCase() === 'allin_gram') && (
-                      <div className="mt-4 pt-3 border-t-2 border-[#ffcc00] space-y-2 bg-[#1a1608] p-3 border border-black">
+                      <div className="mt-4 pt-3 border-t-2 border-[#ffcc00] space-y-2 bg-[#1a1608] p-3 border border-black font-mono">
                         <div className="flex items-center justify-between text-[#ffcc00] font-black text-[9px] uppercase">
                           <span>⚙️ Admin Tournament Manager</span>
                           <span>@allin_gram</span>
                         </div>
-                        <div className="space-y-1.5 text-[8px]">
+                        <div className="space-y-2 text-[8px]">
                           <input
                             type="text"
                             placeholder="Tournament Title (e.g. WEEKLY SMASH CHAMPIONSHIP)"
                             value={adminTitle}
                             onChange={(e) => setAdminTitle(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                           />
                           <input
                             type="text"
                             placeholder="NFT Prize Link (e.g. https://getgems.io/...)"
                             value={adminNftLink}
                             onChange={(e) => setAdminNftLink(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                           />
-                          <input
-                            type="number"
-                            placeholder="Start in Minutes (e.g. 60 or 1440)"
-                            value={adminMinutes}
-                            onChange={(e) => setAdminMinutes(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
-                          />
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <div>
+                              <label className="text-[7px] text-slate-400 block mb-0.5">START TIMER (MINUTES)</label>
+                              <input
+                                type="number"
+                                placeholder="60"
+                                value={adminMinutes}
+                                onChange={(e) => setAdminMinutes(e.target.value)}
+                                className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[7px] text-slate-400 block mb-0.5">ENTRY FEE (TICKETS / TKT)</label>
+                              <input
+                                type="number"
+                                step="0.1"
+                                placeholder="0 = Free"
+                                value={adminTicketCost}
+                                onChange={(e) => setAdminTicketCost(e.target.value)}
+                                className="w-full bg-black border border-black text-[#00ff66] font-bold px-2 py-1 focus:outline-none"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Quick Ticket Presets */}
+                          <div className="flex gap-1 items-center pt-0.5">
+                            <span className="text-[7px] text-slate-400">Presets:</span>
+                            <button
+                              type="button"
+                              onClick={() => setAdminTicketCost('0')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0' ? 'bg-[#00ff66] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              Free
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAdminTicketCost('0.5')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0.5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              0.5 TKT
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAdminTicketCost('1')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '1' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              1 TKT
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setAdminTicketCost('5')}
+                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                            >
+                              5 TKT
+                            </button>
+                          </div>
+
                           <input
                             type="text"
-                            placeholder="Rules / Conditions"
+                            placeholder="Rules / Conditions (e.g. 10s turn timer. Single elimination)"
                             value={adminRules}
                             onChange={(e) => setAdminRules(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                           />
                           <button
                             type="button"
                             onClick={handleAdminCreateTournament}
                             disabled={adminSubmitting}
-                            className="w-full py-1.5 bg-[#ffcc00] text-black font-black text-[8.5px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                            className="w-full py-2 bg-[#ffcc00] text-black font-black text-[8.5px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
                           >
                             {adminSubmitting ? 'Updating...' : 'Update & Launch Tournament'}
                           </button>
