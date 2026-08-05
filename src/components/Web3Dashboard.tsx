@@ -796,6 +796,39 @@ export function Web3Dashboard({
     }
   };
 
+  const [adminTitle, setAdminTitle] = useState('');
+  const [adminNftLink, setAdminNftLink] = useState('');
+  const [adminMinutes, setAdminMinutes] = useState('60');
+  const [adminRules, setAdminRules] = useState('');
+  const [adminSubmitting, setAdminSubmitting] = useState(false);
+
+  const handleAdminCreateTournament = async () => {
+    if (adminSubmitting) return;
+    sound.playPop();
+    setAdminSubmitting(true);
+    try {
+      const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView }>('/api/admin/tournaments/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          title: adminTitle.trim() || 'WEEKLY SMASH CHAMPIONSHIP',
+          nftLink: adminNftLink.trim() || 'https://getgems.io',
+          startInMinutes: Number(adminMinutes) || 60,
+          rules: adminRules.trim() || '10s turn timer. Single elimination tables.',
+          maxPlayers: 32,
+        }),
+      });
+      if (res?.tournament) {
+        setTournamentData(res.tournament);
+        alert('Tournament updated successfully!');
+      }
+    } catch (err: any) {
+      alert(err instanceof Error ? err.message : 'Failed to update tournament.');
+    } finally {
+      setAdminSubmitting(false);
+    }
+  };
+
+
 
 
 
@@ -3537,7 +3570,7 @@ export function Web3Dashboard({
                       : 'text-slate-400 border-transparent hover:text-slate-200'
                   }`}
                 >
-                  ⚡ Quests & NFTs
+                  ⚡ Ayanami event
                 </button>
                 <button
                   type="button"
@@ -3787,6 +3820,54 @@ export function Web3Dashboard({
                         Enter Tournament Bracket / Arena ➔
                       </button>
                     )}
+
+                    {/* ADMIN TOURNAMENT CREATOR PANEL (For @allin_gram) */}
+                    {(profile?.telegramUsername?.toLowerCase().replace('@', '') === 'allin_gram' || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username?.toLowerCase() === 'allin_gram') && (
+                      <div className="mt-4 pt-3 border-t-2 border-[#ffcc00] space-y-2 bg-[#1a1608] p-3 border border-black">
+                        <div className="flex items-center justify-between text-[#ffcc00] font-black text-[9px] uppercase">
+                          <span>⚙️ Admin Tournament Manager</span>
+                          <span>@allin_gram</span>
+                        </div>
+                        <div className="space-y-1.5 text-[8px]">
+                          <input
+                            type="text"
+                            placeholder="Tournament Title (e.g. WEEKLY SMASH CHAMPIONSHIP)"
+                            value={adminTitle}
+                            onChange={(e) => setAdminTitle(e.target.value)}
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                          />
+                          <input
+                            type="text"
+                            placeholder="NFT Prize Link (e.g. https://getgems.io/...)"
+                            value={adminNftLink}
+                            onChange={(e) => setAdminNftLink(e.target.value)}
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                          />
+                          <input
+                            type="number"
+                            placeholder="Start in Minutes (e.g. 60 or 1440)"
+                            value={adminMinutes}
+                            onChange={(e) => setAdminMinutes(e.target.value)}
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Rules / Conditions"
+                            value={adminRules}
+                            onChange={(e) => setAdminRules(e.target.value)}
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAdminCreateTournament}
+                            disabled={adminSubmitting}
+                            className="w-full py-1.5 bg-[#ffcc00] text-black font-black text-[8.5px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                          >
+                            {adminSubmitting ? 'Updating...' : 'Update & Launch Tournament'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="text-center py-6 text-slate-500 text-[9px] uppercase">
@@ -3797,6 +3878,7 @@ export function Web3Dashboard({
               )}
             </motion.div>
           )}
+
 
 
           {currentTab === 'pvp' && (

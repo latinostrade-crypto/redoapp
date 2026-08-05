@@ -3895,12 +3895,16 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
 
 app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60000, 'user'), (req, res) => {
   const userId = (req as AuthenticatedRequest).authUserId!;
-  if (!ADMIN_API_KEY || req.headers['x-admin-key'] !== ADMIN_API_KEY) {
-    // Allow if user is withdrawal operator / admin
-    if (userId !== `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}`) {
-      return res.status(403).json({ error: 'Admin access required.' });
-    }
+  const user = users.get(userId);
+  const username = (user?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
   }
+
 
   const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers } = req.body || {};
 
