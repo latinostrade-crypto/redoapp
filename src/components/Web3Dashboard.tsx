@@ -3868,20 +3868,29 @@ export function Web3Dashboard({
                                     type="button"
                                     onClick={() => {
                                       sound.playPop();
-                                      if (activeMatchObj) {
-                                        openPublicMatch({
-                                          status: 'ready',
-                                          matchId: activeMatchObj.matchId,
-                                          mode: activeMatchObj.mode,
-                                          stake: activeMatchObj.stake,
-                                          players: activeMatchObj.players,
-                                          gameState: activeMatchObj.gameState,
-                                        }, activeMatchObj.stake);
-                                      } else {
-                                        // Fallback: poll or open pvp table
-                                        setCurrentTab('pvp');
-                                        setPvpSubMode('public');
-                                      }
+                                      const matchToOpen = activeMatchObj || {
+                                        matchId: match.matchId,
+                                        mode: 'pvp' as const,
+                                        stake: 0,
+                                        players: match.playerIds.map((pid) => {
+                                          const pObj = tournamentData.participants.find((p) => p.userId === pid);
+                                          return {
+                                            userId: pid,
+                                            username: pObj?.username || pid.replace(/^tg:/, ''),
+                                            avatarId: pObj?.avatarId || 'rabbit',
+                                            stake: 0,
+                                          };
+                                        }),
+                                        gameState: undefined,
+                                      };
+                                      openPublicMatch({
+                                        status: 'ready',
+                                        matchId: matchToOpen.matchId,
+                                        mode: matchToOpen.mode,
+                                        stake: matchToOpen.stake,
+                                        players: matchToOpen.players,
+                                        gameState: matchToOpen.gameState,
+                                      }, matchToOpen.stake);
                                     }}
                                     className="w-full py-2 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
                                   >
@@ -3918,18 +3927,34 @@ export function Web3Dashboard({
                         type="button"
                         onClick={() => {
                           sound.playPop();
-                          if (activeProfile?.activeMatch) {
-                            const match = activeProfile.activeMatch;
+                          const myMatch = tournamentData.matches?.find((m) => m.playerIds.includes(currentUserId));
+                          const matchToOpen = activeProfile?.activeMatch || (myMatch ? {
+                            matchId: myMatch.matchId,
+                            mode: 'pvp' as const,
+                            stake: 0,
+                            players: myMatch.playerIds.map((pid) => {
+                              const pObj = tournamentData.participants.find((p) => p.userId === pid);
+                              return {
+                                userId: pid,
+                                username: pObj?.username || pid.replace(/^tg:/, ''),
+                                avatarId: pObj?.avatarId || 'rabbit',
+                                stake: 0,
+                              };
+                            }),
+                            gameState: undefined,
+                          } : null);
+
+                          if (matchToOpen) {
                             openPublicMatch({
                               status: 'ready',
-                              matchId: match.matchId,
-                              mode: match.mode,
-                              stake: match.stake,
-                              players: match.players,
-                              gameState: match.gameState,
-                            }, match.stake);
+                              matchId: matchToOpen.matchId,
+                              mode: matchToOpen.mode,
+                              stake: matchToOpen.stake,
+                              players: matchToOpen.players,
+                              gameState: matchToOpen.gameState,
+                            }, matchToOpen.stake);
                           } else {
-                            // Fallback to pvp tab if no match is found
+                            // If user is not in any tournament table, open PVP tab
                             setCurrentTab('pvp');
                             setPvpSubMode('public');
                           }
