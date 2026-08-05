@@ -737,6 +737,66 @@ export function Web3Dashboard({
   const [showReferralDetails, setShowReferralDetails] = useState(false);
   const [showCollectionAddress, setShowCollectionAddress] = useState(false);
 
+  const [eventsSubTab, setEventsSubTab] = useState<'quests' | 'tournaments'>('quests');
+  const [tournamentData, setTournamentData] = useState<import('../types').TournamentView | null>(null);
+  const [tournRegistering, setTournRegistering] = useState(false);
+  const [tournCountdown, setTournCountdown] = useState('');
+
+  const fetchTournamentData = useCallback(async () => {
+    try {
+      const res = await apiRequest<{ tournament: import('../types').TournamentView | null }>('/api/tournaments/current');
+      if (res?.tournament) {
+        setTournamentData(res.tournament);
+      }
+    } catch {
+      // Keep state resilient
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTournamentData();
+    const timer = setInterval(fetchTournamentData, 10000);
+    return () => clearInterval(timer);
+  }, [fetchTournamentData]);
+
+  useEffect(() => {
+    if (!tournamentData || tournamentData.status !== 'upcoming') return;
+    const interval = setInterval(() => {
+      const diff = tournamentData.startAt - Date.now();
+      if (diff <= 0) {
+        setTournCountdown('00:00:00');
+        fetchTournamentData();
+        return;
+      }
+      const hrs = Math.floor(diff / (1000 * 60 * 60));
+      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const secs = Math.floor((diff % (1000 * 60)) / 1000);
+      setTournCountdown(
+        `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [tournamentData, fetchTournamentData]);
+
+  const registerForTournament = async () => {
+    if (!tournamentData || tournRegistering) return;
+    sound.playPop();
+    setTournRegistering(true);
+    try {
+      const res = await apiRequest<{ success: boolean; registered: boolean; tournament: import('../types').TournamentView }>('/api/tournaments/register', {
+        method: 'POST',
+      });
+      if (res?.tournament) {
+        setTournamentData(res.tournament);
+      }
+    } catch (err: any) {
+      alert(err instanceof Error ? err.message : 'Could not update registration.');
+    } finally {
+      setTournRegistering(false);
+    }
+  };
+
+
 
 
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
@@ -3463,7 +3523,40 @@ export function Web3Dashboard({
               exit={{ opacity: 0, y: -8 }}
               className="w-full space-y-3 py-2 text-center select-none"
             >
-              {/* Main Event Card */}
+              {/* Events Sub-Tab Selector */}
+              <div className="grid grid-cols-2 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8.5px] font-mono font-bold">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    setEventsSubTab('quests');
+                  }}
+                  className={`py-1.5 uppercase transition-all border ${
+                    eventsSubTab === 'quests'
+                      ? 'bg-[#00ff66]/20 text-[#00ff66] border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-black'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  ⚡ Quests & NFTs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    setEventsSubTab('tournaments');
+                  }}
+                  className={`py-1.5 uppercase transition-all border ${
+                    eventsSubTab === 'tournaments'
+                      ? 'bg-[#ffcc00]/20 text-[#ffcc00] border-[#ffcc00]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-black'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  🏆 Tournaments
+                </button>
+              </div>
+
+              {eventsSubTab === 'quests' ? (
+              /* Main Event Card (Quests & NFTs) */
               <div className="bg-[#12161f] border-2 border-black pixel-box-sm p-4 space-y-4 relative shadow-[4px_4px_0_#000] overflow-hidden">
 
                 {/* Hero Banner with Original Ayanami Plush Collection Image */}
@@ -3580,8 +3673,131 @@ export function Web3Dashboard({
                   </div>
                 )}
               </div>
+              ) : (
+              /* Tournaments Sub-Tab Content */
+              <div className="bg-[#12161f] border-2 border-black pixel-box-sm p-4 space-y-4 relative shadow-[4px_4px_0_#000] font-mono text-left">
+                {tournamentData ? (
+                  <>
+                    {/* Header Badge & Title */}
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                      <div>
+                        <span className={`text-[7px] font-black uppercase px-2 py-0.5 border border-black ${
+                          tournamentData.status === 'in_progress'
+                            ? 'bg-[#ff4b4b] text-white animate-pulse'
+                            : tournamentData.status === 'finished'
+                            ? 'bg-[#00d2ff] text-black'
+                            : 'bg-[#ffcc00] text-black'
+                        }`}>
+                          {tournamentData.status === 'in_progress' ? 'LIVE NOW · TOURNAMENT IN PROGRESS' : tournamentData.status === 'finished' ? 'COMPLETED' : 'UPCOMING TOURNAMENT'}
+                        </span>
+                        <h2 className="text-xs font-black text-white uppercase mt-1">
+                          {tournamentData.title}
+                        </h2>
+                      </div>
+                      <Trophy className="w-5 h-5 text-[#ffcc00]" />
+                    </div>
+
+                    {/* Countdown Timer or Status */}
+                    <div className="bg-slate-950 p-3 border border-black text-center space-y-1">
+                      <span className="text-[7.5px] text-slate-400 uppercase font-mono">
+                        {tournamentData.status === 'in_progress'
+                          ? 'Tournament is currently in progress'
+                          : tournamentData.status === 'finished'
+                          ? 'Tournament has ended'
+                          : 'Starts in:'}
+                      </span>
+                      {tournamentData.status === 'upcoming' && (
+                        <div className="text-sm font-black text-[#00ff66] tracking-widest font-mono">
+                          {tournCountdown}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Rules & NFT Gift Link */}
+                    <div className="bg-black/80 p-2.5 border border-black space-y-1.5 text-[8px] text-slate-300">
+                      <div className="flex justify-between items-center text-[#00d2ff]">
+                        <span className="font-bold uppercase">NFT AWARD:</span>
+                        <a
+                          href={tournamentData.nftLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-white font-bold"
+                        >
+                          View Prize NFT ➔
+                        </a>
+                      </div>
+                      <p className="text-slate-400 leading-relaxed font-sans">
+                        {tournamentData.rules}
+                      </p>
+                      <div className="flex justify-between items-center text-[7.5px] pt-1 text-slate-400 border-t border-slate-900">
+                        <span>Participants: <strong>{tournamentData.participants.length} / {tournamentData.maxPlayers}</strong></span>
+                        <span>Max per table: <strong>4 Players (10s turn)</strong></span>
+                      </div>
+                    </div>
+
+                    {/* Past Winner Card (Step 4 requirement) */}
+                    {tournamentData.winnerName && (
+                      <div className="bg-[#1a2318] border border-[#00ff66]/40 p-2.5 rounded-sm flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Avatar id={(tournamentData.winnerAvatar as any) || 'rabbit'} size={24} />
+                          <div>
+                            <span className="text-[7px] text-[#00ff66] font-bold block uppercase">PREVIOUS CHAMPION</span>
+                            <span className="text-[9px] font-black text-white">{tournamentData.winnerName}</span>
+                          </div>
+                        </div>
+                        <a
+                          href={tournamentData.nftLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase pixel-btn-interactive border border-black"
+                        >
+                          Claimed Prize 🎁
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Registration / Entry Action Button */}
+                    {tournamentData.status === 'upcoming' ? (
+                      <button
+                        type="button"
+                        onClick={registerForTournament}
+                        disabled={tournRegistering}
+                        className={`w-full py-2.5 font-black text-[9.5px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000] ${
+                          tournamentData.isRegistered
+                            ? 'bg-[#ff4b4b] text-white hover:bg-[#e03b3b]'
+                            : 'bg-[#00ff66] text-black hover:bg-[#00e55b]'
+                        }`}
+                      >
+                        {tournRegistering
+                          ? 'Updating...'
+                          : tournamentData.isRegistered
+                          ? 'Cancel Registration'
+                          : 'Register for Tournament'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sound.playPop();
+                          setCurrentTab('pvp');
+                          setPvpSubMode('public');
+                        }}
+                        className="w-full py-2.5 bg-[#00d2ff] text-black font-black text-[9.5px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
+                      >
+                        Enter Tournament Bracket / Arena ➔
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-6 text-slate-500 text-[9px] uppercase">
+                    Loading tournament details...
+                  </div>
+                )}
+              </div>
+              )}
             </motion.div>
           )}
+
 
           {currentTab === 'pvp' && (
             <motion.div

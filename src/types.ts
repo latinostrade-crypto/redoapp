@@ -187,3 +187,42 @@ export interface PendingDepositView {
   expiresAt: number;
   canRetry: boolean;
 }
+
+export interface TournamentParticipantView {
+  userId: string;
+  username: string;
+  avatarId: string;
+  registeredAt: number;
+}
+
+export interface TournamentMatchView {
+  matchId: string;
+  round: number;
+  tableIndex: number;
+  playerIds: string[];
+  winnerId: string | null;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
+export interface TournamentView {
+  id: string;
+  title: string;
+  description: string;
+  nftLink: string;
+  nftImage?: string;
+  startAt: number;
+  status: 'upcoming' | 'in_progress' | 'finished';
+  rules: string;
+  maxPlayers: number;
+  entryTicketCost: number;
+  participants: TournamentParticipantView[];
+  matches: TournamentMatchView[];
+  currentRound: number;
+  winnerUserId: string | null;
+  winnerName: string | null;
+  winnerAvatar: string | null;
+  finishedAt: number | null;
+  createdAt: number;
+  isRegistered?: boolean;
+}
+

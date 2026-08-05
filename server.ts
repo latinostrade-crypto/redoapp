@@ -9,6 +9,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { createTicketingService, type DepositIntent, type TicketLedgerEntry, type WithdrawalRequest } from './server/tickets';
+import { distributePlayersIntoTables, type TournamentData, type TournamentParticipant, type TournamentMatch } from './server/tournaments';
+
 
 dotenv.config();
 
@@ -414,7 +416,9 @@ interface ActiveMatch {
   settled: boolean;
   gameState: ServerGameState;
   payoutResult?: any;
+  turnTimeoutSec?: number;
 }
+
 
 interface PrivateRoom {
   roomCode: string;
@@ -471,6 +475,28 @@ const activeMatchByUser = new Map<string, string>();
 const privateRooms = new Map<string, PrivateRoom>();
 const questProgressByUser = new Map<string, UserQuestProgress[]>();
 const telegramNotifications: TelegramNotification[] = [];
+
+let currentTournament: TournamentData | null = {
+  id: 'weekly-tournament-1',
+  title: 'WEEKLY REDO CHAMPIONSHIP',
+  description: 'Official weekly tournament for all players. Win exclusive NFT sticker awards and top leaderboard points!',
+  nftLink: 'https://getgems.io/collection/EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi',
+  nftImage: '/ayanami-plush.png',
+  startAt: Date.now() + 24 * 3600 * 1000, // 24h from start default
+  status: 'upcoming',
+  rules: '10s turn timer. Single elimination tables (2-4 players). Winner advances to next round until 1 champion remains!',
+  maxPlayers: 32,
+  entryTicketCost: 0,
+  participants: [],
+  matches: [],
+  currentRound: 1,
+  winnerUserId: null,
+  winnerName: null,
+  winnerAvatar: null,
+  finishedAt: null,
+  createdAt: Date.now(),
+};
+
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
@@ -3698,7 +3724,215 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   return res.json(buildLootboxClaimResponse(user, claim, false));
 });
 
+// TOURNAMENT ENDPOINTS & AUTOMATION
+function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: string) {
+  if (!TELEGRAM_BOT_TOKEN || !chatId) return;
+  const body: any = {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+  };
+  if (buttonUrl) {
+    body.reply_markup = {
+      inline_keyboard: [[{ text: '🎮 JOIN MATCH TABLE NOW', web_app: { url: buttonUrl } }]],
+    };
+  }
+  fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).catch(() => undefined);
+}
+
+function processTournamentTick() {
+  if (!currentTournament) return;
+  const now = Date.now();
+
+  // 1. Auto Start when timer reaches 0
+  if (currentTournament.status === 'upcoming' && now >= currentTournament.startAt) {
+    if (currentTournament.participants.length < 2) {
+      // Auto extend 1 hour if less than 2 participants
+      currentTournament.startAt = now + 3600 * 1000;
+      schedulePersist();
+      return;
+    }
+
+    currentTournament.status = 'in_progress';
+    currentTournament.currentRound = 1;
+
+    // Distribute participants into dynamic tables (2, 3, 4 players)
+    const playerIds = currentTournament.participants.map((p) => p.userId);
+    const tables = distributePlayersIntoTables(playerIds);
+
+    currentTournament.matches = tables.map((tablePlayers, idx) => {
+      const matchId = `tourn-${currentTournament!.id}-r1-m${idx + 1}`;
+      
+      const queuePlayers: QueuePlayer[] = tablePlayers.map((pid) => {
+        const u = users.get(pid);
+        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
+        return {
+          userId: pid,
+          username: u?.telegramUsername || pObj?.username || pid,
+          avatarId: pObj?.avatarId || 'rabbit',
+          stake: 0,
+          mode: 'pvp',
+          joinedAt: Date.now(),
+        };
+      });
+
+      const matchState = createInitialMatchState(queuePlayers);
+
+      activeMatches.set(matchId, {
+        matchId,
+        mode: 'pvp',
+        stake: 0,
+        gameState: matchState,
+        players: queuePlayers,
+        createdAt: Date.now(),
+        settled: false,
+        turnTimeoutSec: 10, // 10s TURN TIMER FOR TOURNAMENTS
+      });
+
+
+
+
+      tablePlayers.forEach((pid) => {
+        activeMatchByUser.set(pid, matchId);
+        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
+        if (pObj?.chatId) {
+          const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
+          sendTelegramMessageSafely(
+            pObj.chatId,
+            `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 10 seconds.`,
+            tableUrl
+          );
+        }
+      });
+
+      return {
+        matchId,
+        round: 1,
+        tableIndex: idx + 1,
+        playerIds: tablePlayers,
+        winnerId: null,
+        status: 'in_progress' as const,
+      };
+    });
+
+    schedulePersist();
+  }
+}
+
+
+setInterval(processTournamentTick, 5000);
+
+app.get('/api/tournaments/current', (req, res) => {
+  let authUserId: string | null = null;
+  try {
+    const telegramInitData = extractTelegramInitData(req);
+    const auth = verifyTelegramInitData(telegramInitData);
+    if (auth) authUserId = `tg:${auth.id}`;
+    else {
+      const session = verifySessionToken(extractSessionToken(req));
+      if (session) authUserId = session.userId;
+    }
+  } catch {
+    // Ignore
+  }
+
+  if (!currentTournament) {
+    return res.json({ tournament: null });
+  }
+
+  const isRegistered = authUserId
+    ? currentTournament.participants.some((p) => p.userId === authUserId)
+    : false;
+
+  return res.json({
+    tournament: {
+      ...currentTournament,
+      isRegistered,
+    },
+  });
+});
+
+app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000, 'user'), (req, res) => {
+  const userId = (req as AuthenticatedRequest).authUserId!;
+  const user = users.get(userId);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+
+  if (!currentTournament) {
+    return res.status(400).json({ error: 'No active tournament.' });
+  }
+
+  if (currentTournament.status !== 'upcoming') {
+    return res.status(400).json({ error: 'Tournament registration is closed.' });
+  }
+
+  const existingIdx = currentTournament.participants.findIndex((p) => p.userId === userId);
+  if (existingIdx >= 0) {
+    // Unregister
+    currentTournament.participants.splice(existingIdx, 1);
+    schedulePersist();
+    return res.json({ success: true, registered: false, tournament: { ...currentTournament, isRegistered: false } });
+  }
+
+  if (currentTournament.participants.length >= currentTournament.maxPlayers) {
+    return res.status(400).json({ error: 'Tournament is full.' });
+  }
+
+  currentTournament.participants.push({
+    userId,
+    username: user.telegramUsername || user.telegramFirstName || userId,
+    avatarId: 'rabbit',
+    registeredAt: Date.now(),
+    chatId: user.telegramChatId,
+  });
+
+  schedulePersist();
+  return res.json({ success: true, registered: true, tournament: { ...currentTournament, isRegistered: true } });
+});
+
+app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60000, 'user'), (req, res) => {
+  const userId = (req as AuthenticatedRequest).authUserId!;
+  if (!ADMIN_API_KEY || req.headers['x-admin-key'] !== ADMIN_API_KEY) {
+    // Allow if user is withdrawal operator / admin
+    if (userId !== `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}`) {
+      return res.status(403).json({ error: 'Admin access required.' });
+    }
+  }
+
+  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers } = req.body || {};
+
+  const minutes = Number(startInMinutes) || 60;
+  currentTournament = {
+    id: `tourn-${Date.now()}`,
+    title: title || 'REDO CARTOON CHAMPIONSHIP',
+    description: description || 'Official REDO card tournament!',
+    nftLink: nftLink || 'https://getgems.io',
+    nftImage: nftImage || '/ayanami-plush.png',
+    startAt: Date.now() + minutes * 60 * 1000,
+    status: 'upcoming',
+    rules: rules || '10s turn timer. Single elimination tables.',
+    maxPlayers: Number(maxPlayers) || 32,
+    entryTicketCost: 0,
+    participants: [],
+    matches: [],
+    currentRound: 1,
+    winnerUserId: null,
+    winnerName: null,
+    winnerAvatar: null,
+    finishedAt: null,
+    createdAt: Date.now(),
+  };
+
+  schedulePersist();
+  return res.json({ success: true, tournament: currentTournament });
+});
+
+
 app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'));
+
 ticketingService.registerRoutes(app);
 
 app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
