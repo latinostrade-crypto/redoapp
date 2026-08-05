@@ -3815,12 +3815,25 @@ export function Web3Dashboard({
                         type="button"
                         onClick={() => {
                           sound.playPop();
-                          setCurrentTab('pvp');
-                          setPvpSubMode('public');
+                          if (activeProfile?.activeMatch) {
+                            const match = activeProfile.activeMatch;
+                            openPublicMatch({
+                              status: 'ready',
+                              matchId: match.matchId,
+                              mode: match.mode,
+                              stake: match.stake,
+                              players: match.players,
+                              gameState: match.gameState,
+                            }, match.stake);
+                          } else {
+                            // Fallback to pvp tab if no match is found
+                            setCurrentTab('pvp');
+                            setPvpSubMode('public');
+                          }
                         }}
                         className="w-full py-2.5 bg-[#00d2ff] text-black font-black text-[9.5px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                       >
-                        Enter Tournament Bracket / Arena ➔
+                        Enter Tournament Match ➔
                       </button>
                     )}
 
