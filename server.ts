@@ -459,6 +459,7 @@ interface PersistedState {
   questProgressByUser?: Array<[string, UserQuestProgress[]]>;
   referralPayouts?: ReferralPayoutRecord[];
   telegramNotifications?: TelegramNotification[];
+  pastTournaments?: TournamentData[];
 }
 
 type SupabaseStateRow = {
@@ -496,6 +497,8 @@ let currentTournament: TournamentData | null = {
   finishedAt: null,
   createdAt: Date.now(),
 };
+
+let pastTournaments: TournamentData[] = [];
 
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
@@ -690,6 +693,7 @@ function buildPersistedState(): PersistedState {
     questProgressByUser: Array.from(questProgressByUser.entries()),
     referralPayouts: Array.from(referralPayouts.values()),
     telegramNotifications,
+    pastTournaments,
   };
 }
 
@@ -1035,6 +1039,7 @@ function applySnapshot(snapshot: PersistedState) {
   snapshot.questProgressByUser?.forEach(([userId, progress]) => questProgressByUser.set(userId, progress));
   snapshot.referralPayouts?.forEach((payout) => referralPayouts.set(payout.id, payout));
   snapshot.telegramNotifications?.forEach((entry) => appendTelegramNotification(entry));
+  pastTournaments = snapshot.pastTournaments || [];
   rebuildReferralStats();
 }
 
@@ -2951,9 +2956,9 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   activeMatchByUser.set(userId, match.matchId);
   if (wasAi) {
     match.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected and took back control.`, 'info'), ...match.gameState.logs].slice(0, 50);
-    schedulePersist({ matchId: match.matchId });
-    broadcastMatch(match.matchId);
   }
+  schedulePersist({ matchId: match.matchId });
+  broadcastMatch(match.matchId);
   maybeStartPublicMatch(match);
 }
 
@@ -3733,15 +3738,133 @@ function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: str
     parse_mode: 'HTML',
   };
   if (buttonUrl) {
+    // Telegram Bot API requires `url` (not `web_app`) for t.me deep links.
     body.reply_markup = {
-      inline_keyboard: [[{ text: '🎮 JOIN MATCH TABLE NOW', web_app: { url: buttonUrl } }]],
+      inline_keyboard: [[{ text: '🎮 JOIN MATCH TABLE NOW', url: buttonUrl }]],
     };
   }
   fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }).catch(() => undefined);
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error(`[Telegram Bot Error] chatId=${chatId}: HTTP ${res.status} - ${errText}`);
+      } else {
+        console.log(`[Telegram Bot Success] Message sent to chatId=${chatId}`);
+      }
+    })
+    .catch((err) => {
+      console.error(`[Telegram Bot Transport Error] chatId=${chatId}:`, err);
+    });
+}
+
+function completeTournament(winnerId: string | null) {
+  if (!currentTournament) return;
+
+  currentTournament.status = 'finished';
+  currentTournament.finishedAt = Date.now();
+
+  if (winnerId) {
+    const u = users.get(winnerId);
+    const pObj = currentTournament.participants.find((p) => p.userId === winnerId);
+    currentTournament.winnerUserId = winnerId;
+    const rawUsername = u?.telegramUsername || pObj?.username || winnerId.replace(/^tg:/, '');
+    currentTournament.winnerName = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
+    currentTournament.winnerAvatar = pObj?.avatarId || 'rabbit';
+  } else {
+    currentTournament.winnerName = 'REDO Champion';
+    currentTournament.winnerAvatar = 'rabbit';
+  }
+
+  // Push to past tournaments history list
+  pastTournaments.unshift({ ...currentTournament });
+  if (pastTournaments.length > 20) {
+    pastTournaments.pop();
+  }
+
+  schedulePersist();
+}
+
+function evaluateTournamentProgression() {
+  if (!currentTournament || currentTournament.status !== 'in_progress') return;
+
+  const currentRoundMatches = currentTournament.matches.filter((m) => m.round === currentTournament!.currentRound);
+  if (currentRoundMatches.length === 0) return;
+
+  const allCurrentRoundCompleted = currentRoundMatches.every((m) => m.status === 'completed' && m.winnerId);
+  if (!allCurrentRoundCompleted) return;
+
+  if (currentTournament.currentRound === 1) {
+    const round1Winners = currentRoundMatches.map((m) => m.winnerId!).filter(Boolean);
+    if (round1Winners.length <= 1) {
+      // Only 1 winner (single table tournament) -> Complete tournament!
+      completeTournament(round1Winners[0] || null);
+    } else {
+      // Multiple table winners! Form Round 2 (FINAL TABLE)
+      currentTournament.currentRound = 2;
+      const finalMatchId = `tourn-${currentTournament.id}-r2-final`;
+      const waitingTimerEndAt = Date.now() + 90000; // 90 seconds wait timer
+
+      const finalMatch: TournamentMatch = {
+        matchId: finalMatchId,
+        round: 2,
+        tableIndex: 1,
+        playerIds: round1Winners,
+        winnerId: null,
+        status: 'in_progress',
+        waitingTimerEndAt,
+      };
+
+      currentTournament.matches.push(finalMatch);
+
+      const queuePlayers: QueuePlayer[] = round1Winners.map((pid) => {
+        const u = users.get(pid);
+        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
+        return {
+          userId: pid,
+          username: u?.telegramUsername || pObj?.username || pid.replace(/^tg:/, ''),
+          avatarId: pObj?.avatarId || 'rabbit',
+          stake: 0,
+          mode: 'pvp',
+          joinedAt: Date.now(),
+        };
+      });
+
+      const matchState = createInitialMatchState(queuePlayers);
+
+      activeMatches.set(finalMatchId, {
+        matchId: finalMatchId,
+        mode: 'pvp',
+        stake: 0,
+        gameState: matchState,
+        players: queuePlayers,
+        createdAt: Date.now(),
+        settled: false,
+        turnTimeoutSec: 10,
+      });
+
+      round1Winners.forEach((pid) => {
+        activeMatchByUser.set(pid, finalMatchId);
+        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
+        if (pObj?.chatId) {
+          const tableUrl = buildTelegramMiniAppLink(`tournament_table_${finalMatchId}`);
+          sendTelegramMessageSafely(
+            pObj.chatId,
+            `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the TOURNAMENT FINAL! Tap below to join your table now (90s wait timer).`,
+            tableUrl
+          );
+        }
+      });
+    }
+  } else if (currentTournament.currentRound === 2) {
+    const finalMatch = currentRoundMatches[0];
+    completeTournament(finalMatch?.winnerId || null);
+  }
+
+  schedulePersist();
 }
 
 function processTournamentTick() {
@@ -3841,7 +3964,7 @@ app.get('/api/tournaments/current', (req, res) => {
   }
 
   if (!currentTournament) {
-    return res.json({ tournament: null });
+    return res.json({ tournament: null, history: pastTournaments });
   }
 
   const isRegistered = authUserId
@@ -3853,6 +3976,7 @@ app.get('/api/tournaments/current', (req, res) => {
       ...currentTournament,
       isRegistered,
     },
+    history: pastTournaments,
   });
 });
 
@@ -3977,6 +4101,127 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
 
   schedulePersist();
   return res.json({ success: true, tournament: currentTournament });
+});
+
+app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req, res) => {
+  const userId = (req as AuthenticatedRequest).authUserId!;
+  const user = users.get(userId);
+  const username = (user?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  // 1. Create simulated tournament
+  const tournamentId = `tourn-sim-${Date.now()}`;
+  currentTournament = {
+    id: tournamentId,
+    title: 'SIMULATED CARTOON CHAMPIONSHIP 🏆',
+    description: 'Automated test simulation of a full multi-round tournament!',
+    nftLink: 'https://getgems.io',
+    nftImage: '/ayanami-plush.png',
+    startAt: Date.now() + 2000, // Starts in 2 seconds
+    status: 'upcoming',
+    rules: '10s turn timer. Single elimination 2-player tables.',
+    maxPlayers: 8,
+    entryTicketCost: 0,
+    participants: [
+      {
+        userId: userId,
+        username: user?.telegramUsername ? `@${user.telegramUsername.replace(/^@/, '')}` : (user?.telegramFirstName || userId.replace(/^tg:/, '')),
+        avatarId: 'rabbit',
+        registeredAt: Date.now(),
+        chatId: user?.telegramChatId,
+      },
+      {
+        userId: 'sim-user-1',
+        username: '@cyber_fox',
+        avatarId: 'fox',
+        registeredAt: Date.now() + 1,
+      },
+      {
+        userId: 'sim-user-2',
+        username: '@lunar_cat',
+        avatarId: 'cat',
+        registeredAt: Date.now() + 2,
+      },
+      {
+        userId: 'sim-user-3',
+        username: '@astro_bear',
+        avatarId: 'bear',
+        registeredAt: Date.now() + 3,
+      },
+    ],
+    matches: [],
+    currentRound: 1,
+    winnerUserId: null,
+    winnerName: null,
+    winnerAvatar: null,
+    finishedAt: null,
+    createdAt: Date.now(),
+  };
+
+  // 2. Start Round 1 (2 tables: Table 1 [Admin, @cyber_fox], Table 2 [@lunar_cat, @astro_bear])
+  currentTournament.status = 'in_progress';
+  currentTournament.currentRound = 1;
+  const playerIds = currentTournament.participants.map((p) => p.userId);
+  const tables = distributePlayersIntoTables(playerIds);
+
+  currentTournament.matches = tables.map((tablePlayers, idx) => {
+    const matchId = `tourn-${tournamentId}-r1-m${idx + 1}`;
+    
+    tablePlayers.forEach((pid) => {
+      activeMatchByUser.set(pid, matchId);
+      const pObj = currentTournament!.participants.find((p) => p.userId === pid);
+      if (pObj?.chatId) {
+        const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
+        sendTelegramMessageSafely(
+          pObj.chatId,
+          `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match.`,
+          tableUrl
+        );
+      }
+    });
+
+    return {
+      matchId,
+      round: 1,
+      tableIndex: idx + 1,
+      playerIds: tablePlayers,
+      winnerId: null,
+      status: 'in_progress' as const,
+    };
+  });
+
+  // 3. Simulate Round 1 table completions (Winner T1: Admin/user, Winner T2: @lunar_cat)
+  if (currentTournament.matches[0]) {
+    currentTournament.matches[0].status = 'completed';
+    currentTournament.matches[0].winnerId = currentTournament.matches[0].playerIds[0];
+  }
+  if (currentTournament.matches[1]) {
+    currentTournament.matches[1].status = 'completed';
+    currentTournament.matches[1].winnerId = currentTournament.matches[1].playerIds[0];
+  }
+
+  // 4. Progress to Round 2 (FINAL TABLE with 90s wait timer)
+  evaluateTournamentProgression();
+
+  // 5. Simulate Final Table match completion
+  if (currentTournament.matches[2]) {
+    currentTournament.matches[2].status = 'completed';
+    currentTournament.matches[2].winnerId = currentTournament.matches[2].playerIds[0];
+    evaluateTournamentProgression();
+  }
+
+  schedulePersist();
+  return res.json({
+    success: true,
+    tournament: currentTournament ? { ...currentTournament, isRegistered: true } : null,
+    history: pastTournaments,
+  });
 });
 
 
@@ -5345,6 +5590,15 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   activeMatch.players.forEach((player) => {
     activeMatchByUser.delete(player.userId);
   });
+
+  if (currentTournament && currentTournament.status === 'in_progress') {
+    const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
+    if (tMatch) {
+      tMatch.status = 'completed';
+      tMatch.winnerId = activeMatch.gameState.winnerUserId || placements[0]?.userId || null;
+      evaluateTournamentProgression();
+    }
+  }
 
   activeMatch.payoutResult = {
     grossPot,

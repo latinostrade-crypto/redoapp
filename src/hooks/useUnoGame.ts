@@ -522,6 +522,18 @@ export function useUnoGame() {
     };
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
+  // Fast-polling during match setup / connection phase (waiting for players).
+  // Ensures instant table start even if SSE stream drops or delays match-start broadcast.
+  useEffect(() => {
+    if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || !gameState.waitingForPlayers) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      syncRemoteMatchState().catch(() => undefined);
+    }, 1500);
+    return () => window.clearInterval(interval);
+  }, [gameMode, remoteSessionActive, gameState.waitingForPlayers, syncRemoteMatchState]);
+
   // SSE is preferred for instant moves. A full perspective includes every
   // hand, card and recent log, so fallback polling must stay sparse and only
   // run after a genuinely stale stream.
@@ -531,7 +543,8 @@ export function useUnoGame() {
     }
     let syncing = false;
     const refresh = () => {
-      const streamIsFresh = remoteMatchStreamLastEventAtRef.current > 0
+      const streamIsFresh = !gameState.waitingForPlayers
+        && remoteMatchStreamLastEventAtRef.current > 0
         && Date.now() - remoteMatchStreamLastEventAtRef.current < 25_000;
       if (streamIsFresh) return;
       if (syncing) return;
@@ -542,7 +555,7 @@ export function useUnoGame() {
     };
     const timer = window.setInterval(refresh, 5_000);
     return () => window.clearInterval(timer);
-  }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
+  }, [gameMode, gameState.phase, gameState.waitingForPlayers, remoteSessionActive, syncRemoteMatchState]);
 
   const handleRemoteActionError = useCallback((error: unknown) => {
     sound.playError();

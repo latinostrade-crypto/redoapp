@@ -618,6 +618,14 @@ export function Web3Dashboard({
     sessionStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, currentTab);
   }, [currentTab]);
 
+  useEffect(() => {
+    const startApp = getTelegramStartParam();
+    if (startApp?.startsWith('tournament_table_') || startApp?.startsWith('tourn_')) {
+      setCurrentTab('events');
+      setEventsSubTab('tournaments');
+    }
+  }, []);
+
   const [tonConnectUI] = useTonConnectUI();
   const hookWalletAddress = useTonAddress();
   const hookRawWalletAddress = useTonAddress(false);
@@ -739,14 +747,18 @@ export function Web3Dashboard({
 
   const [eventsSubTab, setEventsSubTab] = useState<'quests' | 'tournaments'>('quests');
   const [tournamentData, setTournamentData] = useState<import('../types').TournamentView | null>(null);
+  const [pastTournaments, setPastTournaments] = useState<import('../types').TournamentView[]>([]);
   const [tournRegistering, setTournRegistering] = useState(false);
   const [tournCountdown, setTournCountdown] = useState('');
 
   const fetchTournamentData = useCallback(async () => {
     try {
-      const res = await apiRequest<{ tournament: import('../types').TournamentView | null }>('/api/tournaments/current');
-      if (res?.tournament) {
+      const res = await apiRequest<{ tournament: import('../types').TournamentView | null; history?: import('../types').TournamentView[] }>('/api/tournaments/current');
+      if (res?.tournament !== undefined) {
         setTournamentData(res.tournament);
+      }
+      if (res?.history) {
+        setPastTournaments(res.history);
       }
     } catch {
       // Keep state resilient
@@ -825,6 +837,26 @@ export function Web3Dashboard({
       }
     } catch (err: any) {
       alert(err instanceof Error ? err.message : 'Failed to update tournament.');
+    } finally {
+      setAdminSubmitting(false);
+    }
+  };
+
+  const handleAdminSimulateTournament = async () => {
+    if (adminSubmitting) return;
+    sound.playPop();
+    setAdminSubmitting(true);
+    try {
+      const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
+        method: 'POST',
+      });
+      if (res?.tournament) {
+        setTournamentData(res.tournament);
+        if (res.history) setPastTournaments(res.history);
+        alert('Tournament simulation completed successfully! Check bracket and past champions list.');
+      }
+    } catch (err: any) {
+      alert(err instanceof Error ? err.message : 'Failed to simulate tournament.');
     } finally {
       setAdminSubmitting(false);
     }
@@ -3822,9 +3854,13 @@ export function Web3Dashboard({
                                 <div className="flex items-center justify-between text-[8px] font-mono">
                                   <div className="flex items-center gap-1.5">
                                     <span className={`font-black px-1.5 py-0.5 border ${
-                                      isMyMatch ? 'bg-[#00ff66] text-black border-black font-bold' : 'bg-slate-800 text-slate-300 border-slate-700'
+                                      match.round === 2
+                                        ? 'bg-[#ffcc00] text-black border-black font-bold'
+                                        : isMyMatch
+                                        ? 'bg-[#00ff66] text-black border-black font-bold'
+                                        : 'bg-slate-800 text-slate-300 border-slate-700'
                                     }`}>
-                                      TABLE #{match.tableIndex}
+                                      {match.round === 2 ? '👑 FINAL TABLE' : `TABLE #${match.tableIndex}`}
                                     </span>
                                     {isMyMatch && (
                                       <span className="bg-[#ffcc00] text-black font-black px-1 text-[7px] uppercase tracking-wider animate-pulse">
@@ -3833,9 +3869,15 @@ export function Web3Dashboard({
                                     )}
                                   </div>
                                   <span className="text-slate-400 uppercase font-bold">
-                                    {match.status === 'completed' ? '🏁 FINISHED' : match.status === 'in_progress' ? '⚔️ IN MATCH' : '⏳ READY'}
+                                    {match.status === 'completed' ? '🏁 FINISHED' : match.status === 'in_progress' ? (match.round === 2 ? '👑 FINAL MATCH' : '⚔️ IN MATCH') : '⏳ READY'}
                                   </span>
                                 </div>
+
+                                {match.round === 2 && match.status !== 'completed' && (
+                                  <div className="bg-[#ffcc00]/20 border border-[#ffcc00]/60 p-1 rounded text-[7.5px] text-[#ffcc00] font-mono text-center font-bold animate-pulse">
+                                    🏆 FINAL ROUND · WAITING FOR PLAYERS (90S TIMER)
+                                  </div>
+                                )}
 
                                 <div className="grid grid-cols-2 gap-1 bg-slate-950 p-2 border border-slate-900 rounded-sm">
                                   {match.playerIds.map((pid, idx) => {
@@ -4086,14 +4128,68 @@ export function Web3Dashboard({
                             onChange={(e) => setAdminRules(e.target.value)}
                             className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                           />
-                          <button
-                            type="button"
-                            onClick={handleAdminCreateTournament}
-                            disabled={adminSubmitting}
-                            className="w-full py-2 bg-[#ffcc00] text-black font-black text-[8.5px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
-                          >
-                            {adminSubmitting ? 'Updating...' : 'Update & Launch Tournament'}
-                          </button>
+                          <div className="grid grid-cols-2 gap-1.5 pt-1">
+                            <button
+                              type="button"
+                              onClick={handleAdminCreateTournament}
+                              disabled={adminSubmitting}
+                              className="w-full py-2 bg-[#ffcc00] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                            >
+                              {adminSubmitting ? 'Updating...' : 'Update Tournament'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleAdminSimulateTournament}
+                              disabled={adminSubmitting}
+                              className="w-full py-2 bg-[#00ff66] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                            >
+                              {adminSubmitting ? 'Simulating...' : '🚀 Run Simulation'}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* PAST TOURNAMENTS / CHAMPIONS LIST (ПРОШЕДШИЕ ТУРНИРЫ) */}
+                    {pastTournaments && pastTournaments.length > 0 && (
+                      <div className="mt-4 pt-3 border-t-2 border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-black uppercase text-[#00d2ff] flex items-center gap-1">
+                            <Trophy className="w-3.5 h-3.5 text-[#00d2ff]" /> PAST TOURNAMENTS & CHAMPIONS
+                          </span>
+                          <span className="text-[7.5px] text-slate-400 font-mono">
+                            {pastTournaments.length} COMPLETED
+                          </span>
+                        </div>
+
+                        <div className="space-y-2">
+                          {pastTournaments.map((past) => (
+                            <div key={past.id} className="bg-slate-950/80 border border-slate-800 p-2.5 rounded-sm space-y-1.5 font-mono">
+                              <div className="flex items-center justify-between text-[8px]">
+                                <span className="font-bold text-white uppercase">{past.title}</span>
+                                <span className="text-slate-400">
+                                  {past.finishedAt ? new Date(past.finishedAt).toLocaleDateString() : 'Completed'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between text-[8px] bg-black/60 p-1.5 border border-slate-900 rounded">
+                                <div className="flex items-center gap-1.5">
+                                  <Avatar id={(past.winnerAvatar as any) || 'rabbit'} size={16} />
+                                  <div>
+                                    <span className="text-[7px] text-[#ffcc00] font-bold block uppercase">CHAMPION WINNER</span>
+                                    <span className="text-[8.5px] font-black text-white">{past.winnerName || 'Unknown Winner'}</span>
+                                  </div>
+                                </div>
+                                <a
+                                  href={past.nftLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-2 py-0.5 bg-[#00d2ff] text-black text-[7px] font-black uppercase pixel-btn-interactive border border-black"
+                                >
+                                  NFT Prize 🎁
+                                </a>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}

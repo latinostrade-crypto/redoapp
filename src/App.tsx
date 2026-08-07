@@ -658,6 +658,14 @@ export default function App() {
                 <div className="mt-3 text-[7px] leading-relaxed text-slate-400">
                   The match starts when everyone connects. If nobody connects, no tickets or energy are charged.
                 </div>
+                <button
+                  type="button"
+                  onClick={() => leaveUnstartedMatch().catch(() => returnToLobby())}
+                  disabled={isLeavingUnstartedMatch}
+                  className="mt-4 w-full py-2 bg-red-950/80 hover:bg-red-900 border-2 border-black text-[#ff4b4b] font-black text-[9px] uppercase tracking-wider pixel-btn-interactive shadow-[3px_3px_0_#000] cursor-pointer disabled:opacity-50"
+                >
+                  {isLeavingUnstartedMatch ? 'Leaving...' : 'Cancel Match'}
+                </button>
               </div>
             </div>
           )}

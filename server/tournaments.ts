@@ -13,6 +13,7 @@ export interface TournamentMatch {
   playerIds: string[];
   winnerId: string | null;
   status: 'pending' | 'in_progress' | 'completed';
+  waitingTimerEndAt?: number | null;
 }
 
 export interface TournamentData {
