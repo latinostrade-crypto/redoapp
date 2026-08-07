@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -4178,218 +4178,216 @@ export function Web3Dashboard({
                         </div>
                       );
                     })()}
-
-
-                    {/* ADMIN TOURNAMENT CREATOR PANEL (For @allin_gram) */}
-                    {(profile?.telegramUsername?.toLowerCase().replace('@', '') === 'allin_gram' || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username?.toLowerCase() === 'allin_gram') && (
-                      <div className="mt-4 pt-3 border-t-2 border-[#ffcc00] space-y-2 bg-[#1a1608] p-3 border border-black font-mono">
-                        <div className="flex items-center justify-between text-[#ffcc00] font-black text-[9px] uppercase">
-                          <span>⚙️ Admin Tournament Manager</span>
-                          <span>@allin_gram</span>
-                        </div>
-                        <div className="space-y-2 text-[8px]">
-                          <input
-                            type="text"
-                            placeholder="Tournament Title (e.g. WEEKLY SMASH CHAMPIONSHIP)"
-                            value={adminTitle}
-                            onChange={(e) => setAdminTitle(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
-                          />
-                          <input
-                            type="text"
-                            placeholder="NFT Prize Link (e.g. https://getgems.io/...)"
-                            value={adminNftLink}
-                            onChange={(e) => setAdminNftLink(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
-                          />
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <div>
-                              <label className="text-[7px] text-slate-400 block mb-0.5">START TIMER (MINUTES)</label>
-                              <input
-                                type="number"
-                                placeholder="60"
-                                value={adminMinutes}
-                                onChange={(e) => setAdminMinutes(e.target.value)}
-                                className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[7px] text-slate-400 block mb-0.5">ENTRY FEE (TICKETS / TKT)</label>
-                              <input
-                                type="number"
-                                step="0.1"
-                                placeholder="0 = Free"
-                                value={adminTicketCost}
-                                onChange={(e) => setAdminTicketCost(e.target.value)}
-                                className="w-full bg-black border border-black text-[#00ff66] font-bold px-2 py-1 focus:outline-none"
-                              />
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="text-[7px] text-slate-400 block mb-0.5">MATCH FORMAT (WINS TO ADVANCE)</label>
-                            <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
-                              <button
-                                type="button"
-                                onClick={() => setAdminWinsRequired(1)}
-                                className={`py-1 border text-center ${adminWinsRequired === 1 ? 'bg-[#00ff66] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
-                              >
-                                1 WIN (SINGLE)
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setAdminWinsRequired(2)}
-                                className={`py-1 border text-center ${adminWinsRequired === 2 ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
-                              >
-                                2 WINS (BEST OF 3)
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Quick Timer Presets */}
-                          <div className="flex gap-1 items-center pt-0.5 flex-wrap">
-                            <span className="text-[7px] text-slate-400">Timer:</span>
-                            <button
-                              type="button"
-                              onClick={() => setAdminMinutes('5')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '5' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              5m
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAdminMinutes('15')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '15' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              15m
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAdminMinutes('60')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '60' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              1h
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAdminMinutes('1440')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '1440' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              24h
-                            </button>
-                          </div>
-
-                          {/* Quick Ticket Presets */}
-                          <div className="flex gap-1 items-center pt-0.5 flex-wrap">
-                            <span className="text-[7px] text-slate-400">Fee:</span>
-                            <button
-                              type="button"
-                              onClick={() => setAdminTicketCost('0')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0' ? 'bg-[#00ff66] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              Free
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAdminTicketCost('0.5')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0.5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              0.5 TKT
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAdminTicketCost('1')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '1' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              1 TKT
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setAdminTicketCost('5')}
-                              className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                            >
-                              5 TKT
-                            </button>
-                          </div>
-
-
-                          <input
-                            type="text"
-                            placeholder="Rules / Conditions (e.g. 10s turn timer. Single elimination)"
-                            value={adminRules}
-                            onChange={(e) => setAdminRules(e.target.value)}
-                            className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
-                          />
-                          <div className="grid grid-cols-2 gap-1.5 pt-1">
-                            <button
-                              type="button"
-                              onClick={handleAdminCreateTournament}
-                              disabled={adminSubmitting}
-                              className="w-full py-2 bg-[#ffcc00] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
-                            >
-                              {adminSubmitting ? 'Updating...' : 'Update Tournament'}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleAdminSimulateTournament}
-                              disabled={adminSubmitting}
-                              className="w-full py-2 bg-[#00ff66] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
-                            >
-                              {adminSubmitting ? 'Simulating...' : '🚀 Run Simulation'}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* PAST TOURNAMENTS / CHAMPIONS LIST (ПРОШЕДШИЕ ТУРНИРЫ) */}
-                    {pastTournaments && pastTournaments.length > 0 && (
-                      <div className="mt-4 pt-3 border-t-2 border-slate-800 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] font-black uppercase text-[#00d2ff] flex items-center gap-1">
-                            <Trophy className="w-3.5 h-3.5 text-[#00d2ff]" /> PAST TOURNAMENTS & CHAMPIONS
-                          </span>
-                          <span className="text-[7.5px] text-slate-400 font-mono">
-                            {pastTournaments.length} COMPLETED
-                          </span>
-                        </div>
-
-                        <div className="space-y-2">
-                          {pastTournaments.map((past) => (
-                            <div key={past.id} className="bg-slate-950/80 border border-slate-800 p-2.5 rounded-sm space-y-1.5 font-mono">
-                              <div className="flex items-center justify-between text-[8px]">
-                                <span className="font-bold text-white uppercase">{past.title}</span>
-                                <span className="text-slate-400">
-                                  {past.finishedAt ? new Date(past.finishedAt).toLocaleDateString() : 'Completed'}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between text-[8px] bg-black/60 p-1.5 border border-slate-900 rounded">
-                                <div className="flex items-center gap-1.5">
-                                  <Avatar id={(past.winnerAvatar as any) || 'rabbit'} size={16} />
-                                  <div>
-                                    <span className="text-[7px] text-[#ffcc00] font-bold block uppercase">CHAMPION WINNER</span>
-                                    <span className="text-[8.5px] font-black text-white">{past.winnerName || 'Unknown Winner'}</span>
-                                  </div>
-                                </div>
-                                <a
-                                  href={past.nftLink}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="px-2 py-0.5 bg-[#00d2ff] text-black text-[7px] font-black uppercase pixel-btn-interactive border border-black"
-                                >
-                                  NFT Prize 🎁
-                                </a>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </>
                 ) : (
                   <div className="text-center py-6 text-slate-400 text-[9px] uppercase font-mono space-y-2 bg-slate-950/60 p-4 border border-slate-800 rounded">
                     <div className="text-xs font-black text-[#ffcc00]">⏳ NO ACTIVE TOURNAMENT</div>
                     <p className="text-[8px] text-slate-400">There is currently no active or upcoming tournament. The admin will schedule and launch the next tournament.</p>
+                  </div>
+                )}
+
+                {/* ADMIN TOURNAMENT CREATOR PANEL (For @allin_gram) */}
+                {isUserAdmin(profile?.telegramUsername) && (
+                  <div className="mt-4 pt-3 border-t-2 border-[#ffcc00] space-y-2 bg-[#1a1608] p-3 border border-black font-mono">
+                    <div className="flex items-center justify-between text-[#ffcc00] font-black text-[9px] uppercase">
+                      <span>⚙️ Admin Tournament Manager</span>
+                      <span>@allin_gram</span>
+                    </div>
+                    <div className="space-y-2 text-[8px]">
+                      <input
+                        type="text"
+                        placeholder="Tournament Title (e.g. WEEKLY SMASH CHAMPIONSHIP)"
+                        value={adminTitle}
+                        onChange={(e) => setAdminTitle(e.target.value)}
+                        className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
+                      />
+                      <input
+                        type="text"
+                        placeholder="NFT Prize Link (e.g. https://getgems.io/...)"
+                        value={adminNftLink}
+                        onChange={(e) => setAdminNftLink(e.target.value)}
+                        className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
+                      />
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div>
+                          <label className="text-[7px] text-slate-400 block mb-0.5">START TIMER (MINUTES)</label>
+                          <input
+                            type="number"
+                            placeholder="60"
+                            value={adminMinutes}
+                            onChange={(e) => setAdminMinutes(e.target.value)}
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-1 focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[7px] text-slate-400 block mb-0.5">ENTRY FEE (TICKETS / TKT)</label>
+                          <input
+                            type="number"
+                            step="0.1"
+                            placeholder="0 = Free"
+                            value={adminTicketCost}
+                            onChange={(e) => setAdminTicketCost(e.target.value)}
+                            className="w-full bg-black border border-black text-[#00ff66] font-bold px-2 py-1 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[7px] text-slate-400 block mb-0.5">MATCH FORMAT (WINS TO ADVANCE)</label>
+                        <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
+                          <button
+                            type="button"
+                            onClick={() => setAdminWinsRequired(1)}
+                            className={`py-1 border text-center ${adminWinsRequired === 1 ? 'bg-[#00ff66] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
+                          >
+                            1 WIN (SINGLE)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAdminWinsRequired(2)}
+                            className={`py-1 border text-center ${adminWinsRequired === 2 ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
+                          >
+                            2 WINS (BEST OF 3)
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Quick Timer Presets */}
+                      <div className="flex gap-1 items-center pt-0.5 flex-wrap">
+                        <span className="text-[7px] text-slate-400">Timer:</span>
+                        <button
+                          type="button"
+                          onClick={() => setAdminMinutes('5')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '5' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          5m
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminMinutes('15')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '15' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          15m
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminMinutes('60')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '60' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          1h
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminMinutes('1440')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '1440' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          24h
+                        </button>
+                      </div>
+
+                      {/* Quick Ticket Presets */}
+                      <div className="flex gap-1 items-center pt-0.5 flex-wrap">
+                        <span className="text-[7px] text-slate-400">Fee:</span>
+                        <button
+                          type="button"
+                          onClick={() => setAdminTicketCost('0')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0' ? 'bg-[#00ff66] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          Free
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminTicketCost('0.5')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0.5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          0.5 TKT
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminTicketCost('1')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '1' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          1 TKT
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAdminTicketCost('5')}
+                          className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
+                        >
+                          5 TKT
+                        </button>
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder="Rules / Conditions (e.g. 10s turn timer. Single elimination)"
+                        value={adminRules}
+                        onChange={(e) => setAdminRules(e.target.value)}
+                        className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
+                      />
+                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleAdminCreateTournament}
+                          disabled={adminSubmitting}
+                          className="w-full py-2 bg-[#ffcc00] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                        >
+                          {adminSubmitting ? 'Updating...' : tournamentData ? 'Update Tournament' : 'Create Tournament'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAdminSimulateTournament}
+                          disabled={adminSubmitting}
+                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                        >
+                          {adminSubmitting ? 'Simulating...' : '🚀 Run Simulation'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* PAST TOURNAMENTS / CHAMPIONS LIST (ПРОШЕДШИЕ ТУРНИРЫ) */}
+                {pastTournaments && pastTournaments.length > 0 && (
+                  <div className="mt-4 pt-3 border-t-2 border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-black uppercase text-[#00d2ff] flex items-center gap-1">
+                        <Trophy className="w-3.5 h-3.5 text-[#00d2ff]" /> PAST TOURNAMENTS & CHAMPIONS
+                      </span>
+                      <span className="text-[7.5px] text-slate-400 font-mono">
+                        {pastTournaments.length} COMPLETED
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {pastTournaments.map((past) => (
+                        <div key={past.id} className="bg-slate-950/80 border border-slate-800 p-2.5 rounded-sm space-y-1.5 font-mono">
+                          <div className="flex items-center justify-between text-[8px]">
+                            <span className="font-bold text-white uppercase">{past.title}</span>
+                            <span className="text-slate-400">
+                              {past.finishedAt ? new Date(past.finishedAt).toLocaleDateString() : 'Completed'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-[8px] bg-black/60 p-1.5 border border-slate-900 rounded">
+                            <div className="flex items-center gap-1.5">
+                              <Avatar id={(past.winnerAvatar as any) || 'rabbit'} size={16} />
+                              <div>
+                                <span className="text-[7px] text-[#ffcc00] font-bold block uppercase">CHAMPION WINNER</span>
+                                <span className="text-[8.5px] font-black text-white">{past.winnerName || 'Unknown Winner'}</span>
+                              </div>
+                            </div>
+                            <a
+                              href={past.nftLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-0.5 bg-[#00d2ff] text-black text-[7px] font-black uppercase pixel-btn-interactive border border-black"
+                            >
+                              NFT Prize 🎁
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

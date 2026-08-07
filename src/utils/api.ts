@@ -332,13 +332,13 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export function isUserAdmin(): boolean {
+export function isUserAdmin(profileUsername?: string): boolean {
   if (typeof window === 'undefined') return false;
   const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
-  if (!tgUser) return false;
-  const matchesId = String(tgUser.id) === '5152039743';
-  const matchesUsername = tgUser.username?.toLowerCase() === 'allin_gram';
-  return matchesId || matchesUsername;
+  const matchesId = tgUser?.id ? String(tgUser.id) === '5152039743' : false;
+  const matchesTgUsername = tgUser?.username ? tgUser.username.toLowerCase() === 'allin_gram' : false;
+  const matchesProfileUsername = profileUsername ? profileUsername.toLowerCase().replace(/^@/, '') === 'allin_gram' : false;
+  return matchesId || matchesTgUsername || matchesProfileUsername;
 }
 
 export function cleanErrorMessage(error: unknown, context?: 'bootstrap' | 'matchmaker' | 'private-room'): string {
