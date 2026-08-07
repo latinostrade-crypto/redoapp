@@ -645,6 +645,15 @@ export function Web3Dashboard({
     }
   }, []);
 
+  useEffect(() => {
+    const handleMatchEnded = () => {
+      initialLaunchTournamentMatchIdRef.current = '';
+      launchTournamentMatchConsumedRef.current = true;
+    };
+    window.addEventListener('redoapp:match-ended', handleMatchEnded);
+    return () => window.removeEventListener('redoapp:match-ended', handleMatchEnded);
+  }, []);
+
   const [tonConnectUI] = useTonConnectUI();
   const hookWalletAddress = useTonAddress();
   const hookRawWalletAddress = useTonAddress(false);
@@ -767,17 +776,22 @@ export function Web3Dashboard({
   const [eventsSubTab, setEventsSubTab] = useState<'quests' | 'tournaments'>('quests');
   const [tournamentData, setTournamentData] = useState<import('../types').TournamentView | null>(null);
   const [pastTournaments, setPastTournaments] = useState<import('../types').TournamentView[]>([]);
+  const [tournamentLeaderboard, setTournamentLeaderboard] = useState<import('../types').TournamentLeaderboardEntry[]>([]);
+  const [showAllLeaderboardModal, setShowAllLeaderboardModal] = useState(false);
   const [tournRegistering, setTournRegistering] = useState(false);
   const [tournCountdown, setTournCountdown] = useState('');
 
   const fetchTournamentData = useCallback(async () => {
     try {
-      const res = await apiRequest<{ tournament: import('../types').TournamentView | null; history?: import('../types').TournamentView[] }>('/api/tournaments/current');
+      const res = await apiRequest<{ tournament: import('../types').TournamentView | null; history?: import('../types').TournamentView[]; leaderboard?: import('../types').TournamentLeaderboardEntry[] }>('/api/tournaments/current');
       if (res?.tournament !== undefined) {
         setTournamentData(res.tournament);
       }
       if (res?.history) {
         setPastTournaments(res.history);
+      }
+      if (res?.leaderboard) {
+        setTournamentLeaderboard(res.leaderboard);
       }
     } catch {
       // Keep state resilient
@@ -832,6 +846,7 @@ export function Web3Dashboard({
   const [adminMinutes, setAdminMinutes] = useState('60');
   const [adminTicketCost, setAdminTicketCost] = useState('0');
   const [adminRules, setAdminRules] = useState('');
+  const [adminWinsRequired, setAdminWinsRequired] = useState<number>(1);
   const [adminSubmitting, setAdminSubmitting] = useState(false);
 
   const handleAdminCreateTournament = async () => {
@@ -846,7 +861,8 @@ export function Web3Dashboard({
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
-          rules: adminRules.trim() || '10s turn timer. Single elimination tables.',
+          winsRequired: adminWinsRequired,
+          rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.'),
           maxPlayers: 32,
         }),
       });
@@ -868,6 +884,7 @@ export function Web3Dashboard({
     try {
       const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
         method: 'POST',
+        body: JSON.stringify({ winsRequired: adminWinsRequired }),
       });
       if (res?.tournament) {
         setTournamentData(res.tournament);
@@ -3820,6 +3837,58 @@ export function Web3Dashboard({
               ) : (
               /* Tournaments Sub-Tab Content */
               <div className="bg-[#12161f] border-2 border-black pixel-box-sm p-4 space-y-4 relative shadow-[4px_4px_0_#000] font-mono text-left">
+                {/* Champions Leaderboard Section */}
+                <div className="bg-[#1a1608] border-2 border-[#ffcc00]/60 p-3 space-y-2 font-mono shadow-[2px_2px_0_#000]">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[#ffcc00] font-black text-[9px] uppercase">
+                      <Trophy className="w-3.5 h-3.5 text-[#ffcc00]" />
+                      <span>CHAMPIONS LEADERBOARD</span>
+                    </div>
+                    {tournamentLeaderboard.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sound.playPop();
+                          setShowAllLeaderboardModal(true);
+                        }}
+                        className="text-[7.5px] font-bold text-[#00d2ff] hover:underline uppercase"
+                      >
+                        Show All ({tournamentLeaderboard.length}) ➔
+                      </button>
+                    )}
+                  </div>
+
+                  {tournamentLeaderboard.length === 0 ? (
+                    <div className="text-[7.5px] text-slate-400 italic py-1">
+                      No tournament victories recorded yet. Be the first champion!
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1.5 pt-1">
+                      {tournamentLeaderboard.slice(0, 3).map((entry, idx) => {
+                        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+                        const badgeBorder = idx === 0 ? 'border-[#ffcc00]' : idx === 1 ? 'border-slate-400' : 'border-[#cd7f32]';
+                        return (
+                          <div
+                            key={entry.userId}
+                            className={`bg-black p-1.5 border ${badgeBorder} rounded flex flex-col items-center text-center space-y-0.5`}
+                          >
+                            <div className="flex items-center gap-1">
+                              <span className="text-[9px]">{medal}</span>
+                              <Avatar id={(entry.avatarId as any) || 'rabbit'} size={14} />
+                            </div>
+                            <span className="text-[7.5px] font-bold text-slate-200 truncate w-full">
+                              {entry.username}
+                            </span>
+                            <span className="text-[7px] font-black text-[#00ff66]">
+                              {entry.winsCount} {entry.winsCount === 1 ? 'WIN' : 'WINS'}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
                 {tournamentData ? (
                   <>
                     {/* Header Badge & Title */}
@@ -3975,6 +4044,11 @@ export function Web3Dashboard({
                                         <span className="truncate flex-1 font-mono">
                                           P{idx + 1}: {name} {isMe ? '(You)' : ''}
                                         </span>
+                                        {(tournamentData.winsRequired || 1) > 1 && (
+                                          <span className="text-[7px] font-black text-[#ffcc00] px-1 bg-[#ffcc00]/10 border border-[#ffcc00]/30 rounded">
+                                            {match.playerWins?.[pid] || 0}/{tournamentData.winsRequired} WINS
+                                          </span>
+                                        )}
                                         {isWinner && <span>👑</span>}
                                       </div>
                                     );
@@ -4149,6 +4223,26 @@ export function Web3Dashboard({
                                 onChange={(e) => setAdminTicketCost(e.target.value)}
                                 className="w-full bg-black border border-black text-[#00ff66] font-bold px-2 py-1 focus:outline-none"
                               />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-[7px] text-slate-400 block mb-0.5">MATCH FORMAT (WINS TO ADVANCE)</label>
+                            <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
+                              <button
+                                type="button"
+                                onClick={() => setAdminWinsRequired(1)}
+                                className={`py-1 border text-center ${adminWinsRequired === 1 ? 'bg-[#00ff66] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
+                              >
+                                1 WIN (SINGLE)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setAdminWinsRequired(2)}
+                                className={`py-1 border text-center ${adminWinsRequired === 2 ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
+                              >
+                                2 WINS (BEST OF 3)
+                              </button>
                             </div>
                           </div>
 
@@ -5344,6 +5438,53 @@ export function Web3Dashboard({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Full Champions Leaderboard Modal */}
+      {showAllLeaderboardModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 font-mono">
+          <div className="bg-[#12161f] border-2 border-[#ffcc00] max-w-xs w-full p-4 space-y-3 shadow-[4px_4px_0_#000] relative text-left">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div className="flex items-center gap-1.5 text-[#ffcc00] font-black text-[10px] uppercase">
+                <Trophy className="w-4 h-4 text-[#ffcc00]" />
+                <span>ALL TOURNAMENT CHAMPIONS</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAllLeaderboardModal(false)}
+                className="text-slate-400 hover:text-white text-xs font-black px-1.5"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
+              {tournamentLeaderboard.map((entry, idx) => (
+                <div
+                  key={entry.userId}
+                  className="flex items-center justify-between bg-slate-950 p-2 border border-slate-800 rounded text-[9px]"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="font-bold text-[#ffcc00] w-4 text-center">{idx + 1}.</span>
+                    <Avatar id={(entry.avatarId as any) || 'rabbit'} size={16} />
+                    <span className="text-slate-200 font-bold truncate">{entry.username}</span>
+                  </div>
+                  <span className="font-black text-[#00ff66] text-[9px] px-1.5 py-0.5 bg-[#00ff66]/10 border border-[#00ff66]/30 rounded">
+                    🏆 {entry.winsCount} {entry.winsCount === 1 ? 'WIN' : 'WINS'}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAllLeaderboardModal(false)}
+              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-[9px] uppercase border border-black"
+            >
+              Close Leaderboard
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

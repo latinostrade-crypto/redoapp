@@ -1440,6 +1440,14 @@ export function useUnoGame() {
     remoteUserIdRef.current = null;
     setRemoteSessionActive(false);
     localStorage.removeItem('redoapp_active_match');
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+      try {
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState(null, '', cleanUrl);
+      } catch {
+        // Ignore iframe history errors
+      }
+    }
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     setCardsPlayedThisRound(0);
     setCardsDrawnThisRound(0);

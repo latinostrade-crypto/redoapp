@@ -14,6 +14,7 @@ export interface TournamentMatch {
   winnerId: string | null;
   status: 'pending' | 'in_progress' | 'completed';
   waitingTimerEndAt?: number | null;
+  playerWins?: Record<string, number>;
 }
 
 export interface TournamentData {
@@ -27,6 +28,7 @@ export interface TournamentData {
   rules: string;
   maxPlayers: number;
   entryTicketCost: number;
+  winsRequired?: number;
   participants: TournamentParticipant[];
   matches: TournamentMatch[];
   currentRound: number;

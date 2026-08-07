@@ -203,6 +203,7 @@ export interface TournamentMatchView {
   winnerId: string | null;
   status: 'pending' | 'in_progress' | 'completed';
   waitingTimerEndAt?: number | null;
+  playerWins?: Record<string, number>;
 }
 
 export interface TournamentView {
@@ -216,6 +217,7 @@ export interface TournamentView {
   rules: string;
   maxPlayers: number;
   entryTicketCost: number;
+  winsRequired?: number;
   participants: TournamentParticipantView[];
   matches: TournamentMatchView[];
   currentRound: number;
@@ -225,5 +227,13 @@ export interface TournamentView {
   finishedAt: number | null;
   createdAt: number;
   isRegistered?: boolean;
+}
+
+export interface TournamentLeaderboardEntry {
+  userId: string;
+  username: string;
+  avatarId: string;
+  winsCount: number;
+  lastWinAt: number;
 }
 

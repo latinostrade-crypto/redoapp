@@ -3971,6 +3971,39 @@ function processTournamentTick() {
 
 setInterval(processTournamentTick, 5000);
 
+function buildTournamentLeaderboard() {
+  const winCounts = new Map<string, { userId: string; username: string; avatarId: string; winsCount: number; lastWinAt: number }>();
+
+  const allFinished = [...pastTournaments];
+  if (currentTournament && currentTournament.status === 'finished') {
+    allFinished.push(currentTournament);
+  }
+
+  allFinished.forEach((t) => {
+    if (t.winnerUserId) {
+      const existing = winCounts.get(t.winnerUserId);
+      const rawUsername = (t.winnerName || t.winnerUserId.replace(/^tg:/, '')).replace(/^@/, '');
+      const avatarId = t.winnerAvatar || 'rabbit';
+      const winTime = t.finishedAt || t.startAt || Date.now();
+
+      if (existing) {
+        existing.winsCount += 1;
+        if (winTime > existing.lastWinAt) existing.lastWinAt = winTime;
+      } else {
+        winCounts.set(t.winnerUserId, {
+          userId: t.winnerUserId,
+          username: rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`,
+          avatarId,
+          winsCount: 1,
+          lastWinAt: winTime,
+        });
+      }
+    }
+  });
+
+  return Array.from(winCounts.values()).sort((a, b) => b.winsCount - a.winsCount || b.lastWinAt - a.lastWinAt);
+}
+
 app.get('/api/tournaments/current', (req, res) => {
   let authUserId: string | null = null;
   try {
@@ -3985,8 +4018,10 @@ app.get('/api/tournaments/current', (req, res) => {
     // Ignore
   }
 
+  const leaderboard = buildTournamentLeaderboard();
+
   if (!currentTournament) {
-    return res.json({ tournament: null, history: pastTournaments });
+    return res.json({ tournament: null, history: pastTournaments, leaderboard });
   }
 
   const isRegistered = authUserId
@@ -3999,6 +4034,7 @@ app.get('/api/tournaments/current', (req, res) => {
       isRegistered,
     },
     history: pastTournaments,
+    leaderboard,
   });
 });
 
@@ -4080,10 +4116,11 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost } = req.body || {};
+  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
 
   const minutes = Number(startInMinutes) || 60;
   const ticketCost = Math.max(0, Number(entryTicketCost) || 0);
+  const targetWins = Number(winsRequired) === 2 ? 2 : 1;
 
   // Preserve registered participants if updating an upcoming tournament
   const existingParticipants = (currentTournament && currentTournament.status === 'upcoming')
@@ -4109,6 +4146,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     rules: rules || '10s turn timer. Single elimination tables.',
     maxPlayers: Number(maxPlayers) || 32,
     entryTicketCost: ticketCost,
+    winsRequired: targetWins,
     participants: existingParticipants,
     matches: existingMatches,
     currentRound: 1,
@@ -4137,6 +4175,8 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
+  const simWinsRequired = Number(req.body?.winsRequired) === 2 ? 2 : 1;
+
   // 1. Create simulated tournament
   const tournamentId = `tourn-sim-${Date.now()}`;
   currentTournament = {
@@ -4147,9 +4187,10 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     nftImage: '/ayanami-plush.png',
     startAt: Date.now() + 2000, // Starts in 2 seconds
     status: 'upcoming',
-    rules: '10s turn timer. Single elimination 2-player tables.',
+    rules: simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination 2-player tables.',
     maxPlayers: 8,
     entryTicketCost: 0,
+    winsRequired: simWinsRequired,
     participants: [
       {
         userId: userId,
@@ -5656,8 +5697,32 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   if (currentTournament && currentTournament.status === 'in_progress') {
     const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
     if (tMatch) {
+      const winsRequired = currentTournament.winsRequired || 1;
+      const winnerId = activeMatch.gameState.winnerUserId || placements[0]?.userId || null;
+      if (winnerId) {
+        tMatch.playerWins = tMatch.playerWins || {};
+        tMatch.playerWins[winnerId] = (tMatch.playerWins[winnerId] || 0) + 1;
+
+        if (winsRequired > 1 && tMatch.playerWins[winnerId] < winsRequired) {
+          // Target wins not reached yet! Re-deal cards for next game round on this table
+          const newGameState = createInitialMatchState(activeMatch.players);
+          (newGameState as any).playerWins = tMatch.playerWins;
+          (newGameState as any).winsRequired = winsRequired;
+          activeMatch.gameState = newGameState;
+          activeMatch.settled = false;
+
+          activeMatch.players.forEach((player) => {
+            activeMatchByUser.set(player.userId, activeMatch.matchId);
+          });
+
+          schedulePersist({ matchId: activeMatch.matchId });
+          broadcastMatch(activeMatch.matchId);
+          return;
+        }
+      }
+
       tMatch.status = 'completed';
-      tMatch.winnerId = activeMatch.gameState.winnerUserId || placements[0]?.userId || null;
+      tMatch.winnerId = winnerId;
       evaluateTournamentProgression();
     }
   }
