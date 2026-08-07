@@ -4187,22 +4187,20 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
 
   const tourn = currentTournament;
   const statusLabel = tourn.status === 'upcoming'
-    ? `Starts in ${Math.max(1, Math.round((tourn.startAt - Date.now()) / 60000))} minutes!`
+    ? `${Math.max(1, Math.round((tourn.startAt - Date.now()) / 60000))} min`
     : tourn.status === 'in_progress'
-    ? 'Tournament is LIVE NOW!'
-    : 'Tournament completed!';
+    ? 'LIVE NOW'
+    : 'Completed';
 
   const text = [
-    `🏆 <b>REDO CARTOON CHAMPIONSHIP ANNOUNCEMENT</b> 🏆`,
+    `🏆 <b>REDO TOURNAMENT</b>`,
     ``,
     `📌 <b>${tourn.title}</b>`,
     `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
     `🎁 <b>NFT Prize:</b> ${tourn.nftLink}`,
-    `👥 <b>Format:</b> ${tourn.winsRequired === 2 ? 'Best of 3 (2 Wins)' : 'Single Elimination'}`,
-    `⏳ <b>Status:</b> ${statusLabel}`,
-    `📜 <b>Rules:</b> ${tourn.rules}`,
+    `⏳ <b>Starts in:</b> ${statusLabel}`,
     ``,
-    `Open REDO app to register and join the tournament! 🎮`,
+    `Open REDO app to join! 🎮`,
   ].join('\n');
 
   let notifiedCount = 0;
