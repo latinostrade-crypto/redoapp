@@ -1830,7 +1830,7 @@ export function Web3Dashboard({
           setCurrentTab('pvp');
           setPvpSubMode('public');
           setMatchmakingState('idle');
-          setPublicQueueError(result.message || 'Previous matchmaking attempt expired. You can join again.');
+          setPublicQueueError('');
           return;
         }
         if (result.status === 'ready' && result.matchId) {
@@ -2630,7 +2630,7 @@ export function Web3Dashboard({
         ) return;
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
-        setPublicQueueError(result.message || 'Previous matchmaking attempt expired. You can join again.');
+        setPublicQueueError('');
       }
       if (result.status === 'idle') {
         // The status request can overtake the initial POST on a cold Render
@@ -4527,23 +4527,19 @@ export function Web3Dashboard({
                               : `${calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - ${calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT`}
                           </span>
                         </div>
-                        {selectedStake === 0 ? (
-                          <div className="text-[7px] text-slate-400">
-                            Public matchmaking without ticket stake. Rewards are XP and quest progress only.
+                        {selectedStake > 0 && (
+                          <div className="flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                sound.playPop();
+                                setShowPayoutDetails(!showPayoutDetails);
+                              }}
+                              className="text-[7px] text-[#00d2ff] hover:underline uppercase font-bold focus:outline-none cursor-pointer"
+                            >
+                              {showPayoutDetails ? 'Hide Payouts ▲' : 'Show Payouts ▼'}
+                            </button>
                           </div>
-                        ) : (
-                        <div className="flex justify-end">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              sound.playPop();
-                              setShowPayoutDetails(!showPayoutDetails);
-                            }}
-                            className="text-[7px] text-[#00d2ff] hover:underline uppercase font-bold focus:outline-none cursor-pointer"
-                          >
-                            {showPayoutDetails ? 'Hide Payouts ▲' : 'Show Payouts ▼'}
-                          </button>
-                        </div>
                         )}
                         {selectedStake > 0 && showPayoutDetails && (
                           <div className="space-y-1 pt-1.5 border-t border-slate-900 animate-fade-in text-[7.5px]">
@@ -4756,7 +4752,7 @@ export function Web3Dashboard({
                           {selectedStake === 0 ? 'JOIN FREE PUBLIC' : 'JOIN REAL QUEUE'}
                         </button>
 
-                        {publicQueueError && (
+                        {publicQueueError && !publicQueueError.includes('expired') && !publicQueueError.includes('No compatible opponent') && !publicQueueError.includes('Previous matchmaking') && (
                           <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
                             {cleanErrorMessage(publicQueueError, 'matchmaker')}
                           </div>
