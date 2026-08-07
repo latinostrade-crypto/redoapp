@@ -4193,7 +4193,7 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     : 'Completed';
 
   const text = [
-    `🏆 <b>REDO TOURNAMENT</b>`,
+    `🏆 <b>REDOapp TOURNAMENT</b>`,
     ``,
     `📌 <b>${tourn.title}</b>`,
     `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
