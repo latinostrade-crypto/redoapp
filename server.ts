@@ -4238,6 +4238,12 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     evaluateTournamentProgression();
   }
 
+  if (currentTournament) {
+    currentTournament.participants.forEach((p) => {
+      activeMatchByUser.delete(p.userId);
+    });
+  }
+
   schedulePersist();
   return res.json({
     success: true,
@@ -5394,11 +5400,35 @@ function sendMatchStateSuccess(req: Request, res: Response, payload: Record<stri
   return res.json(payload);
 }
 
+function findSettledTournamentMatch(matchId: string): TournamentMatch | null {
+  if (currentTournament?.matches) {
+    const m = currentTournament.matches.find((item) => item.matchId === matchId);
+    if (m) return m;
+  }
+  for (const past of pastTournaments) {
+    if (past.matches) {
+      const m = past.matches.find((item) => item.matchId === matchId);
+      if (m) return m;
+    }
+  }
+  return null;
+}
+
 function handleMatchState(req: AuthenticatedRequest, res: Response) {
   const { matchId } = req.params;
   const userId = getAuthenticatedUserId(req);
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
+    const settledMatch = findSettledTournamentMatch(matchId);
+    if (settledMatch) {
+      return res.json({
+        settled: true,
+        status: 'finished',
+        winnerUserId: settledMatch.winnerId,
+        matchId: settledMatch.matchId,
+        message: 'This tournament match has ended.',
+      });
+    }
     return res.status(404).json({ error: 'Match not found.' });
   }
   markMatchPlayerConnected(activeMatch, userId);
@@ -5423,6 +5453,16 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   const userId = getAuthenticatedUserId(req);
   const activeMatch = activeMatches.get(matchId);
   if (!activeMatch) {
+    const settledMatch = findSettledTournamentMatch(matchId);
+    if (settledMatch) {
+      return res.json({
+        settled: true,
+        status: 'finished',
+        winnerUserId: settledMatch.winnerId,
+        matchId: settledMatch.matchId,
+        message: 'This tournament match has ended.',
+      });
+    }
     return res.status(404).json({ error: 'Match not found.' });
   }
   markMatchPlayerConnected(activeMatch, userId);

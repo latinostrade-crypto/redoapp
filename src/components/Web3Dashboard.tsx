@@ -957,6 +957,13 @@ export function Web3Dashboard({
   const openPublicMatch = useCallback((result: PublicQueueStatus, fallbackStake: number) => {
     if (result.status !== 'ready' || !result.matchId) return false;
     if (openingPublicMatchRef.current === result.matchId) return true;
+    if (tournamentData?.matches) {
+      const matchInTourn = tournamentData.matches.find((m) => m.matchId === result.matchId);
+      if (matchInTourn && matchInTourn.status === 'completed') {
+        setPublicQueueError('This tournament match is already completed.');
+        return false;
+      }
+    }
     const matchedStake = Number(
       result.stake
       ?? result.players?.find((player) => player.userId === currentUserId)?.stake
@@ -3964,48 +3971,70 @@ export function Web3Dashboard({
                           ? `Cancel Registration ${tournamentData.entryTicketCost > 0 ? `(Refund ${tournamentData.entryTicketCost} TKT)` : ''}`
                           : `Register for Tournament ${tournamentData.entryTicketCost > 0 ? `(${tournamentData.entryTicketCost} TKT)` : '(FREE)'}`}
                       </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          sound.playPop();
-                          const myMatch = tournamentData.matches?.find((m) => m.playerIds.includes(currentUserId));
-                          const matchToOpen = activeProfile?.activeMatch || (myMatch ? {
-                            matchId: myMatch.matchId,
-                            mode: 'pvp' as const,
-                            stake: 0,
-                            players: myMatch.playerIds.map((pid) => {
-                              const pObj = tournamentData.participants.find((p) => p.userId === pid);
-                              return {
-                                userId: pid,
-                                username: pObj?.username || pid.replace(/^tg:/, ''),
-                                avatarId: pObj?.avatarId || 'rabbit',
-                                stake: 0,
-                              };
-                            }),
-                            gameState: undefined,
-                          } : null);
+                    ) : tournamentData.status === 'finished' ? (
+                      <div className="w-full py-2.5 bg-slate-900 border-2 border-black text-center text-[#00d2ff] font-black text-[9px] uppercase shadow-[2px_2px_0_#000]">
+                        🏁 TOURNAMENT COMPLETED · CHAMPION: {tournamentData.winnerName || 'REDO Champion'}
+                      </div>
+                    ) : (() => {
+                      const myActiveMatch = tournamentData.matches?.find(
+                        (m) => m.playerIds.includes(currentUserId) && m.status !== 'completed'
+                      );
+                      const myCompletedMatch = tournamentData.matches?.find(
+                        (m) => m.playerIds.includes(currentUserId) && m.status === 'completed'
+                      );
 
-                          if (matchToOpen) {
-                            openPublicMatch({
-                              status: 'ready',
-                              matchId: matchToOpen.matchId,
-                              mode: matchToOpen.mode,
-                              stake: matchToOpen.stake,
-                              players: matchToOpen.players,
-                              gameState: matchToOpen.gameState,
-                            }, matchToOpen.stake);
-                          } else {
-                            // If user is not in any tournament table, open PVP tab
-                            setCurrentTab('pvp');
-                            setPvpSubMode('public');
-                          }
-                        }}
-                        className="w-full py-2.5 bg-[#00d2ff] text-black font-black text-[9.5px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-                      >
-                        Enter Tournament Match ➔
-                      </button>
-                    )}
+                      if (myActiveMatch) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              sound.playPop();
+                              const matchToOpen = activeProfile?.activeMatch || {
+                                matchId: myActiveMatch.matchId,
+                                mode: 'pvp' as const,
+                                stake: 0,
+                                players: myActiveMatch.playerIds.map((pid) => {
+                                  const pObj = tournamentData.participants.find((p) => p.userId === pid);
+                                  return {
+                                    userId: pid,
+                                    username: pObj?.username || pid.replace(/^tg:/, ''),
+                                    avatarId: pObj?.avatarId || 'rabbit',
+                                    stake: 0,
+                                  };
+                                }),
+                                gameState: undefined,
+                              };
+
+                              openPublicMatch({
+                                status: 'ready',
+                                matchId: matchToOpen.matchId,
+                                mode: matchToOpen.mode,
+                                stake: matchToOpen.stake,
+                                players: matchToOpen.players,
+                                gameState: matchToOpen.gameState,
+                              }, matchToOpen.stake);
+                            }}
+                            className="w-full py-2.5 bg-[#00ff66] text-black font-black text-[9.5px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000] animate-pulse"
+                          >
+                            <span>🎮</span> ENTER {myActiveMatch.round === 2 ? 'FINAL TABLE' : `MATCH TABLE #${myActiveMatch.tableIndex}`} ➔
+                          </button>
+                        );
+                      }
+
+                      if (myCompletedMatch && myCompletedMatch.winnerId !== currentUserId) {
+                        return (
+                          <div className="w-full py-2.5 bg-slate-900/90 border-2 border-black text-center text-slate-400 font-mono font-bold text-[8.5px] uppercase shadow-[2px_2px_0_#000]">
+                            🏁 MATCH COMPLETED · ELIMINATED (SPECTATING FINALS)
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="w-full py-2.5 bg-slate-950 border-2 border-slate-800 text-center text-slate-400 font-mono text-[8.5px] uppercase">
+                          👀 SPECTATING LIVE TOURNAMENT BRACKET
+                        </div>
+                      );
+                    })()}
 
 
                     {/* ADMIN TOURNAMENT CREATOR PANEL (For @allin_gram) */}
