@@ -316,7 +316,7 @@ export function useUnoGame() {
       // or a hidden iframe before either reaches the backend. Production uses
       // a finite, same-origin JSON response first and retains both bridge
       // transports as recovery paths for older clients.
-      let result: { gameState: GameState };
+      let result: { gameState?: GameState; settled?: boolean; status?: string };
       try {
         const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
         result = isLocalHost
@@ -329,12 +329,26 @@ export function useUnoGame() {
           try {
             result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
           } catch {
-            result = await apiRequest<{ gameState: GameState }>(
+            result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
               `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
               { timeoutMs: 8_000 },
             );
           }
         }
+      }
+      if (result.settled || result.status === 'finished') {
+        localStorage.removeItem('redoapp_active_match');
+        remoteMatchIdRef.current = null;
+        remoteUserIdRef.current = null;
+        setRemoteSessionActive(false);
+        window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
+        setGameState((prev) => ({
+          ...prev,
+          phase: 'setup',
+          players: [],
+          winnerId: null,
+        }));
+        return true;
       }
       if (!isCompleteRemoteTableState(result.gameState)) {
         throw new Error('Match table is not ready yet.');
@@ -350,9 +364,8 @@ export function useUnoGame() {
       }
       return true;
     } catch (error) {
-      console.error('Remote match state sync failed', error);
       const errorMsg = error instanceof Error ? error.message : '';
-      const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished');
+      const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished') || errorMsg.includes('ended');
       if (isNotFoundOrSettled) {
         localStorage.removeItem('redoapp_active_match');
         remoteMatchIdRef.current = null;
@@ -366,6 +379,7 @@ export function useUnoGame() {
           winnerId: null,
         }));
       } else {
+        console.warn('Remote match state sync retry pending:', errorMsg);
         // Transient error or session still initializing during reload:
         // Keep active match state and retry sync shortly instead of dumping user to menu.
         window.setTimeout(() => {
