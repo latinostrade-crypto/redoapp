@@ -3761,6 +3761,19 @@ function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: str
     });
 }
 
+function resolveTelegramChatId(pid: string): number | undefined {
+  const u = users.get(pid);
+  const pObj = currentTournament?.participants.find((p) => p.userId === pid);
+  if (pObj?.chatId) return pObj.chatId;
+  if (u?.telegramChatId) return u.telegramChatId;
+  if (u?.telegramId) return u.telegramId;
+  if (pid.startsWith('tg:')) {
+    const parsed = Number(pid.replace('tg:', ''));
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
 function completeTournament(winnerId: string | null) {
   if (!currentTournament) return;
 
@@ -3774,6 +3787,15 @@ function completeTournament(winnerId: string | null) {
     const rawUsername = u?.telegramUsername || pObj?.username || winnerId.replace(/^tg:/, '');
     currentTournament.winnerName = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
     currentTournament.winnerAvatar = pObj?.avatarId || 'rabbit';
+
+    const winnerChatId = resolveTelegramChatId(winnerId);
+    if (winnerChatId) {
+      sendTelegramMessageSafely(
+        winnerChatId,
+        `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour NFT Award is ready!`,
+        currentTournament.nftLink
+      );
+    }
   } else {
     currentTournament.winnerName = 'REDO Champion';
     currentTournament.winnerAvatar = 'rabbit';
@@ -3848,11 +3870,11 @@ function evaluateTournamentProgression() {
 
       round1Winners.forEach((pid) => {
         activeMatchByUser.set(pid, finalMatchId);
-        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
-        if (pObj?.chatId) {
+        const targetChatId = resolveTelegramChatId(pid);
+        if (targetChatId) {
           const tableUrl = buildTelegramMiniAppLink(`tournament_table_${finalMatchId}`);
           sendTelegramMessageSafely(
-            pObj.chatId,
+            targetChatId,
             `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the TOURNAMENT FINAL! Tap below to join your table now (90s wait timer).`,
             tableUrl
           );
@@ -3921,11 +3943,11 @@ function processTournamentTick() {
 
       tablePlayers.forEach((pid) => {
         activeMatchByUser.set(pid, matchId);
-        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
-        if (pObj?.chatId) {
+        const targetChatId = resolveTelegramChatId(pid);
+        if (targetChatId) {
           const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
           sendTelegramMessageSafely(
-            pObj.chatId,
+            targetChatId,
             `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 10 seconds.`,
             tableUrl
           );
@@ -4175,11 +4197,11 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     
     tablePlayers.forEach((pid) => {
       activeMatchByUser.set(pid, matchId);
-      const pObj = currentTournament!.participants.find((p) => p.userId === pid);
-      if (pObj?.chatId) {
+      const targetChatId = resolveTelegramChatId(pid);
+      if (targetChatId) {
         const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
         sendTelegramMessageSafely(
-          pObj.chatId,
+          targetChatId,
           `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match.`,
           tableUrl
         );
