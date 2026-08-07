@@ -143,23 +143,20 @@ export default function App() {
     try {
       await apiRequest('/api/matches/leave-unstarted', {
         method: 'POST',
-        timeoutMs: 12_000,
-        retryOnNetworkError: true,
-        networkAttempts: 1,
+        timeoutMs: 8_000,
+        retryOnNetworkError: false,
         body: JSON.stringify({
           matchId: activeMatch.matchId || '',
           roomCode: activeMatch.roomCode || '',
         }),
       });
-      // Cached profiles can still contain the just-cancelled activeMatch and
-      // otherwise reopen it before the fresh bootstrap response arrives.
+    } catch (error) {
+      console.warn('leaveUnstartedMatch notice:', error);
+    } finally {
       localStorage.removeItem('redoapp_profile_cache');
       localStorage.removeItem('redoapp_full_profile_cache');
-      returnToLobby();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : 'Could not leave the waiting room. Please retry.');
-    } finally {
       setIsLeavingUnstartedMatch(false);
+      returnToLobby();
     }
   }, [isLeavingUnstartedMatch, returnToLobby]);
 

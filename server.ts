@@ -2905,9 +2905,33 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   if (match.mode !== 'pvp' || match.playStartedAt) return true;
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected);
   const allConnected = connectedPlayers.length === match.gameState.players.length;
-  const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + 60_000);
+  const isTournament = match.matchId.startsWith('tourn-');
+  const timeoutMs = isTournament ? 30_000 : 60_000;
+  const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
   if (!allConnected && !deadlineReached) return false;
+  
   if (deadlineReached && !allConnected) {
+    if (isTournament) {
+      // Tournament matches start after 30s even if players haven't connected yet.
+      // Non-connected players are assigned AI bot control so the table proceeds without delay.
+      match.gameState.players.forEach((player) => {
+        if (!player.hasConnected) {
+          player.isAi = true;
+          player.isConnected = false;
+          player.disconnectedAt = now;
+        }
+      });
+      match.playStartedAt = now;
+      match.gameState.turnStartedAt = now;
+      match.gameState.logs = [
+        createServerLog('🎮 Tournament match started. Non-connected players auto-handled by AI bot (can reconnect anytime).', 'info'),
+        ...match.gameState.logs,
+      ].slice(0, 50);
+      schedulePersist({ matchId: match.matchId });
+      broadcastMatch(match.matchId);
+      return true;
+    }
+
     cancelUnstartedPublicMatch(match, 'Not all players connected in time. Match cancelled.');
     return false;
   }
@@ -3846,6 +3870,7 @@ function evaluateTournamentProgression() {
         createdAt: Date.now(),
         settled: false,
         turnTimeoutSec: 10,
+        connectionDeadlineAt: Date.now() + 30_000,
       });
 
       round1Winners.forEach((pid) => {
@@ -3916,6 +3941,7 @@ function processTournamentTick() {
         createdAt: Date.now(),
         settled: false,
         turnTimeoutSec: 10, // 10s TURN TIMER FOR TOURNAMENTS
+        connectionDeadlineAt: Date.now() + 30_000,
       });
 
 
@@ -4141,6 +4167,60 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
 
   schedulePersist();
   return res.json({ success: true, tournament: currentTournament });
+});
+
+app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60000, 'user'), async (req, res) => {
+  const userId = (req as AuthenticatedRequest).authUserId!;
+  const user = users.get(userId);
+  const username = (user?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  if (!currentTournament) {
+    return res.status(400).json({ error: 'No active or upcoming tournament to notify about.' });
+  }
+
+  const tourn = currentTournament;
+  const statusLabel = tourn.status === 'upcoming'
+    ? `Starts in ${Math.max(1, Math.round((tourn.startAt - Date.now()) / 60000))} minutes!`
+    : tourn.status === 'in_progress'
+    ? 'Tournament is LIVE NOW!'
+    : 'Tournament completed!';
+
+  const text = [
+    `🏆 <b>REDO CARTOON CHAMPIONSHIP ANNOUNCEMENT</b> 🏆`,
+    ``,
+    `📌 <b>${tourn.title}</b>`,
+    `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
+    `🎁 <b>NFT Prize:</b> ${tourn.nftLink}`,
+    `👥 <b>Format:</b> ${tourn.winsRequired === 2 ? 'Best of 3 (2 Wins)' : 'Single Elimination'}`,
+    `⏳ <b>Status:</b> ${statusLabel}`,
+    `📜 <b>Rules:</b> ${tourn.rules}`,
+    ``,
+    `Open REDO app to register and join the tournament! 🎮`,
+  ].join('\n');
+
+  let notifiedCount = 0;
+  const eligibleUsers = Array.from(users.values()).filter((u) => u.telegramChatId);
+
+  for (const u of eligibleUsers) {
+    if (u.telegramChatId) {
+      sendTelegramMessageSafely(u.telegramChatId, text); // plain text message without inline buttons
+      notifiedCount++;
+    }
+  }
+
+  return res.json({
+    success: true,
+    notifiedCount,
+    totalUsers: eligibleUsers.length,
+    message: `Tournament announcement sent to ${notifiedCount} Telegram user(s).`,
+  });
 });
 
 app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req, res) => {
@@ -5199,6 +5279,24 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
     }
     ensureMatchLifecycle(match);
     if (!match.playStartedAt) {
+      if (match.matchId.startsWith('tourn-')) {
+        activeMatchByUser.delete(userId);
+        const pInState = match.gameState.players.find((p) => p.userId === userId);
+        if (pInState) {
+          pInState.isAi = true;
+          pInState.isConnected = false;
+          pInState.disconnectedAt = Date.now();
+          match.gameState.logs = [
+            createServerLog(`🔌 ${pInState.username} left the tournament table (AI bot replacing).`, 'info'),
+            ...match.gameState.logs,
+          ].slice(0, 50);
+        }
+        schedulePersist({ matchId: match.matchId });
+        broadcastMatch(match.matchId);
+        await persistStateNow();
+        return res.json({ success: true, left: true, convertedToBot: true });
+      }
+
       match.players.forEach((player) => activeMatchByUser.delete(player.userId));
       broadcastMatchCancelled(match.matchId, 'A player left before the match started.');
       activeMatches.delete(match.matchId);

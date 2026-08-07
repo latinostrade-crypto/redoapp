@@ -898,6 +898,26 @@ export function Web3Dashboard({
     }
   };
 
+  const [adminNotifying, setAdminNotifying] = useState(false);
+
+  const handleAdminSendNotification = async () => {
+    if (adminNotifying || adminSubmitting) return;
+    sound.playPop();
+    setAdminNotifying(true);
+    try {
+      const res = await apiRequest<{ success: boolean; notifiedCount: number; message: string }>('/api/admin/tournaments/notify', {
+        method: 'POST',
+      });
+      if (res?.success) {
+        alert(`📢 ${res.message || `Tournament announcement sent to ${res.notifiedCount} Telegram users!`}`);
+      }
+    } catch (err: any) {
+      alert(cleanErrorMessage(err));
+    } finally {
+      setAdminNotifying(false);
+    }
+  };
+
 
 
 
@@ -4343,6 +4363,15 @@ export function Web3Dashboard({
                           {adminSubmitting ? 'Simulating...' : '🚀 Run Simulation'}
                         </button>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={handleAdminSendNotification}
+                        disabled={adminNotifying || adminSubmitting}
+                        className="w-full py-2 bg-[#00d2ff] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                      >
+                        {adminNotifying ? 'Sending Notification...' : '📢 Send Tournament Notification (Telegram)'}
+                      </button>
                     </div>
                   </div>
                 )}
