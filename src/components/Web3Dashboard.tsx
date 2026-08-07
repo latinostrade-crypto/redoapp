@@ -607,7 +607,26 @@ export function Web3Dashboard({
     const roomFromSearch = new URLSearchParams(window.location.search).get('room');
     initialLaunchRoomCodeRef.current = (roomFromSearch || (startApp?.startsWith('room_') ? startApp.replace('room_', '') : '')).toUpperCase();
   }
+
+  const initialLaunchTournamentMatchIdRef = useRef('');
+  if (!initialLaunchTournamentMatchIdRef.current) {
+    const startApp = getTelegramStartParam();
+    const tableFromSearch = new URLSearchParams(window.location.search).get('table');
+    if (tableFromSearch) {
+      initialLaunchTournamentMatchIdRef.current = tableFromSearch;
+    } else if (startApp?.startsWith('tournament_table_')) {
+      initialLaunchTournamentMatchIdRef.current = startApp.replace('tournament_table_', '');
+    } else if (startApp?.startsWith('tourn_')) {
+      initialLaunchTournamentMatchIdRef.current = startApp;
+    }
+  }
+
+  const launchTournamentMatchConsumedRef = useRef(false);
+
   const [currentTab, setCurrentTab] = useState<DashboardTab>(() => {
+    if (initialLaunchTournamentMatchIdRef.current) {
+      return 'events';
+    }
     const savedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
     return savedTab === 'events' || savedTab === 'pvp' || savedTab === 'rewards' ? savedTab : 'profile';
   });
@@ -2710,6 +2729,56 @@ export function Web3Dashboard({
       }
     }).catch(() => undefined);
   }, [privateRoomStatus, currentUserId, authReady]);
+
+  useEffect(() => {
+    const targetMatchId = initialLaunchTournamentMatchIdRef.current;
+    if (launchTournamentMatchConsumedRef.current || !targetMatchId || !authReady) return;
+
+    const activeMatchObj = activeProfile?.activeMatch;
+    const matchInTourn = tournamentData?.matches?.find((m) => m.matchId === targetMatchId);
+
+    if (!tournamentData && !activeMatchObj) return;
+
+    launchTournamentMatchConsumedRef.current = true;
+    setCurrentTab('events');
+    setEventsSubTab('tournaments');
+
+    if (matchInTourn && matchInTourn.status === 'completed') {
+      alert('This tournament match has already ended.');
+      return;
+    }
+
+    const matchToOpen = activeMatchObj || (matchInTourn ? {
+      matchId: matchInTourn.matchId,
+      mode: 'pvp' as const,
+      stake: 0,
+      players: matchInTourn.playerIds.map((pid) => {
+        const pObj = tournamentData?.participants.find((p) => p.userId === pid);
+        return {
+          userId: pid,
+          username: pObj?.username || pid.replace(/^tg:/, ''),
+          avatarId: pObj?.avatarId || 'rabbit',
+          stake: 0,
+        };
+      }),
+      gameState: undefined,
+    } : {
+      matchId: targetMatchId,
+      mode: 'pvp' as const,
+      stake: 0,
+      players: [],
+      gameState: undefined,
+    });
+
+    openPublicMatch({
+      status: 'ready',
+      matchId: matchToOpen.matchId,
+      mode: matchToOpen.mode,
+      stake: matchToOpen.stake,
+      players: matchToOpen.players,
+      gameState: matchToOpen.gameState,
+    }, matchToOpen.stake);
+  }, [authReady, tournamentData, activeProfile?.activeMatch, openPublicMatch]);
 
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
