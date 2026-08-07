@@ -477,27 +477,7 @@ const privateRooms = new Map<string, PrivateRoom>();
 const questProgressByUser = new Map<string, UserQuestProgress[]>();
 const telegramNotifications: TelegramNotification[] = [];
 
-let currentTournament: TournamentData | null = {
-  id: 'weekly-tournament-1',
-  title: 'WEEKLY REDO CHAMPIONSHIP',
-  description: 'Official weekly tournament for all players. Win exclusive NFT sticker awards and top leaderboard points!',
-  nftLink: 'https://getgems.io/collection/EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi',
-  nftImage: '/ayanami-plush.png',
-  startAt: Date.now() + 24 * 3600 * 1000, // 24h from start default
-  status: 'upcoming',
-  rules: '10s turn timer. Single elimination tables (2-4 players). Winner advances to next round until 1 champion remains!',
-  maxPlayers: 32,
-  entryTicketCost: 0,
-  participants: [],
-  matches: [],
-  currentRound: 1,
-  winnerUserId: null,
-  winnerName: null,
-  winnerAvatar: null,
-  finishedAt: null,
-  createdAt: Date.now(),
-};
-
+let currentTournament: TournamentData | null = null;
 let pastTournaments: TournamentData[] = [];
 
 const matchSubscribers = new Map<string, Set<Response>>();
@@ -3896,8 +3876,8 @@ function processTournamentTick() {
   // 1. Auto Start when timer reaches 0
   if (currentTournament.status === 'upcoming' && now >= currentTournament.startAt) {
     if (currentTournament.participants.length < 2) {
-      // Auto extend 1 hour if less than 2 participants
-      currentTournament.startAt = now + 3600 * 1000;
+      currentTournament.status = 'finished';
+      currentTournament.description = 'Tournament ended (insufficient participants).';
       schedulePersist();
       return;
     }

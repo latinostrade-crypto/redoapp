@@ -4387,8 +4387,9 @@ export function Web3Dashboard({
                     )}
                   </>
                 ) : (
-                  <div className="text-center py-6 text-slate-500 text-[9px] uppercase">
-                    Loading tournament details...
+                  <div className="text-center py-6 text-slate-400 text-[9px] uppercase font-mono space-y-2 bg-slate-950/60 p-4 border border-slate-800 rounded">
+                    <div className="text-xs font-black text-[#ffcc00]">⏳ NO ACTIVE TOURNAMENT</div>
+                    <p className="text-[8px] text-slate-400">There is currently no active or upcoming tournament. The admin will schedule and launch the next tournament.</p>
                   </div>
                 )}
               </div>
