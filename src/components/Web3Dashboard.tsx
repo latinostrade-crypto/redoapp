@@ -4152,7 +4152,7 @@ export function Web3Dashboard({
                                     }}
                                     className="w-full py-1.5 bg-[#ffcc00] hover:bg-[#e6b800] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
                                   >
-                                    <span>👁️</span> SPECTATE TABLE #{match.tableIndex} / СМОТРЕТЬ ➔
+                                    <span>👁️</span> SPECTATE TABLE #{match.tableIndex} ➔
                                   </button>
                                 )}
                               </div>
@@ -4447,14 +4447,9 @@ export function Web3Dashboard({
                                 <span className="text-[8.5px] font-black text-white">{past.winnerName || 'Unknown Winner'}</span>
                               </div>
                             </div>
-                            <a
-                              href={past.nftLink}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-2 py-0.5 bg-[#00d2ff] text-black text-[7px] font-black uppercase pixel-btn-interactive border border-black"
-                            >
-                              NFT Prize 🎁
-                            </a>
+                            <div className="px-2 py-0.5 bg-slate-800 text-slate-400 text-[7px] font-black uppercase border border-black">
+                              COMPLETED
+                            </div>
                           </div>
                         </div>
                       ))}

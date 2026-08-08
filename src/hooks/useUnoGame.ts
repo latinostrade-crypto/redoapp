@@ -169,11 +169,12 @@ async function fetchRemoteMatchStateViaSameOriginJson(
   }
 }
 
-function isCompleteRemoteTableState(gameState: GameState) {
+function isCompleteRemoteTableState(gameState: GameState, isSpectator = false) {
   return gameState.phase === 'game_over'
+    || gameState.phase === 'round_over'
     || (
       gameState.players.length >= 2
-      && gameState.players.some((player) => player.id === 'player')
+      && (isSpectator || (gameState as any).isSpectator || gameState.players.some((player) => player.id === 'player'))
       && gameState.discardPile.length > 0
     );
 }
@@ -350,7 +351,8 @@ export function useUnoGame() {
         }));
         return true;
       }
-      if (!isCompleteRemoteTableState(result.gameState)) {
+      const isSpectatorMode = (result as any).isSpectator || (result.gameState as any).isSpectator || isSpectator;
+      if (!isCompleteRemoteTableState(result.gameState, isSpectatorMode)) {
         throw new Error('Match table is not ready yet.');
       }
       setGameState(result.gameState);
