@@ -4242,21 +4242,30 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const simWinsRequired = Number(req.body?.winsRequired) === 2 ? 2 : 1;
+  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
+
+  const simWinsRequired = Number(winsRequired) === 2 ? 2 : (currentTournament?.winsRequired || 1);
+  const simTitle = title || currentTournament?.title || 'WEEKLY SMASH CHAMPIONSHIP';
+  const simNftLink = nftLink || currentTournament?.nftLink || 'https://getgems.io';
+  const simNftImage = nftImage || currentTournament?.nftImage || '/ayanami-plush.png';
+  const simDescription = description || currentTournament?.description || 'Official REDO card tournament!';
+  const simMinutes = Number(startInMinutes) || 60;
+  const simTicketCost = entryTicketCost !== undefined ? Math.max(0, Number(entryTicketCost) || 0) : (currentTournament?.entryTicketCost || 0);
+  const simRules = rules || currentTournament?.rules || (simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.');
 
   // 1. Create simulated tournament
   const tournamentId = `tourn-sim-${Date.now()}`;
   currentTournament = {
     id: tournamentId,
-    title: 'SIMULATED CARTOON CHAMPIONSHIP 🏆',
-    description: 'Automated test simulation of a full multi-round tournament!',
-    nftLink: 'https://getgems.io',
-    nftImage: '/ayanami-plush.png',
+    title: simTitle,
+    description: simDescription,
+    nftLink: simNftLink,
+    nftImage: simNftImage,
     startAt: Date.now() + 2000, // Starts in 2 seconds
     status: 'upcoming',
-    rules: simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination 2-player tables.',
-    maxPlayers: 8,
-    entryTicketCost: 0,
+    rules: simRules,
+    maxPlayers: Number(maxPlayers) || currentTournament?.maxPlayers || 8,
+    entryTicketCost: simTicketCost,
     winsRequired: simWinsRequired,
     participants: [
       {
@@ -4298,12 +4307,12 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
   const adminChatId = resolveTelegramChatId(userId);
   if (adminChatId) {
     const simNoticeText = [
-      `🏆 <b>[SIMULATION] REDOapp TOURNAMENT</b>`,
+      `🏆 <b>REDOapp TOURNAMENT</b>`,
       ``,
-      `📌 <b>${currentTournament.title}</b>`,
-      `💰 <b>Entry Fee:</b> FREE ENTRY`,
-      `🎁 <b>NFT Prize:</b> ${currentTournament.nftLink}`,
-      `⏳ <b>Starts in:</b> LIVE NOW (Simulation)`,
+      `📌 <b>${simTitle}</b>`,
+      `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${simTicketCost} TKT` : 'FREE ENTRY'}`,
+      `🎁 <b>NFT Prize:</b> ${simNftLink}`,
+      `⏳ <b>Starts in:</b> ${simMinutes} min (Simulation)`,
       ``,
       `Open REDO app to join! 🎮`,
     ].join('\n');

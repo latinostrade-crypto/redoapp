@@ -909,7 +909,14 @@ export function Web3Dashboard({
     try {
       const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
         method: 'POST',
-        body: JSON.stringify({ winsRequired: adminWinsRequired }),
+        body: JSON.stringify({
+          title: adminTitle.trim() || undefined,
+          nftLink: adminNftLink.trim() || undefined,
+          startInMinutes: Number(adminMinutes) || 60,
+          entryTicketCost: Number(adminTicketCost) || undefined,
+          winsRequired: adminWinsRequired,
+          rules: adminRules.trim() || undefined,
+        }),
       });
       if (res?.tournament) {
         setTournamentData(res.tournament);
