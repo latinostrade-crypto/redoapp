@@ -257,7 +257,7 @@ interface ServerGameState {
   direction: 1 | -1;
   activeColor: CardColor;
   activeValue: ServerCard['value'];
-  phase: 'playing' | 'game_over';
+  phase: 'playing' | 'game_over' | 'round_over';
   winnerUserId: string | null;
   logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'play' | 'draw' | 'action' | 'win' }>;
   consecutiveDraws: number;
@@ -5740,43 +5740,60 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
         tMatch.playerWins[winnerId] = (tMatch.playerWins[winnerId] || 0) + 1;
 
         if (winsRequired > 1 && tMatch.playerWins[winnerId] < winsRequired) {
-          // Target wins not reached yet! Re-deal cards for next game round on this table
+          // Target wins not reached yet! Show 5-second round_over leaderboard to all players on table first
           const prevPlayersMap = new Map(activeMatch.gameState.players.map((p) => [p.userId, p]));
           const winnerPlayer = prevPlayersMap.get(winnerId);
           const winnerName = winnerPlayer?.username || winnerId;
 
-          const newGameState = createInitialMatchState(activeMatch.players);
-
-          // Preserve player connection and AI state from previous round
-          newGameState.players.forEach((p) => {
-            const prev = prevPlayersMap.get(p.userId);
-            if (prev) {
-              p.isAi = prev.isAi;
-              p.isConnected = prev.isConnected;
-              p.hasConnected = prev.hasConnected;
-              p.lastSeenAt = prev.lastSeenAt;
-              p.disconnectedAt = prev.disconnectedAt;
-            }
-          });
-
-          (newGameState as any).playerWins = tMatch.playerWins;
-          (newGameState as any).winsRequired = winsRequired;
-          newGameState.turnStartedAt = Date.now();
-          newGameState.logs = [
-            createServerLog(`🏆 ${winnerName} won this hand! Round score: ${tMatch.playerWins[winnerId]}/${winsRequired} wins. Next hand starting!`, 'win'),
-            ...newGameState.logs,
-          ].slice(0, 50);
-
-          activeMatch.gameState = newGameState;
-          activeMatch.settled = false;
-          activeMatch.playStartedAt = activeMatch.playStartedAt || Date.now();
-
-          activeMatch.players.forEach((player) => {
-            activeMatchByUser.set(player.userId, activeMatch.matchId);
-          });
+          // Set temporary round_over phase for 5 seconds
+          activeMatch.gameState.phase = 'round_over';
+          (activeMatch.gameState as any).roundWinnerUserId = winnerId;
+          (activeMatch.gameState as any).roundWinnerName = winnerName;
+          (activeMatch.gameState as any).roundEndTimestamp = Date.now();
+          (activeMatch.gameState as any).nextRoundStartsAt = Date.now() + 5000;
+          (activeMatch.gameState as any).playerWins = tMatch.playerWins;
+          (activeMatch.gameState as any).winsRequired = winsRequired;
 
           schedulePersist({ matchId: activeMatch.matchId });
           broadcastMatch(activeMatch.matchId);
+
+          // Delay 5 seconds before dealing the next hand
+          setTimeout(() => {
+            if (!activeMatch || activeMatch.settled) return;
+            const newGameState = createInitialMatchState(activeMatch.players);
+
+            // Preserve player connection and AI state from previous round
+            newGameState.players.forEach((p) => {
+              const prev = prevPlayersMap.get(p.userId);
+              if (prev) {
+                p.isAi = prev.isAi;
+                p.isConnected = prev.isConnected;
+                p.hasConnected = prev.hasConnected;
+                p.lastSeenAt = prev.lastSeenAt;
+                p.disconnectedAt = prev.disconnectedAt;
+              }
+            });
+
+            (newGameState as any).playerWins = tMatch.playerWins;
+            (newGameState as any).winsRequired = winsRequired;
+            newGameState.turnStartedAt = Date.now();
+            newGameState.logs = [
+              createServerLog(`🏆 ${winnerName} won this hand! Round score: ${tMatch.playerWins[winnerId]}/${winsRequired} wins. Next hand starting!`, 'win'),
+              ...newGameState.logs,
+            ].slice(0, 50);
+
+            activeMatch.gameState = newGameState;
+            activeMatch.settled = false;
+            activeMatch.playStartedAt = activeMatch.playStartedAt || Date.now();
+
+            activeMatch.players.forEach((player) => {
+              activeMatchByUser.set(player.userId, activeMatch.matchId);
+            });
+
+            schedulePersist({ matchId: activeMatch.matchId });
+            broadcastMatch(activeMatch.matchId);
+          }, 5000);
+
           return;
         }
       }

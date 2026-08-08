@@ -38,7 +38,7 @@ export interface Player {
   disconnectedAt?: number | null;
 }
 
-export type GamePhase = 'setup' | 'playing' | 'choosing_color' | 'game_over';
+export type GamePhase = 'setup' | 'playing' | 'choosing_color' | 'round_over' | 'game_over';
 
 export interface GameLog {
   id: string;
@@ -59,6 +59,10 @@ export interface GameState {
   activeValue: CardValue;
   phase: GamePhase;
   winnerId: PlayerId | null;
+  roundWinnerUserId?: string | null;
+  roundWinnerName?: string | null;
+  roundEndTimestamp?: number | null;
+  nextRoundStartsAt?: number | null;
   logs: GameLog[];
   drawCountAccumulator: number; // For stacking draw cards (+2 or +4 stacking if selected in options, or direct count)
   unoShoutCooldown: { [key in PlayerId]?: number }; // Timestamp tracking for final-card accusations

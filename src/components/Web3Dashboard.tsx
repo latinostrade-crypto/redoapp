@@ -3931,20 +3931,14 @@ export function Web3Dashboard({
                     </div>
 
                     {/* Countdown Timer or Status */}
-                    <div className="bg-slate-950 p-3 border border-black text-center space-y-1">
-                      <span className="text-[7.5px] text-slate-400 uppercase font-mono">
-                        {tournamentData.status === 'in_progress'
-                          ? 'Tournament is currently in progress'
-                          : tournamentData.status === 'finished'
-                          ? 'Tournament has ended'
-                          : 'Starts in:'}
-                      </span>
-                      {tournamentData.status === 'upcoming' && (
+                    {tournamentData.status === 'upcoming' && (
+                      <div className="bg-slate-950 p-3 border border-black text-center space-y-1">
+                        <span className="text-[7.5px] text-slate-400 uppercase font-mono">Starts in:</span>
                         <div className="text-sm font-black text-[#00ff66] tracking-widest font-mono">
                           {tournCountdown}
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
                     {/* Rules & NFT Gift Link */}
                     <div className="bg-black/80 p-2.5 border border-black space-y-1.5 text-[8px] text-slate-300">
@@ -4044,32 +4038,37 @@ export function Web3Dashboard({
                                   </div>
                                 )}
 
-                                <div className="grid grid-cols-2 gap-1 bg-slate-950 p-2 border border-slate-900 rounded-sm">
+                                <div className="flex flex-col gap-1.5 bg-slate-950 p-2 border border-slate-900 rounded-sm">
                                   {match.playerIds.map((pid, idx) => {
                                     const isMe = pid === currentUserId;
                                     const pObj = tournamentData.participants.find((p) => p.userId === pid);
-                                    const name = pObj?.username || pid.replace(/^tg:/, '');
+                                    const rawName = pObj?.username || pid.replace(/^tg:/, '');
+                                    const name = rawName.startsWith('@') ? rawName : `@${rawName}`;
                                     const isWinner = match.winnerId === pid;
 
                                     return (
                                       <div
                                         key={pid}
-                                        className={`flex items-center gap-1.5 text-[8px] p-1 rounded ${
+                                        className={`flex items-center justify-between gap-2 text-[9px] px-2 py-1.5 rounded font-mono ${
                                           isMe
-                                            ? 'text-[#00ff66] font-bold bg-[#00ff66]/10 border border-[#00ff66]/30'
-                                            : 'text-slate-300'
+                                            ? 'text-[#00ff66] font-bold bg-[#00ff66]/10 border border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(0,255,102,0.1)]'
+                                            : 'text-slate-200 bg-slate-900/60 border border-slate-800'
                                         }`}
                                       >
-                                        <Avatar id={pObj?.avatarId || 'rabbit'} size={14} />
-                                        <span className="truncate flex-1 font-mono">
-                                          P{idx + 1}: {name} {isMe ? '(You)' : ''}
-                                        </span>
-                                        {(tournamentData.winsRequired || 1) > 1 && (
-                                          <span className="text-[7px] font-black text-[#ffcc00] px-1 bg-[#ffcc00]/10 border border-[#ffcc00]/30 rounded">
-                                            {match.playerWins?.[pid] || 0}/{tournamentData.winsRequired} WINS
+                                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                                          <Avatar id={pObj?.avatarId || 'rabbit'} size={16} />
+                                          <span className="truncate font-bold text-white text-[9px]">
+                                            P{idx + 1}: {name} {isMe ? '(You)' : ''}
                                           </span>
-                                        )}
-                                        {isWinner && <span>👑</span>}
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          {(tournamentData.winsRequired || 1) > 1 && (
+                                            <span className="text-[7.5px] font-black text-[#ffcc00] px-1.5 py-0.5 bg-[#ffcc00]/15 border border-[#ffcc00]/40 rounded">
+                                              {match.playerWins?.[pid] || 0}/{tournamentData.winsRequired} WINS
+                                            </span>
+                                          )}
+                                          {isWinner && <span className="text-xs">👑</span>}
+                                        </div>
                                       </div>
                                     );
                                   })}
@@ -4134,10 +4133,6 @@ export function Web3Dashboard({
                           ? `Cancel Registration ${tournamentData.entryTicketCost > 0 ? `(Refund ${tournamentData.entryTicketCost} TKT)` : ''}`
                           : `Register for Tournament ${tournamentData.entryTicketCost > 0 ? `(${tournamentData.entryTicketCost} TKT)` : '(FREE)'}`}
                       </button>
-                    ) : tournamentData.status === 'finished' ? (
-                      <div className="w-full py-2.5 bg-slate-900 border-2 border-black text-center text-[#00d2ff] font-black text-[9px] uppercase shadow-[2px_2px_0_#000]">
-                        🏁 TOURNAMENT COMPLETED · CHAMPION: {tournamentData.winnerName || 'REDO Champion'}
-                      </div>
                     ) : (() => {
                       const myActiveMatch = tournamentData.matches?.find(
                         (m) => m.playerIds.includes(currentUserId) && m.status !== 'completed'

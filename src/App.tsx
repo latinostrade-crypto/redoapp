@@ -68,6 +68,27 @@ export default function App() {
   const xpProgressPercentage = Math.min(100, Math.floor((currentLevelXp / xpNeeded) * 100));
 
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5);
+
+  useEffect(() => {
+    if (gameState.phase === 'round_over') {
+      const calcLeft = () => {
+        if (gameState.nextRoundStartsAt) {
+          return Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000));
+        }
+        return 5;
+      };
+      setRoundTimeLeft(calcLeft());
+      const interval = setInterval(() => {
+        const remaining = calcLeft();
+        setRoundTimeLeft(remaining);
+        if (remaining <= 0) {
+          clearInterval(interval);
+        }
+      }, 400);
+      return () => clearInterval(interval);
+    }
+  }, [gameState.phase, gameState.nextRoundStartsAt]);
   const [muted, setMuted] = useState(() => sound.getMuted());
   const [userName, setUserName] = useState(() => {
     const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
@@ -1110,6 +1131,92 @@ export default function App() {
             >
               CANCEL
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 5-SECOND ROUND-OVER POPUP LEADERBOARD OVERLAY ON GAME TABLE */}
+      {gameState.phase === 'round_over' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in font-mono">
+          <div className="w-full max-w-sm bg-[#0c0f12] text-white border-4 border-black p-4 text-center shadow-[8px_8px_0_#000000] space-y-3 relative overflow-hidden">
+            
+            {/* Top Banner Header */}
+            <div className="bg-[#ffcc00] text-black py-1.5 px-3 font-black text-xs uppercase tracking-widest border-2 border-black flex items-center justify-center gap-2 shadow-[2px_2px_0_#000]">
+              <Trophy className="w-4 h-4" />
+              <span>ROUND FINISHED · РАУНД ОКОНЧЕН</span>
+            </div>
+
+            {/* Winner Announcement */}
+            <div className="bg-[#18231c] border border-[#00ff66]/50 p-2.5 rounded-sm flex items-center justify-center gap-2">
+              <Avatar id="rabbit" size={24} emotion="celebrating" />
+              <div className="text-left leading-tight">
+                <span className="text-[7.5px] text-[#00ff66] font-bold block uppercase tracking-wider">ROUND WINNER</span>
+                <span className="text-xs font-black text-white">
+                  {gameState.roundWinnerName || (gameState.winnerId === 'player' ? 'You' : gameState.winnerId) || 'Winner'}
+                </span>
+              </div>
+            </div>
+
+            {/* 5-Second Animated Countdown Progress Bar */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center text-[8px] font-bold text-[#00d2ff]">
+                <span>⚡ NEXT HAND STARTING IN...</span>
+                <span className="text-[#ffcc00] font-black text-[10px]">{roundTimeLeft}s</span>
+              </div>
+              <div className="w-full bg-slate-900 h-2.5 border border-black overflow-hidden relative">
+                <div
+                  className="bg-[#00d2ff] h-full transition-all duration-500 ease-linear shadow-[0_0_8px_#00d2ff]"
+                  style={{ width: `${Math.min(100, Math.max(0, (roundTimeLeft / 5) * 100))}%` }}
+                ></div>
+              </div>
+            </div>
+
+            {/* Table Player Standings */}
+            <div className="space-y-1.5 text-left pt-1">
+              <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider block border-b border-slate-800 pb-1">
+                TABLE SCOREBOARD (BEST OF {(gameState.winsRequired || 2)})
+              </span>
+              {gameState.players.map((p, idx) => {
+                const winsMap = gameState.playerWins || {};
+                const pid = p.id === 'player' ? 'player' : p.id;
+                const wins = winsMap[pid] || winsMap[(p as any).userId] || 0;
+                const isWinner = gameState.roundWinnerUserId
+                  ? ((p as any).userId === gameState.roundWinnerUserId || p.id === gameState.roundWinnerUserId)
+                  : p.hand.length === 0;
+
+                return (
+                  <div
+                    key={p.id || idx}
+                    className={`flex items-center justify-between p-2 border text-[9px] rounded-sm ${
+                      isWinner
+                        ? 'bg-[#00ff66]/15 border-[#00ff66] text-[#00ff66] font-bold shadow-[inset_2px_2px_rgba(0,255,102,0.1)]'
+                        : 'bg-black/60 border-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <Avatar id={p.avatar} emotion={isWinner ? 'celebrating' : 'happy'} size={20} />
+                      <div className="min-w-0 truncate">
+                        <span className="font-bold text-white block leading-tight truncate">
+                          {p.name} {p.id === 'player' ? '(You)' : ''}
+                        </span>
+                        <span className="text-[7.5px] text-slate-400 font-mono">
+                          🎴 {p.hand?.length || 0} CARDS LEFT
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {(gameState.winsRequired || 1) > 1 && (
+                        <span className="px-1.5 py-0.5 bg-[#ffcc00]/20 text-[#ffcc00] border border-[#ffcc00]/50 text-[8px] font-black rounded">
+                          {wins}/{(gameState.winsRequired || 2)} WINS
+                        </span>
+                      )}
+                      {isWinner && <span className="text-xs">👑</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
           </div>
         </div>
       )}
