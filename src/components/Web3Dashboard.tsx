@@ -624,7 +624,14 @@ export function Web3Dashboard({
   const launchTournamentMatchConsumedRef = useRef(false);
 
   const [currentTab, setCurrentTab] = useState<DashboardTab>(() => {
-    if (initialLaunchTournamentMatchIdRef.current) {
+    const startApp = getTelegramStartParam();
+    if (
+      initialLaunchTournamentMatchIdRef.current ||
+      startApp === 'tournaments' ||
+      startApp === 'tournament' ||
+      startApp === 'events' ||
+      startApp?.startsWith('tourn')
+    ) {
       return 'events';
     }
     const savedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
@@ -639,7 +646,13 @@ export function Web3Dashboard({
 
   useEffect(() => {
     const startApp = getTelegramStartParam();
-    if (startApp?.startsWith('tournament_table_') || startApp?.startsWith('tourn_')) {
+    if (
+      startApp === 'tournaments' ||
+      startApp === 'tournament' ||
+      startApp === 'events' ||
+      startApp?.startsWith('tournament_table_') ||
+      startApp?.startsWith('tourn')
+    ) {
       setCurrentTab('events');
       setEventsSubTab('tournaments');
     }
@@ -773,7 +786,19 @@ export function Web3Dashboard({
   const [showReferralDetails, setShowReferralDetails] = useState(false);
   const [showCollectionAddress, setShowCollectionAddress] = useState(false);
 
-  const [eventsSubTab, setEventsSubTab] = useState<'quests' | 'tournaments'>('quests');
+  const [eventsSubTab, setEventsSubTab] = useState<'quests' | 'tournaments'>(() => {
+    const startApp = getTelegramStartParam();
+    if (
+      initialLaunchTournamentMatchIdRef.current ||
+      startApp === 'tournaments' ||
+      startApp === 'tournament' ||
+      startApp === 'events' ||
+      startApp?.startsWith('tourn')
+    ) {
+      return 'tournaments';
+    }
+    return 'quests';
+  });
   const [tournamentData, setTournamentData] = useState<import('../types').TournamentView | null>(null);
   const [pastTournaments, setPastTournaments] = useState<import('../types').TournamentView[]>([]);
   const [tournamentLeaderboard, setTournamentLeaderboard] = useState<import('../types').TournamentLeaderboardEntry[]>([]);

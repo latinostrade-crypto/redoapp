@@ -3737,19 +3737,18 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
 });
 
 // TOURNAMENT ENDPOINTS & AUTOMATION
-function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: string) {
+function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: string, buttonText?: string) {
   if (!TELEGRAM_BOT_TOKEN || !chatId) return;
+  const targetUrl = buttonUrl || buildTelegramMiniAppLink('tournaments');
+  const targetText = buttonText || '🏆 OPEN TOURNAMENTS / ТУРНИРЫ ➔';
   const body: any = {
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [[{ text: targetText, url: targetUrl }]],
+    },
   };
-  if (buttonUrl) {
-    // Telegram Bot API requires `url` (not `web_app`) for t.me deep links.
-    body.reply_markup = {
-      inline_keyboard: [[{ text: '🎮 JOIN MATCH TABLE NOW', url: buttonUrl }]],
-    };
-  }
   fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4209,9 +4208,16 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
   let notifiedCount = 0;
   const eligibleUsers = Array.from(users.values()).filter((u) => u.telegramChatId);
 
+  const tournamentsUrl = buildTelegramMiniAppLink('tournaments');
+
   for (const u of eligibleUsers) {
     if (u.telegramChatId) {
-      sendTelegramMessageSafely(u.telegramChatId, text); // plain text message without inline buttons
+      sendTelegramMessageSafely(
+        u.telegramChatId,
+        text,
+        tournamentsUrl,
+        '🏆 OPEN TOURNAMENTS / ТУРНИРЫ ➔'
+      );
       notifiedCount++;
     }
   }
