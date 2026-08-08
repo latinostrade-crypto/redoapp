@@ -514,6 +514,11 @@ export default function App() {
         <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
           <div className="flex items-center gap-2">
             <img src="/text(logo).jpg" alt="Logo" className="h-6 w-auto object-contain select-none" />
+            {gameState.winsRequired && gameState.winsRequired > 1 && (
+              <span className="px-2 py-0.5 text-[9px] font-black bg-[#ffcc00] text-black border border-black rounded shadow-[1px_1px_0_#000]">
+                BEST OF 3
+              </span>
+            )}
           </div>
 
           {/* Global Controls */}

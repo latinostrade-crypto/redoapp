@@ -2677,6 +2677,8 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       turnStartedAt: match.gameState.turnStartedAt,
       waitingForPlayers: !match.playStartedAt,
       connectionDeadlineAt: match.connectionDeadlineAt || null,
+      playerWins: (match.gameState as any).playerWins || undefined,
+      winsRequired: (match.gameState as any).winsRequired || undefined,
     },
   };
 }
@@ -5727,6 +5729,65 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
     })
     .map((player, index) => ({ userId: player.userId, rank: index + 1 }));
 
+  // Evaluate tournament match round progression before final settlement
+  if (currentTournament && currentTournament.status === 'in_progress') {
+    const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
+    if (tMatch) {
+      const winsRequired = currentTournament.winsRequired || 1;
+      const winnerId = activeMatch.gameState.winnerUserId || placements[0]?.userId || null;
+      if (winnerId) {
+        tMatch.playerWins = tMatch.playerWins || {};
+        tMatch.playerWins[winnerId] = (tMatch.playerWins[winnerId] || 0) + 1;
+
+        if (winsRequired > 1 && tMatch.playerWins[winnerId] < winsRequired) {
+          // Target wins not reached yet! Re-deal cards for next game round on this table
+          const prevPlayersMap = new Map(activeMatch.gameState.players.map((p) => [p.userId, p]));
+          const winnerPlayer = prevPlayersMap.get(winnerId);
+          const winnerName = winnerPlayer?.username || winnerId;
+
+          const newGameState = createInitialMatchState(activeMatch.players);
+
+          // Preserve player connection and AI state from previous round
+          newGameState.players.forEach((p) => {
+            const prev = prevPlayersMap.get(p.userId);
+            if (prev) {
+              p.isAi = prev.isAi;
+              p.isConnected = prev.isConnected;
+              p.hasConnected = prev.hasConnected;
+              p.lastSeenAt = prev.lastSeenAt;
+              p.disconnectedAt = prev.disconnectedAt;
+            }
+          });
+
+          (newGameState as any).playerWins = tMatch.playerWins;
+          (newGameState as any).winsRequired = winsRequired;
+          newGameState.turnStartedAt = Date.now();
+          newGameState.logs = [
+            createServerLog(`🏆 ${winnerName} won this hand! Round score: ${tMatch.playerWins[winnerId]}/${winsRequired} wins. Next hand starting!`, 'win'),
+            ...newGameState.logs,
+          ].slice(0, 50);
+
+          activeMatch.gameState = newGameState;
+          activeMatch.settled = false;
+          activeMatch.playStartedAt = activeMatch.playStartedAt || Date.now();
+
+          activeMatch.players.forEach((player) => {
+            activeMatchByUser.set(player.userId, activeMatch.matchId);
+          });
+
+          schedulePersist({ matchId: activeMatch.matchId });
+          broadcastMatch(activeMatch.matchId);
+          return;
+        }
+      }
+
+      tMatch.status = 'completed';
+      tMatch.winnerId = winnerId;
+      evaluateTournamentProgression();
+    }
+  }
+
+  // Final match settlement
   const grossPot = activeMatch.stake * activeMatch.players.length;
   const seasonFund = round2(grossPot * 0.02);
   const burnFund = round2(grossPot * 0.02);
@@ -5769,39 +5830,6 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   activeMatch.players.forEach((player) => {
     activeMatchByUser.delete(player.userId);
   });
-
-  if (currentTournament && currentTournament.status === 'in_progress') {
-    const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
-    if (tMatch) {
-      const winsRequired = currentTournament.winsRequired || 1;
-      const winnerId = activeMatch.gameState.winnerUserId || placements[0]?.userId || null;
-      if (winnerId) {
-        tMatch.playerWins = tMatch.playerWins || {};
-        tMatch.playerWins[winnerId] = (tMatch.playerWins[winnerId] || 0) + 1;
-
-        if (winsRequired > 1 && tMatch.playerWins[winnerId] < winsRequired) {
-          // Target wins not reached yet! Re-deal cards for next game round on this table
-          const newGameState = createInitialMatchState(activeMatch.players);
-          (newGameState as any).playerWins = tMatch.playerWins;
-          (newGameState as any).winsRequired = winsRequired;
-          activeMatch.gameState = newGameState;
-          activeMatch.settled = false;
-
-          activeMatch.players.forEach((player) => {
-            activeMatchByUser.set(player.userId, activeMatch.matchId);
-          });
-
-          schedulePersist({ matchId: activeMatch.matchId });
-          broadcastMatch(activeMatch.matchId);
-          return;
-        }
-      }
-
-      tMatch.status = 'completed';
-      tMatch.winnerId = winnerId;
-      evaluateTournamentProgression();
-    }
-  }
 
   activeMatch.payoutResult = {
     grossPot,

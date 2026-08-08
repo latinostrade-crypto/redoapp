@@ -68,6 +68,8 @@ export interface GameState {
   turnStartedAt?: number;
   waitingForPlayers?: boolean;
   connectionDeadlineAt?: number | null;
+  playerWins?: Record<string, number>;
+  winsRequired?: number;
 }
 
 export interface GameStats {

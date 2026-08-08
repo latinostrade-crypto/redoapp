@@ -355,10 +355,19 @@ export function useUnoGame() {
       }
       setGameState(result.gameState);
       if (result.gameState.phase === 'game_over') {
-        localStorage.removeItem('redoapp_active_match');
-        remoteMatchIdRef.current = null;
-        remoteUserIdRef.current = null;
-        setRemoteSessionActive(false);
+        const winsRequired = (result.gameState as any).winsRequired || 1;
+        const playerWins = (result.gameState as any).playerWins || {};
+        const maxWins = Math.max(0, ...Object.values(playerWins).map(Number));
+        const isMultiRoundContinuing = winsRequired > 1 && maxWins < winsRequired;
+
+        if (!isMultiRoundContinuing) {
+          localStorage.removeItem('redoapp_active_match');
+          remoteMatchIdRef.current = null;
+          remoteUserIdRef.current = null;
+          setRemoteSessionActive(false);
+        } else {
+          setRemoteSessionActive(true);
+        }
       } else {
         setRemoteSessionActive(true);
       }
