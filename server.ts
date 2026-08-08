@@ -3738,16 +3738,17 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
 // TOURNAMENT ENDPOINTS & AUTOMATION
 function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: string, buttonText?: string) {
   if (!TELEGRAM_BOT_TOKEN || !chatId) return;
-  const targetUrl = buttonUrl || buildTelegramMiniAppLink('tournaments');
-  const targetText = buttonText || '🏆 OPEN TOURNAMENTS / ТУРНИРЫ ➔';
   const body: any = {
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [[{ text: targetText, url: targetUrl }]],
-    },
   };
+  if (buttonUrl) {
+    // Telegram Bot API requires `url` (not `web_app`) for t.me deep links.
+    body.reply_markup = {
+      inline_keyboard: [[{ text: buttonText || '🎮 JOIN MATCH TABLE NOW', url: buttonUrl }]],
+    };
+  }
   fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -4215,7 +4216,7 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
         u.telegramChatId,
         text,
         tournamentsUrl,
-        '🏆 OPEN TOURNAMENTS / ТУРНИРЫ ➔'
+        '🏆 Tournaments ➔'
       );
       notifiedCount++;
     }
@@ -4292,6 +4293,29 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     finishedAt: null,
     createdAt: Date.now(),
   };
+
+  // Send simulated bot notification message to admin
+  const adminChatId = resolveTelegramChatId(userId);
+  if (adminChatId) {
+    const simNoticeText = [
+      `🏆 <b>[SIMULATION] REDOapp TOURNAMENT</b>`,
+      ``,
+      `📌 <b>${currentTournament.title}</b>`,
+      `💰 <b>Entry Fee:</b> FREE ENTRY`,
+      `🎁 <b>NFT Prize:</b> ${currentTournament.nftLink}`,
+      `⏳ <b>Starts in:</b> LIVE NOW (Simulation)`,
+      ``,
+      `Open REDO app to join! 🎮`,
+    ].join('\n');
+
+    const tournamentsUrl = buildTelegramMiniAppLink('tournaments');
+    sendTelegramMessageSafely(
+      adminChatId,
+      simNoticeText,
+      tournamentsUrl,
+      '🏆 Tournaments ➔'
+    );
+  }
 
   // 2. Start Round 1 (2 tables: Table 1 [Admin, @cyber_fox], Table 2 [@lunar_cat, @astro_bear])
   currentTournament.status = 'in_progress';
