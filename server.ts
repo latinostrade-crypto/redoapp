@@ -2617,16 +2617,15 @@ function createInitialMatchState(players: QueuePlayer[]): ServerGameState {
 
 function buildPerspectiveState(match: ActiveMatch, userId: string) {
   const userIndex = match.gameState.players.findIndex((player) => player.userId === userId);
-  if (userIndex === -1) {
-    return null;
-  }
+  const isSpectator = userIndex === -1;
+  const perspectiveIndex = isSpectator ? 0 : userIndex;
 
   const rotatedPlayers = match.gameState.players.map((_, offset) => {
-    const originalIndex = (userIndex + offset) % match.gameState.players.length;
+    const originalIndex = (perspectiveIndex + offset) % match.gameState.players.length;
     const sourcePlayer = match.gameState.players[originalIndex];
-    const localId = offset === 0 ? 'player' : `ai${offset}` as 'ai1' | 'ai2' | 'ai3';
+    const localId = offset === 0 && !isSpectator ? 'player' : (`ai${offset}` as 'ai1' | 'ai2' | 'ai3');
     const revealFullHand = match.gameState.phase === 'game_over';
-    const visibleHand = offset === 0 || revealFullHand ? sourcePlayer.hand : [];
+    const visibleHand = (offset === 0 && !isSpectator) || revealFullHand ? sourcePlayer.hand : [];
 
     return {
       id: localId,
@@ -2642,18 +2641,19 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
     };
   });
 
-  const currentPlayerIndex = ((match.gameState.currentPlayerIndex - userIndex) % match.gameState.players.length + match.gameState.players.length) % match.gameState.players.length;
+  const currentPlayerIndex = ((match.gameState.currentPlayerIndex - perspectiveIndex) % match.gameState.players.length + match.gameState.players.length) % match.gameState.players.length;
   const winnerIndex = match.gameState.winnerUserId
     ? match.gameState.players.findIndex((player) => player.userId === match.gameState.winnerUserId)
     : -1;
   const localWinnerId = winnerIndex === -1
     ? null
-    : (winnerIndex === userIndex ? 'player' : `ai${((winnerIndex - userIndex + match.gameState.players.length) % match.gameState.players.length)}` as 'ai1' | 'ai2' | 'ai3');
+    : (!isSpectator && winnerIndex === perspectiveIndex ? 'player' : (`ai${((winnerIndex - perspectiveIndex + match.gameState.players.length) % match.gameState.players.length)}` as 'ai1' | 'ai2' | 'ai3'));
 
   return {
     matchId: match.matchId,
     mode: match.mode,
     stake: match.stake,
+    isSpectator,
     gameState: {
       deck: [],
       deckCount: match.gameState.deck.length,
@@ -2666,15 +2666,12 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       activeValue: match.gameState.activeValue,
       phase: match.gameState.phase,
       winnerId: localWinnerId,
-      // The table does not render the full server audit trail. Keep a short
-      // reconnect context while the authoritative match retains all 50 logs.
-      logs: match.gameState.logs.slice(0, 10),
-      drawCountAccumulator: 0,
-      unoShoutCooldown: {},
+      logs: match.gameState.logs ? match.gameState.logs.slice(0, 15) : [],
+      turnStartedAt: match.gameState.turnStartedAt,
+      turnTimeoutSec: match.turnTimeoutSec || 10,
       dealerId: 'ai1',
       consecutiveDraws: match.gameState.consecutiveDraws,
       accusablePlayers: [],
-      turnStartedAt: match.gameState.turnStartedAt,
       waitingForPlayers: !match.playStartedAt,
       connectionDeadlineAt: match.connectionDeadlineAt || null,
       playerWins: (match.gameState as any).playerWins || undefined,
@@ -2908,17 +2905,17 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected);
   const allConnected = connectedPlayers.length === match.gameState.players.length;
   const isTournament = match.matchId.startsWith('tourn-');
-  const timeoutMs = isTournament ? 30_000 : 60_000;
+  const timeoutMs = isTournament ? 20_000 : 60_000;
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
   if (!allConnected && !deadlineReached) return false;
   
   if (deadlineReached && !allConnected) {
     if (isTournament) {
-      // Tournament matches start after 30s even if players haven't connected yet.
-      // Non-connected players are assigned AI bot control so the table proceeds without delay.
+      // Tournament matches start after 20s even if players haven't connected yet.
+      // Non-connected players enter shadow mode (isConnected = false) and skip turns automatically without AI bot playing.
       match.gameState.players.forEach((player) => {
         if (!player.hasConnected) {
-          player.isAi = true;
+          player.isAi = false;
           player.isConnected = false;
           player.disconnectedAt = now;
         }
@@ -2926,7 +2923,7 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
       match.playStartedAt = now;
       match.gameState.turnStartedAt = now;
       match.gameState.logs = [
-        createServerLog('🎮 Tournament match started. Non-connected players auto-handled by AI bot (can reconnect anytime).', 'info'),
+        createServerLog('🎮 Tournament match started. Non-connected players are in shadow mode (skipping turns until reconnected).', 'info'),
         ...match.gameState.logs,
       ].slice(0, 50);
       schedulePersist({ matchId: match.matchId });
@@ -4361,21 +4358,27 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
 
   // 3. Simulate Round 1 table completions (Winner T1: Admin/user, Winner T2: @lunar_cat)
   if (currentTournament.matches[0]) {
+    const wId0 = currentTournament.matches[0].playerIds[0];
     currentTournament.matches[0].status = 'completed';
-    currentTournament.matches[0].winnerId = currentTournament.matches[0].playerIds[0];
+    currentTournament.matches[0].winnerId = wId0;
+    currentTournament.matches[0].playerWins = { [wId0]: simWinsRequired };
   }
   if (currentTournament.matches[1]) {
+    const wId1 = currentTournament.matches[1].playerIds[0];
     currentTournament.matches[1].status = 'completed';
-    currentTournament.matches[1].winnerId = currentTournament.matches[1].playerIds[0];
+    currentTournament.matches[1].winnerId = wId1;
+    currentTournament.matches[1].playerWins = { [wId1]: simWinsRequired };
   }
 
-  // 4. Progress to Round 2 (FINAL TABLE with 90s wait timer)
+  // 4. Progress to Round 2 (FINAL TABLE with wait timer)
   evaluateTournamentProgression();
 
   // 5. Simulate Final Table match completion
   if (currentTournament.matches[2]) {
+    const wId2 = currentTournament.matches[2].playerIds[0];
     currentTournament.matches[2].status = 'completed';
-    currentTournament.matches[2].winnerId = currentTournament.matches[2].playerIds[0];
+    currentTournament.matches[2].winnerId = wId2;
+    currentTournament.matches[2].playerWins = { [wId2]: simWinsRequired };
     evaluateTournamentProgression();
   }
 
@@ -6062,8 +6065,7 @@ setInterval(() => {
     }
 
     const elapsedSec = Math.floor((now - state.turnStartedAt) / 1000);
-    const turnLimit = 20;
-    const graceLimit = 60;
+    const turnLimit = match.turnTimeoutSec || 10;
 
     if (currentPlayer.isConnected !== false) {
       if (elapsedSec >= turnLimit) {
@@ -6073,31 +6075,13 @@ setInterval(() => {
         schedulePersist({ matchId });
       }
     } else {
-      const disconnectedAt = currentPlayer.disconnectedAt || match.createdAt;
-      const disconnectedForSec = Math.max(0, (now - disconnectedAt) / 1000);
-      if (disconnectedForSec >= graceLimit) {
-        state.logs = [createServerLog(`🤖 ${currentPlayer.username} is offline. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
-        runServerAiTurn(match, currentPlayerIndex);
-        broadcastMatch(matchId);
-        schedulePersist({ matchId });
-      }
+      // Offline / AFK player: skip turn immediately without waiting!
+      state.logs = [createServerLog(`🔌 ${currentPlayer.username} is offline (skipping turn).`, 'info'), ...state.logs].slice(0, 50);
+      match.gameState = advanceServerTurn(match.gameState);
+      match.gameState.turnStartedAt = now;
+      broadcastMatch(matchId);
+      schedulePersist({ matchId });
     }
-
-    state.players.forEach((player) => {
-      if (player.isConnected === false && !player.isAi) {
-        const disconnectedAt = player.disconnectedAt || match.createdAt;
-        const secsDisconnected = Math.max(0, (now - disconnectedAt) / 1000);
-        if (secsDisconnected >= graceLimit) {
-          player.isAi = true;
-          player.isConnected = true;
-          player.disconnectedAt = null;
-          activeMatchByUser.delete(player.userId);
-          state.logs = [createServerLog(`🤖 ${player.username} has been permanently replaced by a bot.`, 'info'), ...state.logs].slice(0, 50);
-          broadcastMatch(matchId);
-          schedulePersist({ matchId });
-        }
-      }
-    });
   }
 }, 1000);
 

@@ -530,6 +530,7 @@ interface Web3DashboardProps {
   transactions: any[];
   setTransactions: React.Dispatch<React.SetStateAction<any[]>>;
   resetStats?: () => void;
+  onSpectateMatch?: (matchId: string) => void;
 }
 
 type DepositFlowStatus = 'idle' | 'creating' | 'awaiting_wallet' | 'waiting_chain' | 'confirmed' | 'failed';
@@ -600,6 +601,7 @@ export function Web3Dashboard({
   transactions,
   setTransactions,
   resetStats,
+  onSpectateMatch,
 }: Web3DashboardProps) {
   const initialLaunchRoomCodeRef = useRef('');
   if (!initialLaunchRoomCodeRef.current) {
@@ -4138,6 +4140,19 @@ export function Web3Dashboard({
                                     className="w-full py-2 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
                                   >
                                     <span>🎮</span> ENTER MATCH TABLE #{match.tableIndex} ➔
+                                  </button>
+                                )}
+
+                                {!isMyMatch && match.status !== 'completed' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      sound.playPop();
+                                      onSpectateMatch?.(match.matchId);
+                                    }}
+                                    className="w-full py-1.5 bg-[#ffcc00] hover:bg-[#e6b800] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
+                                  >
+                                    <span>👁️</span> SPECTATE TABLE #{match.tableIndex} / СМОТРЕТЬ ➔
                                   </button>
                                 )}
                               </div>

@@ -52,6 +52,9 @@ export default function App() {
     returnToLobby,
     turnTimeLeft,
     resetStats,
+    isSpectator,
+    spectateMatch,
+    stopSpectating,
   } = useUnoGame();
 
   const getDisplayName = (p: any) => {
@@ -625,6 +628,7 @@ export default function App() {
               transactions={transactions}
               setTransactions={setTransactions}
               resetStats={resetStats}
+              onSpectateMatch={spectateMatch}
             />
           </div>
         </main>
@@ -634,6 +638,24 @@ export default function App() {
       {gameState.phase !== 'setup' && (
         <main className="flex-1 w-full max-w-4xl my-1 p-2.5 flex flex-col justify-between gap-2 overflow-hidden z-10 relative bg-[#0c0f12] border-4 border-black shadow-[inset_0_0_20px_rgba(0,0,0,0.8)]">
           
+          {isSpectator && (
+            <div className="w-full bg-[#ffcc00] text-black py-1.5 px-3 text-center text-[9px] min-[370px]:text-[10px] font-black uppercase border-b-2 border-black flex items-center justify-between z-30 shadow-[0_2px_10px_rgba(255,204,0,0.3)] shrink-0">
+              <span className="flex items-center gap-1.5">
+                <span className="animate-pulse">👁️</span> SPECTATING MATCH · CARDS HIDDEN FOR FAIR PLAY
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playPop();
+                  stopSpectating();
+                }}
+                className="bg-black text-white px-2.5 py-1 text-[8px] font-black uppercase border border-black hover:bg-slate-900 shadow-[1px_1px_0_#fff]"
+              >
+                EXIT SPECTATOR ➔
+              </button>
+            </div>
+          )}
+
           {/* FLYING CARDS ANIMATION OVERLAY */}
           <div className="absolute inset-0 pointer-events-none z-50 overflow-hidden">
             <AnimatePresence>

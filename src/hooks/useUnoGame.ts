@@ -238,7 +238,7 @@ export function useUnoGame() {
     if (saved) return JSON.parse(saved);
     return [];
   });
-  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(7);
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(10);
   const remoteMatchIdRef = useRef<string | null>(null);
   const remoteUserIdRef = useRef<string | null>(null);
   const [remoteSessionActive, setRemoteSessionActive] = useState(false);
@@ -507,8 +507,11 @@ export function useUnoGame() {
     remoteMatchStreamRef.current = stream;
 
     stream.addEventListener('match-state', (event) => {
-      const payload = JSON.parse((event as MessageEvent).data) as { gameState: GameState };
+      const payload = JSON.parse((event as MessageEvent).data) as { gameState: GameState; isSpectator?: boolean };
       remoteMatchStreamLastEventAtRef.current = Date.now();
+      if (payload.isSpectator !== undefined) {
+        setIsSpectator(payload.isSpectator);
+      }
       setGameState(payload.gameState);
     });
     stream.addEventListener('heartbeat', () => {
@@ -1385,10 +1388,10 @@ export function useUnoGame() {
     const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
     const isHumanTurn = currentActivePlayer?.id === 'player';
 
-    let initialTime = 7;
+    let initialTime = 10;
     if (gameMode !== 'offline' && gameState.turnStartedAt) {
       const elapsed = Math.floor((Date.now() - gameState.turnStartedAt) / 1000);
-      initialTime = Math.max(0, 7 - elapsed);
+      initialTime = Math.max(0, 10 - elapsed);
     }
     setTurnTimeLeft(initialTime);
 
@@ -1498,6 +1501,36 @@ export function useUnoGame() {
     });
   }, []);
 
+  const [isSpectator, setIsSpectator] = useState(false);
+
+  const spectateMatch = useCallback(async (matchId: string) => {
+    sound.playPop();
+    try {
+      const res = await apiRequest<{ success?: boolean; isSpectator?: boolean; gameState?: GameState }>(`/api/matches/state/${encodeURIComponent(matchId)}`);
+      if (res?.gameState) {
+        remoteMatchIdRef.current = matchId;
+        remoteUserIdRef.current = 'spectator';
+        setIsSpectator(true);
+        setGameMode('pvp');
+        setGameState(res.gameState);
+        setRemoteSessionActive(true);
+        return true;
+      }
+    } catch (err) {
+      console.error('Failed to spectate match', err);
+    }
+    return false;
+  }, []);
+
+  const stopSpectating = useCallback(() => {
+    sound.playPop();
+    setIsSpectator(false);
+    remoteMatchIdRef.current = null;
+    remoteUserIdRef.current = null;
+    setRemoteSessionActive(false);
+    returnToLobby();
+  }, [returnToLobby]);
+
   return {
     gameState,
     stats,
@@ -1523,5 +1556,8 @@ export function useUnoGame() {
     activeStake,
     returnToLobby,
     turnTimeLeft,
+    isSpectator,
+    spectateMatch,
+    stopSpectating,
   };
 }
