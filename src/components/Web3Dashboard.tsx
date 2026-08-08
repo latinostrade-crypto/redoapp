@@ -910,12 +910,12 @@ export function Web3Dashboard({
       const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
         method: 'POST',
         body: JSON.stringify({
-          title: adminTitle.trim() || undefined,
-          nftLink: adminNftLink.trim() || undefined,
+          title: adminTitle.trim() || 'WEEKLY SMASH CHAMPIONSHIP',
+          nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
-          entryTicketCost: Number(adminTicketCost) || undefined,
+          entryTicketCost: Number(adminTicketCost) || 0,
           winsRequired: adminWinsRequired,
-          rules: adminRules.trim() || undefined,
+          rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.'),
         }),
       });
       if (res?.tournament) {

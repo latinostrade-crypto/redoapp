@@ -3799,7 +3799,8 @@ function completeTournament(winnerId: string | null) {
       sendTelegramMessageSafely(
         winnerChatId,
         `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour NFT Award is ready!`,
-        currentTournament.nftLink
+        currentTournament.nftLink,
+        '🎁 View Prize NFT ➔'
       );
     }
   } else {
