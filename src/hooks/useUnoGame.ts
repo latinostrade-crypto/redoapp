@@ -238,7 +238,7 @@ export function useUnoGame() {
     if (saved) return JSON.parse(saved);
     return [];
   });
-  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(20);
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number>(7);
   const remoteMatchIdRef = useRef<string | null>(null);
   const remoteUserIdRef = useRef<string | null>(null);
   const [remoteSessionActive, setRemoteSessionActive] = useState(false);
@@ -1385,10 +1385,10 @@ export function useUnoGame() {
     const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
     const isHumanTurn = currentActivePlayer?.id === 'player';
 
-    let initialTime = 20;
+    let initialTime = 7;
     if (gameMode !== 'offline' && gameState.turnStartedAt) {
       const elapsed = Math.floor((Date.now() - gameState.turnStartedAt) / 1000);
-      initialTime = Math.max(0, 20 - elapsed);
+      initialTime = Math.max(0, 7 - elapsed);
     }
     setTurnTimeLeft(initialTime);
 
@@ -1401,7 +1401,7 @@ export function useUnoGame() {
           }
           return 0;
         }
-        if (prev <= 7 && isHumanTurn) {
+        if (prev <= 3 && isHumanTurn) {
           sound.playWarning();
         }
         return prev - 1;

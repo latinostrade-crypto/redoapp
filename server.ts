@@ -2826,6 +2826,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     playStartedAt: waitsForPlayers ? null : createdAt,
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
+    turnTimeoutSec: 7,
     gameState: createInitialMatchState(players),
   };
   activeMatch.gameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
@@ -3871,7 +3872,7 @@ function evaluateTournamentProgression() {
         players: queuePlayers,
         createdAt: Date.now(),
         settled: false,
-        turnTimeoutSec: 10,
+        turnTimeoutSec: 7,
         connectionDeadlineAt: Date.now() + 30_000,
       });
 
@@ -3942,7 +3943,7 @@ function processTournamentTick() {
         players: queuePlayers,
         createdAt: Date.now(),
         settled: false,
-        turnTimeoutSec: 10, // 10s TURN TIMER FOR TOURNAMENTS
+        turnTimeoutSec: 7, // 7s TURN TIMER FOR TOURNAMENTS
         connectionDeadlineAt: Date.now() + 30_000,
       });
 
@@ -3956,7 +3957,7 @@ function processTournamentTick() {
           const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
           sendTelegramMessageSafely(
             targetChatId,
-            `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 10 seconds.`,
+            `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 7 seconds.`,
             tableUrl
           );
         }
@@ -4151,7 +4152,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     nftImage: nftImage || '/ayanami-plush.png',
     startAt: Date.now() + minutes * 60 * 1000,
     status: 'upcoming',
-    rules: rules || '10s turn timer. Single elimination tables.',
+    rules: rules || '7s turn timer. Single elimination tables.',
     maxPlayers: Number(maxPlayers) || 32,
     entryTicketCost: ticketCost,
     winsRequired: targetWins,
@@ -4247,7 +4248,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     nftImage: '/ayanami-plush.png',
     startAt: Date.now() + 2000, // Starts in 2 seconds
     status: 'upcoming',
-    rules: simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination 2-player tables.',
+    rules: simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '7s turn timer. Single elimination 2-player tables.',
     maxPlayers: 8,
     entryTicketCost: 0,
     winsRequired: simWinsRequired,
@@ -6022,7 +6023,7 @@ setInterval(() => {
     }
 
     const elapsedSec = Math.floor((now - state.turnStartedAt) / 1000);
-    const turnLimit = 20;
+    const turnLimit = match.turnTimeoutSec || 7;
     const graceLimit = 60;
 
     if (currentPlayer.isConnected !== false) {

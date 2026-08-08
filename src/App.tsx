@@ -867,7 +867,7 @@ export default function App() {
               {gameState.phase === 'playing' && !isWaitingForPlayers && (
                 <div className="absolute top-0.5 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none">
                   <div className={`px-2 py-0.5 border border-black font-mono font-black text-[9px] min-[370px]:text-[10px] sm:text-[11px] shadow-[1px_1px_0_#000] text-center transition-all ${
-                    turnTimeLeft <= 6 && isHumanTurn
+                    turnTimeLeft <= 3 && isHumanTurn
                       ? 'bg-[#ff4b4b] text-white animate-bounce shadow-[0_0_8px_#ff4b4b]'
                       : 'bg-[#ffcc00] text-black'
                   }`}>

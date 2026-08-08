@@ -862,7 +862,7 @@ export function Web3Dashboard({
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
           winsRequired: adminWinsRequired,
-          rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.'),
+          rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '7s turn timer. Single elimination tables.'),
           maxPlayers: 32,
         }),
       });
@@ -4335,7 +4335,7 @@ export function Web3Dashboard({
 
                       <input
                         type="text"
-                        placeholder="Rules / Conditions (e.g. 10s turn timer. Single elimination)"
+                        placeholder="Rules / Conditions (e.g. 7s turn timer. Single elimination)"
                         value={adminRules}
                         onChange={(e) => setAdminRules(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
