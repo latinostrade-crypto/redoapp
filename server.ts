@@ -2629,6 +2629,7 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
 
     return {
       id: localId,
+      userId: sourcePlayer.userId,
       name: sourcePlayer.username,
       avatar: sourcePlayer.avatarId,
       hand: visibleHand,
@@ -2648,6 +2649,18 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
   const localWinnerId = winnerIndex === -1
     ? null
     : (!isSpectator && winnerIndex === perspectiveIndex ? 'player' : (`ai${((winnerIndex - perspectiveIndex + match.gameState.players.length) % match.gameState.players.length)}` as 'ai1' | 'ai2' | 'ai3'));
+
+  const rawPlayerWins = (match.gameState as any).playerWins || {};
+  const mappedPlayerWins: Record<string, number> = {};
+  match.gameState.players.forEach((sourcePlayer, originalIndex) => {
+    const wins = rawPlayerWins[sourcePlayer.userId] || rawPlayerWins[sourcePlayer.username] || 0;
+    const localId = !isSpectator && originalIndex === perspectiveIndex
+      ? 'player'
+      : (`ai${((originalIndex - perspectiveIndex + match.gameState.players.length) % match.gameState.players.length)}` as 'ai1' | 'ai2' | 'ai3');
+    mappedPlayerWins[sourcePlayer.userId] = wins;
+    mappedPlayerWins[sourcePlayer.username] = wins;
+    mappedPlayerWins[localId] = wins;
+  });
 
   return {
     matchId: match.matchId,
@@ -2674,8 +2687,8 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       accusablePlayers: [],
       waitingForPlayers: !match.playStartedAt,
       connectionDeadlineAt: match.connectionDeadlineAt || null,
-      playerWins: (match.gameState as any).playerWins || undefined,
-      winsRequired: (match.gameState as any).winsRequired || undefined,
+      playerWins: mappedPlayerWins,
+      winsRequired: (match.gameState as any).winsRequired || (currentTournament?.winsRequired || 1),
     },
   };
 }

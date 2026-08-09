@@ -1165,7 +1165,7 @@ export default function App() {
             {/* Top Banner Header */}
             <div className="bg-[#ffcc00] text-black py-1.5 px-3 font-black text-xs uppercase tracking-widest border-2 border-black flex items-center justify-center gap-2 shadow-[2px_2px_0_#000]">
               <Trophy className="w-4 h-4" />
-              <span>ROUND FINISHED · РАУНД ОКОНЧЕН</span>
+              <span>ROUND FINISHED</span>
             </div>
 
             {/* Winner Announcement */}
@@ -1200,10 +1200,9 @@ export default function App() {
               </span>
               {gameState.players.map((p, idx) => {
                 const winsMap = gameState.playerWins || {};
-                const pid = p.id === 'player' ? 'player' : p.id;
-                const wins = winsMap[pid] || winsMap[(p as any).userId] || 0;
+                const wins = winsMap[(p as any).userId] || winsMap[p.name] || winsMap[p.id] || (p.id === 'player' ? winsMap['player'] : 0);
                 const isWinner = gameState.roundWinnerUserId
-                  ? ((p as any).userId === gameState.roundWinnerUserId || p.id === gameState.roundWinnerUserId)
+                  ? ((p as any).userId === gameState.roundWinnerUserId || p.id === gameState.roundWinnerUserId || p.name === gameState.roundWinnerName)
                   : p.hand.length === 0;
 
                 return (
