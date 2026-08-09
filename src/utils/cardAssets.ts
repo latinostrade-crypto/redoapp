@@ -20,10 +20,10 @@ export function getCardImageUrl(color: CardColor, value: CardValue, id: string):
   }
 
   if (value === 'wild_draw4') {
-    const colors = ['red', 'blue', 'gold', 'purp'];
-    const colorName = color === 'wild'
-      ? colors[getDeterministicHash(id || 'draw4') % colors.length]
-      : color === 'yellow' ? 'gold' : color === 'green' ? 'purp' : color;
+    if (color === 'wild') {
+      return '';
+    }
+    const colorName = color === 'yellow' ? 'gold' : color === 'green' ? 'purp' : color;
     return `/card-thumbs/plus4_${colorName}_v2.jpeg`;
   }
 
