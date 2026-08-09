@@ -137,7 +137,7 @@ export default function App() {
     && gameState.phase !== 'game_over'
     && (
       gameState.players.length < 2
-      || !gameState.players.some((player) => player.id === 'player')
+      || (!isSpectator && !gameState.players.some((player) => player.id === 'player'))
       || gameState.discardPile.length === 0
     );
   const [connectionTimeLeft, setConnectionTimeLeft] = useState(60);

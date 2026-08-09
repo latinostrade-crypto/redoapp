@@ -308,7 +308,7 @@ if (typeof window !== 'undefined') {
     ];
 
     const isInitialUserSync = path === '/api/users/sync' && ((window as any).redoappIsAppStarting ?? true);
-    const isMatchStateSync = path.startsWith('/api/matches/state/');
+    const isMatchStateSync = path.startsWith('/api/matches/state/') && ((window as any).redoappIsAppStarting ?? true);
     const isAlreadyTracked = ((window as any).redoappActiveLoads || []).includes(id);
     const shouldTrack = pathsWeCareAbout.includes(path) || isInitialUserSync || isMatchStateSync || isAlreadyTracked;
 

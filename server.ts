@@ -3836,73 +3836,75 @@ function evaluateTournamentProgression() {
   const allCurrentRoundCompleted = currentRoundMatches.every((m) => m.status === 'completed' && m.winnerId);
   if (!allCurrentRoundCompleted) return;
 
-  if (currentTournament.currentRound === 1) {
-    const round1Winners = currentRoundMatches.map((m) => m.winnerId!).filter(Boolean);
-    if (round1Winners.length <= 1) {
-      // Only 1 winner (single table tournament) -> Complete tournament!
-      completeTournament(round1Winners[0] || null);
-    } else {
-      // Multiple table winners! Form Round 2 (FINAL TABLE)
-      currentTournament.currentRound = 2;
-      const finalMatchId = `tourn-${currentTournament.id}-r2-final`;
-      const waitingTimerEndAt = Date.now() + 90000; // 90 seconds wait timer
-
-      const finalMatch: TournamentMatch = {
-        matchId: finalMatchId,
-        round: 2,
-        tableIndex: 1,
-        playerIds: round1Winners,
-        winnerId: null,
-        status: 'in_progress',
-        waitingTimerEndAt,
-      };
-
-      currentTournament.matches.push(finalMatch);
-
-      const queuePlayers: QueuePlayer[] = round1Winners.map((pid) => {
-        const u = users.get(pid);
-        const pObj = currentTournament!.participants.find((p) => p.userId === pid);
-        return {
-          userId: pid,
-          username: u?.telegramUsername || pObj?.username || pid.replace(/^tg:/, ''),
-          avatarId: pObj?.avatarId || 'rabbit',
-          stake: 0,
-          mode: 'pvp',
-          joinedAt: Date.now(),
-        };
-      });
-
-      const matchState = createInitialMatchState(queuePlayers);
-
-      activeMatches.set(finalMatchId, {
-        matchId: finalMatchId,
-        mode: 'pvp',
-        stake: 0,
-        gameState: matchState,
-        players: queuePlayers,
-        createdAt: Date.now(),
-        settled: false,
-        turnTimeoutSec: 10,
-        connectionDeadlineAt: Date.now() + 30_000,
-      });
-
-      round1Winners.forEach((pid) => {
-        activeMatchByUser.set(pid, finalMatchId);
-        const targetChatId = resolveTelegramChatId(pid);
-        if (targetChatId) {
-          const tableUrl = buildTelegramMiniAppLink(`tournament_table_${finalMatchId}`);
-          sendTelegramMessageSafely(
-            targetChatId,
-            `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the TOURNAMENT FINAL! Tap below to join your table now (90s wait timer).`,
-            tableUrl
-          );
-        }
-      });
-    }
-  } else if (currentTournament.currentRound === 2) {
-    const finalMatch = currentRoundMatches[0];
-    completeTournament(finalMatch?.winnerId || null);
+  const currentRoundWinners = currentRoundMatches.map((m) => m.winnerId!).filter(Boolean);
+  if (currentRoundWinners.length <= 1) {
+    completeTournament(currentRoundWinners[0] || null);
+    schedulePersist();
+    return;
   }
+
+  const nextRoundNumber = currentTournament.currentRound + 1;
+  currentTournament.currentRound = nextRoundNumber;
+
+  const nextTables = distributePlayersIntoTables(currentRoundWinners);
+  const isFinalRound = nextTables.length === 1 && currentRoundWinners.length <= 4;
+  const waitingTimerEndAt = Date.now() + 90000; // 90 seconds wait timer
+
+  nextTables.forEach((tablePlayers, idx) => {
+    const matchId = isFinalRound
+      ? `tourn-${currentTournament!.id}-r${nextRoundNumber}-final`
+      : `tourn-${currentTournament!.id}-r${nextRoundNumber}-m${idx + 1}`;
+
+    const newMatch: TournamentMatch = {
+      matchId,
+      round: nextRoundNumber,
+      tableIndex: idx + 1,
+      playerIds: tablePlayers,
+      winnerId: null,
+      status: 'in_progress',
+      waitingTimerEndAt,
+    };
+    currentTournament!.matches.push(newMatch);
+
+    const queuePlayers: QueuePlayer[] = tablePlayers.map((pid) => {
+      const u = users.get(pid);
+      const pObj = currentTournament!.participants.find((p) => p.userId === pid);
+      return {
+        userId: pid,
+        username: u?.telegramUsername || pObj?.username || pid.replace(/^tg:/, ''),
+        avatarId: pObj?.avatarId || 'rabbit',
+        stake: 0,
+        mode: 'pvp',
+        joinedAt: Date.now(),
+      };
+    });
+
+    const matchState = createInitialMatchState(queuePlayers);
+
+    activeMatches.set(matchId, {
+      matchId,
+      mode: 'pvp',
+      stake: 0,
+      gameState: matchState,
+      players: queuePlayers,
+      createdAt: Date.now(),
+      settled: false,
+      turnTimeoutSec: 10,
+      connectionDeadlineAt: Date.now() + 30_000,
+    });
+
+    tablePlayers.forEach((pid) => {
+      activeMatchByUser.set(pid, matchId);
+      const targetChatId = resolveTelegramChatId(pid);
+      if (targetChatId) {
+        const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
+        const text = isFinalRound
+          ? `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the TOURNAMENT FINAL! Tap below to join your table now (90s wait timer).`
+          : `🏆 <b>SEMI-FINAL ROUND ${nextRoundNumber} STARTED!</b>\nCongratulations! You advanced to Round ${nextRoundNumber}! Tap below to join your table now (90s wait timer).`;
+        sendTelegramMessageSafely(targetChatId, text, tableUrl, '🎮 Enter Table ➔');
+      }
+    });
+  });
 
   schedulePersist();
 }
@@ -4253,16 +4255,41 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
+  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired, playerCount } = req.body || {};
 
+  const totalSimPlayers = Math.max(4, Math.min(64, Number(playerCount) || Number(maxPlayers) || 16));
   const simWinsRequired = Number(winsRequired) === 2 ? 2 : (currentTournament?.winsRequired || 1);
-  const simTitle = title || currentTournament?.title || 'WEEKLY SMASH CHAMPIONSHIP';
+  const simTitle = title || currentTournament?.title || `REDO CHAMPIONSHIP (${totalSimPlayers} PLAYERS)`;
   const simNftLink = nftLink || currentTournament?.nftLink || 'https://getgems.io';
   const simNftImage = nftImage || currentTournament?.nftImage || '/ayanami-plush.png';
   const simDescription = description || currentTournament?.description || 'Official REDO card tournament!';
   const simMinutes = Number(startInMinutes) || 60;
   const simTicketCost = entryTicketCost !== undefined ? Math.max(0, Number(entryTicketCost) || 0) : (currentTournament?.entryTicketCost || 0);
   const simRules = rules || currentTournament?.rules || (simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.');
+
+  const avatars = ['rabbit', 'fox', 'cat', 'bear', 'koala', 'panda', 'tiger', 'penguin'];
+  const botNames = ['cyber_fox', 'lunar_cat', 'astro_bear', 'pixel_king', 'unomaster', 'card_shark', 'hyper_koala', 'turbo_rabbit', 'shadow_ninja', 'blaze_lion', 'storm_hawk', 'cosmic_wolf', 'alpha_bot', 'apex_predator', 'mystic_owl', 'vortex_panther', 'phantom_viper', 'neon_dragon', 'quantum_lynx', 'starlight_deer', 'thunder_puma', 'glitch_raccoon', 'solar_falcon', 'zen_shiba', 'frost_polar', 'sky_eagle', 'fire_phoenix', 'iron_rhino', 'swift_cheetah', 'golden_swan', 'silent_lynx'];
+
+  const simParticipants: TournamentParticipant[] = [
+    {
+      userId: userId,
+      username: user?.telegramUsername ? `@${user.telegramUsername.replace(/^@/, '')}` : (user?.telegramFirstName || userId.replace(/^tg:/, '')),
+      avatarId: 'rabbit',
+      registeredAt: Date.now(),
+      chatId: user?.telegramChatId,
+    },
+  ];
+
+  for (let i = 1; i < totalSimPlayers; i++) {
+    const name = botNames[(i - 1) % botNames.length];
+    const avatar = avatars[(i - 1) % avatars.length];
+    simParticipants.push({
+      userId: `sim-user-${i}`,
+      username: `@${name}_${i}`,
+      avatarId: avatar,
+      registeredAt: Date.now() + i,
+    });
+  }
 
   // 1. Create simulated tournament
   const tournamentId = `tourn-sim-${Date.now()}`;
@@ -4272,39 +4299,13 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     description: simDescription,
     nftLink: simNftLink,
     nftImage: simNftImage,
-    startAt: Date.now() + 2000, // Starts in 2 seconds
+    startAt: Date.now() + 2000,
     status: 'upcoming',
     rules: simRules,
-    maxPlayers: Number(maxPlayers) || currentTournament?.maxPlayers || 8,
+    maxPlayers: totalSimPlayers,
     entryTicketCost: simTicketCost,
     winsRequired: simWinsRequired,
-    participants: [
-      {
-        userId: userId,
-        username: user?.telegramUsername ? `@${user.telegramUsername.replace(/^@/, '')}` : (user?.telegramFirstName || userId.replace(/^tg:/, '')),
-        avatarId: 'rabbit',
-        registeredAt: Date.now(),
-        chatId: user?.telegramChatId,
-      },
-      {
-        userId: 'sim-user-1',
-        username: '@cyber_fox',
-        avatarId: 'fox',
-        registeredAt: Date.now() + 1,
-      },
-      {
-        userId: 'sim-user-2',
-        username: '@lunar_cat',
-        avatarId: 'cat',
-        registeredAt: Date.now() + 2,
-      },
-      {
-        userId: 'sim-user-3',
-        username: '@astro_bear',
-        avatarId: 'bear',
-        registeredAt: Date.now() + 3,
-      },
-    ],
+    participants: simParticipants,
     matches: [],
     currentRound: 1,
     winnerUserId: null,
@@ -4314,13 +4315,13 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     createdAt: Date.now(),
   };
 
-  // Send simulated bot notification message to admin
   const adminChatId = resolveTelegramChatId(userId);
   if (adminChatId) {
     const simNoticeText = [
-      `🏆 <b>REDOapp TOURNAMENT</b>`,
+      `🏆 <b>REDOapp TOURNAMENT SIMULATION</b>`,
       ``,
       `📌 <b>${simTitle}</b>`,
+      `👥 <b>Participants:</b> ${totalSimPlayers} players`,
       `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${simTicketCost} TKT` : 'FREE ENTRY'}`,
       `🎁 <b>Prize:</b> ${simNftLink}`,
       `⏳ <b>Starts in:</b> ${simMinutes} min (Simulation)`,
@@ -4337,7 +4338,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     );
   }
 
-  // 2. Start Round 1 (2 tables: Table 1 [Admin, @cyber_fox], Table 2 [@lunar_cat, @astro_bear])
+  // 2. Start Round 1
   currentTournament.status = 'in_progress';
   currentTournament.currentRound = 1;
   const playerIds = currentTournament.participants.map((p) => p.userId);
@@ -4369,29 +4370,25 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     };
   });
 
-  // 3. Simulate Round 1 table completions (Winner T1: Admin/user, Winner T2: @lunar_cat)
-  if (currentTournament.matches[0]) {
-    const wId0 = currentTournament.matches[0].playerIds[0];
-    currentTournament.matches[0].status = 'completed';
-    currentTournament.matches[0].winnerId = wId0;
-    currentTournament.matches[0].playerWins = { [wId0]: simWinsRequired };
-  }
-  if (currentTournament.matches[1]) {
-    const wId1 = currentTournament.matches[1].playerIds[0];
-    currentTournament.matches[1].status = 'completed';
-    currentTournament.matches[1].winnerId = wId1;
-    currentTournament.matches[1].playerWins = { [wId1]: simWinsRequired };
-  }
+  // 3. Loop through rounds and simulate table wins until tournament is finished
+  let safetyLoopCounter = 0;
+  while (currentTournament && currentTournament.status === 'in_progress' && safetyLoopCounter < 10) {
+    safetyLoopCounter++;
+    const activeRound = currentTournament.currentRound;
+    const roundMatches = currentTournament.matches.filter((m) => m.round === activeRound && m.status !== 'completed');
 
-  // 4. Progress to Round 2 (FINAL TABLE with wait timer)
-  evaluateTournamentProgression();
+    if (roundMatches.length === 0) break;
 
-  // 5. Simulate Final Table match completion
-  if (currentTournament.matches[2]) {
-    const wId2 = currentTournament.matches[2].playerIds[0];
-    currentTournament.matches[2].status = 'completed';
-    currentTournament.matches[2].winnerId = wId2;
-    currentTournament.matches[2].playerWins = { [wId2]: simWinsRequired };
+    // Simulate completion for all matches in the current round
+    roundMatches.forEach((match) => {
+      const adminInTable = match.playerIds.find((pid) => pid === userId);
+      const winnerId = adminInTable || match.playerIds[0];
+      match.status = 'completed';
+      match.winnerId = winnerId;
+      match.playerWins = { [winnerId]: simWinsRequired };
+    });
+
+    // Advance to next round or finish tournament
     evaluateTournamentProgression();
   }
 
@@ -5606,7 +5603,9 @@ function handleMatchState(req: AuthenticatedRequest, res: Response) {
     }
     return res.status(404).json({ error: 'Match not found.' });
   }
-  markMatchPlayerConnected(activeMatch, userId);
+  if (activeMatch.gameState.players.some((p) => p.userId === userId)) {
+    markMatchPlayerConnected(activeMatch, userId);
+  }
   const state = buildPerspectiveState(activeMatch, userId);
   if (!state) {
     return res.status(403).json({ error: 'User is not part of this match.' });
@@ -5640,7 +5639,9 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     }
     return res.status(404).json({ error: 'Match not found.' });
   }
-  markMatchPlayerConnected(activeMatch, userId);
+  if (activeMatch.gameState.players.some((p) => p.userId === userId)) {
+    markMatchPlayerConnected(activeMatch, userId);
+  }
   const state = buildPerspectiveState(activeMatch, userId);
   if (!state) {
     return res.status(403).json({ error: 'User is not part of this match.' });

@@ -1465,18 +1465,23 @@ export function useUnoGame() {
       try {
         const activeMatch = JSON.parse(activeMatchRaw);
         if (activeMatch.matchId) {
+          if (activeMatch.isSpectator) {
+            setIsSpectator(true);
+            isSpectatorRef.current = true;
+            remoteUserIdRef.current = 'spectator';
+          }
           setGameMode(activeMatch.mode || 'pvp');
           setActiveStake(activeMatch.stake || 0);
           const initialStateIsFresh = Date.now() - Number(activeMatch.createdAt || 0) < 30_000;
           setGameState(
             initialStateIsFresh
               && activeMatch.initialGameState
-              && isCompleteRemoteTableState(activeMatch.initialGameState)
+              && isCompleteRemoteTableState(activeMatch.initialGameState, !!activeMatch.isSpectator)
               ? activeMatch.initialGameState as GameState
               : (prev) => ({
                   ...prev,
                   phase: 'playing',
-                  logs: [createLog('Reconnecting to active match...', 'info')],
+                  logs: [createLog(activeMatch.isSpectator ? 'Connecting to live table as spectator...' : 'Reconnecting to active match...', 'info')],
                 }),
           );
           setRemoteSessionActive(true);

@@ -904,7 +904,7 @@ export function Web3Dashboard({
     }
   };
 
-  const handleAdminSimulateTournament = async () => {
+  const handleAdminSimulateTournament = async (playerCount: number = 16) => {
     if (adminSubmitting) return;
     sound.playPop();
     setAdminSubmitting(true);
@@ -912,18 +912,19 @@ export function Web3Dashboard({
       const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
         method: 'POST',
         body: JSON.stringify({
-          title: adminTitle.trim() || 'WEEKLY SMASH CHAMPIONSHIP',
+          title: adminTitle.trim() || `REDO CHAMPIONSHIP (${playerCount} PLAYERS)`,
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
           winsRequired: adminWinsRequired,
+          playerCount,
           rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.'),
         }),
       });
       if (res?.tournament) {
         setTournamentData(res.tournament);
         if (res.history) setPastTournaments(res.history);
-        alert('Tournament simulation completed successfully! Check bracket and past champions list.');
+        alert(`Tournament simulation (${playerCount} players, multi-round bracket) completed successfully! Check bracket and past champions list.`);
       }
     } catch (err: any) {
       alert(err instanceof Error ? err.message : 'Failed to simulate tournament.');
@@ -4387,22 +4388,30 @@ export function Web3Dashboard({
                         onChange={(e) => setAdminRules(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                       />
-                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                      <div className="grid grid-cols-3 gap-1.5 pt-1">
                         <button
                           type="button"
                           onClick={handleAdminCreateTournament}
                           disabled={adminSubmitting}
-                          className="w-full py-2 bg-[#ffcc00] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                          className="w-full py-2 bg-[#ffcc00] text-black font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
                         >
-                          {adminSubmitting ? 'Updating...' : tournamentData ? 'Update Tournament' : 'Create Tournament'}
+                          {adminSubmitting ? 'Updating...' : tournamentData ? 'Update Tourn' : 'Create Tourn'}
                         </button>
                         <button
                           type="button"
-                          onClick={handleAdminSimulateTournament}
+                          onClick={() => handleAdminSimulateTournament(16)}
                           disabled={adminSubmitting}
-                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
                         >
-                          {adminSubmitting ? 'Simulating...' : '🚀 Run Simulation'}
+                          {adminSubmitting ? 'Simulating...' : '🚀 Sim 16P'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAdminSimulateTournament(32)}
+                          disabled={adminSubmitting}
+                          className="w-full py-2 bg-[#ff4b4b] text-white font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
+                        >
+                          {adminSubmitting ? 'Simulating...' : '🔥 Sim 32P'}
                         </button>
                       </div>
 
