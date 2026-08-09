@@ -296,52 +296,82 @@ export function useUnoGame() {
 
   const syncRemoteMatchState = useCallback(async () => {
     const activeMatchRaw = localStorage.getItem('redoapp_active_match');
-    if (!activeMatchRaw) {
-      remoteMatchIdRef.current = null;
-      remoteUserIdRef.current = null;
-      setRemoteSessionActive(false);
+    let matchIdToFetch: string | null = null;
+    let userIdForFetch: string | null = null;
+    let isSpectatorSession = isSpectatorRef.current;
+
+    if (activeMatchRaw) {
+      try {
+        const activeMatch = JSON.parse(activeMatchRaw) as {
+          matchId: string;
+          currentUserId: string;
+          isSpectator?: boolean;
+        };
+        matchIdToFetch = activeMatch.matchId || null;
+        userIdForFetch = activeMatch.currentUserId || null;
+        if (activeMatch.isSpectator) {
+          isSpectatorSession = true;
+        }
+      } catch (e) {
+        console.error('Error parsing active match in syncRemoteMatchState', e);
+      }
+    } else if (isSpectatorRef.current && remoteMatchIdRef.current) {
+      matchIdToFetch = remoteMatchIdRef.current;
+      userIdForFetch = 'spectator';
+      isSpectatorSession = true;
+    }
+
+    if (!matchIdToFetch || (!userIdForFetch && !isSpectatorSession)) {
+      if (!isSpectatorRef.current) {
+        remoteMatchIdRef.current = null;
+        remoteUserIdRef.current = null;
+        setRemoteSessionActive(false);
+      }
       return false;
     }
 
+    remoteMatchIdRef.current = matchIdToFetch;
+    remoteUserIdRef.current = userIdForFetch || 'spectator';
+
     try {
-      const activeMatch = JSON.parse(activeMatchRaw) as {
-        matchId: string;
-        currentUserId: string;
-      };
-      if (!activeMatch.matchId || !activeMatch.currentUserId) {
-        return false;
-      }
-      remoteMatchIdRef.current = activeMatch.matchId;
-      remoteUserIdRef.current = activeMatch.currentUserId;
-      // Telegram WebViews can indefinitely hold a credentialed CORS request
-      // or a hidden iframe before either reaches the backend. Production uses
-      // a finite, same-origin JSON response first and retains both bridge
-      // transports as recovery paths for older clients.
       let result: { gameState?: GameState; settled?: boolean; status?: string };
-      try {
+      if (isSpectatorSession) {
+        result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
+          `/api/matches/state/${encodeURIComponent(matchIdToFetch)}`,
+          { timeoutMs: 8_000 },
+        );
+      } else {
         const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-        result = isLocalHost
-          ? await fetchRemoteMatchStateViaBridge(activeMatch.matchId)
-          : await fetchRemoteMatchStateViaSameOriginJson(activeMatch.matchId);
-      } catch {
         try {
-          result = await fetchRemoteMatchStateViaSameOriginBridge(activeMatch.matchId);
+          result = isLocalHost
+            ? await fetchRemoteMatchStateViaBridge(matchIdToFetch)
+            : await fetchRemoteMatchStateViaSameOriginJson(matchIdToFetch);
         } catch {
           try {
-            result = await fetchRemoteMatchStateViaBridge(activeMatch.matchId);
+            result = await fetchRemoteMatchStateViaSameOriginBridge(matchIdToFetch);
           } catch {
-            result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
-              `/api/matches/state/${encodeURIComponent(activeMatch.matchId)}`,
-              { timeoutMs: 8_000 },
-            );
+            try {
+              result = await fetchRemoteMatchStateViaBridge(matchIdToFetch);
+            } catch {
+              result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
+                `/api/matches/state/${encodeURIComponent(matchIdToFetch)}`,
+                { timeoutMs: 8_000 },
+              );
+            }
           }
         }
       }
+
       if (result.settled || result.status === 'finished') {
+        if (isSpectatorSession) {
+          setIsSpectator(false);
+          isSpectatorRef.current = false;
+        }
         localStorage.removeItem('redoapp_active_match');
         remoteMatchIdRef.current = null;
         remoteUserIdRef.current = null;
         setRemoteSessionActive(false);
+        setGameMode('offline');
         window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
         setGameState((prev) => ({
           ...prev,
@@ -351,9 +381,14 @@ export function useUnoGame() {
         }));
         return true;
       }
-      const isSpectatorMode = (result as any).isSpectator || (result.gameState as any).isSpectator || isSpectator;
+
+      const isSpectatorMode = isSpectatorSession || (result as any).isSpectator || (result.gameState as any)?.isSpectator;
       if (!isCompleteRemoteTableState(result.gameState, isSpectatorMode)) {
         throw new Error('Match table is not ready yet.');
+      }
+      if (isSpectatorMode) {
+        setIsSpectator(true);
+        isSpectatorRef.current = true;
       }
       setGameState(result.gameState);
       if (result.gameState.phase === 'game_over') {
@@ -363,6 +398,10 @@ export function useUnoGame() {
         const isMultiRoundContinuing = winsRequired > 1 && maxWins < winsRequired;
 
         if (!isMultiRoundContinuing) {
+          if (isSpectatorMode) {
+            setIsSpectator(false);
+            isSpectatorRef.current = false;
+          }
           localStorage.removeItem('redoapp_active_match');
           remoteMatchIdRef.current = null;
           remoteUserIdRef.current = null;
@@ -378,10 +417,15 @@ export function useUnoGame() {
       const errorMsg = error instanceof Error ? error.message : '';
       const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished') || errorMsg.includes('ended');
       if (isNotFoundOrSettled) {
+        if (isSpectatorSession) {
+          setIsSpectator(false);
+          isSpectatorRef.current = false;
+        }
         localStorage.removeItem('redoapp_active_match');
         remoteMatchIdRef.current = null;
         remoteUserIdRef.current = null;
         setRemoteSessionActive(false);
+        setGameMode('offline');
         window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
         setGameState((prev) => ({
           ...prev,
@@ -391,10 +435,8 @@ export function useUnoGame() {
         }));
       } else {
         console.warn('Remote match state sync retry pending:', errorMsg);
-        // Transient error or session still initializing during reload:
-        // Keep active match state and retry sync shortly instead of dumping user to menu.
         window.setTimeout(() => {
-          if (localStorage.getItem('redoapp_active_match')) {
+          if (localStorage.getItem('redoapp_active_match') || isSpectatorRef.current) {
             syncRemoteMatchState().catch(() => undefined);
           }
         }, 1500);
@@ -1512,22 +1554,39 @@ export function useUnoGame() {
   }, []);
 
   const [isSpectator, setIsSpectator] = useState(false);
+  const isSpectatorRef = useRef(false);
+  useEffect(() => {
+    isSpectatorRef.current = isSpectator;
+  }, [isSpectator]);
 
   const spectateMatch = useCallback(async (matchId: string) => {
     sound.playPop();
     try {
-      const res = await apiRequest<{ success?: boolean; isSpectator?: boolean; gameState?: GameState }>(`/api/matches/state/${encodeURIComponent(matchId)}`);
+      setIsSpectator(true);
+      isSpectatorRef.current = true;
+      remoteMatchIdRef.current = matchId;
+      remoteUserIdRef.current = 'spectator';
+      setGameMode('pvp');
+      setActiveStake(0);
+      localStorage.setItem('redoapp_active_match', JSON.stringify({ matchId, currentUserId: 'spectator', isSpectator: true }));
+
+      const res = await apiRequest<{ success?: boolean; isSpectator?: boolean; gameState?: GameState }>(
+        `/api/matches/state/${encodeURIComponent(matchId)}`,
+        { timeoutMs: 8_000 },
+      );
       if (res?.gameState) {
-        remoteMatchIdRef.current = matchId;
-        remoteUserIdRef.current = 'spectator';
-        setIsSpectator(true);
-        setGameMode('pvp');
         setGameState(res.gameState);
         setRemoteSessionActive(true);
         return true;
       }
     } catch (err) {
       console.error('Failed to spectate match', err);
+      setIsSpectator(false);
+      isSpectatorRef.current = false;
+      localStorage.removeItem('redoapp_active_match');
+      remoteMatchIdRef.current = null;
+      remoteUserIdRef.current = null;
+      setRemoteSessionActive(false);
     }
     return false;
   }, []);
@@ -1535,9 +1594,18 @@ export function useUnoGame() {
   const stopSpectating = useCallback(() => {
     sound.playPop();
     setIsSpectator(false);
+    isSpectatorRef.current = false;
+    localStorage.removeItem('redoapp_active_match');
     remoteMatchIdRef.current = null;
     remoteUserIdRef.current = null;
     setRemoteSessionActive(false);
+    setGameMode('offline');
+    setGameState((prev) => ({
+      ...prev,
+      phase: 'setup',
+      players: [],
+      winnerId: null,
+    }));
     returnToLobby();
   }, [returnToLobby]);
 
