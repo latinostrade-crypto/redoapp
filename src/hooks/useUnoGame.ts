@@ -1138,16 +1138,12 @@ export function useUnoGame() {
   }, []);
 
   // Initiate Playing wild card (Human)
-  const initiatePlayCard = useCallback((card: UnoCardType, chosenColor?: CardColor) => {
+  const initiatePlayCard = useCallback((card: UnoCardType) => {
     if ((gameMode === 'pvp' || gameMode === 'private') && remoteSessionActive && remoteMatchIdRef.current && remoteUserIdRef.current) {
       if (card.color === 'wild') {
-        if (chosenColor) {
-          selectWildColor(chosenColor);
-        } else {
-          setPendingWildCard(card);
-          setWildSelectOpen(true);
-          sound.playPop();
-        }
+        setPendingWildCard(card);
+        setWildSelectOpen(true);
+        sound.playPop();
       } else {
         apiRequest<{ gameState: GameState }>('/api/matches/action', {
           method: 'POST',
@@ -1171,17 +1167,13 @@ export function useUnoGame() {
     }
 
     if (card.color === 'wild') {
-      if (chosenColor) {
-        playCard('player', card, chosenColor);
-      } else {
-        setPendingWildCard(card);
-        setWildSelectOpen(true);
-        sound.playPop();
-      }
+      setPendingWildCard(card);
+      setWildSelectOpen(true);
+      sound.playPop();
     } else {
       playCard('player', card);
     }
-  }, [gameMode, playCard, remoteSessionActive, saveStats, selectWildColor]);
+  }, [gameMode, playCard, remoteSessionActive, saveStats]);
 
   // Draw Card Logic
   const drawCard = useCallback((playerId: PlayerId) => {
