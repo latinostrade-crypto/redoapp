@@ -4265,7 +4265,7 @@ export function Web3Dashboard({
                       />
                       <input
                         type="text"
-                        placeholder="NFT Prize Link (e.g. https://getgems.io/...)"
+                        placeholder="Prize Link (e.g. https://t.me/...)"
                         value={adminNftLink}
                         onChange={(e) => setAdminNftLink(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"

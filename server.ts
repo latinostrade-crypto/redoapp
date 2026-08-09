@@ -3808,9 +3808,9 @@ function completeTournament(winnerId: string | null) {
     if (winnerChatId) {
       sendTelegramMessageSafely(
         winnerChatId,
-        `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour NFT Award is ready!`,
+        `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour Award is ready!`,
         currentTournament.nftLink,
-        '🎁 View Prize NFT ➔'
+        '🎁 View Prize ➔'
       );
     }
   } else {
@@ -4210,7 +4210,7 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     ``,
     `📌 <b>${tourn.title}</b>`,
     `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
-    `🎁 <b>NFT Prize:</b> ${tourn.nftLink}`,
+    `🎁 <b>Prize:</b> ${tourn.nftLink}`,
     `⏳ <b>Starts in:</b> ${statusLabel}`,
     ``,
     `Open REDO app to join! 🎮`,
@@ -4322,7 +4322,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
       ``,
       `📌 <b>${simTitle}</b>`,
       `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${simTicketCost} TKT` : 'FREE ENTRY'}`,
-      `🎁 <b>NFT Prize:</b> ${simNftLink}`,
+      `🎁 <b>Prize:</b> ${simNftLink}`,
       `⏳ <b>Starts in:</b> ${simMinutes} min (Simulation)`,
       ``,
       `Open REDO app to join! 🎮`,
