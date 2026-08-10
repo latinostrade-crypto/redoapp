@@ -900,18 +900,27 @@ export function useUnoGame() {
     aiTurnHandledRef.current = null;
   }, [saveStats, syncRemoteMatchState]);
 
+const isClientPlayerActive = (p: Player) => p.isAi || p.isConnected !== false;
+
+const getNextActiveClientPlayerIndex = (players: Player[], currentIndex: number, direction: number, steps = 1): number => {
+  const numPlayers = players.length;
+  if (numPlayers === 0) return 0;
+  const hasActive = players.some(isClientPlayerActive);
+  let curr = currentIndex;
+  for (let s = 0; s < steps; s++) {
+    let loopGuard = 0;
+    do {
+      curr = (curr + direction + numPlayers) % numPlayers;
+      loopGuard++;
+    } while (hasActive && !isClientPlayerActive(players[curr]) && loopGuard < numPlayers);
+  }
+  return curr;
+};
+
   // Execute Player Turn switch log
   const advanceTurn = useCallback((state: GameState, customSkipCount: number = 1): GameState => {
-    let nextIndex = state.currentPlayerIndex + state.direction * customSkipCount;
+    const nextIndex = getNextActiveClientPlayerIndex(state.players, state.currentPlayerIndex, state.direction, customSkipCount);
 
-    // Loop indices around player size (4 players)
-    const numPlayers = state.players.length;
-    nextIndex = (nextIndex % numPlayers + numPlayers) % numPlayers;
-
-    const nextPlayer = state.players[nextIndex];
-
-    // Reset draw count if we didn't perform stacking (standard draw rules)
-    // We also clear accusable list except for anyone who has just moved
     return {
       ...state,
       currentPlayerIndex: nextIndex,
@@ -1012,67 +1021,76 @@ export function useUnoGame() {
       if (card.value === 'reverse') {
         newState.direction = newState.direction === 1 ? -1 : 1;
         logMsg += ` 🔄 Turned reverse play direction!`;
-        const activeAiPlayer = prev.players[(prev.currentPlayerIndex + prev.direction * 1 + 4) % 4];
-        changeEmotion(activeAiPlayer.id, 'thinking', 1500);
+        const nextActiveIdx = getNextActiveClientPlayerIndex(prev.players, prev.currentPlayerIndex, newState.direction, 1);
+        const activeAiPlayer = prev.players[nextActiveIdx];
+        if (activeAiPlayer) {
+          changeEmotion(activeAiPlayer.id, 'thinking', 1500);
+        }
       } else if (card.value === 'skip') {
         skipCount = 2;
-        const skippedId = prev.players[(prev.currentPlayerIndex + prev.direction + 4) % 4].id;
-        logMsg += ` 🚫 Skipped ${prev.players[(prev.currentPlayerIndex + prev.direction + 4) % 4].name}!`;
-        // Trigger cute upset reaction
-        setTimeout(() => {
-          changeEmotion(skippedId, 'angry', 2500);
-          triggerBubble(skippedId, 'Hey! I was ready to play! 💢', 1500);
-        }, 150);
+        const skippedIndex = getNextActiveClientPlayerIndex(prev.players, prev.currentPlayerIndex, prev.direction, 1);
+        const skippedPlayer = prev.players[skippedIndex];
+        if (skippedPlayer) {
+          logMsg += ` 🚫 Skipped ${skippedPlayer.name}!`;
+          setTimeout(() => {
+            changeEmotion(skippedPlayer.id, 'angry', 2500);
+            triggerBubble(skippedPlayer.id, 'Hey! I was ready to play! 💢', 1500);
+          }, 150);
+        }
       } else if (card.value === 'draw2') {
         // Draw 2 penalty
-        const victimIndex = (prev.currentPlayerIndex + prev.direction + 4) % 4;
+        const victimIndex = getNextActiveClientPlayerIndex(prev.players, prev.currentPlayerIndex, prev.direction, 1);
         const victim = prev.players[victimIndex];
 
-        checkRefillDeck(2);
-        const drawnCards = deck.splice(0, 2);
+        if (victim) {
+          checkRefillDeck(2);
+          const drawnCards = deck.splice(0, 2);
 
-        newState.players = newState.players.map((p) => {
-          if (p.id === victim.id) {
-            return {
-              ...p,
-              hand: [...p.hand, ...drawnCards],
-              emotion: 'worried' as const,
-            };
-          }
-          return p;
-        });
+          newState.players = newState.players.map((p) => {
+            if (p.id === victim.id) {
+              return {
+                ...p,
+                hand: [...p.hand, ...drawnCards],
+                emotion: 'worried' as const,
+              };
+            }
+            return p;
+          });
 
-        skipCount = 2; // skip they after drawing
-        logMsg += ` 📥 Forced ${victim.name} to draw 2 cards!`;
+          skipCount = 2; // skip victim after drawing
+          logMsg += ` 📥 Forced ${victim.name} to draw 2 cards!`;
 
-        setTimeout(() => {
-          triggerBubble(victim.id, 'Oops! Two extra cards! 🥕🐼', 2500);
-        }, 150);
+          setTimeout(() => {
+            triggerBubble(victim.id, 'Oops! Two extra cards! 🥕🐼', 2500);
+          }, 150);
+        }
       } else if (card.value === 'wild_draw4') {
         // Draw 4 penalty
-        const victimIndex = (prev.currentPlayerIndex + prev.direction + 4) % 4;
+        const victimIndex = getNextActiveClientPlayerIndex(prev.players, prev.currentPlayerIndex, prev.direction, 1);
         const victim = prev.players[victimIndex];
 
-        checkRefillDeck(4);
-        const drawnCards = deck.splice(0, 4);
+        if (victim) {
+          checkRefillDeck(4);
+          const drawnCards = deck.splice(0, 4);
 
-        newState.players = newState.players.map((p) => {
-          if (p.id === victim.id) {
-            return {
-              ...p,
-              hand: [...p.hand, ...drawnCards],
-              emotion: 'angry' as const,
-            };
-          }
-          return p;
-        });
+          newState.players = newState.players.map((p) => {
+            if (p.id === victim.id) {
+              return {
+                ...p,
+                hand: [...p.hand, ...drawnCards],
+                emotion: 'angry' as const,
+              };
+            }
+            return p;
+          });
 
-        skipCount = 2; // skip after drawing
-        logMsg += ` 💥 Forced ${victim.name} to draw 4 cards!`;
+          skipCount = 2; // skip victim after drawing
+          logMsg += ` 💥 Forced ${victim.name} to draw 4 cards!`;
 
-        setTimeout(() => {
-          triggerBubble(victim.id, 'Oh, no! FOUR CARDS? Unfair! 🦊😭💦', 3000);
-        }, 150);
+          setTimeout(() => {
+            triggerBubble(victim.id, 'Oh, no! FOUR CARDS? Unfair! 🦊😭💦', 3000);
+          }, 150);
+        }
       }
 
       // Add actual log

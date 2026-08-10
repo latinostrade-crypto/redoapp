@@ -2532,10 +2532,29 @@ function createServerLog(message: string, type: 'info' | 'play' | 'draw' | 'acti
   };
 }
 
+function isPlayerActive(p: ServerGamePlayer) {
+  return p.isAi || p.isConnected !== false;
+}
+
+function getNextActivePlayerIndex(players: ServerGamePlayer[], currentIndex: number, direction: number, steps = 1): number {
+  const numPlayers = players.length;
+  if (numPlayers === 0) return 0;
+
+  const hasActive = players.some(isPlayerActive);
+  let curr = currentIndex;
+
+  for (let s = 0; s < steps; s++) {
+    let loopGuard = 0;
+    do {
+      curr = (curr + direction + numPlayers) % numPlayers;
+      loopGuard++;
+    } while (hasActive && !isPlayerActive(players[curr]) && loopGuard < numPlayers);
+  }
+  return curr;
+}
+
 function advanceServerTurn(state: ServerGameState, skipCount = 1): ServerGameState {
-  const numPlayers = state.players.length;
-  let nextIndex = state.currentPlayerIndex + state.direction * skipCount;
-  nextIndex = (nextIndex % numPlayers + numPlayers) % numPlayers;
+  const nextIndex = getNextActivePlayerIndex(state.players, state.currentPlayerIndex, state.direction, skipCount);
   return {
     ...state,
     currentPlayerIndex: nextIndex,
@@ -2600,11 +2619,13 @@ function createInitialMatchState(players: QueuePlayer[]): ServerGameState {
   }
   const startingCard = deck.splice(startingCardIndex, 1)[0];
 
+  const initialCurrentPlayerIndex = getNextActivePlayerIndex(serverPlayers, 0, 1, 0);
+
   return {
     deck,
     discardPile: [startingCard],
     players: serverPlayers,
-    currentPlayerIndex: 0,
+    currentPlayerIndex: initialCurrentPlayerIndex,
     direction: 1,
     activeColor: startingCard.color,
     activeValue: startingCard.value,
@@ -2740,7 +2761,8 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
 
   if (card.value === 'reverse') {
     nextState.direction = nextState.direction === 1 ? -1 : 1;
-    if (state.players.length === 2) {
+    const activeCount = state.players.filter(isPlayerActive).length;
+    if (activeCount === 2) {
       skipCount = 2;
     }
   } else if (card.value === 'skip') {
@@ -2748,16 +2770,31 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
   } else if (card.value === 'draw2' || card.value === 'wild_draw4') {
     const drawCount = card.value === 'draw2' ? 2 : 4;
     nextState = ensureServerDeck(nextState, drawCount);
-    const victimIndex = (state.currentPlayerIndex + state.direction + state.players.length) % state.players.length;
+
+    const victimIndex = getNextActivePlayerIndex(state.players, state.currentPlayerIndex, nextState.direction, 1);
     const victim = nextState.players[victimIndex];
     const drawnCards = nextState.deck.splice(Math.max(nextState.deck.length - drawCount, 0), drawCount);
     victim.hand = [...victim.hand, ...drawnCards];
     victim.emotion = 'worried';
-    skipCount = 2;
+
+    const nextAfterVictimIndex = getNextActivePlayerIndex(nextState.players, victimIndex, nextState.direction, 1);
+    nextState.currentPlayerIndex = nextAfterVictimIndex;
+    nextState.consecutiveDraws = 0;
+
+    const colorLabel = card.color === 'wild' ? `wild -> ${finalColor}` : `${card.color} ${card.value}`;
+    nextState.logs = [
+      createServerLog(`${currentPlayer.username} played ${colorLabel} (+${drawCount} cards to ${victim.username})`, 'action'),
+      ...nextState.logs,
+    ].slice(0, 50);
+
+    match.gameState = nextState;
+    match.gameState.turnStartedAt = Date.now();
+    schedulePersist({ matchId: match.matchId });
+    return;
   }
 
   const colorLabel = card.color === 'wild' ? `wild -> ${finalColor}` : `${card.color} ${card.value}`;
-  nextState.logs = [createServerLog(`${currentPlayer.username} played ${colorLabel}`, card.color === 'wild' || card.value === 'skip' || card.value === 'reverse' || card.value === 'draw2' ? 'action' : 'play'), ...nextState.logs].slice(0, 50);
+  nextState.logs = [createServerLog(`${currentPlayer.username} played ${colorLabel}`, card.color === 'wild' || card.value === 'skip' || card.value === 'reverse' ? 'action' : 'play'), ...nextState.logs].slice(0, 50);
   match.gameState = advanceServerTurn(nextState, skipCount);
   match.gameState.turnStartedAt = Date.now();
   schedulePersist({ matchId: match.matchId });
@@ -6146,8 +6183,21 @@ setInterval(() => {
       continue;
     }
 
-    const currentPlayerIndex = state.currentPlayerIndex;
-    const currentPlayer = state.players[currentPlayerIndex];
+    // Ensure current turn points to an active player if possible
+    let currentPlayerIndex = state.currentPlayerIndex;
+    let currentPlayer = state.players[currentPlayerIndex];
+    if (currentPlayer && !isPlayerActive(currentPlayer) && state.players.some(isPlayerActive)) {
+      const activeIndex = getNextActivePlayerIndex(state.players, currentPlayerIndex, state.direction, 0);
+      if (activeIndex !== currentPlayerIndex) {
+        state.currentPlayerIndex = activeIndex;
+        currentPlayerIndex = activeIndex;
+        currentPlayer = state.players[activeIndex];
+        state.turnStartedAt = now;
+        broadcastMatch(matchId);
+        schedulePersist({ matchId });
+      }
+    }
+
     if (!currentPlayer) continue;
 
     if (!state.turnStartedAt) {
