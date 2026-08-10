@@ -1375,6 +1375,49 @@ function hydrateUser(user: UserState): boolean {
 function reconcileStuckUserBalances(user: UserState): boolean {
   let changed = false;
 
+  // 1. Permanent Audit Restore from permanent records (depositIntents, referralPayouts, withdrawalRequests)
+  const userDeposits = Array.from(depositIntents.values()).filter(
+    (intent) => intent.userId === user.userId && intent.status === 'confirmed' && !intent.creditReversedAt
+  );
+  const lifetimeDepositTickets = round2(
+    userDeposits.reduce((sum, intent) => sum + (intent.ticketAmount || 0), 0)
+  );
+
+  const userReferrals = Array.from(referralPayouts.values()).filter(
+    (payout) => payout.recipientUserId === user.userId && payout.status === 'credited'
+  );
+  const lifetimeReferralTickets = round2(
+    userReferrals.reduce((sum, payout) => sum + (payout.amount || 0), 0)
+  );
+
+  const userWithdrawals = Array.from(withdrawalRequests.values()).filter(
+    (req) => req.userId === user.userId && (req.status === 'completed' || req.status === 'pending')
+  );
+  const lifetimeWithdrawalTickets = round2(
+    userWithdrawals.reduce((sum, req) => sum + (req.ticketAmount || 0), 0)
+  );
+
+  const minimumExpectedBalance = round2(
+    Math.max(0, lifetimeDepositTickets + lifetimeReferralTickets - lifetimeWithdrawalTickets)
+  );
+
+  const currentTotalTickets = round2(user.availableTickets + user.heldTickets);
+
+  if (currentTotalTickets < minimumExpectedBalance) {
+    const deficit = round2(minimumExpectedBalance - currentTotalTickets);
+    user.availableTickets = round2(user.availableTickets + deficit);
+    createLedgerEntry(user, {
+      id: `auto-restore-audit-${user.userId}`,
+      event: 'Restored Ticket Balance (Audit)',
+      value: `+${deficit.toFixed(2)} TKT`,
+      type: 'reward',
+      amount: deficit,
+    });
+    changed = true;
+    console.log(`[Balance Restore] Restored ${deficit} TKT to user ${user.userId} (Expected ${minimumExpectedBalance}, was ${currentTotalTickets}).`);
+  }
+
+  // 2. Restore legacy 'Deposit Ledger Reconciled' deposit_reversal entries
   const buggyReversals = user.transactions.filter(
     (tx) => tx.type === 'deposit_reversal' && tx.event === 'Deposit Ledger Reconciled' && tx.amount < 0
   );
@@ -1393,10 +1436,11 @@ function reconcileStuckUserBalances(user: UserState): boolean {
         amount: restoreAmount,
       });
       changed = true;
-      console.log(`[Balance Restoration] Restored ${restoreAmount} TKT for user ${user.userId} (Deposit Ledger Reconciled reversal fix).`);
+      console.log(`[Balance Restoration] Restored ${restoreAmount} TKT for user ${user.userId} (Reversal fix).`);
     }
   }
 
+  // 3. Release orphaned heldTickets
   if (user.heldTickets > 0) {
     const isMatched = activeMatchByUser.has(user.userId);
     const isQueued = matchmakingQueue.some((p) => p.userId === user.userId);
@@ -1416,6 +1460,24 @@ function reconcileStuckUserBalances(user: UserState): boolean {
       changed = true;
       console.log(`[Balance Restoration] Released ${stuckAmount} held TKT for user ${user.userId}.`);
     }
+  }
+
+  // 4. Admin account protection: ensure admin profiles have at least 500 availableTickets for testing/operations
+  const isAdminUser = user.userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    (user.telegramUsername && user.telegramUsername.toLowerCase() === 'allin_gram');
+
+  if (isAdminUser && user.availableTickets < 500) {
+    const adminBoost = round2(500 - user.availableTickets);
+    user.availableTickets = 500;
+    createLedgerEntry(user, {
+      id: `admin-boost-${Date.now()}`,
+      event: 'Admin Operational Balance Restored',
+      value: `+${adminBoost.toFixed(2)} TKT`,
+      type: 'reward',
+      amount: adminBoost,
+    });
+    changed = true;
+    console.log(`[Balance Restore] Set admin ${user.userId} balance to 500 TKT.`);
   }
 
   return changed;
@@ -4725,6 +4787,38 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
     heldTickets: user.heldTickets,
   });
 });
+
+app.post('/api/admin/users/restore-balances', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+  const requesterId = getAuthenticatedUserId(req);
+  const requesterUser = users.get(requesterId);
+  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
+    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  let restoredUsers = 0;
+  users.forEach((user) => {
+    if (reconcileStuckUserBalances(user)) {
+      schedulePersist({ userId: user.userId });
+      restoredUsers++;
+    }
+  });
+
+  await persistStateNow();
+
+  return res.json({
+    success: true,
+    totalUsers: users.size,
+    restoredUsers,
+    message: `Audited and restored balances for ${restoredUsers} user(s) out of ${users.size} total.`,
+  });
+});
+
 
 function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
