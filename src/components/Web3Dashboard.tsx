@@ -4556,7 +4556,9 @@ export function Web3Dashboard({
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                           {matchmakingState === 'joining'
                             ? `You are ready. Players: ${queueLength}/${MIN_MATCH_PLAYERS} minimum. Connecting securely to the match server…`
-                            : `Players connected: ${queueLength}/${MAX_MATCH_PLAYERS}. The table opens immediately when at least ${MIN_MATCH_PLAYERS} players are ready.`}
+                            : selectedStake === 0
+                              ? `Searching for free players (${queueLength}/${MAX_MATCH_PLAYERS}). Table starts when another player joins or auto-fills in 20s.`
+                              : `Searching for real players (${queueLength}/${MAX_MATCH_PLAYERS}). Ticket games are strict PVP.`}
                         </p>
                       </div>
                       <button

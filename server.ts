@@ -401,7 +401,8 @@ interface QueuePlayer {
   stake: number;
   mode: MatchMode;
   joinedAt: number;
-  costsCommitted?: boolean;
+  costsCommitted?: boolean | 'held';
+  isAi?: boolean;
 }
 
 interface ActiveMatch {
@@ -2590,19 +2591,22 @@ function ensureServerDeck(state: ServerGameState, countNeeded: number): ServerGa
 
 function createInitialMatchState(players: QueuePlayer[]): ServerGameState {
   let deck = shuffleServerDeck(generateServerDeck());
-  const serverPlayers: ServerGamePlayer[] = players.map((player) => ({
-    userId: player.userId,
-    username: player.username,
-    avatarId: player.avatarId,
-    hand: [],
-    isAi: false,
-    isConnected: false,
-    hasConnected: false,
-    lastSeenAt: null,
-    disconnectedAt: null,
-    unoDeclared: false,
-    emotion: 'happy',
-  }));
+  const serverPlayers: ServerGamePlayer[] = players.map((player) => {
+    const isBot = Boolean(player.isAi || player.userId.startsWith('bot_'));
+    return {
+      userId: player.userId,
+      username: player.username,
+      avatarId: player.avatarId,
+      hand: [],
+      isAi: isBot,
+      isConnected: isBot,
+      hasConnected: isBot,
+      lastSeenAt: isBot ? Date.now() : null,
+      disconnectedAt: null,
+      unoDeclared: false,
+      emotion: 'happy',
+    };
+  });
 
   for (let c = 0; c < 7; c++) {
     serverPlayers.forEach((player) => {
@@ -2904,12 +2908,13 @@ function commitPublicMatchCosts(match: ActiveMatch) {
   if (match.costsCommitted) return true;
   const energyCost = match.stake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
   const entries = match.players
-    .filter((player) => player.costsCommitted === false)
+    .filter((player) => player.costsCommitted !== true && !player.isAi && !player.userId.startsWith('bot_'))
     .map((player) => ({ player, user: getUser(player.userId) }));
 
-  for (const { user } of entries) {
+  for (const { user, player } of entries) {
     recalculateEnergy(user);
-    if (user.energy < energyCost || (match.stake > 0 && user.availableTickets < match.stake)) {
+    const needTicketHold = match.stake > 0 && player.costsCommitted !== 'held';
+    if (user.energy < energyCost || (needTicketHold && user.availableTickets < match.stake)) {
       return false;
     }
   }
@@ -2918,8 +2923,10 @@ function commitPublicMatchCosts(match: ActiveMatch) {
     spendEnergy(user, energyCost, match.stake === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
     updateQuestProgress(user.userId, 'spend_energy', energyCost);
     if (match.stake > 0) {
-      user.availableTickets = round2(user.availableTickets - match.stake);
-      user.heldTickets = round2(user.heldTickets + match.stake);
+      if (player.costsCommitted !== 'held') {
+        user.availableTickets = round2(user.availableTickets - match.stake);
+        user.heldTickets = round2(user.heldTickets + match.stake);
+      }
       createLedgerEntry(user, {
         event: 'PVP Match Hold',
         value: `-${match.stake.toFixed(2)} TKT`,
@@ -2939,10 +2946,16 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
   broadcastMatchCancelled(match.matchId, reason);
   match.players.forEach((player) => {
     activeMatchByUser.delete(player.userId);
-    const user = users.get(player.userId);
-    if (user) {
-      user.matchmakingFailureAt = Date.now();
-      user.matchmakingFailureReason = 'timeout';
+    if (!player.isAi && !player.userId.startsWith('bot_')) {
+      const user = users.get(player.userId);
+      if (user) {
+        if (player.stake > 0 && player.costsCommitted === 'held') {
+          user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
+          user.availableTickets = round2(user.availableTickets + player.stake);
+        }
+        user.matchmakingFailureAt = Date.now();
+        user.matchmakingFailureReason = 'timeout';
+      }
     }
   });
   activeMatches.delete(match.matchId);
@@ -2952,17 +2965,15 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
 function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   ensureMatchLifecycle(match);
   if (match.mode !== 'pvp' || match.playStartedAt) return true;
-  const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected);
+  const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
   const allConnected = connectedPlayers.length === match.gameState.players.length;
   const isTournament = match.matchId.startsWith('tourn-');
-  const timeoutMs = isTournament ? 20_000 : 60_000;
+  const timeoutMs = isTournament ? 20_000 : 20_000;
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
   if (!allConnected && !deadlineReached) return false;
   
   if (deadlineReached && !allConnected) {
     if (isTournament) {
-      // Tournament matches start after 20s even if players haven't connected yet.
-      // Non-connected players enter shadow mode (isConnected = false) and skip turns automatically without AI bot playing.
       match.gameState.players.forEach((player) => {
         if (!player.hasConnected) {
           player.isAi = false;
@@ -2981,9 +2992,31 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
       return true;
     }
 
-    cancelUnstartedPublicMatch(match, 'Not all players connected in time. Match cancelled.');
-    return false;
+    const connectedCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
+    if (match.stake === 0 && connectedCount > 0) {
+      match.gameState.players.forEach((player) => {
+        if (!player.hasConnected && !player.isAi) {
+          activeMatchByUser.delete(player.userId);
+          player.isAi = true;
+          player.isConnected = true;
+          player.hasConnected = true;
+          player.username = `Bot ${player.username}`;
+          const qP = match.players.find((qp) => qp.userId === player.userId);
+          if (qP) {
+            qP.isAi = true;
+          }
+        }
+      });
+      match.gameState.logs = [
+        createServerLog('🔌 Absent player replaced by AI bot. Free match starting.', 'info'),
+        ...match.gameState.logs,
+      ].slice(0, 50);
+    } else {
+      cancelUnstartedPublicMatch(match, 'Not all players connected in time. Match cancelled.');
+      return false;
+    }
   }
+
   if (!commitPublicMatchCosts(match)) {
     cancelUnstartedPublicMatch(match, 'Match costs could not be committed. Match cancelled.');
     return false;
@@ -3142,6 +3175,24 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   };
 }
 
+const BOT_NAMES = ['Anya', 'Max', 'Leo', 'Elena', 'Oscar', 'Maya', 'Viktor', 'Chloe'];
+const BOT_AVATARS = ['rabbit', 'koala', 'fox', 'bear', 'cat', 'panda', 'tiger', 'racoon'];
+
+function createBotQueuePlayer(stake: number, mode: MatchMode, index = 0): QueuePlayer {
+  const botId = `bot_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 6)}`;
+  const nameIndex = Math.floor(Math.random() * BOT_NAMES.length);
+  return {
+    userId: botId,
+    username: `Bot ${BOT_NAMES[nameIndex]}`,
+    avatarId: BOT_AVATARS[nameIndex % BOT_AVATARS.length],
+    stake,
+    mode,
+    joinedAt: Date.now(),
+    costsCommitted: true,
+    isAi: true,
+  };
+}
+
 function expireTimedOutMatchmakingPlayers(now = Date.now()) {
   const groupSizes = new Map<string, number>();
   matchmakingQueue.forEach((player) => {
@@ -3158,10 +3209,16 @@ function expireTimedOutMatchmakingPlayers(now = Date.now()) {
   const expiredUserIds = new Set(expired.map((player) => player.userId));
   matchmakingQueue = matchmakingQueue.filter((player) => !expiredUserIds.has(player.userId));
   expired.forEach((player) => {
-    const user = getUser(player.userId);
-    user.matchmakingFailureAt = now;
-    user.matchmakingFailureReason = 'timeout';
-    schedulePersist({ userId: player.userId });
+    if (!player.isAi && !player.userId.startsWith('bot_')) {
+      const user = getUser(player.userId);
+      if (player.stake > 0 && player.costsCommitted === 'held') {
+        user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
+        user.availableTickets = round2(user.availableTickets + player.stake);
+      }
+      user.matchmakingFailureAt = now;
+      user.matchmakingFailureReason = 'timeout';
+      schedulePersist({ userId: player.userId });
+    }
   });
   schedulePersist();
   expired.forEach((player) => broadcastQueue(player.userId));
@@ -3169,8 +3226,9 @@ function expireTimedOutMatchmakingPlayers(now = Date.now()) {
 
 function runMatchmakingTick() {
   expireTimedOutMatchmakingPlayers();
-  if (matchmakingQueue.length < MIN_MATCH_PLAYERS) return;
+  if (matchmakingQueue.length === 0) return;
 
+  const now = Date.now();
   const groups = new Map<string, QueuePlayer[]>();
   for (const player of matchmakingQueue) {
     const key = `${player.mode}_${player.stake}`;
@@ -3185,19 +3243,10 @@ function runMatchmakingTick() {
     let i = 0;
     while (i < players.length) {
       const remaining = players.length - i;
-      if (remaining < MIN_MATCH_PLAYERS) break;
+      if (remaining >= MIN_MATCH_PLAYERS) {
+        const groupSlice = players.slice(i, i + MAX_MATCH_PLAYERS);
+        const oldestPlayer = groupSlice[0];
 
-      const groupSlice = players.slice(i, i + MAX_MATCH_PLAYERS);
-      const oldestPlayer = groupSlice[0];
-
-      // A public table supports 2–4 players.  Waiting for a four-player room
-      // (or an arbitrary timeout) after two paid players have matched made a
-      // successful 0.3-ticket pairing look stalled, particularly on mobile.
-      // Start the ready pair immediately; additional players form the next
-      // compatible table instead of being held in limbo.
-      const shouldMatch = groupSlice.length >= MIN_MATCH_PLAYERS;
-
-      if (shouldMatch) {
         const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const mode = oldestPlayer.mode;
         const stake = oldestPlayer.stake;
@@ -3220,7 +3269,29 @@ function runMatchmakingTick() {
 
         i += groupSlice.length;
       } else {
-        break;
+        const soloPlayer = players[i];
+        const waitedMs = now - soloPlayer.joinedAt;
+        if (soloPlayer.stake === 0 && waitedMs >= 20_000) {
+          const botPlayer = createBotQueuePlayer(soloPlayer.stake, soloPlayer.mode, 0);
+          const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const matchPlayers = [soloPlayer, botPlayer];
+
+          activateMatch(matchId, soloPlayer.mode, matchPlayers, soloPlayer.stake);
+
+          matchmakingQueue = matchmakingQueue.filter(p => p.userId !== soloPlayer.userId);
+
+          schedulePersist();
+
+          const timer = matchmakerCleanupTimers.get(soloPlayer.userId);
+          if (timer) {
+            clearTimeout(timer);
+            matchmakerCleanupTimers.delete(soloPlayer.userId);
+          }
+          broadcastQueue(soloPlayer.userId);
+          i += 1;
+        } else {
+          break;
+        }
       }
     }
   }
@@ -4791,9 +4862,21 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     matchmakerCleanupTimers.delete(userId);
   }
 
+  const oldQueuedPlayer = matchmakingQueue.find(p => p.userId === userId);
+  if (oldQueuedPlayer && oldQueuedPlayer.stake > 0 && oldQueuedPlayer.costsCommitted === 'held') {
+    user.heldTickets = round2(Math.max(0, user.heldTickets - oldQueuedPlayer.stake));
+    user.availableTickets = round2(user.availableTickets + oldQueuedPlayer.stake);
+  }
+
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   user.matchmakingFailureAt = null;
   user.matchmakingFailureReason = null;
+
+  if (stakeAmount > 0) {
+    user.availableTickets = round2(user.availableTickets - stakeAmount);
+    user.heldTickets = round2(user.heldTickets + stakeAmount);
+  }
+
   matchmakingQueue.push({
     userId,
     username,
@@ -4801,7 +4884,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     stake: stakeAmount,
     mode,
     joinedAt: Date.now(),
-    costsCommitted: false,
+    costsCommitted: stakeAmount > 0 ? 'held' : false,
   });
 
   runMatchmakingTick();
@@ -4854,6 +4937,13 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
           const stillNoSubs = !queueSubscribers.get(userId) || queueSubscribers.get(userId)!.size === 0;
           const player = matchmakingQueue.find(p => p.userId === userId);
           if (stillNoSubs && player) {
+            if (player.stake > 0 && player.costsCommitted === 'held') {
+              const u = users.get(userId);
+              if (u) {
+                u.heldTickets = round2(Math.max(0, u.heldTickets - player.stake));
+                u.availableTickets = round2(u.availableTickets + player.stake);
+              }
+            }
             matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
             schedulePersist();
             matchmakingQueue
@@ -4881,6 +4971,7 @@ function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     if (activeMatch && !activeMatch.settled && activeMatch.gameState.phase !== 'game_over') {
+      markMatchPlayerConnected(activeMatch, userId);
       const perspective = buildPerspectiveState(activeMatch, userId);
       return sendMatchmakerStatusSuccess(req, res, {
         status: 'ready',
@@ -5829,13 +5920,17 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
   const player = matchmakingQueue.find(p => p.userId === userId);
   matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
   if (player) {
+    if (player.stake > 0 && player.costsCommitted === 'held') {
+      user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
+      user.availableTickets = round2(user.availableTickets + player.stake);
+    }
     matchmakingQueue
       .filter(p => p.stake === player.stake && p.mode === player.mode)
       .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
   }
   schedulePersist({ userId });
   broadcastQueue(userId);
-  res.json({ success: true });
+  res.json({ success: true, availableTickets: user.availableTickets, heldTickets: user.heldTickets });
 });
 
 function scheduleMatchCleanup(matchId: string) {
@@ -5971,6 +6066,7 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   const payoutByRank = buildPayoutByRank(activeMatch.players.length, netPrizePool);
 
   placements.forEach(({ userId, rank }) => {
+    if (userId.startsWith('bot_')) return;
     const user = getUser(userId);
     const grossPayout = payoutByRank[rank];
     const referralSettlement = activeMatch.mode === 'pvp'
