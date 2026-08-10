@@ -124,11 +124,19 @@ export interface QuestView {
   completed: boolean;
 }
 
+export interface ReferralLevelStats {
+  total: number;
+  pending: number;
+  activated: number;
+  rejected: number;
+}
+
 export interface ReferralInvite {
   userId: string;
   username: string;
   photoUrl: string | null;
   status: 'pending' | 'activated' | 'rejected';
+  level?: 1 | 2;
   assignedAt: number | null;
   activatedAt: number | null;
 }
@@ -153,6 +161,8 @@ export interface PlayerProfile {
     totalInvited: number;
     pendingInvited: number;
     rejectedInvited: number;
+    level1?: ReferralLevelStats;
+    level2?: ReferralLevelStats;
     invitedUsers: ReferralInvite[];
   };
   quests: QuestView[];

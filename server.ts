@@ -343,11 +343,16 @@ type PersistedUserState = UserState & {
 
 type ReferralStatus = NonNullable<UserState['referralStatus']>;
 
-interface ReferralStats {
+interface ReferralLevelStats {
   total: number;
   pending: number;
   activated: number;
   rejected: number;
+}
+
+interface ReferralStats {
+  level1: ReferralLevelStats;
+  level2: ReferralLevelStats;
 }
 
 type ReferralPayoutLevel = 1 | 2;
@@ -950,12 +955,19 @@ async function loadSupabaseRowsByPrefix(prefix: string): Promise<SupabaseStateRo
   return rows;
 }
 
-function createEmptyReferralStats(): ReferralStats {
+function createEmptyLevelStats(): ReferralLevelStats {
   return {
     total: 0,
     pending: 0,
     activated: 0,
     rejected: 0,
+  };
+}
+
+function createEmptyReferralStats(): ReferralStats {
+  return {
+    level1: createEmptyLevelStats(),
+    level2: createEmptyLevelStats(),
   };
 }
 
@@ -967,20 +979,26 @@ function normalizeReferralStatus(status: UserState['referralStatus']): ReferralS
   return status || 'pending';
 }
 
-function adjustReferralStats(inviterUserId: string | undefined, fromStatus: UserState['referralStatus'] | null, toStatus: UserState['referralStatus'] | null) {
+function adjustReferralStats(
+  inviterUserId: string | undefined,
+  fromStatus: UserState['referralStatus'] | null,
+  toStatus: UserState['referralStatus'] | null,
+  level: 1 | 2 = 1,
+) {
   if (!inviterUserId || fromStatus === toStatus) return;
   const stats = referralStatsByInviter.get(inviterUserId) || createEmptyReferralStats();
+  const levelStats = level === 1 ? stats.level1 : stats.level2;
 
   if (fromStatus) {
-    stats.total = Math.max(0, stats.total - 1);
-    stats[normalizeReferralStatus(fromStatus)] = Math.max(0, stats[normalizeReferralStatus(fromStatus)] - 1);
+    levelStats.total = Math.max(0, levelStats.total - 1);
+    levelStats[normalizeReferralStatus(fromStatus)] = Math.max(0, levelStats[normalizeReferralStatus(fromStatus)] - 1);
   }
   if (toStatus) {
-    stats.total += 1;
-    stats[normalizeReferralStatus(toStatus)] += 1;
+    levelStats.total += 1;
+    levelStats[normalizeReferralStatus(toStatus)] += 1;
   }
 
-  if (stats.total === 0) {
+  if (stats.level1.total === 0 && stats.level2.total === 0) {
     referralStatsByInviter.delete(inviterUserId);
     return;
   }
@@ -991,7 +1009,17 @@ function rebuildReferralStats() {
   referralStatsByInviter.clear();
   users.forEach((user) => {
     if (!user.referredByUserId) return;
-    adjustReferralStats(user.referredByUserId, null, normalizeReferralStatus(user.referralStatus));
+    const inviterL1 = users.get(user.referredByUserId);
+    if (!inviterL1) return;
+
+    adjustReferralStats(inviterL1.userId, null, normalizeReferralStatus(user.referralStatus), 1);
+
+    if (inviterL1.referredByUserId) {
+      const inviterL2 = users.get(inviterL1.referredByUserId);
+      if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviterL1.userId) {
+        adjustReferralStats(inviterL2.userId, null, normalizeReferralStatus(user.referralStatus), 2);
+      }
+    }
   });
 }
 
@@ -1550,6 +1578,28 @@ function isLootboxAvailable(user: UserState): boolean {
   return getDailyQuestCompletion(user.userId, now).allCompleted;
 }
 
+function buildReferralsView(user: UserState) {
+  const stats = getReferralStats(user.userId);
+  const totalActivated = stats.level1.activated + stats.level2.activated;
+  const referralsActivated = Math.max(user.referralsActivated, totalActivated);
+  const totalInvited = Math.max(stats.level1.total + stats.level2.total, referralsActivated);
+  const pendingInvited = stats.level1.pending + stats.level2.pending;
+  const rejectedInvited = stats.level1.rejected + stats.level2.rejected;
+
+  return {
+    referredByUserId: user.referredByUserId || null,
+    status: user.referralStatus || null,
+    activatedAt: user.referralActivatedAt || null,
+    referralsActivated,
+    totalInvited,
+    pendingInvited,
+    rejectedInvited,
+    level1: stats.level1,
+    level2: stats.level2,
+    invitedUsers: [],
+  };
+}
+
 function buildBootstrapProfileResponse(user: UserState) {
   const activeMatchId = activeMatchByUser.get(user.userId);
   let activeMatchInfo = null;
@@ -1589,6 +1639,7 @@ function buildBootstrapProfileResponse(user: UserState) {
     referralCode: user.referralCode,
     referralLink: buildTelegramMiniAppLink(`ref_${user.referralCode}`),
     referralResetAt: user.referralResetAt || null,
+    referrals: buildReferralsView(user),
     dailyStreak: user.dailyStreak || 0,
     lastDailyXpAt: user.lastDailyXpAt,
     lastDailyCheckin: user.lastDailyCheckin || null,
@@ -1600,33 +1651,21 @@ function buildBootstrapProfileResponse(user: UserState) {
 
 function buildProfileResponse(user: UserState) {
   const claimedQuestIds = claimCompletedQuests(user);
-  const referralStats = getReferralStats(user.userId);
-  const referralsActivated = Math.max(user.referralsActivated, referralStats.activated);
-  const totalInvited = Math.max(referralStats.total, referralsActivated);
   return {
     ...buildBootstrapProfileResponse(user),
-    referrals: {
-      referredByUserId: user.referredByUserId || null,
-      status: user.referralStatus || null,
-      activatedAt: user.referralActivatedAt || null,
-      referralsActivated,
-      totalInvited,
-      pendingInvited: referralStats.pending,
-      rejectedInvited: referralStats.rejected,
-      invitedUsers: [],
-    },
     quests: buildQuestView(user.userId),
     claimedQuestIds,
   };
 }
 
-function buildReferralInviteView(user: UserState) {
+function buildReferralInviteView(user: UserState, level: 1 | 2 = 1) {
   const fullName = [user.telegramFirstName, user.telegramLastName].filter(Boolean).join(' ').trim();
   return {
     userId: user.userId,
     username: user.telegramUsername ? `@${user.telegramUsername}` : fullName || 'Telegram player',
     photoUrl: user.telegramPhotoUrl || null,
     status: normalizeReferralStatus(user.referralStatus),
+    level,
     assignedAt: user.referralAssignedAt || null,
     activatedAt: user.referralActivatedAt || null,
   };
@@ -1653,24 +1692,36 @@ function parseReferralPagination(rawLimit: unknown, rawCursor: unknown) {
 function listReferralInvites(inviterUserId: string, rawLimit: unknown, rawCursor: unknown) {
   const { limit, cursor } = parseReferralPagination(rawLimit, rawCursor);
 
-  const sorted = Array.from(users.values())
-    .filter((candidate) => candidate.referredByUserId === inviterUserId)
-    .sort((a, b) => {
-      const byAssignedAt = (b.referralAssignedAt || 0) - (a.referralAssignedAt || 0);
-      return byAssignedAt || a.userId.localeCompare(b.userId);
-    });
+  const entries: Array<{ user: UserState; level: 1 | 2 }> = [];
+  users.forEach((candidate) => {
+    if (!candidate.referredByUserId) return;
+    if (candidate.referredByUserId === inviterUserId) {
+      entries.push({ user: candidate, level: 1 });
+    } else {
+      const inviterL1 = users.get(candidate.referredByUserId);
+      if (inviterL1?.referredByUserId === inviterUserId) {
+        entries.push({ user: candidate, level: 2 });
+      }
+    }
+  });
+
+  const sorted = entries.sort((a, b) => {
+    const byAssignedAt = (b.user.referralAssignedAt || 0) - (a.user.referralAssignedAt || 0);
+    return byAssignedAt || a.user.userId.localeCompare(b.user.userId);
+  });
+
   const afterCursor = cursor
-    ? sorted.filter((candidate) => (
-      (candidate.referralAssignedAt || 0) < cursor!.assignedAt
-      || ((candidate.referralAssignedAt || 0) === cursor!.assignedAt && candidate.userId > cursor!.userId)
+    ? sorted.filter((entry) => (
+      (entry.user.referralAssignedAt || 0) < cursor!.assignedAt
+      || ((entry.user.referralAssignedAt || 0) === cursor!.assignedAt && entry.user.userId > cursor!.userId)
     ))
     : sorted;
   const page = afterCursor.slice(0, limit);
   const last = page[page.length - 1];
   return {
-    invites: page.map(buildReferralInviteView),
+    invites: page.map((entry) => buildReferralInviteView(entry.user, entry.level)),
     nextCursor: afterCursor.length > page.length && last
-      ? Buffer.from(JSON.stringify({ assignedAt: last.referralAssignedAt || 0, userId: last.userId })).toString('base64url')
+      ? Buffer.from(JSON.stringify({ assignedAt: last.user.referralAssignedAt || 0, userId: last.user.userId })).toString('base64url')
       : null,
   };
 }
@@ -2206,19 +2257,21 @@ function ensureDefaultAmbassador(): UserState | null {
   return ambassador;
 }
 
+function parseReferralCodeFromParam(param?: string): string | null {
+  if (!param || typeof param !== 'string') return null;
+  let cleaned = param.trim();
+  cleaned = cleaned.replace(/^(startapp|start_param|ref)=/i, '').trim();
+  cleaned = cleaned.replace(/^ref_?/i, '').trim();
+  if (!cleaned) return null;
+  return cleaned.toUpperCase();
+}
+
 function assignReferralIfNeeded(user: UserState, startParam?: string) {
-  if (user.referredByUserId) {
-    return;
-  }
+  const code = parseReferralCodeFromParam(startParam);
+  if (!code) return;
 
-  let inviter: UserState | null = null;
-  if (startParam && /^ref_/i.test(startParam)) {
-    const referralCode = startParam.replace(/^ref_/i, '').trim().toUpperCase();
-    inviter = findUserByReferralCode(referralCode);
-  }
-
-  // Fallback to Default Ambassador if user joined organically without a referral link
-  if (!inviter || inviter.userId === user.userId) {
+  let inviter = findUserByReferralCode(code);
+  if (!inviter && code === DEFAULT_REFERRER_CODE) {
     inviter = ensureDefaultAmbassador();
   }
 
@@ -2226,10 +2279,32 @@ function assignReferralIfNeeded(user: UserState, startParam?: string) {
     return;
   }
 
+  if (user.referredByUserId) {
+    if (user.referredByUserId === inviter.userId) return;
+    const currentInviterIsAmbassador = user.referredByUserId.startsWith('ambassador:');
+    if (currentInviterIsAmbassador && user.referralStatus === 'pending') {
+      const ambassadorL1 = users.get(user.referredByUserId);
+      adjustReferralStats(user.referredByUserId, 'pending', null, 1);
+      if (ambassadorL1?.referredByUserId) {
+        adjustReferralStats(ambassadorL1.referredByUserId, 'pending', null, 2);
+      }
+      invalidateReferralCache(user.referredByUserId);
+    } else {
+      return;
+    }
+  }
+
   user.referredByUserId = inviter.userId;
   user.referralStatus = 'pending';
   user.referralAssignedAt = Date.now();
-  adjustReferralStats(inviter.userId, null, 'pending');
+  adjustReferralStats(inviter.userId, null, 'pending', 1);
+  if (inviter.referredByUserId) {
+    const inviterL2 = users.get(inviter.referredByUserId);
+    if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviter.userId) {
+      adjustReferralStats(inviterL2.userId, null, 'pending', 2);
+      invalidateReferralCache(inviterL2.userId);
+    }
+  }
   schedulePersist({ userId: user.userId });
   invalidateReferralCache(inviter.userId);
 }
@@ -2267,7 +2342,14 @@ function maybeActivateReferral(user: UserState, matchId: string) {
     user.referralActivatedAt = Date.now();
     user.referralActivationMatchId = matchId;
     inviter.referralsActivated += 1;
-    adjustReferralStats(inviter.userId, previousStatus, 'activated');
+    adjustReferralStats(inviter.userId, previousStatus, 'activated', 1);
+    if (inviter.referredByUserId) {
+      const inviterL2 = users.get(inviter.referredByUserId);
+      if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviter.userId) {
+        adjustReferralStats(inviterL2.userId, previousStatus, 'activated', 2);
+        invalidateReferralCache(inviterL2.userId);
+      }
+    }
   }
 
   // Deterministic IDs let a restart safely finish a partially persisted
@@ -3663,7 +3745,7 @@ app.post('/api/users/sync', async (req, res) => {
   }
   // In production the referral parameter is part of Telegram's signed
   // initData. Do not let a client replace it with an arbitrary inviter code.
-  const trustedStartParam = resolved.auth?.start_param || (!TELEGRAM_BOT_TOKEN ? startParam : undefined);
+  const trustedStartParam = resolved.auth?.start_param || startParam || undefined;
   assignReferralIfNeeded(user, trustedStartParam);
   try {
     // The referral edge must be durable before the Mini App treats the sync

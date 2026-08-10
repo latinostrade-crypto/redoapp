@@ -94,6 +94,8 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
       ),
       pendingInvited: profile.referrals?.pendingInvited ?? profile.referrals?.invitedUsers?.filter((invite) => invite.status === 'pending').length ?? 0,
       rejectedInvited: profile.referrals?.rejectedInvited ?? profile.referrals?.invitedUsers?.filter((invite) => invite.status === 'rejected').length ?? 0,
+      level1: profile.referrals?.level1 ?? { total: 0, pending: 0, activated: 0, rejected: 0 },
+      level2: profile.referrals?.level2 ?? { total: 0, pending: 0, activated: 0, rejected: 0 },
       invitedUsers: profile.referrals?.invitedUsers ?? [],
     },
     quests: profile.quests ?? [],
@@ -1937,7 +1939,7 @@ export function Web3Dashboard({
   };
 
   const loadReferralInvites = (cursor: string | null = null) => {
-    if (referralInvitesLoading || !getSessionToken()) return Promise.resolve();
+    if (referralInvitesLoading) return Promise.resolve();
     setReferralInvitesLoading(true);
     setReferralInvitesError('');
     const query = new URLSearchParams({ limit: '20' });
@@ -3268,30 +3270,35 @@ export function Web3Dashboard({
                         ) : (
                           <>
                             <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                              <span className="text-slate-400 uppercase">Total Invited</span>
+                              <span className="text-slate-400 uppercase">Total Referral Network</span>
                               <span className="text-slate-100 font-black">{referralStats.totalInvited}</span>
                             </div>
-                            <div className="grid grid-cols-3 gap-1 text-[7px]">
-                              <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
-                                <div className="text-slate-500 uppercase">Active</div>
-                                <div className="text-[#00ff66] font-black">{referralStats.referralsActivated}</div>
+                            <div className="grid grid-cols-2 gap-1 text-[7px]">
+                              <div className="bg-slate-950 border border-black px-1.5 py-1 text-left">
+                                <div className="text-[#00ff66] font-black uppercase text-[6.5px]">L1 Direct (2% Share)</div>
+                                <div className="text-slate-300 font-bold mt-0.5">
+                                  <span className="text-[#00ff66]">{referralStats.level1?.activated ?? 0}</span> / {referralStats.level1?.total ?? 0} active
+                                </div>
                               </div>
-                              <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
-                                <div className="text-slate-500 uppercase">Pending</div>
-                                <div className="text-[#ffcc00] font-black">{referralStats.pendingInvited}</div>
-                              </div>
-                              <div className="bg-slate-950 border border-black px-1.5 py-0.5 text-left">
-                                <div className="text-slate-550 uppercase">Rejected</div>
-                                <div className="text-slate-300 font-black">{referralStats.rejectedInvited}</div>
+                              <div className="bg-slate-950 border border-black px-1.5 py-1 text-left">
+                                <div className="text-[#ffcc00] font-black uppercase text-[6.5px]">L2 Team (1% Share)</div>
+                                <div className="text-slate-300 font-bold mt-0.5">
+                                  <span className="text-[#00ff66]">{referralStats.level2?.activated ?? 0}</span> / {referralStats.level2?.total ?? 0} active
+                                </div>
                               </div>
                             </div>
                             <div className="pt-1 space-y-1 text-left">
-                              <div className="text-[6.5px] uppercase font-bold text-slate-500">Invited players</div>
+                              <div className="text-[6.5px] uppercase font-bold text-slate-500">Network invited players</div>
                               {referralInvites.length === 0 && !referralInvitesLoading ? (
                                 <div className="text-[7px] text-slate-500">The invite records are being restored or no detailed names are available yet.</div>
                               ) : referralInvites.map((invite) => (
                                 <div key={invite.userId} className="flex items-center justify-between gap-2 bg-slate-950 border border-black px-1.5 py-1 text-[7px]">
-                                  <span className="min-w-0 truncate text-slate-200">{invite.username}</span>
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className={`px-1 text-[6px] font-black border leading-tight ${invite.level === 2 ? 'bg-[#ffcc00]/10 border-[#ffcc00] text-[#ffcc00]' : 'bg-[#00ff66]/10 border-[#00ff66] text-[#00ff66]'}`}>
+                                      {invite.level === 2 ? 'L2 (1%)' : 'L1 (2%)'}
+                                    </span>
+                                    <span className="min-w-0 truncate text-slate-200">{invite.username}</span>
+                                  </div>
                                   <span className={invite.status === 'activated' ? 'font-black text-[#00ff66]' : invite.status === 'pending' ? 'font-black text-[#ffcc00]' : 'font-black text-slate-400'}>
                                     {invite.status === 'activated' ? 'ACTIVE' : invite.status.toUpperCase()}
                                   </span>
