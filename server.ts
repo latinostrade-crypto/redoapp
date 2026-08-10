@@ -1023,6 +1023,69 @@ function rebuildReferralStats() {
   });
 }
 
+function reconcileReferralStatuses(): number {
+  let reconciledCount = 0;
+  const sourceUserIdsWithPayouts = new Set<string>();
+  for (const payout of referralPayouts.values()) {
+    if (payout.sourceUserId && (payout.status === 'credited' || payout.status === 'pending')) {
+      sourceUserIdsWithPayouts.add(payout.sourceUserId);
+    }
+  }
+
+  for (const user of users.values()) {
+    if (!user.referredByUserId) continue;
+    if (user.referralStatus === 'activated') continue;
+
+    const inviter = users.get(user.referredByUserId);
+    if (!inviter || inviter.userId === user.userId) {
+      if (user.referralStatus !== 'rejected') {
+        adjustReferralStats(user.referredByUserId, user.referralStatus || 'pending', 'rejected', 1);
+        user.referralStatus = 'rejected';
+        schedulePersist({ userId: user.userId });
+        invalidateReferralCache(user.referredByUserId);
+      }
+      continue;
+    }
+
+    const hasActivationMatchId = Boolean(user.referralActivationMatchId);
+    const hasGeneratedPayout = sourceUserIdsWithPayouts.has(user.userId);
+    const hasReferralLedgerEntry = user.transactions.some((tx) =>
+      tx.type === 'referral_bonus' || (tx.event && tx.event.includes('Referral'))
+    );
+    const hasMatchPayout = user.transactions.some((tx) =>
+      tx.type === 'match_payout' || (tx.event && tx.event.includes('Match Payout'))
+    );
+
+    if (hasActivationMatchId || hasGeneratedPayout || hasReferralLedgerEntry || hasMatchPayout) {
+      const previousStatus = user.referralStatus || 'pending';
+      user.referralStatus = 'activated';
+      user.referralActivatedAt = user.referralActivatedAt || Date.now();
+      user.referralActivationMatchId = user.referralActivationMatchId || 'reconciled-activation';
+      inviter.referralsActivated = Math.max(inviter.referralsActivated, (inviter.referralsActivated || 0) + 1);
+
+      adjustReferralStats(inviter.userId, previousStatus, 'activated', 1);
+      if (inviter.referredByUserId) {
+        const inviterL2 = users.get(inviter.referredByUserId);
+        if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviter.userId) {
+          adjustReferralStats(inviterL2.userId, previousStatus, 'activated', 2);
+          invalidateReferralCache(inviterL2.userId);
+        }
+      }
+
+      schedulePersist({ userId: user.userId });
+      schedulePersist({ userId: inviter.userId });
+      invalidateReferralCache(inviter.userId);
+      reconciledCount++;
+    }
+  }
+
+  if (reconciledCount > 0) {
+    rebuildReferralStats();
+    console.log(`[Referral Reconciliation] Successfully reconciled ${reconciledCount} pending referral statuses to active.`);
+  }
+  return reconciledCount;
+}
+
 function applySnapshot(snapshot: PersistedState) {
   users.clear();
   depositIntents.clear();
@@ -1169,6 +1232,7 @@ async function loadPersistedState() {
       });
 
       rebuildReferralStats();
+      reconcileReferralStatuses();
       users.forEach((user) => {
         if (reconcileStuckUserBalances(user)) {
           schedulePersist({ userId: user.userId });
@@ -4860,6 +4924,24 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
   });
+});
+
+app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+  const requesterId = getAuthenticatedUserId(req);
+  const requesterUser = users.get(requesterId);
+  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
+    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  const count = reconcileReferralStatuses();
+  await persistStateNow();
+  return res.json({ success: true, reconciledCount: count });
 });
 
 app.post('/api/admin/users/restore-balances', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
