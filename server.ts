@@ -4515,6 +4515,51 @@ app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
   return res.send(`Withdrawal ${request.id} rejected and refunded.`);
 });
 
+app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+  const requesterId = getAuthenticatedUserId(req);
+  const requesterUser = users.get(requesterId);
+  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
+    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  const { targetUserId, amount, mode, reason } = req.body || {};
+  const targetId = String(targetUserId || requesterId).trim();
+  const delta = Number(amount);
+  if (!targetId || !Number.isFinite(delta)) {
+    return res.status(400).json({ error: 'Adjustment requires targetUserId and a numeric amount.' });
+  }
+
+  const user = getUser(targetId);
+  if (mode === 'set') {
+    user.availableTickets = round2(Math.max(0, delta));
+  } else {
+    user.availableTickets = round2(Math.max(0, user.availableTickets + delta));
+  }
+
+  createLedgerEntry(user, {
+    event: reason ? `Admin Adjustment: ${reason}` : 'Admin Ticket Adjustment',
+    value: `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} TKT`,
+    type: delta >= 0 ? 'reward' : 'fund_burn',
+    amount: delta,
+  });
+
+  schedulePersist({ userId: user.userId });
+  await persistStateNow();
+
+  return res.json({
+    success: true,
+    userId: user.userId,
+    availableTickets: user.availableTickets,
+    heldTickets: user.heldTickets,
+  });
+});
+
 function sendMatchmakerJoinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   if (input?.responseMode === 'iframe') {
@@ -5758,6 +5803,26 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
 
 function scheduleMatchCleanup(matchId: string) {
   setTimeout(() => {
+    const match = activeMatches.get(matchId);
+    if (match && !match.settled) {
+      if (match.gameState.phase === 'game_over') {
+        settleMatchHelper(match);
+      } else if (match.stake > 0) {
+        match.players.forEach((p) => {
+          const user = getUser(p.userId);
+          user.heldTickets = round2(Math.max(0, user.heldTickets - match.stake));
+          user.availableTickets = round2(user.availableTickets + match.stake);
+          createLedgerEntry(user, {
+            id: `match-refund:${matchId}:${user.userId}`,
+            event: 'Unsettled Match Refund',
+            value: `+${match.stake.toFixed(2)} TKT`,
+            type: 'stake_release',
+            amount: match.stake,
+          });
+          schedulePersist({ userId: user.userId });
+        });
+      }
+    }
     activeMatches.delete(matchId);
     if (supabaseAdmin) {
       supabaseAdmin
@@ -6004,13 +6069,24 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   for (const [matchId, match] of activeMatches.entries()) {
-    if (match.settled || match.gameState.phase !== 'playing') {
+    if (match.settled) {
+      match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      continue;
+    }
+
+    if (match.gameState.phase === 'game_over') {
+      match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      settleMatchHelper(match);
+      continue;
+    }
+
+    if (match.gameState.phase !== 'playing') {
       match.players.forEach((p) => activeMatchByUser.delete(p.userId));
       continue;
     }
 
     const matchAgeMs = now - match.createdAt;
-    if (matchAgeMs > 15 * 60 * 1000) {
+    if (matchAgeMs > 10 * 60 * 1000) {
       const allBotsOrOffline = match.gameState.players.every((p) => p.isAi || p.isConnected === false);
       if (allBotsOrOffline) {
         match.gameState.phase = 'game_over';

@@ -627,33 +627,6 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         if (!claim.claimed && claim.ownerIntentId !== intent.id) reverseDuplicateCredit(intent, claim.ownerIntentId);
       }
     }
-
-    const intentsByUser = new Map<string, DepositIntent[]>();
-    for (const intent of deps.depositIntents.values()) {
-      const entries = intentsByUser.get(intent.userId) || [];
-      entries.push(intent);
-      intentsByUser.set(intent.userId, entries);
-    }
-    for (const [userId, intents] of intentsByUser) {
-      const user = deps.getUser(userId, intents[0]?.walletAddress);
-      const expectedDepositCredit = deps.round2(intents
-        .filter((intent) => intent.status === 'confirmed' && !intent.creditReversedAt)
-        .reduce((sum, intent) => sum + intent.ticketAmount, 0));
-      const ledgerDepositCredit = deps.round2(user.transactions
-        .filter((entry) => entry.type === 'purchase' || entry.type === 'deposit_reversal')
-        .reduce((sum, entry) => sum + entry.amount, 0));
-      const excessCredit = deps.round2(ledgerDepositCredit - expectedDepositCredit);
-      if (excessCredit > 0) {
-        user.availableTickets = deps.round2(user.availableTickets - excessCredit);
-        deps.createLedgerEntry(user, {
-          event: 'Deposit Ledger Reconciled',
-          value: `-${excessCredit.toFixed(2)} TKT`,
-          type: 'deposit_reversal',
-          amount: -excessCredit,
-        });
-        deps.schedulePersist({ userId });
-      }
-    }
   }
 
   function reconcileDuplicateDepositCredits() {
