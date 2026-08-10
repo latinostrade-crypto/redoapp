@@ -3172,13 +3172,18 @@ function commitPublicMatchCosts(match: ActiveMatch) {
   for (const { user, player } of entries) {
     recalculateEnergy(user);
     const needTicketHold = match.stake > 0 && player.costsCommitted !== 'held';
-    if (user.energy < energyCost || (needTicketHold && user.availableTickets < match.stake)) {
+    if (match.stake > 0 && (needTicketHold && user.availableTickets < match.stake)) {
       return false;
     }
   }
 
   for (const { player, user } of entries) {
-    spendEnergy(user, energyCost, match.stake === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
+    if (user.energy >= energyCost) {
+      spendEnergy(user, energyCost, match.stake === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
+    } else {
+      user.energy = 0;
+      user.energyUpdatedAt = Date.now();
+    }
     updateQuestProgress(user.userId, 'spend_energy', energyCost);
     if (match.stake > 0) {
       if (player.costsCommitted !== 'held') {
@@ -6609,11 +6614,14 @@ setInterval(() => {
     }
 
     const elapsedSec = Math.floor((now - state.turnStartedAt) / 1000);
-    const turnLimit = match.turnTimeoutSec || 10;
+    const isBotPlayer = Boolean(currentPlayer.isAi || currentPlayer.userId.startsWith('bot_'));
+    const turnLimit = isBotPlayer ? 1 : (match.turnTimeoutSec || 10);
 
     if (currentPlayer.isConnected !== false) {
       if (elapsedSec >= turnLimit) {
-        state.logs = [createServerLog(`⏰ ${currentPlayer.username}'s turn timed out. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
+        if (!isBotPlayer) {
+          state.logs = [createServerLog(`⏰ ${currentPlayer.username}'s turn timed out. Auto-playing.`, 'info'), ...state.logs].slice(0, 50);
+        }
         runServerAiTurn(match, currentPlayerIndex);
         broadcastMatch(matchId);
         schedulePersist({ matchId });

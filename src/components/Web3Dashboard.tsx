@@ -2713,10 +2713,20 @@ export function Web3Dashboard({
         setPublicQueueError('');
       }
       if (result.status === 'idle') {
-        // The status request can overtake the initial POST on a cold Render
-        // instance. The join request itself owns the transition out of this
-        // state until the server has confirmed that the player is queued.
-        if (matchmakingStateRef.current === 'joining') return;
+        if (
+          matchmakingStateRef.current === 'joining'
+          || matchmakingStateRef.current === 'success'
+          || openingPublicMatchRef.current !== ''
+        ) return;
+        const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+        if (activeMatchRaw) {
+          try {
+            const parsed = JSON.parse(activeMatchRaw);
+            if (parsed.matchId && Date.now() - Number(parsed.createdAt || 0) < 60_000) {
+              return;
+            }
+          } catch {}
+        }
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
         setPublicQueueError('Matchmaking connection lost or timed out. Please try joining again.');
