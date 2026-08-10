@@ -3393,6 +3393,7 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     if (activeMatch && !activeMatch.settled && activeMatch.gameState.phase !== 'game_over') {
+      markMatchPlayerConnected(activeMatch, userId);
       const perspective = buildPerspectiveState(activeMatch, userId);
       return {
         status: 'ready',
@@ -5131,7 +5132,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   expireTimedOutMatchmakingPlayers();
   const activeMatchId = activeMatchByUser.get(userId);
   const existingActiveMatch = activeMatchId ? activeMatches.get(activeMatchId) : null;
-  if (existingActiveMatch) {
+  if (existingActiveMatch && !existingActiveMatch.settled && existingActiveMatch.gameState.phase !== 'game_over') {
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
@@ -5140,6 +5141,8 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       matchmaker: tryActivateQueuedMatch(userId),
       replayed: true,
     });
+  } else if (activeMatchId && (!existingActiveMatch || existingActiveMatch.settled || existingActiveMatch.gameState.phase === 'game_over')) {
+    activeMatchByUser.delete(userId);
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
   if (existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode) {
