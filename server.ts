@@ -1462,22 +1462,14 @@ function reconcileStuckUserBalances(user: UserState): boolean {
     }
   }
 
-  // 4. Admin account protection: ensure admin profiles have at least 500 availableTickets for testing/operations
-  const isAdminUser = user.userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    (user.telegramUsername && user.telegramUsername.toLowerCase() === 'allin_gram');
-
-  if (isAdminUser && user.availableTickets < 500) {
-    const adminBoost = round2(500 - user.availableTickets);
-    user.availableTickets = 500;
-    createLedgerEntry(user, {
-      id: `admin-boost-${Date.now()}`,
-      event: 'Admin Operational Balance Restored',
-      value: `+${adminBoost.toFixed(2)} TKT`,
-      type: 'reward',
-      amount: adminBoost,
-    });
+  // Clean up any legacy artificial admin boost transactions if present
+  const adminBoostTxs = user.transactions.filter((tx) => tx.id && tx.id.startsWith('admin-boost-'));
+  if (adminBoostTxs.length > 0) {
+    const totalBoostRemoved = round2(adminBoostTxs.reduce((sum, tx) => sum + (tx.amount || 0), 0));
+    user.transactions = user.transactions.filter((tx) => !tx.id || !tx.id.startsWith('admin-boost-'));
+    user.availableTickets = round2(Math.max(0, user.availableTickets - totalBoostRemoved));
     changed = true;
-    console.log(`[Balance Restore] Set admin ${user.userId} balance to 500 TKT.`);
+    console.log(`[Balance Cleanup] Removed ${totalBoostRemoved} artificial boost TKT from user ${user.userId}.`);
   }
 
   return changed;
