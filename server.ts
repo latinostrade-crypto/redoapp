@@ -1141,6 +1141,11 @@ async function loadPersistedState() {
       });
 
       rebuildReferralStats();
+      users.forEach((user) => {
+        if (reconcileStuckUserBalances(user)) {
+          schedulePersist({ userId: user.userId });
+        }
+      });
 
       // Migrate each legacy-only user immediately into the granular format.
       // This is idempotent and preserves both referral links and ticket
@@ -1361,8 +1366,61 @@ function hydrateUser(user: UserState): boolean {
       changed = true;
     }
   }
+  if (reconcileStuckUserBalances(user)) {
+    changed = true;
+  }
   return changed;
 }
+
+function reconcileStuckUserBalances(user: UserState): boolean {
+  let changed = false;
+
+  const buggyReversals = user.transactions.filter(
+    (tx) => tx.type === 'deposit_reversal' && tx.event === 'Deposit Ledger Reconciled' && tx.amount < 0
+  );
+
+  for (const reversal of buggyReversals) {
+    const refundId = `restored-reversal-${reversal.id}`;
+    const alreadyFixed = user.transactions.some((tx) => tx.id === refundId);
+    if (!alreadyFixed) {
+      const restoreAmount = round2(Math.abs(reversal.amount));
+      user.availableTickets = round2(user.availableTickets + restoreAmount);
+      createLedgerEntry(user, {
+        id: refundId,
+        event: 'Restored Ledger Balance',
+        value: `+${restoreAmount.toFixed(2)} TKT`,
+        type: 'reward',
+        amount: restoreAmount,
+      });
+      changed = true;
+      console.log(`[Balance Restoration] Restored ${restoreAmount} TKT for user ${user.userId} (Deposit Ledger Reconciled reversal fix).`);
+    }
+  }
+
+  if (user.heldTickets > 0) {
+    const isMatched = activeMatchByUser.has(user.userId);
+    const isQueued = matchmakingQueue.some((p) => p.userId === user.userId);
+    const isRoomed = Array.from(privateRooms.values()).some((r) => r.players.some((p) => p.userId === user.userId));
+
+    if (!isMatched && !isQueued && !isRoomed) {
+      const stuckAmount = round2(user.heldTickets);
+      user.availableTickets = round2(user.availableTickets + stuckAmount);
+      user.heldTickets = 0;
+      createLedgerEntry(user, {
+        id: `held-release-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        event: 'Orphaned Held Tickets Released',
+        value: `+${stuckAmount.toFixed(2)} TKT`,
+        type: 'stake_release',
+        amount: stuckAmount,
+      });
+      changed = true;
+      console.log(`[Balance Restoration] Released ${stuckAmount} held TKT for user ${user.userId}.`);
+    }
+  }
+
+  return changed;
+}
+
 
 function getStartOfUtcDay(ts: number) {
   const d = new Date(ts);
