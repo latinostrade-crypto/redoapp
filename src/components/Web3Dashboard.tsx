@@ -614,12 +614,23 @@ export function Web3Dashboard({
   if (!initialLaunchTournamentMatchIdRef.current) {
     const startApp = getTelegramStartParam();
     const tableFromSearch = new URLSearchParams(window.location.search).get('table');
+    let candidate = '';
     if (tableFromSearch) {
-      initialLaunchTournamentMatchIdRef.current = tableFromSearch;
+      candidate = tableFromSearch;
     } else if (startApp?.startsWith('tournament_table_')) {
-      initialLaunchTournamentMatchIdRef.current = startApp.replace('tournament_table_', '');
+      candidate = startApp.replace('tournament_table_', '');
     } else if (startApp?.startsWith('tourn_')) {
-      initialLaunchTournamentMatchIdRef.current = startApp;
+      candidate = startApp;
+    }
+    if (candidate) {
+      try {
+        const consumed = JSON.parse(sessionStorage.getItem('redoapp_consumed_matches') || '[]');
+        if (!consumed.includes(candidate)) {
+          initialLaunchTournamentMatchIdRef.current = candidate;
+        }
+      } catch {
+        initialLaunchTournamentMatchIdRef.current = candidate;
+      }
     }
   }
 
@@ -661,7 +672,19 @@ export function Web3Dashboard({
   }, []);
 
   useEffect(() => {
-    const handleMatchEnded = () => {
+    const handleMatchEnded = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (detail?.matchId) {
+        try {
+          const existing = JSON.parse(sessionStorage.getItem('redoapp_consumed_matches') || '[]');
+          if (!existing.includes(detail.matchId)) {
+            existing.push(detail.matchId);
+            sessionStorage.setItem('redoapp_consumed_matches', JSON.stringify(existing));
+          }
+        } catch {
+          // ignore
+        }
+      }
       initialLaunchTournamentMatchIdRef.current = '';
       launchTournamentMatchConsumedRef.current = true;
     };
@@ -1821,7 +1844,7 @@ export function Web3Dashboard({
   useEffect(() => {
     if (activeProfile?.activeMatch) {
       const match = activeProfile.activeMatch;
-      if (match.gameState?.phase === 'game_over') {
+      if (match.gameState?.phase === 'game_over' || (match as any).settled) {
         localStorage.removeItem('redoapp_active_match');
         return;
       }
@@ -2806,17 +2829,32 @@ export function Web3Dashboard({
     const targetMatchId = initialLaunchTournamentMatchIdRef.current;
     if (launchTournamentMatchConsumedRef.current || !targetMatchId || !authReady) return;
 
+    try {
+      const consumed = JSON.parse(sessionStorage.getItem('redoapp_consumed_matches') || '[]');
+      if (consumed.includes(targetMatchId)) {
+        launchTournamentMatchConsumedRef.current = true;
+        initialLaunchTournamentMatchIdRef.current = '';
+        return;
+      }
+    } catch {
+      // ignore
+    }
+
     const activeMatchObj = activeProfile?.activeMatch;
     const matchInTourn = tournamentData?.matches?.find((m) => m.matchId === targetMatchId);
 
     if (!tournamentData && !activeMatchObj) return;
 
     launchTournamentMatchConsumedRef.current = true;
+    initialLaunchTournamentMatchIdRef.current = '';
     setCurrentTab('events');
     setEventsSubTab('tournaments');
 
     if (matchInTourn && matchInTourn.status === 'completed') {
-      alert('This tournament match has already ended.');
+      return;
+    }
+
+    if (activeMatchObj?.gameState?.phase === 'game_over') {
       return;
     }
 

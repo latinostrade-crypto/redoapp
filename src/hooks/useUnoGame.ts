@@ -1509,6 +1509,18 @@ export function useUnoGame() {
 
   const returnToLobby = useCallback(() => {
     sound.playPop();
+    const endingMatchId = remoteMatchIdRef.current;
+    if (endingMatchId && typeof window !== 'undefined') {
+      try {
+        const existing = JSON.parse(sessionStorage.getItem('redoapp_consumed_matches') || '[]');
+        if (!existing.includes(endingMatchId)) {
+          existing.push(endingMatchId);
+          sessionStorage.setItem('redoapp_consumed_matches', JSON.stringify(existing));
+        }
+      } catch {
+        // ignore
+      }
+    }
     remoteMatchStreamRef.current?.close();
     remoteMatchStreamRef.current = null;
     remoteMatchIdRef.current = null;
@@ -1523,7 +1535,7 @@ export function useUnoGame() {
         // Ignore iframe history errors
       }
     }
-    window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
+    window.dispatchEvent(new CustomEvent('redoapp:match-ended', { detail: { matchId: endingMatchId } }));
     setCardsPlayedThisRound(0);
     setCardsDrawnThisRound(0);
     setLeaderboard([]);
