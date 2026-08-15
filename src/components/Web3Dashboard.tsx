@@ -2626,12 +2626,12 @@ export function Web3Dashboard({
         stored[rawAddress] = true;
         localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
         setNftCheckState('verified');
-        setNftCheckMessage('Sticker holder verified.');
+        setNftCheckMessage('Ayanami Plush sticker holder verified.');
         return;
       }
 
       setNftCheckState('missing');
-      setNftCheckMessage('No sticker NFT from this collection was found on this wallet.');
+      setNftCheckMessage('No Ayanami Plush sticker NFT was found on this wallet.');
     } catch (error) {
       setNftCheckState('error');
       setNftCheckMessage(error instanceof Error ? error.message : 'NFT verification failed.');
@@ -2641,7 +2641,7 @@ export function Web3Dashboard({
   const checkAndEnforceStickerOwnership = useCallback(async (targetGame?: 'poker' | 'blackjack'): Promise<boolean> => {
     if (!walletConnected || !rawAddress) {
       sound.playPop();
-      alert('⚠️ Для доступа к Покеру и Блэкджеку необходимо подключить TON кошелек со стикерами Redoapp. Перейдите во вкладку Events для проверки.');
+      alert('⚠️ Для доступа к Покеру и Блэкджеку необходимо подключить TON кошелек со стикером Ayanami Plush. Перейдите во вкладку Events для проверки.');
       setCurrentTab('events');
       setEventsSubTab('stickers');
       setShowConnectModal(true);
@@ -2674,19 +2674,19 @@ export function Web3Dashboard({
         stored[rawAddress] = true;
         localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
         setNftCheckState('verified');
-        setNftCheckMessage('Sticker holder verified.');
+        setNftCheckMessage('Ayanami Plush sticker holder verified.');
         return true;
       }
 
       setNftCheckState('missing');
-      setNftCheckMessage('No sticker NFT from this collection was found on this wallet.');
-      alert(`🔒 Доступ закрыт: На вашем кошельке не найдены стикеры из коллекции Redoapp. Приобретите или проверьте стикеры на вкладке Events для доступа к ${targetGame === 'blackjack' ? 'Блэкджеку' : 'Покеру'}.`);
+      setNftCheckMessage('No Ayanami Plush sticker NFT was found on this wallet.');
+      alert(`🔒 Доступ закрыт: На вашем кошельке не найден стикер Ayanami Plush! Приобретите или проверьте стикер Ayanami Plush на вкладке Events для доступа к ${targetGame === 'blackjack' ? 'Блэкджеку' : 'Покеру'}.`);
       setCurrentTab('events');
       setEventsSubTab('stickers');
       return false;
     } catch {
       if (stored[rawAddress]) return true;
-      alert('🔒 Не удалось проверить наличие стикеров на кошельке. Проверьте подключение и статус на вкладке Events.');
+      alert('🔒 Не удалось проверить наличие стикера Ayanami Plush на кошельке. Проверьте подключение и статус на вкладке Events.');
       setCurrentTab('events');
       setEventsSubTab('stickers');
       return false;
@@ -2716,7 +2716,7 @@ export function Web3Dashboard({
               setPvpGameTab('uno');
               setCurrentTab('events');
               setEventsSubTab('stickers');
-              alert('⚠️ Стикеры больше не найдены на вашем кошельке! Доступ к Покеру и Блэкджеку приостановлен.');
+              alert('⚠️ Стикер Ayanami Plush больше не найден на вашем кошельке! Доступ к Покеру и Блэкджеку приостановлен.');
             }
           }
         } else {

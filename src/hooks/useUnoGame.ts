@@ -232,7 +232,7 @@ export function useUnoGame() {
   const [activeStake, setActiveStake] = useState<number>(0);
   const [goldenTickets, setGoldenTickets] = useState<number>(() => {
     const saved = localStorage.getItem('uno_golden_tickets');
-    return saved ? parseFloat(saved) : 50;
+    return saved ? parseFloat(saved) : 0;
   });
   const [transactions, setTransactions] = useState<any[]>(() => {
     const saved = localStorage.getItem('yo_transactions');

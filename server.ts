@@ -1353,7 +1353,7 @@ function getUser(userId: string, walletAddress?: string): UserState {
     userId,
     walletAddress,
     lastDailyEnergyAt: null,
-    availableTickets: 50,
+    availableTickets: 0,
     heldTickets: 0,
     xp: 0,
     lastDailyXpAt: null,
@@ -1396,7 +1396,7 @@ function hydrateUser(user: UserState): boolean {
     }
   };
 
-  setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(user.availableTickets, 50) : 50);
+  setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(0, user.availableTickets) : 0);
   setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? user.heldTickets : 0);
   setIfChanged('xp', Number.isFinite(user.xp) ? user.xp : 0);
   const hydratedEnergy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
