@@ -466,6 +466,7 @@ interface MatchmakingStatusPayload {
   players?: QueuePlayer[];
   stake?: number;
   mode?: MatchMode;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   message?: string;
   failedAt?: number;
   // The first player-specific table snapshot travels with `ready`. Mobile
@@ -3455,6 +3456,7 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
         players: activeMatch.players,
         stake: activeMatch.stake,
         mode: activeMatch.mode,
+        gameType: activeMatch.gameType || 'uno',
         gameState: perspective?.gameState,
       };
     } else {
@@ -3491,6 +3493,7 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     countdownSec: Math.max(0, Math.ceil((MATCHMAKING_TIMEOUT_MS - waitedMs) / 1000)),
     stake: player.stake,
     mode: player.mode,
+    gameType: playerGameType,
   };
 }
 

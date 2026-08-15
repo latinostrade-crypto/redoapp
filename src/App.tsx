@@ -165,7 +165,11 @@ export default function App() {
 
   const handleReturnFromPoker = useCallback(() => {
     setActiveGameType('uno');
-  }, []);
+    returnToLobby();
+    try {
+      localStorage.removeItem('redoapp_active_match');
+    } catch {}
+  }, [returnToLobby]);
 
   const handleStartBlackjackGame = useCallback(
     (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => {
@@ -177,7 +181,11 @@ export default function App() {
 
   const handleReturnFromBlackjack = useCallback(() => {
     setActiveGameType('uno');
-  }, []);
+    returnToLobby();
+    try {
+      localStorage.removeItem('redoapp_active_match');
+    } catch {}
+  }, [returnToLobby]);
   const shouldPromptWalletAfterFirstFreeGame =
     gameState.phase === 'game_over' &&
     gameMode === 'offline' &&

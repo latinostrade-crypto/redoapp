@@ -29,19 +29,25 @@ export interface BlackjackPlayer {
   isBusted: boolean;
   hasBlackjack: boolean;
   status: BlackjackHandStatus;
+  wins: number;
+  isAi?: boolean;
 }
 
-export type BlackjackStage = 'idle' | 'player_turn' | 'dealer_turn' | 'ended';
+export type BlackjackStage = 'idle' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
 
 export interface BlackjackGameState {
   stage: BlackjackStage;
   pot: number;
   stake: number;
   mode: 'offline' | 'pvp' | 'private';
-  player: BlackjackPlayer;
+  currentPlayerIndex: number;
+  players: BlackjackPlayer[];
   dealer: BlackjackPlayer;
-  winner: 'player' | 'dealer' | 'push' | null;
+  targetWins: number;
+  winner: string | null;
+  matchChampion?: BlackjackPlayer | null;
   winningHandDesc?: string;
+  winningPayout?: number;
   logs: { id: string; timestamp: string; message: string }[];
   isDealing?: boolean;
   turnTimeLeft?: number;

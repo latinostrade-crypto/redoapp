@@ -119,9 +119,9 @@ export function BlackjackGame({
     sound.playPop();
   };
 
-  // Auto-next hand timer during showdown
+  // Auto-next hand timer during round_ended
   useEffect(() => {
-    if (gameState.stage !== 'ended') {
+    if (gameState.stage !== 'round_ended') {
       setNextHandCountdown(5);
       return;
     }
@@ -140,8 +140,11 @@ export function BlackjackGame({
     return () => clearInterval(timer);
   }, [gameState.stage, onNextHand]);
 
-  const canPlay = gameState.stage === 'player_turn' && !gameState.isDealing;
-  const canDouble = canPlay && gameState.player.cards.length === 2 && gameState.player.chips >= gameState.player.bet;
+  const activePlayer = gameState.players[gameState.currentPlayerIndex];
+  const isHumanActiveTurn = gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer?.id === 'player';
+  const canPlay = isHumanActiveTurn;
+  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
+  const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2 && activePlayer.chips >= activePlayer.bet;
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
@@ -168,6 +171,10 @@ export function BlackjackGame({
             <span>{gameState.stake === 0 ? 'FREE' : `${gameState.stake}TKT`}</span>
           </span>
 
+          <span className="text-[8px] font-black text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
+            TARGET: {gameState.targetWins} WINS
+          </span>
+
           <button
             type="button"
             onClick={toggleMute}
@@ -180,44 +187,28 @@ export function BlackjackGame({
         </div>
       </header>
 
-      {/* 2. OVAL CASINO FELT TABLE */}
-      <div className="w-full h-[380px] min-[380px]:h-[410px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[50px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-center z-10 shrink-0">
+      {/* 2. CASINO FELT TABLE WITH MULTI-SEAT PLAYERS */}
+      <div className="w-full h-[400px] min-[380px]:h-[430px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[40px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-between p-2 z-10 shrink-0">
         
-        {/* Felt Watermark Pattern */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none rounded-[45px] bg-[radial-gradient(#00ff66_1px,transparent_1px)] [background-size:10px_10px]" />
+        {/* Felt Pattern */}
+        <div className="absolute inset-0 opacity-10 pointer-events-none rounded-[35px] bg-[radial-gradient(#00ff66_1px,transparent_1px)] [background-size:10px_10px]" />
 
-        {/* 3D VISUAL DECK STACK AT CENTER-LEFT OF FELT */}
-        <div className="absolute left-3 top-[44%] -translate-y-1/2 flex flex-col items-center z-20 opacity-85 pointer-events-none">
-          <div className="relative w-7 h-10">
-            <div className="absolute inset-0 bg-slate-950 border border-black rounded translate-x-0.5 translate-y-0.5 overflow-hidden shadow">
-              <img src="/card-thumbs/back.jpeg" alt="Deck" className="w-full h-full object-cover" />
+        {/* TOP: DEALER AREA */}
+        <div className="w-full flex flex-col items-center z-30 pt-1">
+          <div className="flex items-center gap-2 bg-black/60 px-3 py-1 rounded-full border border-black/80">
+            {/* Dealer Avatar */}
+            <div className="relative p-1 bg-slate-950 border border-black rounded flex flex-col items-center min-w-[44px] shadow-md">
+              <Avatar avatarId={gameState.dealer.avatar} emotion={gameState.dealer.isBusted ? 'worried' : 'happy'} size="xs" />
+              <span className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight mt-0.5">
+                DEALER
+              </span>
+              <span className="text-[7px] font-black text-[#00d2ff] leading-tight">
+                {gameState.stage === 'player_turn' ? 'SCORE: ?' : `SCORE: ${gameState.dealer.score}`}
+              </span>
             </div>
-            <div className="absolute inset-0 bg-slate-950 border-2 border-black rounded overflow-hidden shadow-md">
-              <img src="/card-thumbs/back.jpeg" alt="Deck" className="w-full h-full object-cover" />
-            </div>
-          </div>
-          <span className="text-[6px] font-black text-[#00ff66] mt-0.5 uppercase tracking-tighter">
-            DECK
-          </span>
-        </div>
 
-        {/* BET AMOUNT DISPLAY (Top Center) */}
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center z-20">
-          <div className="bg-slate-950/95 border-2 border-[#ffcc00] px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(255,204,0,0.4)] flex items-center gap-1.5">
-            <ChipStack amount={gameState.player.bet} label="BET" />
-            <div className="flex items-center gap-1 text-[9.5px] font-black text-[#ffcc00] uppercase tracking-wide">
-              <ChipStackIcon className="w-3 h-3" />
-              <span>{gameState.player.bet}</span>
-            </div>
-          </div>
-        </div>
-
-
-        {/* DEALER AREA (TOP FELT) */}
-        <div className="absolute top-11 left-1/2 -translate-x-1/2 flex flex-col items-center z-30">
-          <div className="flex items-center gap-1.5">
             {/* Dealer Cards */}
-            <div className="flex -space-x-3 shrink-0">
+            <div className="flex -space-x-2 shrink-0">
               {gameState.dealer.cards.map((c, idx) => (
                 <BlackjackCardView
                   key={c.id || idx}
@@ -226,120 +217,99 @@ export function BlackjackGame({
                 />
               ))}
             </div>
-
-            {/* Dealer Avatar & Score */}
-            <div className="relative p-1 bg-slate-950 border border-black rounded flex flex-col items-center min-w-[48px] shadow-md">
-              <Avatar avatarId={gameState.dealer.avatar} emotion={gameState.dealer.isBusted ? 'worried' : 'happy'} size="xs" />
-              <span className="text-[7px] font-black text-white truncate max-w-[44px] leading-tight mt-0.5">
-                DEALER
-              </span>
-              <span className="text-[7px] font-black text-[#00d2ff] leading-tight">
-                {gameState.stage === 'player_turn' ? 'SCORE: ?' : `SCORE: ${gameState.dealer.score}`}
-              </span>
-            </div>
           </div>
         </div>
 
-        {/* TABLE CENTER BRAND WATERMARK & BLINKING TIMER */}
-        <div className="absolute top-[48%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 z-20 pointer-events-none">
-          <div className="text-xl font-black text-[#00ff66]/30 uppercase tracking-widest drop-shadow">
-            BLACKJACK 21
+        {/* TABLE CENTER: POT & TURN STATUS */}
+        <div className="flex flex-col items-center gap-1 z-20 pointer-events-none my-auto">
+          <div className="bg-slate-950/95 border border-[#ffcc00] px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(255,204,0,0.3)] flex items-center gap-1.5">
+            <ChipStack amount={gameState.pot} label="POT" />
+            <span className="text-[8.5px] font-black text-[#ffcc00] uppercase">
+              POT: {gameState.pot}
+            </span>
           </div>
 
           {/* TURN TIMER BADGE */}
-          {gameState.stage === 'player_turn' && !gameState.isDealing && (
+          {gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer && (
             <motion.div
               animate={{
-                scale: turnTimeLeft <= 5 ? [1, 1.1, 1] : [1, 1.03, 1],
+                scale: turnTimeLeft <= 5 ? [1, 1.08, 1] : [1, 1.02, 1],
                 boxShadow: turnTimeLeft <= 5
-                  ? ['0 0 10px #ff3333', '0 0 25px #ff3333', '0 0 10px #ff3333']
-                  : ['0 0 10px #00ff66', '0 0 20px #00ff66', '0 0 10px #00ff66'],
+                  ? ['0 0 8px #ff3333', '0 0 16px #ff3333', '0 0 8px #ff3333']
+                  : ['0 0 8px #00ff66', '0 0 16px #00ff66', '0 0 8px #00ff66'],
               }}
               transition={{ repeat: Infinity, duration: turnTimeLeft <= 5 ? 0.45 : 0.9 }}
-              className={`px-3 py-1 rounded-full border-2 font-black text-[9.5px] flex items-center gap-1.5 tracking-wider uppercase backdrop-blur-md ${
-                turnTimeLeft <= 5 ? 'bg-red-950 border-red-500 text-red-300 animate-pulse' : 'bg-black/95 border-[#00ff66] text-[#00ff66]'
+              className={`px-3 py-0.5 rounded-full border font-black text-[9px] flex items-center gap-1 uppercase backdrop-blur-md ${
+                turnTimeLeft <= 5 ? 'bg-red-950 border-red-500 text-red-300' : 'bg-black/95 border-[#00ff66] text-[#00ff66]'
               }`}
             >
-              <Timer className={`w-3.5 h-3.5 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
-              <span>YOUR TURN: {turnTimeLeft}S</span>
+              <Timer className={`w-3 h-3 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
+              <span>{activePlayer.id === 'player' ? 'YOUR TURN' : `${activePlayer.name.toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
             </motion.div>
           )}
         </div>
 
-        {/* PLAYER AREA (BOTTOM FELT) */}
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex flex-col items-center z-30">
-          {/* LIVE HAND STATUS BADGE */}
-          <div className="mb-1 bg-black/95 border border-[#00ff66] px-2.5 py-0.5 rounded text-[8px] font-black text-[#00ff66] uppercase tracking-wider shadow flex items-center gap-1">
-            {gameState.player.hasBlackjack ? (
-              <>
-                <Sparkles className="w-3 h-3 text-[#ffcc00] animate-spin" />
-                <span className="text-[#ffcc00]">NATURAL BLACKJACK 21!</span>
-              </>
-            ) : gameState.player.isBusted ? (
-              <span className="text-red-400">BUSTED ({gameState.player.score})</span>
-            ) : (
-              <span>SCORE: {gameState.player.score}{gameState.player.isSoft ? ' (SOFT)' : ''}</span>
-            )}
-          </div>
+        {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS */}
+        <div className="w-full flex items-end justify-around gap-1 z-30 pb-1">
+          {gameState.players.map((p, idx) => {
+            const isTurn = gameState.stage === 'player_turn' && gameState.currentPlayerIndex === idx;
+            const isMe = p.id === 'player';
+            return (
+              <div
+                key={p.id || idx}
+                className={`relative flex flex-col items-center p-1 rounded-lg transition-all ${
+                  isTurn
+                    ? 'bg-black/90 border-2 border-[#00ff66] shadow-[0_0_15px_#00ff66]'
+                    : isMe
+                    ? 'bg-black/70 border border-[#ffcc00]/60'
+                    : 'bg-black/60 border border-slate-700'
+                }`}
+                style={{ maxWidth: `${100 / Math.max(1, gameState.players.length)}%` }}
+              >
+                {/* WINS BADGE */}
+                <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
+                  ⭐ {p.wins}/{gameState.targetWins} WINS
+                </div>
 
-          <div className="flex items-end gap-1.5">
-            {/* Player Cards */}
-            <div className="flex -space-x-3 shrink-0">
-              {gameState.player.cards.map((c, idx) => (
-                <BlackjackCardView key={c.id || idx} card={c} />
-              ))}
-            </div>
+                {/* Cards */}
+                <div className="flex -space-x-3 mb-1 shrink-0">
+                  {p.cards.map((c, cIdx) => (
+                    <BlackjackCardView key={c.id || cIdx} card={c} />
+                  ))}
+                </div>
 
-            {/* Player Avatar Pill */}
-            <div className={`relative p-1 bg-slate-950 border rounded flex flex-col items-center min-w-[50px] max-w-[54px] ${
-              gameState.stage === 'player_turn' ? 'border-[#00ff66] shadow-[0_0_12px_#00ff66]' : 'border-black'
-            }`}>
-              <Avatar
-                avatarId={gameState.player.avatar}
-                emotion={gameState.player.isBusted ? 'worried' : gameState.stage === 'player_turn' ? 'thinking' : 'happy'}
-                size="xs"
-              />
-              <span className="text-[7px] font-black text-white truncate max-w-[46px] leading-tight mt-0.5">
-                {gameState.player.name}
-              </span>
-              <div className="flex items-center gap-0.5 text-[7px] font-black text-[#ffcc00] leading-tight">
-                <ChipStackIcon className="w-2.5 h-2.5" />
-                <span>{gameState.player.chips}</span>
+                {/* Avatar + Info */}
+                <div className="flex flex-col items-center">
+                  <Avatar avatarId={p.avatar} emotion={p.isBusted ? 'worried' : isTurn ? 'thinking' : 'happy'} size="xs" />
+                  <span className="text-[7px] font-black text-white truncate max-w-[48px] leading-tight mt-0.5">
+                    {p.name} {isMe ? '(YOU)' : ''}
+                  </span>
+                  <div className="text-[7px] font-black text-[#00ff66] leading-tight">
+                    {p.isBusted ? <span className="text-red-400">BUST</span> : p.hasBlackjack ? <span className="text-[#ffcc00]">BJ 21</span> : `SCORE: ${p.score}`}
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* 3. SHOWDOWN / HAND ENDED MODAL */}
+      {/* 3. ROUND ENDED / MATCH CHAMPION MODAL */}
       <AnimatePresence>
-        {gameState.stage === 'ended' && (
+        {(gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/85 z-50 flex flex-col items-center justify-center p-3 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-3 backdrop-blur-sm"
           >
             <div className="bg-slate-950 border-2 border-[#00ff66] p-4 rounded-xl max-w-xs w-full text-center space-y-3 shadow-[0_0_35px_#00ff66]">
-              <Trophy className="w-9 h-9 text-[#ffcc00] mx-auto animate-bounce" />
+              <Trophy className="w-10 h-10 text-[#ffcc00] mx-auto animate-bounce" />
               <h2 className="text-xs font-black uppercase tracking-wider text-[#00ff66]">
-                {gameState.winner === 'player'
-                  ? '🎉 YOU WON THE HAND!'
-                  : gameState.winner === 'push'
-                  ? 'PUSH (TIE)'
-                  : 'DEALER WINS'}
+                {gameState.stage === 'match_ended'
+                  ? `🏆 ${gameState.matchChampion?.name.toUpperCase()} IS THE CHAMPION!`
+                  : 'ROUND COMPLETED'}
               </h2>
-
-              <div className="grid grid-cols-2 gap-2 bg-slate-900 border border-slate-700 p-2 rounded text-[9px] font-bold">
-                <div className="text-center">
-                  <span className="block text-slate-400 text-[7.5px] uppercase">YOUR SCORE</span>
-                  <span className="text-[#00ff66] font-black text-sm">{gameState.player.score}</span>
-                </div>
-                <div className="text-center">
-                  <span className="block text-slate-400 text-[7.5px] uppercase">DEALER SCORE</span>
-                  <span className="text-[#00d2ff] font-black text-sm">{gameState.dealer.score}</span>
-                </div>
-              </div>
 
               {gameState.winningHandDesc && (
                 <p className="text-[9.5px] text-slate-200 font-bold bg-black/80 border border-black p-2 rounded leading-relaxed">
@@ -347,21 +317,41 @@ export function BlackjackGame({
                 </p>
               )}
 
-              {/* Action Buttons: Next Hand & Lobby */}
+              {/* Standings Table */}
+              <div className="space-y-1 bg-slate-900 border border-slate-800 p-2 rounded text-[8px] font-bold">
+                <div className="text-slate-400 text-[7px] uppercase tracking-wider mb-1">TABLE STANDINGS (TARGET: 2 WINS)</div>
+                {gameState.players.map((p) => (
+                  <div key={p.id} className="flex justify-between items-center px-1">
+                    <span className="text-white truncate max-w-[120px]">{p.name} {p.id === 'player' ? '(You)' : ''}</span>
+                    <span className="text-[#ffcc00] font-black">⭐ {p.wins}/{gameState.targetWins} WINS</span>
+                  </div>
+                ))}
+              </div>
+
+              {gameState.stage === 'match_ended' && gameState.winningPayout && gameState.winningPayout > 0 && (
+                <div className="bg-amber-950/60 border border-amber-500/50 p-1.5 rounded text-[9px] font-black text-[#ffcc00] flex items-center justify-center gap-1">
+                  <Coins className="w-3.5 h-3.5" />
+                  <span>TOTAL PRIZE: +{gameState.winningPayout} TKT</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
               <div className="space-y-1.5 pt-1">
-                <button
-                  type="button"
-                  onClick={onNextHand}
-                  className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black font-black text-[10px] uppercase pixel-btn-interactive shadow flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Play className="w-3.5 h-3.5 fill-black text-black" />
-                  <span>NEXT HAND ({nextHandCountdown}S)</span>
-                </button>
+                {gameState.stage === 'round_ended' && (
+                  <button
+                    type="button"
+                    onClick={onNextHand}
+                    className="w-full py-2 bg-[#00ff66] text-black border-2 border-black font-black text-[10px] uppercase pixel-btn-interactive shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-black text-black" />
+                    <span>NEXT HAND ({nextHandCountdown}S)</span>
+                  </button>
+                )}
 
                 <button
                   type="button"
                   onClick={onReturnToLobby}
-                  className="w-full py-1.5 bg-slate-900 text-slate-300 border border-black font-bold text-[8.5px] uppercase pixel-btn-interactive cursor-pointer"
+                  className="w-full py-2 bg-red-950 text-red-200 border border-red-500 font-bold text-[9px] uppercase pixel-btn-interactive cursor-pointer"
                 >
                   RETURN TO LOBBY
                 </button>
@@ -371,15 +361,17 @@ export function BlackjackGame({
         )}
       </AnimatePresence>
 
-      {/* 4. PLAYER ACTION CONTROLS */}
+      {/* 4. PLAYER ACTION CONTROLS (HIT / STAND / DOUBLE) */}
       {gameState.stage === 'player_turn' && !gameState.isDealing && (
         <div className="bg-slate-950 border border-black p-2 rounded-lg z-20 flex flex-col gap-1.5 shadow-lg">
           <div className="flex justify-between items-center text-[8.5px] font-bold text-[#00ff66]">
-            <span>CHOOSE ACTION:</span>
-            <div className="flex items-center gap-1 text-white">
-              <span>YOUR SCORE:</span>
-              <strong className="text-[#ffcc00] text-[9.5px]">{gameState.player.score}</strong>
-            </div>
+            <span>{canPlay ? '👉 YOUR TURN - CHOOSE ACTION:' : `⏳ WAITING FOR ${activePlayer?.name.toUpperCase()}...`}</span>
+            {humanPlayer && (
+              <div className="flex items-center gap-1 text-white">
+                <span>YOUR SCORE:</span>
+                <strong className="text-[#ffcc00] text-[9.5px]">{humanPlayer.score}</strong>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-1.5">
@@ -388,7 +380,7 @@ export function BlackjackGame({
               type="button"
               disabled={!canPlay}
               onClick={onHit}
-              className="py-2 px-1 bg-[#00ff66]/20 border border-[#00ff66] hover:bg-[#00ff66]/30 text-[#00ff66] font-black rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[46px] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
+              className="py-2 px-1 bg-[#00ff66]/20 border border-[#00ff66] hover:bg-[#00ff66]/30 text-[#00ff66] font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
             >
               <div className="flex items-center gap-1 text-[9.5px]">
                 <Plus className="w-3 h-3" />
@@ -402,7 +394,7 @@ export function BlackjackGame({
               type="button"
               disabled={!canPlay}
               onClick={onStand}
-              className="py-2 px-1 bg-red-950 border border-red-500/50 hover:bg-red-900/50 text-red-300 font-black rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[46px] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
+              className="py-2 px-1 bg-red-950 border border-red-500/50 hover:bg-red-900/50 text-red-300 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
             >
               <div className="flex items-center gap-1 text-[9.5px]">
                 <Hand className="w-3 h-3" />
@@ -416,13 +408,13 @@ export function BlackjackGame({
               type="button"
               disabled={!canDouble}
               onClick={onDoubleDown}
-              className="py-2 px-1 bg-[#ffcc00]/20 border border-[#ffcc00] hover:bg-[#ffcc00]/30 text-[#ffcc00] font-black rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[46px] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
+              className="py-2 px-1 bg-[#ffcc00]/20 border border-[#ffcc00] hover:bg-[#ffcc00]/30 text-[#ffcc00] font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
             >
               <div className="flex items-center gap-1 text-[9.5px]">
                 <Coins className="w-3 h-3" />
-                <span>DOUBLE (2X)</span>
+                <span>DOUBLE</span>
               </div>
-              <span className="text-[6.5px] text-amber-300/80 font-normal mt-0.5">double bet</span>
+              <span className="text-[6.5px] text-amber-300/80 font-normal mt-0.5">2x bet</span>
             </button>
           </div>
         </div>
