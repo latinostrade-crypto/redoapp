@@ -1505,13 +1505,27 @@ function reconcileStuckUserBalances(user: UserState): boolean {
     userWithdrawals.reduce((sum, req) => sum + (req.ticketAmount || 0), 0)
   );
 
+  // Gameplay winnings from match payouts
+  const matchEarnings = round2(
+    user.transactions
+      .filter((tx) => tx.type === 'match_payout' && tx.amount > 0)
+      .reduce((sum, tx) => sum + (tx.amount || 0), 0)
+  );
+
   const minimumExpectedBalance = round2(
-    Math.max(0, lifetimeDepositTickets + lifetimeReferralTickets - lifetimeWithdrawalTickets)
+    Math.max(0, lifetimeDepositTickets + lifetimeReferralTickets + matchEarnings - lifetimeWithdrawalTickets)
   );
 
   const currentTotalTickets = round2(user.availableTickets + user.heldTickets);
 
-  if (currentTotalTickets < minimumExpectedBalance) {
+  // If user has zero deposits, zero referrals, and zero match earnings, but has artificial tickets (e.g. legacy 50 default), clear them
+  if (currentTotalTickets > minimumExpectedBalance && lifetimeDepositTickets === 0 && lifetimeReferralTickets === 0 && matchEarnings === 0) {
+    const previous = user.availableTickets;
+    user.availableTickets = 0;
+    user.heldTickets = 0;
+    changed = true;
+    console.log(`[Audit Reset] Cleared unbacked tickets for user ${user.userId}: was ${previous} TKT, now 0 TKT.`);
+  } else if (currentTotalTickets < minimumExpectedBalance) {
     const deficit = round2(minimumExpectedBalance - currentTotalTickets);
     user.availableTickets = round2(user.availableTickets + deficit);
     createLedgerEntry(user, {
