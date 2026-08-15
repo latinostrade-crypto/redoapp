@@ -76,7 +76,7 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     telegramUsername: profile.telegramUsername ?? null,
     telegramPhotoUrl: profile.telegramPhotoUrl ?? null,
     walletAddress: profile.walletAddress ?? null,
-    availableTickets: profile.availableTickets !== undefined ? Number(profile.availableTickets) : 50,
+    availableTickets: profile.availableTickets !== undefined && Number.isFinite(Number(profile.availableTickets)) ? Number(profile.availableTickets) : 0,
     heldTickets: Number(profile.heldTickets) || 0,
     xp: Number(profile.xp) || 0,
     energy: profile.energy ?? DEFAULT_ENERGY_STATE,
