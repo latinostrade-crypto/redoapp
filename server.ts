@@ -3641,6 +3641,7 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
     maxPlayers: MAX_MATCH_PLAYERS,
     players: room.players,
     matchId: room.matchId || null,
+    gameType: room.gameType || 'uno',
   };
 }
 

@@ -578,6 +578,8 @@ type PrivateRoomResponse = {
   targetPlayers?: number;
   status: 'waiting' | 'started';
   matchId?: string;
+  stake?: number;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   players?: PrivateRoomPlayer[];
   availableTickets?: number;
   heldTickets?: number;
@@ -1402,6 +1404,9 @@ export function Web3Dashboard({
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
     }
     const targetGame = result.gameType || pvpGameTab;
+    if (result.gameType) {
+      setPvpGameTab(result.gameType);
+    }
     if ((result.status === 'started' || result.status === 'ready' || count >= 2) && result.matchId) {
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
@@ -1431,6 +1436,9 @@ export function Web3Dashboard({
     setPrivateRoomCode(result.roomCode);
     setGoldenTickets(result.availableTickets);
     setHeldTickets(result.heldTickets);
+    if (result.gameType) {
+      setPvpGameTab(result.gameType);
+    }
     applyPrivateRoomState(result);
     if (result.status !== 'started' && (result.playersCount || result.players?.length || 1) < 2) {
       setPrivateRoomStatus('waiting');
@@ -1438,7 +1446,7 @@ export function Web3Dashboard({
     }
   };
 
-  const joinPrivateRoomByCode = (roomCodeInput?: string) => {
+  const joinPrivateRoomByCode = useCallback((roomCodeInput?: string) => {
     const roomCodeToUse = (roomCodeInput || privateJoinCode || privateRoomCode).trim().toUpperCase();
     if (!roomCodeToUse) {
       alert('Enter or generate a room code first.');
@@ -1470,7 +1478,20 @@ export function Web3Dashboard({
       alert(message);
       return false;
     });
-  };
+  }, [authReady, currentUserId, userName, selectedAvatar, rawAddress, pvpGameTab, privateJoinCode, privateRoomCode, applyPrivateRoomState]);
+
+  const autoJoinConsumedRef = useRef(false);
+  useEffect(() => {
+    const code = initialLaunchRoomCodeRef.current;
+    if (code && authReady && !autoJoinConsumedRef.current) {
+      autoJoinConsumedRef.current = true;
+      setCurrentTab('pvp');
+      setPvpSubMode('private');
+      setPrivateJoinCode(code);
+      setPrivateRoomCode(code);
+      joinPrivateRoomByCode(code);
+    }
+  }, [authReady, joinPrivateRoomByCode]);
 
   const createPrivateRoomViaBridge = (payload: {
     userId: string;
