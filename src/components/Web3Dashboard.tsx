@@ -1390,15 +1390,17 @@ export function Web3Dashboard({
     };
   }, [resetPrivateRoomState]);
 
-  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string | null; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
-    setPrivateRoomPlayersCount(result.playersCount);
+  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
+    const count = result.playersCount || result.players?.length || 1;
+    setPrivateRoomPlayersCount(count);
     if (Array.isArray(result.players)) {
       setPrivateRoomPlayersList(result.players);
     }
     if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
     }
-    if (result.status === 'started' && result.matchId) {
+    const targetGame = result.gameType || pvpGameTab;
+    if ((result.status === 'started' || result.status === 'ready' || count >= 2) && result.matchId) {
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
         mode: 'private',
@@ -1410,9 +1412,9 @@ export function Web3Dashboard({
       }));
       setPrivateRoomStatus('ready');
       setPrivateRoomCreateState('idle');
-      if (pvpGameTab === 'poker' && onStartPokerGame) {
+      if (targetGame === 'poker' && onStartPokerGame) {
         onStartPokerGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
-      } else if (pvpGameTab === 'blackjack' && onStartBlackjackGame) {
+      } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
         onStartBlackjackGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
       } else {
         onStartGame('private', privateRoomStake);
@@ -1428,7 +1430,7 @@ export function Web3Dashboard({
     setGoldenTickets(result.availableTickets);
     setHeldTickets(result.heldTickets);
     applyPrivateRoomState(result);
-    if (result.status !== 'started') {
+    if (result.status !== 'started' && (result.playersCount || result.players?.length || 1) < 2) {
       setPrivateRoomStatus('waiting');
       setPrivateRoomCreateState('waiting');
     }
@@ -1455,6 +1457,7 @@ export function Web3Dashboard({
         username: userName,
         avatarId: selectedAvatar,
         walletAddress: rawAddress || null,
+        gameType: pvpGameTab,
       }),
     }).then((result) => {
       applyPrivateRoomJoin(result, roomCodeToUse);
@@ -1682,6 +1685,7 @@ export function Web3Dashboard({
       walletAddress: rawAddress || null,
       stake: effectiveStake,
       targetPlayers: effectiveTargetPlayers,
+      gameType: pvpGameTab,
       createRequestId,
       requestedRoomCode,
     };
@@ -1769,7 +1773,7 @@ export function Web3Dashboard({
         retryOnNetworkError: true,
         networkAttempts: 1,
         body: JSON.stringify({ matchId, roomCode: privateRoomCode }),
-      });
+      }).catch(() => undefined);
       localStorage.removeItem('redoapp_active_match');
       recoveredActiveMatchRef.current = '';
       resetPrivateRoomState();
@@ -1783,6 +1787,7 @@ export function Web3Dashboard({
       }
     } catch (error) {
       setPrivateRoomError(error instanceof Error ? error.message : 'Could not cancel the waiting room.');
+      resetPrivateRoomState();
     } finally {
       setPrivateRoomCanceling(false);
     }

@@ -450,6 +450,7 @@ interface PrivateRoom {
   stake: number;
   targetPlayers: number;
   hostUserId: string;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   players: QueuePlayer[];
   createdAt: number;
   status: 'waiting' | 'ready' | 'started';
@@ -5503,7 +5504,7 @@ function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Reco
 
 function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
-  const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId, requestedRoomCode } = input as {
+  const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId, requestedRoomCode, gameType: rawGameType } = input as {
     username: string;
     avatarId: string;
     stake: number;
@@ -5511,7 +5512,9 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     walletAddress?: string;
     createRequestId?: string;
     requestedRoomCode?: string;
+    gameType?: 'uno' | 'poker' | 'blackjack';
   };
+  const gameType: 'uno' | 'poker' | 'blackjack' = rawGameType || 'uno';
   const userId = getPrivateRoomUserId(req, input);
   if (!userId) {
     return res.status(400).json({ error: 'Missing room creator user id.' });
@@ -5540,6 +5543,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     avatarId,
     stake: stakeAmount,
     mode: 'private',
+    gameType,
     joinedAt: Date.now(),
     costsCommitted: false,
   };
@@ -5567,6 +5571,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
         telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
         stake: existingWaitingRoom.stake,
         targetPlayers: existingWaitingRoom.targetPlayers,
+        gameType: existingWaitingRoom.gameType || gameType,
         status: existingWaitingRoom.status,
         matchId: existingWaitingRoom.matchId || null,
         playersCount: existingWaitingRoom.players.length,
@@ -5597,6 +5602,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
         telegramLink: buildTelegramMiniAppLink(`room_${existingRoom.roomCode}`),
         stake: existingRoom.stake,
         targetPlayers: existingRoom.targetPlayers,
+        gameType: existingRoom.gameType || gameType,
         status: existingRoom.status,
         matchId: existingRoom.matchId || null,
         playersCount: existingRoom.players.length,
@@ -5615,8 +5621,6 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   if (stakeAmount > 0 && user.energy < 1) {
     return res.status(400).json({ error: 'Not enough energy.' });
   }
-
-
 
   let roomCode = normalizedRequestedCode;
   if (roomCode && privateRooms.has(roomCode)) {
@@ -5639,12 +5643,13 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       avatarId: 'koala',
       stake: stakeAmount,
       mode: 'private',
+      gameType,
       joinedAt: Date.now(),
       costsCommitted: false,
     });
   }
 
-  activateMatch(matchId, 'private', matchPlayers, stakeAmount);
+  activateMatch(matchId, 'private', matchPlayers, stakeAmount, gameType);
 
   privateRooms.set(roomCode, {
     roomCode,
@@ -5652,6 +5657,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
     hostUserId: userId,
+    gameType,
     players: [hostPlayer],
     createdAt: Date.now(),
     status: 'waiting',
@@ -5666,6 +5672,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
+    gameType,
     status: 'waiting',
     matchId,
     playersCount: 1,
@@ -5719,6 +5726,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
       telegramLink: buildTelegramMiniAppLink(`room_${room.roomCode}`),
       targetPlayers: room.targetPlayers,
       playersCount: room.players.length,
+      gameType: room.gameType || 'uno',
       status: room.status,
       matchId: room.matchId || null,
       players: room.players,
@@ -5753,6 +5761,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     avatarId,
     stake: room.stake,
     mode: 'private',
+    gameType: room.gameType || 'uno',
     joinedAt: Date.now(),
     costsCommitted: false,
   };
@@ -5790,7 +5799,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
       activeMatchByUser.set(userId, match.matchId);
 
       const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
-      if (!anyLeft) {
+      if (!anyLeft || room.players.length >= 2) {
         const startedAt = Date.now();
         room.status = 'started';
         match.costsCommitted = true;
@@ -5813,6 +5822,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     telegramLink: buildTelegramMiniAppLink(`room_${room.roomCode}`),
     targetPlayers: room.targetPlayers,
     playersCount: room.players.length,
+    gameType: room.gameType || 'uno',
     status: room.status,
     matchId: room.matchId || null,
     players: room.players,
