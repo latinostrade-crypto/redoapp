@@ -5,10 +5,14 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useUnoGame } from './hooks/useUnoGame';
+import { usePokerGame } from './hooks/usePokerGame';
+import { useBlackjackGame } from './hooks/useBlackjackGame';
 import { Avatar } from './components/Avatars';
 import { UnoCard } from './components/UnoCard';
 import { RuleModal } from './components/RuleModal';
 import { Web3Dashboard } from './components/Web3Dashboard';
+import { PokerGame } from './components/PokerGame';
+import { BlackjackGame } from './components/BlackjackGame';
 import { LoadingScreen } from './components/LoadingScreen';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiRequest, ApiTraceDetail } from './utils/api';
@@ -57,6 +61,49 @@ export default function App() {
     stopSpectating,
   } = useUnoGame();
 
+  const [activeGameType, setActiveGameType] = useState<'uno' | 'poker' | 'blackjack'>('uno');
+  const {
+    gameState: pokerState,
+    turnTimeLeft: pokerTurnTimeLeft,
+    startPokerSession,
+    nextHand: handleNextPokerHand,
+    playerFold,
+    playerCallOrCheck,
+    playerRaise,
+  } = usePokerGame({
+    onSettlement: (payout, won) => {
+      if (won && payout > 0) {
+        sound.playVictory();
+        if (pokerState.stake > 0) {
+          setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
+        }
+      }
+    },
+  });
+
+  const {
+    gameState: blackjackState,
+    turnTimeLeft: blackjackTurnTimeLeft,
+    startBlackjackSession,
+    playerHit: handleBlackjackHit,
+    playerStand: handleBlackjackStand,
+    playerDoubleDown: handleBlackjackDoubleDown,
+    nextHand: handleNextBlackjackHand,
+  } = useBlackjackGame({
+    onSettlement: (payout, won, push) => {
+      if (won && payout > 0) {
+        sound.playVictory();
+        if (blackjackState.stake > 0) {
+          setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
+        }
+      } else if (push && payout > 0) {
+        if (blackjackState.stake > 0) {
+          setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
+        }
+      }
+    },
+  });
+
   const getDisplayName = (p: any) => {
     return p.name;
   };
@@ -98,9 +145,39 @@ export default function App() {
     if (tgUser) {
       return tgUser.username || `${tgUser.first_name} ${tgUser.last_name || ''}`.trim() || 'guest';
     }
-    return 'guest';
+    let storedName = localStorage.getItem('redoapp_guest_name');
+    if (!storedName) {
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      storedName = isMobile ? `Phone_${Math.floor(1000 + Math.random() * 9000)}` : `PC_${Math.floor(1000 + Math.random() * 9000)}`;
+      localStorage.setItem('redoapp_guest_name', storedName);
+    }
+    return storedName;
   });
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
+
+  const handleStartPokerGame = useCallback(
+    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => {
+      setActiveGameType('poker');
+      startPokerSession(selectedAvatar, userName, mode, stake, roomCode);
+    },
+    [selectedAvatar, startPokerSession, userName]
+  );
+
+  const handleReturnFromPoker = useCallback(() => {
+    setActiveGameType('uno');
+  }, []);
+
+  const handleStartBlackjackGame = useCallback(
+    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => {
+      setActiveGameType('blackjack');
+      startBlackjackSession(selectedAvatar, userName, mode, stake, roomCode);
+    },
+    [selectedAvatar, startBlackjackSession, userName]
+  );
+
+  const handleReturnFromBlackjack = useCallback(() => {
+    setActiveGameType('uno');
+  }, []);
   const shouldPromptWalletAfterFirstFreeGame =
     gameState.phase === 'game_over' &&
     gameMode === 'offline' &&
@@ -593,8 +670,35 @@ export default function App() {
         </header>
       )}
 
-      {/* LOBBY / SETUP SCREEN */}
-      {gameState.phase === 'setup' && (
+      {/* POKER GAMEPLAY SURFACE */}
+      {activeGameType === 'poker' ? (
+        <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
+          <PokerGame
+            gameState={pokerState}
+            turnTimeLeft={pokerTurnTimeLeft}
+            onFold={playerFold}
+            onCallOrCheck={playerCallOrCheck}
+            onRaise={playerRaise}
+            onNextHand={handleNextPokerHand}
+            onReturnToLobby={handleReturnFromPoker}
+          />
+        </main>
+      ) : activeGameType === 'blackjack' ? (
+        <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
+          <BlackjackGame
+            gameState={blackjackState}
+            turnTimeLeft={blackjackTurnTimeLeft}
+            onHit={handleBlackjackHit}
+            onStand={handleBlackjackStand}
+            onDoubleDown={handleBlackjackDoubleDown}
+            onNextHand={handleNextBlackjackHand}
+            onReturnToLobby={handleReturnFromBlackjack}
+          />
+        </main>
+      ) : (
+        <>
+          {/* LOBBY / SETUP SCREEN */}
+          {gameState.phase === 'setup' && (
         <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-start">
 
           {/* Lobby Banner */}
@@ -620,6 +724,8 @@ export default function App() {
               xpProgressPercentage={xpProgressPercentage}
               playerXp={playerXp}
               onStartGame={handleStartGame}
+              onStartPokerGame={handleStartPokerGame}
+              onStartBlackjackGame={handleStartBlackjackGame}
               onNameChange={setUserName}
               onAvatarSelect={setSelectedAvatar}
               onOpenRules={() => setRulesOpen(true)}
@@ -1409,6 +1515,8 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
 
       {/* INJECT RULES MODAL DIALOG */}

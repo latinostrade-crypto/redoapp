@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -67,7 +67,7 @@ const FULL_PROFILE_CACHE_STORAGE_KEY = 'redoapp_full_profile_cache';
 const NFT_EVENT_VERIFICATION_STORAGE_KEY = 'redoapp_nft_event_verifications';
 const DASHBOARD_TAB_STORAGE_KEY = 'redoapp_dashboard_tab';
 const PROMO_EVENT_DISMISSED_KEY = 'redoapp_ayanami_promo_dismissed';
-const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 0, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
+const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 10, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
 type DashboardTab = 'profile' | 'events' | 'pvp' | 'rewards';
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
   if (!profile?.userId) return null;
@@ -76,7 +76,7 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     telegramUsername: profile.telegramUsername ?? null,
     telegramPhotoUrl: profile.telegramPhotoUrl ?? null,
     walletAddress: profile.walletAddress ?? null,
-    availableTickets: Number(profile.availableTickets) || 0,
+    availableTickets: profile.availableTickets !== undefined ? Number(profile.availableTickets) : 50,
     heldTickets: Number(profile.heldTickets) || 0,
     xp: Number(profile.xp) || 0,
     energy: profile.energy ?? DEFAULT_ENERGY_STATE,
@@ -118,7 +118,7 @@ function buildTelegramMiniAppSchemeLink(startParam: string) {
 }
 
 function buildMatchmakerDeliveryUrl(endpoint: 'status' | 'status-beacon' | 'stream' | 'wait-beacon', params?: URLSearchParams) {
-  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const isLocalHost = isLocal;
   const base = isLocalHost
     ? `${API_BASE_URL}/api/matchmaker/${endpoint}`
     : `/match-api/${endpoint}`;
@@ -523,7 +523,9 @@ interface Web3DashboardProps {
   xpNeeded: number;
   xpProgressPercentage: number;
   playerXp: number;
-  onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number) => void;
+  onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
+  onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
+  onStartBlackjackGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
   onOpenRules?: () => void;
@@ -595,6 +597,8 @@ export function Web3Dashboard({
   xpProgressPercentage,
   playerXp,
   onStartGame,
+  onStartPokerGame,
+  onStartBlackjackGame,
   onNameChange,
   onAvatarSelect,
   onOpenRules,
@@ -653,6 +657,7 @@ export function Web3Dashboard({
     return savedTab === 'events' || savedTab === 'pvp' || savedTab === 'rewards' ? savedTab : 'profile';
   });
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
+  const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>('uno');
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
 
   useEffect(() => {
@@ -1055,13 +1060,20 @@ export function Web3Dashboard({
   const autoResumedDepositRef = useRef('');
   const withdrawalRefreshInFlightRef = useRef(false);
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
-  const fallbackGuestUserId = `guest:${userName.toLowerCase()}`;
+  const fallbackGuestUserId = React.useMemo(() => {
+    let id = localStorage.getItem('redoapp_guest_user_id');
+    if (!id) {
+      id = `guest_${Math.random().toString(36).slice(2, 10)}`;
+      localStorage.setItem('redoapp_guest_user_id', id);
+    }
+    return id;
+  }, []);
   // Wallet connection is account metadata, never application identity.
   // Keeping the user id stable prevents a connect/disconnect from resetting
   // the Telegram profile and the currently selected dashboard tab.
   const bootstrapUserId = telegramInitData
     ? (storedUserId || fallbackGuestUserId)
-    : (storedUserId.startsWith('guest:') ? storedUserId : fallbackGuestUserId);
+    : (storedUserId.startsWith('guest:') || storedUserId.startsWith('guest_') ? storedUserId : fallbackGuestUserId);
   const activeProfile = fullProfile ?? profile;
   const publicMatchmakingActive = matchmakingState === 'joining' || matchmakingState === 'searching';
 
@@ -1103,7 +1115,13 @@ export function Web3Dashboard({
       flushSync(() => {
         setQueueLength(result.players?.length || 1);
         setMatchmakingState('success');
-        onStartGame(result.mode || 'pvp', matchedStake);
+        if (pvpGameTab === 'poker' && onStartPokerGame) {
+          onStartPokerGame(result.mode || 'pvp', matchedStake);
+        } else if (pvpGameTab === 'blackjack' && onStartBlackjackGame) {
+          onStartBlackjackGame(result.mode || 'pvp', matchedStake);
+        } else {
+          onStartGame(result.mode || 'pvp', matchedStake);
+        }
       });
       return true;
     } catch (error) {
@@ -1111,7 +1129,7 @@ export function Web3Dashboard({
       setPublicQueueError(error instanceof Error ? error.message : 'Could not open the matched table.');
       return false;
     }
-  }, [currentUserId, onStartGame]);
+  }, [currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, pvpGameTab, tournamentData?.matches]);
 
   useEffect(() => {
     if (activeProfile?.lastDailyXpAt) {
@@ -1161,9 +1179,10 @@ export function Web3Dashboard({
   const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - energyNow) / 1000)) : 0;
   const tgProfileName = activeProfile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = activeProfile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
-  const privateStakeRequiresWallet = privateRoomStake > 0;
+  const isLocalNetwork = isLocal;
+  const privateStakeRequiresWallet = !isLocalNetwork && privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
-  const authReady = bootstrapState === 'ready';
+  const authReady = bootstrapState === 'ready' || isLocalNetwork;
   const refreshPendingWithdrawal = useCallback(async () => {
     if (withdrawalRefreshInFlightRef.current) return null;
     withdrawalRefreshInFlightRef.current = true;
@@ -1391,9 +1410,15 @@ export function Web3Dashboard({
       }));
       setPrivateRoomStatus('ready');
       setPrivateRoomCreateState('idle');
-      onStartGame('private', privateRoomStake);
+      if (pvpGameTab === 'poker' && onStartPokerGame) {
+        onStartPokerGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
+      } else if (pvpGameTab === 'blackjack' && onStartBlackjackGame) {
+        onStartBlackjackGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
+      } else {
+        onStartGame('private', privateRoomStake);
+      }
     }
-  }, [privateRoomStake, currentUserId, onStartGame, privateRoomCode]);
+  }, [privateRoomStake, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, privateRoomCode, pvpGameTab]);
 
   const applyPrivateRoomJoin = (result: PrivateRoomResponse, roomCodeToUse: string) => {
     setShowRoomDisclaimer(false);
@@ -1634,14 +1659,15 @@ export function Web3Dashboard({
     };
     return run();
   };
-
-  const createPrivateRoom = () => {
+  const createPrivateRoom = (overrideStake?: PrivateStakeOption, overrideTargetPlayers?: 2 | 3 | 4) => {
     if (privateRoomCreateState === 'creating') return;
     if (!authReady) {
       setPrivateRoomError('Session is still syncing with the backend. Try again in a moment.');
       return;
     }
-    if (privateStakeRequiresWallet && !walletConnected) {
+    const effectiveStake = overrideStake !== undefined ? overrideStake : privateRoomStake;
+    const effectiveTargetPlayers = overrideTargetPlayers !== undefined ? overrideTargetPlayers : privateRoomTargetPlayers;
+    if (effectiveStake > 0 && !walletConnected && !isLocalNetwork) {
       connectWallet();
       return;
     }
@@ -1654,8 +1680,8 @@ export function Web3Dashboard({
       username: userName,
       avatarId: selectedAvatar,
       walletAddress: rawAddress || null,
-      stake: privateRoomStake,
-      targetPlayers: privateRoomTargetPlayers,
+      stake: effectiveStake,
+      targetPlayers: effectiveTargetPlayers,
       createRequestId,
       requestedRoomCode,
     };
@@ -1761,6 +1787,112 @@ export function Web3Dashboard({
       setPrivateRoomCanceling(false);
     }
   };
+
+  const handleLeavePublicQueue = useCallback(() => {
+    sound.playPop();
+    publicJoinAttemptRef.current += 1;
+    apiRequest('/api/matchmaker/leave', {
+      method: 'POST',
+      body: JSON.stringify({ userId: currentUserId }),
+    }).then(() => {
+      return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
+    }).then((balance) => {
+      setGoldenTickets(balance.availableTickets);
+      setHeldTickets(balance.heldTickets);
+    }).finally(() => {
+      setMatchmakingState('idle');
+      setPublicQueueError('');
+    });
+  }, [currentUserId]);
+
+  const handleStartMatchmakingQueue = useCallback(() => {
+    if (!authReady) {
+      const message = 'Session is still syncing with the backend. Try again in a moment.';
+      setPublicQueueError(message);
+      alert(message);
+      return;
+    }
+    if (selectedStake > 0 && !walletConnected && !isLocalNetwork) {
+      const message = 'Connect wallet first for ticket-stake public matches.';
+      setPublicQueueError(message);
+      alert(message);
+      return;
+    }
+    const requiredEnergy = selectedStake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
+    if (energy.energy < requiredEnergy) {
+      const message = selectedStake === 0
+        ? `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`
+        : `You need ${PUBLIC_STAKE_MATCH_ENERGY_COST} energy to join a public game.`;
+      setPublicQueueError(message);
+      alert(message);
+      return;
+    }
+    if (selectedStake > 0 && goldenTickets < selectedStake) {
+      const message = `You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`;
+      setPublicQueueError(message);
+      alert(message);
+      return;
+    }
+    sound.playShuffle();
+    wakeBackend();
+    setPublicQueueError('');
+    setQueueLength(1);
+    setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
+    publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
+    const joinAttempt = publicJoinAttemptRef.current + 1;
+    publicJoinAttemptRef.current = joinAttempt;
+    publicJoinStartedAtRef.current = Date.now();
+    setMatchmakingState('joining');
+    const joinPayload = {
+      userId: currentUserId,
+      username: userName,
+      avatarId: selectedAvatar,
+      walletAddress: rawAddress || null,
+      stake: selectedStake,
+      mode: 'pvp' as const,
+      forceFresh: true,
+    };
+    let joinSettled = false;
+    apiRequest<PublicMatchmakerResponse>('/api/matchmaker/join', {
+      method: 'POST',
+      retryOnNetworkError: true,
+      networkAttempts: 3,
+      timeoutMs: 45000,
+      body: JSON.stringify(joinPayload),
+    }).then((result) => {
+      if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+      joinSettled = true;
+      setGoldenTickets(result.availableTickets);
+      setHeldTickets(result.heldTickets);
+      if (result.energy) {
+        updateProfileEnergy(result.energy);
+      }
+      setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
+      setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
+      if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
+        openPublicMatch(result.matchmaker, selectedStake);
+        return;
+      }
+      setMatchmakingState('searching');
+    }).catch(async (error) => {
+      if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+      try {
+        const recovered = await getPublicQueueStatusViaSameOrigin()
+          .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8000 }));
+        if (recovered.status === 'ready' && recovered.matchId) {
+          openPublicMatch(recovered, selectedStake);
+          return;
+        }
+        if (recovered.status === 'searching') {
+          setQueueLength(recovered.queueLength || 1);
+          setMatchmakingState('searching');
+          return;
+        }
+      } catch {}
+      setMatchmakingState('idle');
+      setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
+    });
+  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, openPublicMatch, updateProfileEnergy, getPublicQueueStatusViaSameOrigin]);
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     if (!authReady || !getSessionToken()) {
@@ -2506,6 +2638,100 @@ export function Web3Dashboard({
     }
   };
 
+  const checkAndEnforceStickerOwnership = useCallback(async (targetGame?: 'poker' | 'blackjack'): Promise<boolean> => {
+    if (!walletConnected || !rawAddress) {
+      sound.playPop();
+      alert('⚠️ Для доступа к Покеру и Блэкджеку необходимо подключить TON кошелек со стикерами Redoapp. Перейдите во вкладку Events для проверки.');
+      setCurrentTab('events');
+      setEventsSubTab('stickers');
+      setShowConnectModal(true);
+      return false;
+    }
+
+    const stored = readNftEventVerifications();
+    const isAlreadyVerified = Boolean(stored[rawAddress]);
+
+    if (isAlreadyVerified) {
+      return true;
+    }
+
+    try {
+      sound.playPop();
+      setNftCheckState('checking');
+      const response = await fetch(
+        `https://tonapi.io/v2/accounts/${encodeURIComponent(rawAddress)}/nfts?collection=${encodeURIComponent(NFT_COLLECTION_ADDRESS)}&limit=1`,
+        { headers: { Accept: 'application/json' } }
+      );
+
+      if (!response.ok) {
+        throw new Error('TonAPI check unavailable.');
+      }
+
+      const payload = (await response.json()) as { nft_items?: unknown[]; items?: unknown[] };
+      const nftItems = Array.isArray(payload.nft_items) ? payload.nft_items : Array.isArray(payload.items) ? payload.items : [];
+
+      if (nftItems.length > 0) {
+        stored[rawAddress] = true;
+        localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
+        setNftCheckState('verified');
+        setNftCheckMessage('Sticker holder verified.');
+        return true;
+      }
+
+      setNftCheckState('missing');
+      setNftCheckMessage('No sticker NFT from this collection was found on this wallet.');
+      alert(`🔒 Доступ закрыт: На вашем кошельке не найдены стикеры из коллекции Redoapp. Приобретите или проверьте стикеры на вкладке Events для доступа к ${targetGame === 'blackjack' ? 'Блэкджеку' : 'Покеру'}.`);
+      setCurrentTab('events');
+      setEventsSubTab('stickers');
+      return false;
+    } catch {
+      if (stored[rawAddress]) return true;
+      alert('🔒 Не удалось проверить наличие стикеров на кошельке. Проверьте подключение и статус на вкладке Events.');
+      setCurrentTab('events');
+      setEventsSubTab('stickers');
+      return false;
+    }
+  }, [walletConnected, rawAddress, setCurrentTab]);
+
+  useEffect(() => {
+    if (!walletConnected || !rawAddress) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(
+          `https://tonapi.io/v2/accounts/${encodeURIComponent(rawAddress)}/nfts?collection=${encodeURIComponent(NFT_COLLECTION_ADDRESS)}&limit=1`,
+          { headers: { Accept: 'application/json' } }
+        );
+        if (!response.ok) return;
+        const payload = (await response.json()) as { nft_items?: unknown[]; items?: unknown[] };
+        const nftItems = Array.isArray(payload.nft_items) ? payload.nft_items : Array.isArray(payload.items) ? payload.items : [];
+
+        const stored = readNftEventVerifications();
+        if (nftItems.length === 0) {
+          if (stored[rawAddress]) {
+            delete stored[rawAddress];
+            localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
+            setNftCheckState('missing');
+            if (pvpGameTab === 'poker' || pvpGameTab === 'blackjack') {
+              setPvpGameTab('uno');
+              setCurrentTab('events');
+              setEventsSubTab('stickers');
+              alert('⚠️ Стикеры больше не найдены на вашем кошельке! Доступ к Покеру и Блэкджеку приостановлен.');
+            }
+          }
+        } else {
+          if (!stored[rawAddress]) {
+            stored[rawAddress] = true;
+            localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
+            setNftCheckState('verified');
+          }
+        }
+      } catch {}
+    }, 180000);
+
+    return () => clearInterval(interval);
+  }, [walletConnected, rawAddress, pvpGameTab, setCurrentTab]);
+
   const buyTicketsWithTon = async () => {
     if (!walletConnected) {
       alert("Please connect your wallet first.");
@@ -2717,6 +2943,7 @@ export function Web3Dashboard({
           matchmakingStateRef.current === 'joining'
           || matchmakingStateRef.current === 'success'
           || openingPublicMatchRef.current !== ''
+          || Date.now() - publicJoinStartedAtRef.current < 4000
         ) return;
         const activeMatchRaw = localStorage.getItem('redoapp_active_match');
         if (activeMatchRaw) {
@@ -4535,7 +4762,61 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="w-full space-y-3 py-2 text-left"
             >
-              {/* Consolidated PVP Sub Mode selector */}
+              {/* Consolidated Game Sub-Tab selector (UNO vs POKER vs BLACKJACK) */}
+              <div className="grid grid-cols-3 border-2 border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] min-[380px]:text-[9px] font-mono font-black mb-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sound.playPop();
+                    setPvpGameTab('uno');
+                  }}
+                  className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
+                    pvpGameTab === 'uno'
+                      ? 'bg-[#00d2ff] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)] font-black'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  🎮 UNO
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    sound.playPop();
+                    const allowed = await checkAndEnforceStickerOwnership('poker');
+                    if (allowed) {
+                      setPvpGameTab('poker');
+                    }
+                  }}
+                  className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
+                    pvpGameTab === 'poker'
+                      ? 'bg-[#ffcc00] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)] font-black'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  ♠️ POKER
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    sound.playPop();
+                    const allowed = await checkAndEnforceStickerOwnership('blackjack');
+                    if (allowed) {
+                      setPvpGameTab('blackjack');
+                    }
+                  }}
+                  className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
+                    pvpGameTab === 'blackjack'
+                      ? 'bg-[#00ff66] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)] font-black'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  🃏 BLACKJACK
+                </button>
+              </div>
+
+              {pvpGameTab === 'uno' && (
+                <>
+                  {/* Consolidated PVP Sub Mode selector */}
               <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
                 {(['public', 'private', 'practice'] as const).map((sub) => (
                   <button
@@ -5304,6 +5585,613 @@ export function Web3Dashboard({
                   </button>
                 </div>
               )}
+            </>
+          )}
+
+          {pvpGameTab === 'poker' && (
+            <div className="w-full space-y-3 font-mono">
+              {/* Poker Sub Mode selector */}
+              <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
+                {(['public', 'private', 'practice'] as const).map((sub) => (
+                  <button
+                    key={sub}
+                    type="button"
+                    onClick={() => {
+                      sound.playPop();
+                      setPvpSubMode(sub);
+                    }}
+                    className={`text-center py-1 uppercase transition-all cursor-pointer border ${
+                      pvpSubMode === sub
+                        ? 'bg-[#ffcc00]/20 text-[#ffcc00] border-[#ffcc00]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-bold'
+                        : 'text-slate-400 border-transparent hover:text-slate-200'
+                    }`}
+                  >
+                    {sub === 'public' ? 'Public' : sub === 'private' ? 'Private' : 'Practice'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Poker Public Arena */}
+              {pvpSubMode === 'public' && (
+                matchmakingState === 'joining' || matchmakingState === 'searching' ? (
+                  <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
+                    <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
+                      <span className="text-[10px] font-black text-[#ffcc00]">
+                        {`${matchmakingTimer}S`}
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
+                        {matchmakingState === 'joining' ? 'CONNECTING TO POKER QUEUE' : 'POKER QUEUE ACTIVE'}
+                      </h3>
+                      <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
+                        Searching for real opponents ({queueLength}/4). Ticket games are strict PVP with NO bots.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLeavePublicQueue}
+                      className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive cursor-pointer"
+                    >
+                      Cancel Queue
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3">
+                    <div className="flex justify-between items-center text-[9px]">
+                      <h3 className="font-black text-slate-100 uppercase flex items-center gap-1">
+                        <span>♠️</span> TEXAS HOLD'EM ARENA
+                      </h3>
+                      <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
+                        {selectedStake === 0 ? (
+                          <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#ffcc00]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
+                        ) : (
+                          <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1">
+                      {PUBLIC_STAKE_OPTIONS.map((stake) => (
+                        <button
+                          key={stake}
+                          type="button"
+                          onClick={() => {
+                            sound.playPop();
+                            setSelectedStake(stake);
+                          }}
+                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                            selectedStake === stake
+                              ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                              : 'bg-black border-black text-slate-450'
+                          }`}
+                        >
+                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
+                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {selectedStake > 0 && (
+                      <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400">
+                        <div className="flex justify-between items-center text-slate-300">
+                          <span className="font-bold">4-Player Hold'em Pot:</span>
+                          <span className="text-[#ffcc00] font-bold">{(selectedStake * 4 * 0.96).toFixed(2)} TKT</span>
+                        </div>
+                        <div className="flex justify-between items-center text-[7px] text-slate-450">
+                          <span>Winner takes 96% of total table pot (4% platform fee).</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleStartMatchmakingQueue}
+                      className="w-full py-2.5 bg-[#ffcc00] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer"
+                    >
+                      SEARCH POKER MATCH ({selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`})
+                    </button>
+                  </div>
+                )
+              )}
+
+              {/* Poker Private Arena */}
+              {pvpSubMode === 'private' && (
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
+                      POKER PRIVATE ROOM
+                    </h3>
+                    <span className="text-[8px] text-slate-400">
+                      STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
+                    </span>
+                  </div>
+                  <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
+                    Create a private Texas Hold'em room or join your friend's room using a room code.
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-1">
+                    {PRIVATE_STAKE_OPTIONS.map((stake) => (
+                      <button
+                        key={stake}
+                        type="button"
+                        onClick={() => {
+                          sound.playPop();
+                          setSelectedStake(stake);
+                          setPrivateRoomStake(stake);
+                        }}
+                        className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                          selectedStake === stake
+                            ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                            : 'bg-black border-black text-slate-450'
+                        }`}
+                      >
+                        <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
+                        <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Join By Room Code */}
+                  <div className="space-y-1">
+                    <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        value={privateJoinCode}
+                        onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
+                        placeholder="ENTER CODE (E.G. PK8492)"
+                        className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
+                          if (!normalizedCode) {
+                            alert('Enter a room code first.');
+                            return;
+                          }
+                          sound.playPop();
+                          setPrivateRoomCode(normalizedCode);
+                          joinPrivateRoomByCode(normalizedCode);
+                        }}
+                        className="px-3 py-1.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                      >
+                        Join
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Create Room Button or Active Waiting Room Lobby */}
+                  {!generatedLink && privateRoomStatus !== 'waiting' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrivateRoomStake(selectedStake);
+                        setPrivateRoomTargetPlayers(4);
+                        createPrivateRoom(selectedStake, 4);
+                      }}
+                      disabled={!authReady || privateRoomCreateState === 'creating'}
+                      className="w-full py-2.5 bg-[#ffcc00] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {privateRoomCreateState === 'creating' ? 'Creating Room...' : 'CREATE PRIVATE POKER ROOM'}
+                    </button>
+                  ) : (
+                    <div className="space-y-2 text-[9px] bg-black p-2 border border-black rounded">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[#ffcc00] font-black uppercase text-[10px]">
+                          ROOM: {privateRoomCode || 'PENDING'}
+                        </span>
+                        <span className="text-[#00ff66] font-bold text-[9px]">
+                          {privateRoomPlayersCount || 1}/4 PLAYERS
+                        </span>
+                      </div>
+
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sound.playPop();
+                            const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
+                            const text = encodeURIComponent(`Join my private Poker room: ${privateRoomCode}! 🃏♠️`);
+                            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
+                            const tg = (window as any).Telegram?.WebApp;
+                            if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+                            else window.open(shareUrl, '_blank');
+                          }}
+                          className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
+                        >
+                          INVITE FRIEND ➔
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            sound.playPop();
+                            await copyTextSafely(privateRoomCode);
+                            alert(`Room code ${privateRoomCode} copied!`);
+                          }}
+                          className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
+                        >
+                          Copy Code
+                        </button>
+                      </div>
+
+                      {/* Player Slots */}
+                      <div className="space-y-1 py-1">
+                        <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-1 px-2 rounded-sm text-[8px]">
+                          <span className="text-white font-bold">{userName} (You)</span>
+                          <span className="text-[#00ff66] font-bold">HOST</span>
+                        </div>
+                        <div className="flex items-center justify-between bg-slate-900/50 border border-dashed border-slate-800 p-1 px-2 rounded-sm text-[8px]">
+                          <span className="text-slate-400 italic">
+                            {privateRoomPlayersCount >= 2 ? (privateRoomPlayersList[1]?.username || 'Player 2') : 'Waiting for friend to join with code...'}
+                          </span>
+                          <span className={privateRoomPlayersCount >= 2 ? "text-[#00ff66] font-bold" : "text-[#ffcc00] animate-pulse font-bold"}>
+                            {privateRoomPlayersCount >= 2 ? 'READY' : 'WAITING'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Launch Match Button */}
+                      {privateRoomPlayersCount >= 2 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sound.playShuffle();
+                            if (onStartPokerGame) {
+                              onStartPokerGame('private', selectedStake, privateRoomCode);
+                            }
+                          }}
+                          className="w-full py-2 bg-[#00ff66] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive shadow cursor-pointer"
+                        >
+                          START POKER MATCH ({privateRoomPlayersCount} PLAYERS) ➔
+                        </button>
+                      ) : (
+                        <div className="w-full py-2 bg-slate-900 text-[#ffcc00] border border-slate-800 text-[8px] font-mono text-center uppercase animate-pulse">
+                          ⏳ Waiting for 2nd player to enter code {privateRoomCode}...
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={cancelWaitingPrivateRoom}
+                        className="w-full py-1 bg-red-950 text-red-300 border border-red-900 text-[8px] font-bold uppercase pixel-btn-interactive"
+                      >
+                        Cancel Room
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Poker Practice Mode */}
+              {pvpSubMode === 'practice' && (
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
+                  <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
+                    Practice Texas Hold'em against 3 AI bots (Bear, Fox, Panda) zero risk.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playShuffle();
+                      if (onStartPokerGame) {
+                        onStartPokerGame('offline', 0);
+                      } else {
+                        onStartGame('offline', 0);
+                      }
+                    }}
+                    className="w-full py-3 bg-[#00ff66] text-black font-black text-[10px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-black text-black" />
+                    PLAY POKER PRACTICE (FREE)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {pvpGameTab === 'blackjack' && (
+            <div className="w-full space-y-3 font-mono">
+              {/* Blackjack Sub Mode selector */}
+              <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
+                {(['public', 'private', 'practice'] as const).map((sub) => (
+                  <button
+                    key={sub}
+                    type="button"
+                    onClick={() => {
+                      sound.playPop();
+                      setPvpSubMode(sub);
+                    }}
+                    className={`text-center py-1 uppercase transition-all cursor-pointer border ${
+                      pvpSubMode === sub
+                        ? 'bg-[#00ff66]/20 text-[#00ff66] border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-bold'
+                        : 'text-slate-400 border-transparent hover:text-slate-200'
+                    }`}
+                  >
+                    {sub === 'public' ? 'Public' : sub === 'private' ? 'Private' : 'Practice'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Blackjack Public Arena */}
+              {pvpSubMode === 'public' && (
+                matchmakingState === 'joining' || matchmakingState === 'searching' ? (
+                  <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
+                    <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
+                      <span className="text-[10px] font-black text-[#00ff66]">
+                        {`${matchmakingTimer}S`}
+                      </span>
+                    </div>
+                    <div className="space-y-0.5">
+                      <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
+                        {matchmakingState === 'joining' ? 'CONNECTING TO BLACKJACK QUEUE' : 'BLACKJACK QUEUE ACTIVE'}
+                      </h3>
+                      <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
+                        Searching for real opponents ({queueLength}/2). Ticket games are strict PVP with NO bots.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleLeavePublicQueue}
+                      className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive cursor-pointer"
+                    >
+                      Cancel Queue
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3">
+                    <div className="flex justify-between items-center text-[9px]">
+                      <h3 className="font-black text-slate-100 uppercase flex items-center gap-1">
+                        <span>🃏</span> BLACKJACK 21 ARENA
+                      </h3>
+                      <span className="text-[8px] text-[#00ff66] bg-black px-1.5 py-0.5 border border-black">
+                        {selectedStake === 0 ? (
+                          <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#00ff66]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
+                        ) : (
+                          <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1">
+                      {PUBLIC_STAKE_OPTIONS.map((stake) => (
+                        <button
+                          key={stake}
+                          type="button"
+                          onClick={() => {
+                            sound.playPop();
+                            setSelectedStake(stake);
+                          }}
+                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                            selectedStake === stake
+                              ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                              : 'bg-black border-black text-slate-450'
+                          }`}
+                        >
+                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
+                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'practice' : 'stake'}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {selectedStake > 0 && (
+                      <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400">
+                        <div className="flex justify-between items-center text-slate-300">
+                          <span>Win Payout:</span>
+                          <span className="text-[#00ff66] font-bold">1:1 ({(selectedStake * 2).toFixed(2)} TKT)</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-300">
+                          <span>Natural 21 Payout:</span>
+                          <span className="text-[#ffcc00] font-bold">3:2 ({(selectedStake * 2.5).toFixed(2)} TKT)</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleStartMatchmakingQueue}
+                      className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer"
+                    >
+                      SEARCH BLACKJACK MATCH ({selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`})
+                    </button>
+                  </div>
+                )
+              )}
+
+              {/* Blackjack Private Arena */}
+              {pvpSubMode === 'private' && (
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
+                      BLACKJACK PRIVATE ROOM
+                    </h3>
+                    <span className="text-[8px] text-slate-400">
+                      STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
+                    </span>
+                  </div>
+                  <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
+                    Create a private Blackjack room or join your friend's table using a room code.
+                  </p>
+
+                  <div className="grid grid-cols-3 gap-1">
+                    {PRIVATE_STAKE_OPTIONS.map((stake) => (
+                      <button
+                        key={stake}
+                        type="button"
+                        onClick={() => {
+                          sound.playPop();
+                          setSelectedStake(stake);
+                          setPrivateRoomStake(stake);
+                        }}
+                        className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                          selectedStake === stake
+                            ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                            : 'bg-black border-black text-slate-450'
+                        }`}
+                      >
+                        <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
+                        <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Join By Room Code */}
+                  <div className="space-y-1">
+                    <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        value={privateJoinCode}
+                        onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
+                        placeholder="ENTER CODE (E.G. BJ5192)"
+                        className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
+                          if (!normalizedCode) {
+                            alert('Enter a room code first.');
+                            return;
+                          }
+                          sound.playPop();
+                          setPrivateRoomCode(normalizedCode);
+                          joinPrivateRoomByCode(normalizedCode);
+                        }}
+                        className="px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                      >
+                        Join
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Create Room Button or Active Waiting Room Lobby */}
+                  {!generatedLink && privateRoomStatus !== 'waiting' ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPrivateRoomStake(selectedStake);
+                        setPrivateRoomTargetPlayers(2);
+                        createPrivateRoom(selectedStake, 2);
+                      }}
+                      disabled={!authReady || privateRoomCreateState === 'creating'}
+                      className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      {privateRoomCreateState === 'creating' ? 'Creating Room...' : 'CREATE PRIVATE BLACKJACK ROOM'}
+                    </button>
+                  ) : (
+                    <div className="space-y-2 text-[9px] bg-black p-2 border border-black rounded">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[#00ff66] font-black uppercase text-[10px]">
+                          ROOM: {privateRoomCode || 'PENDING'}
+                        </span>
+                        <span className="text-[#ffcc00] font-bold text-[9px]">
+                          {privateRoomPlayersCount || 1}/2 PLAYERS
+                        </span>
+                      </div>
+
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sound.playPop();
+                            const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
+                            const text = encodeURIComponent(`Join my private Blackjack room: ${privateRoomCode}! 🃏⚡`);
+                            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
+                            const tg = (window as any).Telegram?.WebApp;
+                            if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+                            else window.open(shareUrl, '_blank');
+                          }}
+                          className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
+                        >
+                          INVITE FRIEND ➔
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            sound.playPop();
+                            await copyTextSafely(privateRoomCode);
+                            alert(`Room code ${privateRoomCode} copied!`);
+                          }}
+                          className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
+                        >
+                          Copy Code
+                        </button>
+                      </div>
+
+                      {/* Player Slots */}
+                      <div className="space-y-1 py-1">
+                        <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-1 px-2 rounded-sm text-[8px]">
+                          <span className="text-white font-bold">{userName} (You)</span>
+                          <span className="text-[#00ff66] font-bold">HOST</span>
+                        </div>
+                        <div className="flex items-center justify-between bg-slate-900/50 border border-dashed border-slate-800 p-1 px-2 rounded-sm text-[8px]">
+                          <span className="text-slate-400 italic">
+                            {privateRoomPlayersCount >= 2 ? (privateRoomPlayersList[1]?.username || 'Player 2') : 'Waiting for friend to join with code...'}
+                          </span>
+                          <span className={privateRoomPlayersCount >= 2 ? "text-[#00ff66] font-bold" : "text-[#ffcc00] animate-pulse font-bold"}>
+                            {privateRoomPlayersCount >= 2 ? 'READY' : 'WAITING'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Launch Match Button */}
+                      {privateRoomPlayersCount >= 2 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sound.playShuffle();
+                            if (onStartBlackjackGame) {
+                              onStartBlackjackGame('private', selectedStake, privateRoomCode);
+                            }
+                          }}
+                          className="w-full py-2 bg-[#00ff66] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive shadow cursor-pointer"
+                        >
+                          START BLACKJACK MATCH (2 PLAYERS) ➔
+                        </button>
+                      ) : (
+                        <div className="w-full py-2 bg-slate-900 text-[#ffcc00] border border-slate-800 text-[8px] font-mono text-center uppercase animate-pulse">
+                          ⏳ Waiting for 2nd player to enter code {privateRoomCode}...
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={cancelWaitingPrivateRoom}
+                        className="w-full py-1 bg-red-950 text-red-300 border border-red-900 text-[8px] font-bold uppercase pixel-btn-interactive"
+                      >
+                        Cancel Room
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Blackjack Practice Mode */}
+              {pvpSubMode === 'practice' && (
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
+                  <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
+                    Practice Blackjack 21 against the house with zero ticket risk.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sound.playShuffle();
+                      if (onStartBlackjackGame) {
+                        onStartBlackjackGame('offline', 0);
+                      } else {
+                        onStartGame('offline', 0);
+                      }
+                    }}
+                    className="w-full py-3 bg-[#00ff66] text-black border border-black text-[10px] uppercase font-black pixel-btn-interactive flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] cursor-pointer"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-black text-black" />
+                    PLAY BLACKJACK PRACTICE (FREE)
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
             </motion.div>
           )}
       </div>

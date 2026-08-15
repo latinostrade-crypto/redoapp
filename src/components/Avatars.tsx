@@ -136,7 +136,16 @@ const AVATAR_PIXELS: Record<AvatarId, string[]> = {
   ]
 };
 
-export const Avatar: React.FC<AvatarProps> = ({ id, emotion, isActive, size = 64 }) => {
+export const Avatar: React.FC<AvatarProps> = ({ id, avatarId, emotion, isActive, size = 64 }) => {
+  const targetId = id || avatarId || 'rabbit';
+  const calculatedSize = typeof size === 'number'
+    ? size
+    : size === 'xs' ? 24
+    : size === 'sm' ? 32
+    : size === 'md' ? 44
+    : size === 'lg' ? 64
+    : 36;
+
   const getAvatarStyle = () => {
     let animClass = 'pixel-box-sm relative flex items-center justify-center overflow-hidden ';
     
@@ -159,14 +168,14 @@ export const Avatar: React.FC<AvatarProps> = ({ id, emotion, isActive, size = 64
     return animClass;
   };
 
-  const rows = AVATAR_PIXELS[id] || AVATAR_PIXELS.rabbit;
+  const rows = AVATAR_PIXELS[targetId] || AVATAR_PIXELS.rabbit;
 
   return (
     <div
       role="img"
-      aria-label={`Pixel avatar ${id} showing ${emotion}`}
+      aria-label={`Pixel avatar ${targetId} showing ${emotion}`}
       className={`transition-all duration-200 ${getAvatarStyle()}`}
-      style={{ width: size, height: size, padding: '4px' }}
+      style={{ width: calculatedSize, height: calculatedSize, padding: '2px' }}
     >
       <svg viewBox="0 0 16 16" className="w-full h-full" style={{ shapeRendering: 'crispEdges' }}>
         {rows.map((row, rIdx) => 

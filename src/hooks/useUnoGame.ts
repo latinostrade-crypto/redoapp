@@ -24,7 +24,7 @@ import {
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
-import { apiRequest, buildAuthenticatedUrl, getSessionToken } from '../utils/api';
+import { apiRequest, buildAuthenticatedUrl, getSessionToken, isLocal } from '../utils/api';
 
 function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: GameState }> {
   return new Promise((resolve, reject) => {
@@ -232,7 +232,7 @@ export function useUnoGame() {
   const [activeStake, setActiveStake] = useState<number>(0);
   const [goldenTickets, setGoldenTickets] = useState<number>(() => {
     const saved = localStorage.getItem('uno_golden_tickets');
-    return saved ? parseFloat(saved) : 0;
+    return saved ? parseFloat(saved) : 50;
   });
   const [transactions, setTransactions] = useState<any[]>(() => {
     const saved = localStorage.getItem('yo_transactions');
@@ -341,7 +341,7 @@ export function useUnoGame() {
           { timeoutMs: 8_000 },
         );
       } else {
-        const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        const isLocalHost = isLocal;
         try {
           result = isLocalHost
             ? await fetchRemoteMatchStateViaBridge(matchIdToFetch)

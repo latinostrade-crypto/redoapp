@@ -1,5 +1,14 @@
-const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (isLocal ? 'http://localhost:10000' : 'https://yoapp-backend.onrender.com');
+export const isLocal = typeof window !== 'undefined' && (
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.startsWith('192.168.') ||
+  window.location.hostname.startsWith('10.') ||
+  window.location.hostname.startsWith('172.') ||
+  window.location.hostname.endsWith('.local')
+);
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (
+  isLocal && typeof window !== 'undefined' ? `http://${window.location.hostname}:10000` : 'https://yoapp-backend.onrender.com'
+);
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
 // Render documents an approximately one-minute wake-up for idle free services.
 const API_REQUEST_TIMEOUT_MS = 90000;
@@ -82,6 +91,9 @@ export function setSessionToken(token: string | null | undefined) {
 export function buildAuthHeaders(init?: HeadersInit) {
   const token = getSessionToken();
   const telegramInitData = getTelegramInitData();
+  const storedUserId = typeof window !== 'undefined'
+    ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
+    : '';
   return {
     ...(init || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -90,15 +102,20 @@ export function buildAuthHeaders(init?: HeadersInit) {
     // an iOS Mini App stays open, and sending both made the backend reject the
     // still-valid session because it deliberately validates initData first.
     ...(!token && telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
+    ...(storedUserId ? { 'x-user-id': storedUserId } : {}),
   };
 }
 
 export function buildAuthenticatedUrl(path: string) {
   const token = getSessionToken();
   const telegramInitData = getTelegramInitData();
+  const storedUserId = typeof window !== 'undefined'
+    ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
+    : '';
   const params = new URLSearchParams();
   if (token) params.set('sessionToken', token);
   else if (telegramInitData) params.set('telegramInitData', telegramInitData);
+  if (storedUserId) params.set('userId', storedUserId);
   const isAbsolute = path.startsWith('http://') || path.startsWith('https://');
   const isSameOriginRewrite = path.startsWith('/match-api/');
   const targetUrl = isAbsolute || isSameOriginRewrite
@@ -123,14 +140,15 @@ function refreshApiSession(signal?: AbortSignal) {
 
   sessionRefreshPromise = (async () => {
     const telegramInitData = getTelegramInitData();
-    const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
-    const fallbackGuestUserId = storedUserId.startsWith('guest:') ? storedUserId : 'guest:guest';
+    const storedUserId = localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '';
+    const fallbackGuestUserId = storedUserId || 'guest:guest';
     const currentSessionToken = getSessionToken();
     const response = await fetch(`${API_BASE_URL}/api/users/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(currentSessionToken ? { Authorization: `Bearer ${currentSessionToken}` } : {}),
+        ...(storedUserId ? { 'x-user-id': storedUserId } : {}),
       },
       body: JSON.stringify({
         userId: telegramInitData ? (storedUserId || fallbackGuestUserId) : fallbackGuestUserId,
