@@ -421,6 +421,7 @@ interface QueuePlayer {
   avatarId: string;
   stake: number;
   mode: MatchMode;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   joinedAt: number;
   costsCommitted?: boolean | 'held';
   isAi?: boolean;
@@ -429,6 +430,7 @@ interface QueuePlayer {
 interface ActiveMatch {
   matchId: string;
   mode: MatchMode;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   stake: number;
   players: QueuePlayer[];
   createdAt: number;
@@ -3170,7 +3172,7 @@ function applyPassAction(match: ActiveMatch, userId: string) {
   schedulePersist({ matchId: match.matchId });
 }
 
-function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[], stake: number) {
+function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[], stake: number, gameType: 'uno' | 'poker' | 'blackjack' = 'uno') {
   const createdAt = Date.now();
   const waitsForPrivatePlayers = mode === 'private'
     && players.some((player) => player.userId.startsWith('waiting_for_player_'));
@@ -3178,6 +3180,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
   const activeMatch: ActiveMatch = {
     matchId,
     mode,
+    gameType,
     stake,
     players,
     createdAt,
@@ -3471,8 +3474,9 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     return { status: 'idle' };
   }
 
+  const playerGameType = player.gameType || 'uno';
   const similarPlayers = matchmakingQueue.filter(
-    (entry) => entry.stake === player.stake && entry.mode === player.mode
+    (entry) => (entry.gameType || 'uno') === playerGameType && entry.stake === player.stake && entry.mode === player.mode
   );
   // Sort by joinedAt ASC (oldest first)
   similarPlayers.sort((a, b) => a.joinedAt - b.joinedAt);
@@ -3510,11 +3514,11 @@ function createBotQueuePlayer(stake: number, mode: MatchMode, index = 0): QueueP
 function expireTimedOutMatchmakingPlayers(now = Date.now()) {
   const groupSizes = new Map<string, number>();
   matchmakingQueue.forEach((player) => {
-    const key = `${player.mode}_${player.stake}`;
+    const key = `${player.gameType || 'uno'}_${player.mode}_${player.stake}`;
     groupSizes.set(key, (groupSizes.get(key) || 0) + 1);
   });
   const expired = matchmakingQueue.filter((player) => {
-    const key = `${player.mode}_${player.stake}`;
+    const key = `${player.gameType || 'uno'}_${player.mode}_${player.stake}`;
     return now - player.joinedAt >= MATCHMAKING_TIMEOUT_MS
       && (groupSizes.get(key) || 0) < MIN_MATCH_PLAYERS;
   });
@@ -3542,10 +3546,9 @@ function runMatchmakingTick() {
   expireTimedOutMatchmakingPlayers();
   if (matchmakingQueue.length === 0) return;
 
-  const now = Date.now();
   const groups = new Map<string, QueuePlayer[]>();
   for (const player of matchmakingQueue) {
-    const key = `${player.mode}_${player.stake}`;
+    const key = `${player.gameType || 'uno'}_${player.mode}_${player.stake}`;
     const list = groups.get(key) || [];
     list.push(player);
     groups.set(key, list);
@@ -3564,8 +3567,9 @@ function runMatchmakingTick() {
         const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const mode = oldestPlayer.mode;
         const stake = oldestPlayer.stake;
+        const gameType = oldestPlayer.gameType || 'uno';
 
-        activateMatch(matchId, mode, groupSlice, stake);
+        activateMatch(matchId, mode, groupSlice, stake, gameType);
 
         const matchUserIds = new Set(groupSlice.map(p => p.userId));
         matchmakingQueue = matchmakingQueue.filter(p => !matchUserIds.has(p.userId));
@@ -5137,13 +5141,15 @@ function sendMatchmakerWatchPage(req: Request, res: Response) {
 
 function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
-  const { username, avatarId, stake, mode, walletAddress } = input as {
+  const { username, avatarId, stake, mode, walletAddress, gameType: rawGameType } = input as {
     username: string;
     avatarId: string;
     stake: number;
     mode: MatchMode;
     walletAddress?: string;
+    gameType?: 'uno' | 'poker' | 'blackjack';
   };
+  const gameType: 'uno' | 'poker' | 'blackjack' = rawGameType || 'uno';
   const userId = getAuthenticatedUserId(req);
   if (stake === undefined || stake === null || !mode) {
     return res.status(400).json({ error: 'Missing stake or mode.' });
@@ -5175,7 +5181,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     activeMatchByUser.delete(userId);
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
-  if (existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode) {
+  if (existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode && (existingQueuedPlayer.gameType || 'uno') === gameType) {
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
@@ -5218,6 +5224,75 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   user.matchmakingFailureAt = null;
   user.matchmakingFailureReason = null;
 
+  // Dynamic table fill: If a public match is already active/waiting with open seats (< 4 players)
+  const openActiveMatch = Array.from(activeMatches.values()).find(
+    (m) => m.mode === 'pvp' &&
+      (m.gameType || 'uno') === gameType &&
+      m.stake === stakeAmount &&
+      !m.settled &&
+      m.gameState.phase !== 'game_over' &&
+      m.players.length < 4 &&
+      !m.players.some((p) => p.userId === userId)
+  );
+
+  if (openActiveMatch) {
+    if (stakeAmount > 0) {
+      user.availableTickets = round2(user.availableTickets - stakeAmount);
+      user.heldTickets = round2(user.heldTickets + stakeAmount);
+    }
+    if (user.energy >= energyCost) {
+      spendEnergy(user, energyCost, stakeAmount === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
+    }
+
+    const newPlayer: QueuePlayer = {
+      userId,
+      username,
+      avatarId,
+      stake: stakeAmount,
+      mode,
+      gameType,
+      joinedAt: Date.now(),
+      costsCommitted: true,
+    };
+
+    openActiveMatch.players.push(newPlayer);
+    activeMatchByUser.set(userId, openActiveMatch.matchId);
+
+    const state = ensureServerDeck(openActiveMatch.gameState, 7);
+    const startingHand = state.deck.splice(0, 7);
+    openActiveMatch.gameState = state;
+    openActiveMatch.gameState.players.push({
+      userId,
+      username,
+      avatarId,
+      hand: startingHand,
+      isAi: false,
+      isConnected: true,
+      hasConnected: true,
+      lastSeenAt: Date.now(),
+      disconnectedAt: null,
+      unoDeclared: false,
+      emotion: 'happy',
+    });
+
+    openActiveMatch.gameState.logs = [
+      createServerLog(`👋 ${username} joined the public table! (${openActiveMatch.players.length}/4)`, 'info'),
+      ...openActiveMatch.gameState.logs,
+    ].slice(0, 50);
+
+    schedulePersist({ userId });
+    schedulePersist({ matchId: openActiveMatch.matchId });
+    broadcastMatch(openActiveMatch.matchId);
+
+    return sendMatchmakerJoinSuccess(req, res, {
+      success: true,
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+      energy: getEnergyState(user),
+      matchmaker: tryActivateQueuedMatch(userId),
+    });
+  }
+
   if (stakeAmount > 0) {
     user.availableTickets = round2(user.availableTickets - stakeAmount);
     user.heldTickets = round2(user.heldTickets + stakeAmount);
@@ -5229,6 +5304,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     avatarId,
     stake: stakeAmount,
     mode,
+    gameType,
     joinedAt: Date.now(),
     costsCommitted: stakeAmount > 0 ? 'held' : false,
   });
@@ -5236,7 +5312,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   runMatchmakingTick();
 
   matchmakingQueue
-    .filter(p => p.stake === stakeAmount && p.mode === mode)
+    .filter(p => p.stake === stakeAmount && p.mode === mode && (p.gameType || 'uno') === gameType)
     .forEach((queuedPlayer) => broadcastQueue(queuedPlayer.userId));
   schedulePersist({ userId });
 
@@ -5244,7 +5320,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
 
   return sendMatchmakerJoinSuccess(req, res, {
     success: true,
-    queueLength: matchmakingQueue.filter(p => p.stake === stakeAmount && p.mode === mode).length,
+    queueLength: matchmakingQueue.filter(p => p.stake === stakeAmount && p.mode === mode && (p.gameType || 'uno') === gameType).length,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),

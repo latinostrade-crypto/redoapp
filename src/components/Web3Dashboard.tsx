@@ -1850,6 +1850,7 @@ export function Web3Dashboard({
       walletAddress: rawAddress || null,
       stake: selectedStake,
       mode: 'pvp' as const,
+      gameType: pvpGameTab,
       forceFresh: true,
     };
     let joinSettled = false;
@@ -1892,7 +1893,7 @@ export function Web3Dashboard({
       setMatchmakingState('idle');
       setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
     });
-  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, openPublicMatch, updateProfileEnergy, getPublicQueueStatusViaSameOrigin]);
+  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy, getPublicQueueStatusViaSameOrigin]);
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     if (!authReady || !getSessionToken()) {
