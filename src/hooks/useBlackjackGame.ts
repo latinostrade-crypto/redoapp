@@ -172,8 +172,8 @@ export function useBlackjackGame(options?: {
 
           const humanPlayer = updatedPlayers.find((p) => p.id === 'player') || updatedPlayers[0];
           const humanWonMatch = Boolean(champion && champion.id === humanPlayer?.id);
-          const tablePot = (gameState.stake > 0 ? gameState.stake : DEFAULT_BET) * updatedPlayers.length;
-          const championPayout = Math.round(tablePot * 0.96 * 100) / 100;
+          const tablePot = gameState.stake > 0 ? gameState.stake * updatedPlayers.length : 0;
+          const championPayout = tablePot > 0 ? Math.round(tablePot * 0.96 * 100) / 100 : 0;
 
           if (isMatchOver) {
             if (humanWonMatch) {

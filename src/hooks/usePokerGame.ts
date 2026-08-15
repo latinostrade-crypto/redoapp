@@ -282,9 +282,6 @@ export function usePokerGame(options?: {
         isAdvancingRef.current = false;
 
         const won = winner.id === 'player';
-        if (won && options?.onSettlement) {
-          options.onSettlement(prev.pot, true);
-        }
 
         return {
           ...prev,
@@ -360,10 +357,6 @@ export function usePokerGame(options?: {
         });
 
         sound.playPop();
-        const playerWon = winners.includes('player');
-        if (playerWon && options?.onSettlement) {
-          options.onSettlement(splitAmount, true);
-        }
 
         return {
           ...prev,
@@ -648,6 +641,15 @@ export function usePokerGame(options?: {
 
       if (activeSurvivors.length <= 1 || (humanPlayer && humanPlayer.chips <= 0)) {
         const winner = activeSurvivors[0] || prev.players[0];
+        const isHumanWinner = winner.id === 'player';
+        const matchPayout = isHumanWinner && prev.stake > 0
+          ? Math.round(prev.stake * prev.players.length * 0.96 * 100) / 100
+          : 0;
+
+        if (options?.onSettlement) {
+          options.onSettlement(matchPayout, isHumanWinner);
+        }
+
         return {
           ...prev,
           stage: 'ended',
@@ -655,7 +657,7 @@ export function usePokerGame(options?: {
           matchWinnerName: winner.name,
           winnerIds: [winner.id],
           winningCardIds: [],
-          winningHandDesc: winner.id === 'player' ? 'MATCH CHAMPION! You won all the chips!' : `${winner.name} won the poker match!`,
+          winningHandDesc: isHumanWinner ? 'MATCH CHAMPION! You won all the chips!' : `${winner.name} won the poker match!`,
         };
       }
 

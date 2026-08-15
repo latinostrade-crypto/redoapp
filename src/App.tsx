@@ -74,9 +74,7 @@ export default function App() {
     onSettlement: (payout, won) => {
       if (won && payout > 0) {
         sound.playVictory();
-        if (pokerState.stake > 0) {
-          setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
-        }
+        setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
       }
     },
   });
@@ -91,15 +89,9 @@ export default function App() {
     nextHand: handleNextBlackjackHand,
   } = useBlackjackGame({
     onSettlement: (payout, won, push) => {
-      if (won && payout > 0) {
-        sound.playVictory();
-        if (blackjackState.stake > 0) {
-          setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
-        }
-      } else if (push && payout > 0) {
-        if (blackjackState.stake > 0) {
-          setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
-        }
+      if ((won || push) && payout > 0) {
+        if (won) sound.playVictory();
+        setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
       }
     },
   });

@@ -1487,86 +1487,49 @@ function hydrateUser(user: UserState): boolean {
 function reconcileStuckUserBalances(user: UserState): boolean {
   let changed = false;
 
-  // 1. Permanent Audit Restore from permanent records (depositIntents, referralPayouts, withdrawalRequests)
+  // 1. Clean up legacy artificial audit restores and admin boosts
+  const invalidTxs = user.transactions.filter(
+    (tx) => tx.id && (tx.id.startsWith('auto-restore-audit-') || tx.id.startsWith('admin-boost-'))
+  );
+  if (invalidTxs.length > 0) {
+    const totalInvalidRestored = round2(invalidTxs.reduce((sum, tx) => sum + (tx.amount || 0), 0));
+    user.transactions = user.transactions.filter(
+      (tx) => !tx.id || (!tx.id.startsWith('auto-restore-audit-') && !tx.id.startsWith('admin-boost-'))
+    );
+    user.availableTickets = round2(Math.max(0, user.availableTickets - totalInvalidRestored));
+    changed = true;
+    console.log(`[Balance Cleanup] Removed ${totalInvalidRestored} artificial audit/boost TKT from user ${user.userId}.`);
+  }
+
+  // 2. Clear unbacked artificial tickets for fresh users who have 0 real deposits, referrals, or match earnings
   const userDeposits = Array.from(depositIntents.values()).filter(
     (intent) => intent.userId === user.userId && intent.status === 'confirmed' && !intent.creditReversedAt
   );
   const lifetimeDepositTickets = round2(
     userDeposits.reduce((sum, intent) => sum + (intent.ticketAmount || 0), 0)
   );
-
   const userReferrals = Array.from(referralPayouts.values()).filter(
     (payout) => payout.recipientUserId === user.userId && payout.status === 'credited'
   );
   const lifetimeReferralTickets = round2(
     userReferrals.reduce((sum, payout) => sum + (payout.amount || 0), 0)
   );
-
-  const userWithdrawals = Array.from(withdrawalRequests.values()).filter(
-    (req) => req.userId === user.userId && (req.status === 'completed' || req.status === 'pending')
-  );
-  const lifetimeWithdrawalTickets = round2(
-    userWithdrawals.reduce((sum, req) => sum + (req.ticketAmount || 0), 0)
-  );
-
-  // Gameplay winnings from match payouts
   const matchEarnings = round2(
     user.transactions
       .filter((tx) => tx.type === 'match_payout' && tx.amount > 0)
       .reduce((sum, tx) => sum + (tx.amount || 0), 0)
   );
 
-  const minimumExpectedBalance = round2(
-    Math.max(0, lifetimeDepositTickets + lifetimeReferralTickets + matchEarnings - lifetimeWithdrawalTickets)
-  );
-
   const currentTotalTickets = round2(user.availableTickets + user.heldTickets);
-
-  // If user has zero deposits, zero referrals, and zero match earnings, but has artificial tickets (e.g. legacy 50 default), clear them
-  if (currentTotalTickets > minimumExpectedBalance && lifetimeDepositTickets === 0 && lifetimeReferralTickets === 0 && matchEarnings === 0) {
+  if (currentTotalTickets > 0 && lifetimeDepositTickets === 0 && lifetimeReferralTickets === 0 && matchEarnings === 0 && user.transactions.length === 0) {
     const previous = user.availableTickets;
     user.availableTickets = 0;
     user.heldTickets = 0;
     changed = true;
-    console.log(`[Audit Reset] Cleared unbacked tickets for user ${user.userId}: was ${previous} TKT, now 0 TKT.`);
-  } else if (currentTotalTickets < minimumExpectedBalance) {
-    const deficit = round2(minimumExpectedBalance - currentTotalTickets);
-    user.availableTickets = round2(user.availableTickets + deficit);
-    createLedgerEntry(user, {
-      id: `auto-restore-audit-${user.userId}`,
-      event: 'Restored Ticket Balance (Audit)',
-      value: `+${deficit.toFixed(2)} TKT`,
-      type: 'reward',
-      amount: deficit,
-    });
-    changed = true;
-    console.log(`[Balance Restore] Restored ${deficit} TKT to user ${user.userId} (Expected ${minimumExpectedBalance}, was ${currentTotalTickets}).`);
+    console.log(`[Audit Reset] Cleared unbacked tickets for inactive user ${user.userId}: was ${previous} TKT, now 0 TKT.`);
   }
 
-  // 2. Restore legacy 'Deposit Ledger Reconciled' deposit_reversal entries
-  const buggyReversals = user.transactions.filter(
-    (tx) => tx.type === 'deposit_reversal' && tx.event === 'Deposit Ledger Reconciled' && tx.amount < 0
-  );
-
-  for (const reversal of buggyReversals) {
-    const refundId = `restored-reversal-${reversal.id}`;
-    const alreadyFixed = user.transactions.some((tx) => tx.id === refundId);
-    if (!alreadyFixed) {
-      const restoreAmount = round2(Math.abs(reversal.amount));
-      user.availableTickets = round2(user.availableTickets + restoreAmount);
-      createLedgerEntry(user, {
-        id: refundId,
-        event: 'Restored Ledger Balance',
-        value: `+${restoreAmount.toFixed(2)} TKT`,
-        type: 'reward',
-        amount: restoreAmount,
-      });
-      changed = true;
-      console.log(`[Balance Restoration] Restored ${restoreAmount} TKT for user ${user.userId} (Reversal fix).`);
-    }
-  }
-
-  // 3. Release orphaned heldTickets
+  // 3. Release orphaned heldTickets (if user is not in match, room, or queue)
   if (user.heldTickets > 0) {
     const isMatched = activeMatchByUser.has(user.userId);
     const isQueued = matchmakingQueue.some((p) => p.userId === user.userId);
@@ -1588,14 +1551,14 @@ function reconcileStuckUserBalances(user: UserState): boolean {
     }
   }
 
-  // Clean up any legacy artificial admin boost transactions if present
-  const adminBoostTxs = user.transactions.filter((tx) => tx.id && tx.id.startsWith('admin-boost-'));
-  if (adminBoostTxs.length > 0) {
-    const totalBoostRemoved = round2(adminBoostTxs.reduce((sum, tx) => sum + (tx.amount || 0), 0));
-    user.transactions = user.transactions.filter((tx) => !tx.id || !tx.id.startsWith('admin-boost-'));
-    user.availableTickets = round2(Math.max(0, user.availableTickets - totalBoostRemoved));
+  // 4. Ensure non-negative bounds
+  if (user.availableTickets < 0) {
+    user.availableTickets = 0;
     changed = true;
-    console.log(`[Balance Cleanup] Removed ${totalBoostRemoved} artificial boost TKT from user ${user.userId}.`);
+  }
+  if (user.heldTickets < 0) {
+    user.heldTickets = 0;
+    changed = true;
   }
 
   return changed;
@@ -3431,11 +3394,14 @@ function buildRankOrder(playerCount: number): number[] {
 }
 
 function buildPayoutByRank(playerCount: number, netPrizePool: number): Record<number, number> {
+  if (netPrizePool <= 0) {
+    return Object.fromEntries(Array.from({ length: playerCount }, (_, index) => [index + 1, 0]));
+  }
   const shares = playerCount <= 2
-    ? [0.90, 0.10]
+    ? [1.00, 0.00]
     : playerCount === 3
-      ? [0.65, 0.25, 0.10]
-      : [0.55, 0.25, 0.10, 0.10];
+      ? [0.70, 0.30, 0.00]
+      : [0.70, 0.30, 0.00, 0.00];
   const payouts = shares.map((share, index) => index === 0
     ? 0
     : Math.floor((netPrizePool * share + Number.EPSILON) * 100) / 100);
@@ -6504,8 +6470,8 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
   placements.forEach(({ userId, rank }) => {
     if (userId.startsWith('bot_')) return;
     const user = getUser(userId);
-    const grossPayout = payoutByRank[rank];
-    const referralSettlement = activeMatch.mode === 'pvp'
+    const grossPayout = payoutByRank[rank] || 0;
+    const referralSettlement = activeMatch.mode === 'pvp' && grossPayout > 0
       ? applyReferralMatchBonus(user, grossPayout, activeMatch.matchId)
       : { inviterBonus: 0, netPayout: grossPayout };
     const matchPayoutLedgerId = `match-payout:${activeMatch.matchId}:${user.userId}`;
@@ -6513,14 +6479,16 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
 
     if (!payoutAlreadyCredited) {
       user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
-      user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
-      createLedgerEntry(user, {
-        id: matchPayoutLedgerId,
-        event: `${activeMatch.mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
-        value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
-        type: 'match_payout',
-        amount: referralSettlement.netPayout,
-      });
+      if (referralSettlement.netPayout > 0) {
+        user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+        createLedgerEntry(user, {
+          id: matchPayoutLedgerId,
+          event: `${activeMatch.mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
+          value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+          type: 'match_payout',
+          amount: referralSettlement.netPayout,
+        });
+      }
       if (activeMatch.mode === 'pvp') {
         updateQuestProgress(user.userId, 'play_online', 1);
       } else {
