@@ -20,7 +20,7 @@ import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 const STARTING_CHIPS = 100;
 const DEFAULT_BET = 10;
 const TURN_DURATION_SEC = 15;
-const TARGET_WINS = 2;
+const MAX_HANDS = 5;
 
 const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
   { name: 'Koala Jack', avatar: 'koala' },
@@ -67,7 +67,8 @@ export function useBlackjackGame(options?: {
         status: 'playing',
         wins: 0,
       },
-      targetWins: TARGET_WINS,
+      currentHand: 1,
+      maxHands: MAX_HANDS,
       winner: null,
       matchChampion: null,
       winningHandDesc: undefined,
@@ -120,11 +121,16 @@ export function useBlackjackGame(options?: {
    * Advance to the next player's turn or start Dealer turn if all finished (Offline Mode)
    */
   const advanceToNextTurn = useCallback((currentPlayers: BlackjackPlayer[], nextIndex: number) => {
-    if (nextIndex < currentPlayers.length) {
+    let nextIdx = nextIndex;
+    while (nextIdx < currentPlayers.length && (currentPlayers[nextIdx].status !== 'playing' || currentPlayers[nextIdx].eliminated)) {
+      nextIdx++;
+    }
+
+    if (nextIdx < currentPlayers.length) {
       setGameState((prev) => ({
         ...prev,
         players: currentPlayers,
-        currentPlayerIndex: nextIndex,
+        currentPlayerIndex: nextIdx,
         stage: 'player_turn',
         turnTimeLeft: TURN_DURATION_SEC,
       }));
@@ -155,7 +161,8 @@ export function useBlackjackGame(options?: {
       let dealerEval = evaluateBlackjackHand(currentDealerCards);
 
       const drawNextDealerCard = () => {
-        const anyPlayerStanding = currentPlayers.some((p) => !p.isBusted);
+        const activePlayers = currentPlayers.filter((p) => !p.eliminated);
+        const anyPlayerStanding = activePlayers.some((p) => !p.isBusted);
         if (anyPlayerStanding && dealerEval.score < 17 && deck.length > 0) {
           const nextCard = deck.pop()!;
           currentDealerCards.push(nextCard);
@@ -178,44 +185,62 @@ export function useBlackjackGame(options?: {
         } else {
           isDealerDrawingRef.current = false;
           const updatedPlayers = currentPlayers.map((p) => {
+            if (p.eliminated) return p;
+
             let wonRound = false;
             let finalChips = p.chips;
+            let profit = 0;
+
             if (p.isBusted) {
               wonRound = false;
+              profit = -p.bet;
             } else if (dealerEval.isBusted) {
               wonRound = true;
-              finalChips += p.bet * 2;
+              profit = p.hasBlackjack ? Math.round(p.bet * 1.5) : p.bet;
+              finalChips += (p.bet + profit);
             } else if (p.hasBlackjack && !dealerEval.hasBlackjack) {
               wonRound = true;
-              finalChips += p.bet * 2;
+              profit = Math.round(p.bet * 1.5);
+              finalChips += (p.bet + profit);
             } else if (p.score > dealerEval.score) {
               wonRound = true;
-              finalChips += p.bet * 2;
+              profit = p.bet;
+              finalChips += (p.bet + profit);
             } else if (p.score === dealerEval.score) {
               wonRound = false;
+              profit = 0;
               finalChips += p.bet;
             } else {
               wonRound = false;
+              profit = -p.bet;
             }
 
+            const isOut = finalChips <= 0;
             return {
               ...p,
-              chips: finalChips,
+              chips: Math.max(0, finalChips),
               wins: wonRound ? p.wins + 1 : p.wins,
               status: p.isBusted ? ('busted' as const) : ('stood' as const),
+              eliminated: isOut,
+              lastProfit: profit,
             };
           });
 
-          const champion = updatedPlayers.find((p) => p.wins >= TARGET_WINS);
-          const isMatchOver = Boolean(champion);
+          // Check if match is finished (Hand 5 or only 1 player remains)
+          const survivors = updatedPlayers.filter((p) => !p.eliminated && p.chips > 0);
+          const isMatchOver = survivors.length <= 1 || gameState.currentHand >= gameState.maxHands;
+
+          // Find Chip Leader / Champion
+          const sorted = [...updatedPlayers].sort((a, b) => (b.chips - a.chips) || (b.wins - a.wins));
+          const champion = isMatchOver ? sorted[0] : null;
 
           let winningHandDesc = '';
           if (champion) {
-            winningHandDesc = `🏆 ${champion.name.toUpperCase()} WINS THE MATCH! (${champion.wins}/${TARGET_WINS} WINS)`;
+            winningHandDesc = `🏆 ${champion.name.toUpperCase()} WINS WITH ${champion.chips} CHIPS!`;
           } else if (dealerEval.isBusted) {
-            winningHandDesc = `DEALER BUSTED (${dealerEval.score})! Standing players win round!`;
+            winningHandDesc = `DEALER BUSTED (${dealerEval.score})! Standing players win chips!`;
           } else {
-            winningHandDesc = `Dealer score: ${dealerEval.score}. Round complete.`;
+            winningHandDesc = `Dealer score: ${dealerEval.score}. Hand ${gameState.currentHand}/${gameState.maxHands} complete.`;
           }
 
           const humanPlayer = updatedPlayers.find((p) => p.id === 'player') || updatedPlayers[0];
@@ -257,14 +282,22 @@ export function useBlackjackGame(options?: {
       const initialDealerPause = window.setTimeout(drawNextDealerCard, 600);
       dealingTimeoutsRef.current.push(initialDealerPause);
     },
-    [gameState.dealer.cards, gameState.stake, options]
+    [gameState.currentHand, gameState.dealer.cards, gameState.maxHands, gameState.stake, options]
   );
 
   /**
    * Execute sequential initial deal to all table players and dealer (Offline Mode)
    */
   const dealNewRoundCards = useCallback(
-    (currentPlayers: BlackjackPlayer[], initialDealer: BlackjackPlayer, mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
+    (
+      currentPlayers: BlackjackPlayer[],
+      initialDealer: BlackjackPlayer,
+      mode: 'offline' | 'pvp' | 'private',
+      stake: number,
+      roomCode?: string,
+      matchId?: string,
+      handNum = 1
+    ) => {
       clearDealingTimeouts();
       isDealerDrawingRef.current = false;
       isProcessingAiTurnRef.current = false;
@@ -275,16 +308,32 @@ export function useBlackjackGame(options?: {
         deckRef.current = deck;
       }
 
-      const betAmount = stake > 0 ? stake : DEFAULT_BET;
+      const standardBet = DEFAULT_BET;
+      let totalPot = 0;
 
       const dealtPlayers: BlackjackPlayer[] = currentPlayers.map((p) => {
+        if (p.eliminated || p.chips <= 0) {
+          return {
+            ...p,
+            chips: 0,
+            bet: 0,
+            cards: [],
+            score: 0,
+            status: 'stood' as const,
+            eliminated: true,
+          };
+        }
+
+        const betAmount = Math.min(standardBet, p.chips);
         const c1 = deck.pop()!;
         const c2 = deck.pop()!;
         const pEval = evaluateBlackjackHand([c1, c2]);
+        totalPot += betAmount;
+
         return {
           ...p,
           bet: betAmount,
-          chips: Math.max(0, p.chips - betAmount),
+          chips: p.chips - betAmount,
           cards: [c1, c2],
           score: pEval.score,
           isSoft: pEval.isSoft,
@@ -298,14 +347,17 @@ export function useBlackjackGame(options?: {
       const d2 = deck.pop()!;
       const dEval = evaluateBlackjackHand([d1, d2]);
 
-      const totalPot = betAmount * dealtPlayers.length;
+      let initialIdx = 0;
+      while (initialIdx < dealtPlayers.length && (dealtPlayers[initialIdx].status !== 'playing' || dealtPlayers[initialIdx].eliminated)) {
+        initialIdx++;
+      }
 
       setGameState({
-        stage: 'player_turn',
+        stage: initialIdx < dealtPlayers.length ? 'player_turn' : 'dealer_turn',
         pot: totalPot,
         stake,
         mode,
-        currentPlayerIndex: 0,
+        currentPlayerIndex: initialIdx < dealtPlayers.length ? initialIdx : 0,
         players: dealtPlayers,
         dealer: {
           ...initialDealer,
@@ -316,7 +368,8 @@ export function useBlackjackGame(options?: {
           hasBlackjack: dEval.hasBlackjack,
           status: 'playing',
         },
-        targetWins: TARGET_WINS,
+        currentHand: handNum,
+        maxHands: MAX_HANDS,
         winner: null,
         matchChampion: null,
         winningHandDesc: undefined,
@@ -324,7 +377,7 @@ export function useBlackjackGame(options?: {
           {
             id: Math.random().toString(36).substring(2, 9),
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            message: `New round dealt for ${dealtPlayers.length} players vs Dealer. First to ${TARGET_WINS} wins!`,
+            message: `Hand ${handNum}/${MAX_HANDS} dealt for active players vs Dealer!`,
           },
         ],
         isDealing: false,
@@ -374,6 +427,8 @@ export function useBlackjackGame(options?: {
           matchId: resolvedMatchId,
           roomCode,
           stake,
+          currentHand: 1,
+          maxHands: MAX_HANDS,
           stage: 'player_turn',
           waitingForPlayers: true,
         }));
@@ -383,20 +438,18 @@ export function useBlackjackGame(options?: {
         return;
       }
 
-      // Offline Practice Mode against Bots
+      // Offline Practice Mode against Bots (100 chips each)
       setRemoteMatchId(null);
 
       const deck = createShuffledBlackjackDeck();
       deckRef.current = deck;
-
-      const betAmount = stake > 0 ? stake : DEFAULT_BET;
 
       const humanPlayer: BlackjackPlayer = {
         id: 'player',
         name: userName || 'Player',
         avatar: userAvatar,
         chips: STARTING_CHIPS,
-        bet: betAmount,
+        bet: 0,
         cards: [],
         score: 0,
         isSoft: false,
@@ -405,6 +458,7 @@ export function useBlackjackGame(options?: {
         status: 'playing',
         wins: 0,
         isAi: false,
+        eliminated: false,
       };
 
       const bots: BlackjackPlayer[] = DEFAULT_BOTS.slice(0, 2).map((bot, idx) => ({
@@ -412,7 +466,7 @@ export function useBlackjackGame(options?: {
         name: bot.name,
         avatar: bot.avatar,
         chips: STARTING_CHIPS,
-        bet: betAmount,
+        bet: 0,
         cards: [],
         score: 0,
         isSoft: false,
@@ -421,6 +475,7 @@ export function useBlackjackGame(options?: {
         status: 'playing',
         wins: 0,
         isAi: true,
+        eliminated: false,
       }));
 
       const allPlayers: BlackjackPlayer[] = [humanPlayer, ...bots];
@@ -440,7 +495,7 @@ export function useBlackjackGame(options?: {
         wins: 0,
       };
 
-      dealNewRoundCards(allPlayers, dealer, mode, stake, roomCode, matchId);
+      dealNewRoundCards(allPlayers, dealer, mode, stake, roomCode, matchId, 1);
     },
     [dealNewRoundCards, syncRemoteMatchState]
   );
@@ -475,7 +530,7 @@ export function useBlackjackGame(options?: {
     // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
-    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing) return;
+    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.eliminated) return;
 
     const deck = deckRef.current;
     const newCard = deck.pop();
@@ -538,7 +593,7 @@ export function useBlackjackGame(options?: {
     // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
-    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing) return;
+    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.eliminated) return;
 
     const updatedPlayer: BlackjackPlayer = {
       ...currPlayer,
@@ -551,7 +606,7 @@ export function useBlackjackGame(options?: {
   }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, syncRemoteMatchState]);
 
   /**
-   * Action: DOUBLE DOWN (Double bet, draw 1 card, stand)
+   * Action: DOUBLE DOWN (Double bet with remaining chips, draw 1 card, stand)
    */
   const playerDoubleDown = useCallback(async () => {
     sound.playPop();
@@ -580,11 +635,9 @@ export function useBlackjackGame(options?: {
     // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
-    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.cards.length !== 2) return;
+    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.cards.length !== 2 || currPlayer.eliminated) return;
 
-    const additionalBet = currPlayer.bet;
-    if (currPlayer.chips < additionalBet) return;
-
+    const additionalBet = Math.min(currPlayer.bet, currPlayer.chips);
     const deck = deckRef.current;
     const newCard = deck.pop();
     if (!newCard) return;
@@ -595,7 +648,7 @@ export function useBlackjackGame(options?: {
     const updatedPlayer: BlackjackPlayer = {
       ...currPlayer,
       chips: currPlayer.chips - additionalBet,
-      bet: currPlayer.bet * 2,
+      bet: currPlayer.bet + additionalBet,
       cards: updatedCards,
       score: playerEval.score,
       isSoft: playerEval.isSoft,
@@ -609,7 +662,7 @@ export function useBlackjackGame(options?: {
   }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, syncRemoteMatchState]);
 
   /**
-   * Start next round keeping wins counter intact
+   * Start next round keeping chips intact
    */
   const nextHand = useCallback(async () => {
     sound.playShuffle();
@@ -636,8 +689,9 @@ export function useBlackjackGame(options?: {
     }
 
     // Offline mode
-    dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId);
-  }, [dealNewRoundCards, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake, remoteMatchId, syncRemoteMatchState]);
+    const nextHandNum = gameState.currentHand + 1;
+    dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId, nextHandNum);
+  }, [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake, remoteMatchId, syncRemoteMatchState]);
 
   // SSE Stream Listener for Online Multiplayer
   useEffect(() => {
@@ -719,7 +773,7 @@ export function useBlackjackGame(options?: {
     if (remoteMatchId || gameState.stage !== 'player_turn' || gameState.isDealing) return;
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
-    if (!currPlayer || !currPlayer.isAi || isProcessingAiTurnRef.current) return;
+    if (!currPlayer || !currPlayer.isAi || isProcessingAiTurnRef.current || currPlayer.eliminated) return;
 
     isProcessingAiTurnRef.current = true;
     const timer = setTimeout(() => {

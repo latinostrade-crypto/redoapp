@@ -308,6 +308,8 @@ interface ServerBlackjackPlayer {
   hasBlackjack: boolean;
   status: 'playing' | 'stood' | 'busted' | 'blackjack';
   wins: number;
+  eliminated?: boolean;
+  lastProfit?: number;
 }
 
 interface ServerBlackjackGameState {
@@ -318,7 +320,9 @@ interface ServerBlackjackGameState {
   stage: 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
   pot: number;
   stake: number;
-  targetWins: number;
+  currentHand: number;
+  maxHands: number;
+  targetWins?: number;
   winnerUserId?: string | null;
   matchChampionUserId?: string | null;
   roundWinnerUserId?: string | null;
@@ -3115,7 +3119,7 @@ function evaluateServerBlackjackHand(cards: ServerBlackjackCard[]): {
 
 function createInitialBlackjackMatchState(players: QueuePlayer[], stake: number): ServerBlackjackGameState {
   const shoe = generateServerBlackjackShoe(4);
-  const betAmount = stake > 0 ? stake : 10;
+  const initialBet = 10;
 
   const serverPlayers: ServerBlackjackPlayer[] = players.map((p) => {
     const isBot = Boolean(p.isAi || p.userId.startsWith('bot_') || p.userId.startsWith('waiting_for_player_'));
@@ -3132,14 +3136,15 @@ function createInitialBlackjackMatchState(players: QueuePlayer[], stake: number)
       lastSeenAt: !isBot ? Date.now() : null,
       disconnectedAt: null,
       cards: [c1, c2],
-      bet: betAmount,
-      chips: 100,
+      bet: initialBet,
+      chips: 100 - initialBet,
       score: evalResult.score,
       isSoft: evalResult.isSoft,
       isBusted: false,
       hasBlackjack: evalResult.hasBlackjack,
       status: evalResult.hasBlackjack ? ('blackjack' as const) : ('playing' as const),
       wins: 0,
+      eliminated: false,
     };
   });
 
@@ -3164,7 +3169,7 @@ function createInitialBlackjackMatchState(players: QueuePlayer[], stake: number)
     wins: 0,
   };
 
-  const totalPot = betAmount * serverPlayers.length;
+  const totalPot = initialBet * serverPlayers.length;
 
   let initialPlayerIdx = 0;
   while (initialPlayerIdx < serverPlayers.length && serverPlayers[initialPlayerIdx].status !== 'playing') {
@@ -3181,10 +3186,12 @@ function createInitialBlackjackMatchState(players: QueuePlayer[], stake: number)
     stage: initialStage,
     pot: totalPot,
     stake,
+    currentHand: 1,
+    maxHands: 5,
     targetWins: 2,
     winnerUserId: null,
     matchChampionUserId: null,
-    logs: [createServerLog(`🃏 Round 1 dealt for ${serverPlayers.length} players vs Dealer. First to 2 wins!`, 'info')],
+    logs: [createServerLog(`🃏 Hand 1/5 dealt for ${serverPlayers.length} players with 100 chips bankroll!`, 'info')],
     turnStartedAt: Date.now(),
     turnTimeoutSec: 15,
   };
@@ -3195,7 +3202,7 @@ function advanceBlackjackTurn(match: ActiveMatch) {
   if (!bj) return;
 
   let nextIdx = bj.currentPlayerIndex + 1;
-  while (nextIdx < bj.players.length && bj.players[nextIdx].status !== 'playing') {
+  while (nextIdx < bj.players.length && (bj.players[nextIdx].status !== 'playing' || bj.players[nextIdx].eliminated)) {
     nextIdx++;
   }
 
@@ -3217,7 +3224,8 @@ function runServerDealerSequence(match: ActiveMatch) {
 
   bj.stage = 'dealer_turn';
 
-  const anyStandingPlayer = bj.players.some((p) => !p.isBusted);
+  const activePlayers = bj.players.filter((p) => !p.eliminated);
+  const anyStandingPlayer = activePlayers.some((p) => !p.isBusted);
   let dEval = evaluateServerBlackjackHand(bj.dealer.cards);
 
   if (anyStandingPlayer) {
@@ -3233,60 +3241,85 @@ function runServerDealerSequence(match: ActiveMatch) {
   bj.dealer.isBusted = dEval.isBusted;
   bj.dealer.status = dEval.isBusted ? 'busted' : 'stood';
 
-  // Evaluate round winners
+  // Evaluate payouts & chips
   const roundWinners: ServerBlackjackPlayer[] = [];
-  bj.players.forEach((p) => {
+  activePlayers.forEach((p) => {
     let wonRound = false;
+    let profit = 0;
     if (p.isBusted) {
       wonRound = false;
+      profit = -p.bet;
     } else if (dEval.isBusted) {
       wonRound = true;
+      profit = p.hasBlackjack ? Math.round(p.bet * 1.5) : p.bet;
+      p.chips += (p.bet + profit);
     } else if (p.hasBlackjack && !dEval.hasBlackjack) {
       wonRound = true;
+      profit = Math.round(p.bet * 1.5);
+      p.chips += (p.bet + profit);
     } else if (p.score > dEval.score) {
       wonRound = true;
+      profit = p.bet;
+      p.chips += (p.bet + profit);
     } else if (p.score === dEval.score) {
-      // Tie (push) - no round win point awarded
+      // Tie (push) - bet returned
       wonRound = false;
+      profit = 0;
+      p.chips += p.bet;
     } else {
       wonRound = false;
+      profit = -p.bet;
     }
 
+    p.lastProfit = profit;
     if (wonRound) {
       p.wins += 1;
       roundWinners.push(p);
     }
+
+    // Check elimination
+    if (p.chips <= 0) {
+      p.chips = 0;
+      p.eliminated = true;
+      bj.logs = [createServerLog(`💀 ${p.username} ran out of chips and is eliminated!`, 'action'), ...bj.logs].slice(0, 50);
+    }
   });
 
-  const champion = bj.players.find((p) => p.wins >= bj.targetWins);
+  // Check if match ended (Hand 5 finished OR <= 1 survivor)
+  const remainingPlayers = bj.players.filter((p) => !p.eliminated && p.chips > 0);
+  const isMatchOver = remainingPlayers.length <= 1 || bj.currentHand >= bj.maxHands;
 
-  let winningHandDesc = '';
-  if (champion) {
-    winningHandDesc = `🏆 ${champion.username.toUpperCase()} WINS THE MATCH! (${champion.wins}/${bj.targetWins} WINS)`;
+  if (isMatchOver) {
+    // Find Champion by highest chip count
+    const sorted = [...bj.players].sort((a, b) => (b.chips - a.chips) || (b.wins - a.wins));
+    const champion = sorted[0] || bj.players[0];
+
+    const winningDesc = `🏆 ${champion.username.toUpperCase()} WINS THE MATCH WITH ${champion.chips} CHIPS!`;
     bj.stage = 'match_ended';
     bj.winnerUserId = champion.userId;
     bj.matchChampionUserId = champion.userId;
     bj.roundWinnerUserId = champion.userId;
     bj.roundWinnerName = champion.username;
-    bj.winningHandDesc = winningHandDesc;
-    bj.logs = [createServerLog(winningHandDesc, 'win'), ...bj.logs].slice(0, 50);
+    bj.winningHandDesc = winningDesc;
+    bj.logs = [createServerLog(winningDesc, 'win'), ...bj.logs].slice(0, 50);
     settleBlackjackMatch(match);
   } else {
+    let handSummary = '';
     if (roundWinners.length > 0) {
       const names = roundWinners.map((w) => w.username).join(', ');
-      winningHandDesc = `⭐ ${names} won this round! Dealer score: ${dEval.isBusted ? 'BUST (' + dEval.score + ')' : dEval.score}. Next hand in 5s...`;
+      handSummary = `⭐ ${names} won Hand ${bj.currentHand}! Dealer: ${dEval.isBusted ? 'BUST (' + dEval.score + ')' : dEval.score}. Hand ${bj.currentHand + 1}/${bj.maxHands} in 5s...`;
       bj.roundWinnerUserId = roundWinners[0].userId;
       bj.roundWinnerName = names;
     } else if (dEval.isBusted) {
-      winningHandDesc = `Dealer busted (${dEval.score})! Next hand in 5s...`;
+      handSummary = `Dealer busted (${dEval.score})! Hand ${bj.currentHand + 1}/${bj.maxHands} in 5s...`;
     } else {
-      winningHandDesc = `Dealer won this round (${dEval.score}). Next hand in 5s...`;
+      handSummary = `Dealer won Hand ${bj.currentHand} (${dEval.score}). Hand ${bj.currentHand + 1}/${bj.maxHands} in 5s...`;
     }
 
     bj.stage = 'round_ended';
-    bj.winningHandDesc = winningHandDesc;
+    bj.winningHandDesc = handSummary;
     bj.nextRoundStartsAt = Date.now() + 5000;
-    bj.logs = [createServerLog(winningHandDesc, 'info'), ...bj.logs].slice(0, 50);
+    bj.logs = [createServerLog(handSummary, 'info'), ...bj.logs].slice(0, 50);
   }
 }
 
@@ -3294,24 +3327,43 @@ function startNextBlackjackRound(match: ActiveMatch) {
   const bj = match.blackjackGameState;
   if (!bj || bj.stage === 'match_ended') return;
 
+  bj.currentHand += 1;
+
   if (bj.shoe.length < (bj.players.length + 1) * 5) {
     bj.shoe = generateServerBlackjackShoe(4);
   }
 
-  const betAmount = match.stake > 0 ? match.stake : 10;
+  const standardBet = 10;
+  let totalPot = 0;
 
   bj.players.forEach((p) => {
+    if (p.eliminated || p.chips <= 0) {
+      p.eliminated = true;
+      p.chips = 0;
+      p.bet = 0;
+      p.cards = [];
+      p.score = 0;
+      p.status = 'stood';
+      return;
+    }
+
+    const betAmount = Math.min(standardBet, p.chips);
+    p.chips -= betAmount;
+    p.bet = betAmount;
+    totalPot += betAmount;
+
     const c1 = bj.shoe.pop()!;
     const c2 = bj.shoe.pop()!;
     const pEval = evaluateServerBlackjackHand([c1, c2]);
     p.cards = [c1, c2];
-    p.bet = betAmount;
     p.score = pEval.score;
     p.isSoft = pEval.isSoft;
     p.isBusted = false;
     p.hasBlackjack = pEval.hasBlackjack;
     p.status = pEval.hasBlackjack ? 'blackjack' : 'playing';
   });
+
+  bj.pot = totalPot;
 
   const d1 = bj.shoe.pop()!;
   const d2 = bj.shoe.pop()!;
@@ -3324,7 +3376,7 @@ function startNextBlackjackRound(match: ActiveMatch) {
   bj.dealer.status = 'playing';
 
   let nextIdx = 0;
-  while (nextIdx < bj.players.length && bj.players[nextIdx].status !== 'playing') {
+  while (nextIdx < bj.players.length && (bj.players[nextIdx].status !== 'playing' || bj.players[nextIdx].eliminated)) {
     nextIdx++;
   }
 
@@ -3334,7 +3386,7 @@ function startNextBlackjackRound(match: ActiveMatch) {
   bj.roundWinnerUserId = null;
   bj.roundWinnerName = null;
   bj.turnStartedAt = Date.now();
-  bj.logs = [createServerLog(`🃏 New round dealt! First to ${bj.targetWins} wins.`, 'info'), ...bj.logs].slice(0, 50);
+  bj.logs = [createServerLog(`🃏 Hand ${bj.currentHand}/${bj.maxHands} dealt!`, 'info'), ...bj.logs].slice(0, 50);
 
   if (bj.stage === 'dealer_turn') {
     runServerDealerSequence(match);
@@ -3399,7 +3451,9 @@ function applyBlackjackAction(match: ActiveMatch, userId: string, action: string
     if (currentPlayer.cards.length !== 2) {
       throw new Error('Double down is only allowed on the first 2 cards.');
     }
-    currentPlayer.bet *= 2;
+    const additionalBet = Math.min(currentPlayer.bet, currentPlayer.chips);
+    currentPlayer.chips -= additionalBet;
+    currentPlayer.bet += additionalBet;
     if (bj.shoe.length === 0) {
       bj.shoe = generateServerBlackjackShoe(4);
     }
@@ -3411,7 +3465,7 @@ function applyBlackjackAction(match: ActiveMatch, userId: string, action: string
     currentPlayer.isBusted = pEval.isBusted;
     currentPlayer.status = pEval.isBusted ? 'busted' : 'stood';
 
-    bj.logs = [createServerLog(`${currentPlayer.username} doubled down! (score: ${pEval.score})`, 'action'), ...bj.logs].slice(0, 50);
+    bj.logs = [createServerLog(`${currentPlayer.username} doubled down to ${currentPlayer.bet} chips! (score: ${pEval.score})`, 'action'), ...bj.logs].slice(0, 50);
     advanceBlackjackTurn(match);
   } else {
     throw new Error(`Unsupported blackjack action: ${action}`);
@@ -6883,7 +6937,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       const c1 = openActiveMatch.blackjackGameState.shoe.pop()!;
       const c2 = openActiveMatch.blackjackGameState.shoe.pop()!;
       const pEval = evaluateServerBlackjackHand([c1, c2]);
-      const betAmount = openActiveMatch.stake > 0 ? openActiveMatch.stake : 10;
+      const initialBet = 10;
       openActiveMatch.blackjackGameState.players.push({
         userId,
         username,
@@ -6894,16 +6948,17 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
         lastSeenAt: Date.now(),
         disconnectedAt: null,
         cards: [c1, c2],
-        bet: betAmount,
-        chips: 100,
+        bet: initialBet,
+        chips: 100 - initialBet,
         score: pEval.score,
         isSoft: pEval.isSoft,
         isBusted: false,
         hasBlackjack: pEval.hasBlackjack,
         status: pEval.hasBlackjack ? 'blackjack' : 'playing',
         wins: 0,
+        eliminated: false,
       });
-      openActiveMatch.blackjackGameState.pot = betAmount * openActiveMatch.blackjackGameState.players.length;
+      openActiveMatch.blackjackGameState.pot = initialBet * openActiveMatch.blackjackGameState.players.length;
       openActiveMatch.blackjackGameState.logs = [
         createServerLog(`👋 ${username} joined the Blackjack table! (${openActiveMatch.players.length}/4)`, 'info'),
         ...openActiveMatch.blackjackGameState.logs,

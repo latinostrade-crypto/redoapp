@@ -5837,7 +5837,7 @@ export function Web3Dashboard({
                         {matchmakingState === 'joining' ? 'CONNECTING TO BLACKJACK QUEUE' : 'BLACKJACK QUEUE ACTIVE'}
                       </h3>
                       <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                        Searching for real opponents ({queueLength}/2). Ticket games are strict PVP with NO bots.
+                        Searching for real opponents ({queueLength}/4). 100 Chips bankroll, 5 hands elimination match.
                       </p>
                     </div>
                     <button
@@ -5852,7 +5852,7 @@ export function Web3Dashboard({
                   <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3">
                     <div className="flex justify-between items-center text-[9px]">
                       <h3 className="font-black text-slate-100 uppercase flex items-center gap-1">
-                        <span>🃏</span> BLACKJACK 21 ARENA
+                        <span>🃏</span> BLACKJACK 21 ARENA (100 CHIPS TOURNAMENT)
                       </h3>
                       <span className="text-[8px] text-[#00ff66] bg-black px-1.5 py-0.5 border border-black">
                         {selectedStake === 0 ? (
@@ -5879,7 +5879,7 @@ export function Web3Dashboard({
                           }`}
                         >
                           <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'practice' : 'stake'}</span>
+                          <span className="text-[6px] block mt-0.5">{stake === 0 ? '100 chips' : '100 chips stack'}</span>
                         </button>
                       ))}
                     </div>
@@ -5887,12 +5887,12 @@ export function Web3Dashboard({
                     {selectedStake > 0 && (
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400">
                         <div className="flex justify-between items-center text-slate-300">
-                          <span>Win Payout:</span>
-                          <span className="text-[#00ff66] font-bold">1:1 ({(selectedStake * 2).toFixed(2)} TKT)</span>
+                          <span>Match Format:</span>
+                          <span className="text-[#00ff66] font-bold">100 Chips Stack (5 Hands)</span>
                         </div>
                         <div className="flex justify-between items-center text-slate-300">
-                          <span>Natural 21 Payout:</span>
-                          <span className="text-[#ffcc00] font-bold">3:2 ({(selectedStake * 2.5).toFixed(2)} TKT)</span>
+                          <span>Champion Payout:</span>
+                          <span className="text-[#ffcc00] font-bold">96% Table Prize Pool</span>
                         </div>
                       </div>
                     )}

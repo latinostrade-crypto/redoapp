@@ -32,6 +32,8 @@ export interface BlackjackPlayer {
   status: BlackjackHandStatus;
   wins: number;
   isAi?: boolean;
+  eliminated?: boolean;
+  lastProfit?: number;
 }
 
 export type BlackjackStage = 'idle' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
@@ -46,7 +48,9 @@ export interface BlackjackGameState {
   currentPlayerIndex: number;
   players: BlackjackPlayer[];
   dealer: BlackjackPlayer;
-  targetWins: number;
+  targetWins?: number;
+  currentHand: number;
+  maxHands: number;
   winner: string | null;
   roundWinnerUserId?: string | null;
   roundWinnerName?: string | null;
@@ -64,4 +68,3 @@ export interface BlackjackGameState {
   waitingForPlayers?: boolean;
   connectionDeadlineAt?: number | null;
 }
-

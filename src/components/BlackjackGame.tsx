@@ -3,17 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { BlackjackCard, BlackjackGameState } from '../types/blackjack';
-import { sound } from '../utils/sound';
-import { RotateCcw, Volume2, VolumeX, Trophy, Coins, Play, Timer, Plus, Hand, Loader2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  Trophy,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+  Coins,
+  Timer,
+  Plus,
+  Hand,
+  Play,
+  Loader2,
+  Skull,
+} from 'lucide-react';
+import {
+  BlackjackCard,
+  BlackjackGameState,
+} from '../types/blackjack';
 import { Avatar } from './Avatars';
-import { ChipStackIcon } from './PokerGame';
+import { sound } from '../utils/sound';
 
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
-  turnTimeLeft?: number;
+  turnTimeLeft: number;
   onHit: () => void;
   onStand: () => void;
   onDoubleDown: () => void;
@@ -21,115 +35,81 @@ interface BlackjackGameProps {
   onReturnToLobby: () => void;
 }
 
-const SUIT_SYMBOLS: Record<string, { symbol: string; color: string }> = {
-  spades: { symbol: '♠', color: 'text-slate-950' },
-  hearts: { symbol: '♥', color: 'text-red-600' },
-  diamonds: { symbol: '♦', color: 'text-blue-600' },
-  clubs: { symbol: '♣', color: 'text-emerald-700' },
-};
-
-const RANK_LABELS: Record<number, string> = {
-  2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10',
-  11: 'J', 12: 'Q', 13: 'K', 14: 'A',
-};
-
-function ChipStack({ amount, label }: { amount: number; label?: string }) {
-  if (amount <= 0) return null;
-
+function ChipStackIcon({ className = 'w-3 h-3' }: { className?: string }) {
   return (
-    <motion.div
-      initial={{ scale: 0, y: 10 }}
-      animate={{ scale: 1, y: 0 }}
-      className="flex items-center gap-1 bg-black/90 border border-amber-400/80 px-2 py-0.5 rounded-full shadow-[0_2px_4px_rgba(0,0,0,0.8)] select-none shrink-0"
-    >
-      <ChipStackIcon className="w-3.5 h-3.5" />
-      <span className="text-[8px] font-black text-[#ffcc00] leading-none">
-        {label ? `${label} ${amount}` : amount}
-      </span>
-    </motion.div>
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <ellipse cx="12" cy="6" rx="8" ry="3" fill="#ffcc00" stroke="#000" />
+      <path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6" fill="#e6b800" stroke="#000" />
+      <path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" fill="#cca300" stroke="#000" />
+    </svg>
   );
 }
 
-function BlackjackCardView({
-  card,
-  hidden = false,
-}: {
-  card?: BlackjackCard & { hidden?: boolean };
-  hidden?: boolean;
-  key?: React.Key;
-}) {
-  const cardSizeClass = 'w-10 h-14 min-[380px]:w-12 min-[380px]:h-16';
-  const isHidden = hidden || !card || card.hidden === true || card.rank === 0;
+function ChipStack({ amount, label }: { amount: number; label?: string }) {
+  return (
+    <div className="flex items-center gap-1 bg-black/80 px-2 py-0.5 rounded border border-[#ffcc00]/60 shadow-[0_0_8px_rgba(255,204,0,0.3)]">
+      <ChipStackIcon className="w-3.5 h-3.5 text-[#ffcc00]" />
+      <span className="text-[8.5px] font-black text-[#ffcc00] uppercase tracking-wider">
+        {amount} {label || 'CHIPS'}
+      </span>
+    </div>
+  );
+}
 
-  if (isHidden) {
+function BlackjackCardView({ card, hidden }: { card: BlackjackCard; hidden?: boolean; key?: string | number }) {
+  if (hidden || card.hidden) {
     return (
-      <motion.div
-        initial={{ scale: 0.3, x: 50, y: -40, rotate: -20, opacity: 0 }}
-        animate={{ scale: 1, x: 0, y: 0, rotate: 0, opacity: 1 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 24 }}
-        className={`${cardSizeClass} border-2 border-black rounded-lg shadow-lg overflow-hidden bg-slate-950 select-none shrink-0 relative`}
-      >
-        <img
-          src="/card-thumbs/back.jpeg"
-          alt="Card Back"
-          className="w-full h-full object-cover"
-        />
-        <div className="absolute inset-0 bg-black/20" />
-      </motion.div>
+      <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-gradient-to-br from-blue-900 to-indigo-950 border-2 border-white/80 rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none">
+        <div className="w-6 h-10 border border-blue-400/40 rounded flex items-center justify-center">
+          <span className="text-[10px] font-black text-blue-300">🎴</span>
+        </div>
+      </div>
     );
   }
 
-  const suitInfo = SUIT_SYMBOLS[card.suit] || { symbol: '?', color: 'text-black' };
-  const rankLabel = RANK_LABELS[card.rank] || String(card.rank);
+  const isRed = card.suit === 'hearts' || card.suit === 'diamonds';
+  const suitSymbol =
+    card.suit === 'spades' ? '♠' : card.suit === 'hearts' ? '♥' : card.suit === 'diamonds' ? '♦' : '♣';
+  const rankDisplay =
+    card.rank === 14 ? 'A' : card.rank === 13 ? 'K' : card.rank === 12 ? 'Q' : card.rank === 11 ? 'J' : card.rank;
 
   return (
     <motion.div
-      initial={{ scale: 0.3, x: 50, y: -40, rotate: 20, opacity: 0 }}
-      animate={{ scale: 1, x: 0, y: 0, rotate: 0, opacity: 1 }}
-      transition={{ type: 'spring', stiffness: 320, damping: 24 }}
-      className={`${cardSizeClass} bg-slate-100 border-2 border-black rounded-lg p-1 flex flex-col justify-between select-none shadow-[2px_2px_0_#000] shrink-0 relative overflow-hidden`}
+      initial={{ scale: 0.8, y: -10, opacity: 0 }}
+      animate={{ scale: 1, y: 0, opacity: 1 }}
+      className={`w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-white border-2 border-black rounded-md shadow-md flex flex-col justify-between p-0.5 select-none relative ${
+        isRed ? 'text-red-600' : 'text-slate-950'
+      }`}
     >
-      <div className={`text-[10px] min-[380px]:text-[11px] font-black leading-none ${suitInfo.color}`}>
-        {rankLabel}
-      </div>
-      <div className={`text-base min-[380px]:text-lg self-center leading-none ${suitInfo.color}`}>
-        {suitInfo.symbol}
-      </div>
-      <div className={`text-[10px] min-[380px]:text-[11px] font-black leading-none self-end rotate-180 ${suitInfo.color}`}>
-        {rankLabel}
-      </div>
+      <div className="text-[8px] font-black leading-none">{rankDisplay}</div>
+      <div className="text-sm font-black leading-none text-center">{suitSymbol}</div>
+      <div className="text-[8px] font-black leading-none text-right rotate-180">{rankDisplay}</div>
     </motion.div>
   );
 }
 
 export function BlackjackGame({
   gameState,
-  turnTimeLeft = 15,
+  turnTimeLeft,
   onHit,
   onStand,
   onDoubleDown,
   onNextHand,
   onReturnToLobby,
 }: BlackjackGameProps) {
-  const [muted, setMuted] = useState(() => sound.getMuted());
+  const [muted, setMuted] = useState(sound.getMuted());
   const [nextHandCountdown, setNextHandCountdown] = useState(5);
 
   const toggleMute = () => {
-    const isNowMuted = sound.toggleMute();
-    setMuted(isNowMuted);
-    sound.playPop();
+    sound.toggleMute();
+    setMuted(sound.getMuted());
   };
 
-  // Auto-next hand timer during round_ended
+  // Next Hand Auto-Countdown Timer when round ends
   useEffect(() => {
     if (gameState.stage !== 'round_ended') {
       setNextHandCountdown(5);
       return;
-    }
-
-    if (gameState.nextRoundStartsAt) {
-      const remaining = Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000));
-      setNextHandCountdown(remaining);
     }
 
     const timer = setInterval(() => {
@@ -150,9 +130,13 @@ export function BlackjackGame({
 
   const activePlayer = gameState.players[gameState.currentPlayerIndex];
   const isHumanActiveTurn = gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer?.id === 'player';
-  const canPlay = isHumanActiveTurn;
+  const canPlay = isHumanActiveTurn && !activePlayer?.eliminated;
   const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
-  const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2;
+  const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2 && activePlayer.chips >= activePlayer.bet;
+
+  // Calculate chip leader
+  const sortedByChips = [...gameState.players].sort((a, b) => (b.chips - a.chips) || (b.wins - a.wins));
+  const chipLeader = sortedByChips[0];
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
@@ -169,7 +153,7 @@ export function BlackjackGame({
             <span>LOBBY</span>
           </button>
           <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
-            BLACKJACK 21 ({gameState.mode.toUpperCase()})
+            HAND {gameState.currentHand || 1}/{gameState.maxHands || 5}
           </span>
         </div>
 
@@ -180,7 +164,7 @@ export function BlackjackGame({
           </span>
 
           <span className="text-[8px] font-black text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
-            TARGET: {gameState.targetWins} WINS
+            BANKROLL: {humanPlayer?.chips ?? 100} 💰
           </span>
 
           <button
@@ -206,7 +190,7 @@ export function BlackjackGame({
           <div className="flex items-center gap-2 bg-black/60 px-3 py-1 rounded-full border border-black/80">
             {/* Dealer Avatar */}
             <div className="relative p-1 bg-slate-950 border border-black rounded flex flex-col items-center min-w-[44px] shadow-md">
-              <Avatar avatarId={gameState.dealer.avatar} emotion={gameState.dealer.isBusted ? 'worried' : 'happy'} size="xs" />
+              <Avatar id={gameState.dealer.avatar} emotion={gameState.dealer.isBusted ? 'worried' : 'happy'} size={24} />
               <span className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight mt-0.5">
                 DEALER
               </span>
@@ -239,11 +223,13 @@ export function BlackjackGame({
             </div>
           ) : (
             <>
-              <div className="bg-slate-950/95 border border-[#ffcc00] px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(255,204,0,0.3)] flex items-center gap-1.5">
-                <ChipStack amount={gameState.pot} label="POT" />
-                <span className="text-[8.5px] font-black text-[#ffcc00] uppercase">
-                  POT: {gameState.pot}
-                </span>
+              <div className="flex items-center gap-1.5">
+                <ChipStack amount={gameState.pot} label="ROUND POT" />
+                {chipLeader && (
+                  <span className="bg-black/90 border border-amber-400/80 px-2 py-0.5 rounded text-[8px] font-black text-amber-300">
+                    👑 LEADER: {chipLeader.name} ({chipLeader.chips} 💰)
+                  </span>
+                )}
               </div>
 
               {/* TURN TIMER BADGE */}
@@ -273,11 +259,14 @@ export function BlackjackGame({
           {gameState.players.map((p, idx) => {
             const isTurn = gameState.stage === 'player_turn' && gameState.currentPlayerIndex === idx;
             const isMe = p.id === 'player';
+            const isEliminated = p.eliminated || p.chips <= 0;
             return (
               <div
                 key={p.id || idx}
                 className={`relative flex flex-col items-center p-1 rounded-lg transition-all ${
-                  isTurn
+                  isEliminated
+                    ? 'bg-black/40 border border-slate-800 opacity-60'
+                    : isTurn
                     ? 'bg-black/90 border-2 border-[#00ff66] shadow-[0_0_15px_#00ff66]'
                     : isMe
                     ? 'bg-black/70 border border-[#ffcc00]/60'
@@ -285,35 +274,44 @@ export function BlackjackGame({
                 }`}
                 style={{ maxWidth: `${100 / Math.max(1, gameState.players.length)}%` }}
               >
-                {/* WINS BADGE */}
+                {/* CHIPS BADGE */}
                 <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
-                  ⭐ {p.wins}/{gameState.targetWins} WINS
+                  💰 {p.chips} CHIPS
                 </div>
 
                 {/* Cards */}
-                <div className="flex -space-x-3 mb-1 shrink-0">
-                  {p.cards.map((c, cIdx) => (
-                    <BlackjackCardView key={c.id || cIdx} card={c} />
-                  ))}
+                <div className="flex -space-x-3 mb-1 shrink-0 min-h-[50px] items-center justify-center">
+                  {isEliminated ? (
+                    <div className="text-[8px] font-black text-red-400 flex items-center gap-0.5 bg-black/80 px-1.5 py-1 rounded border border-red-900">
+                      <Skull className="w-3 h-3" />
+                      <span>BUSTED OUT</span>
+                    </div>
+                  ) : (
+                    p.cards.map((c, cIdx) => (
+                      <BlackjackCardView key={c.id || cIdx} card={c} />
+                    ))
+                  )}
                 </div>
 
                 {/* Avatar + Info */}
                 <div className="flex flex-col items-center">
-                  <Avatar avatarId={p.avatar} emotion={p.isBusted ? 'worried' : p.hasBlackjack ? 'happy' : isTurn ? 'thinking' : 'happy'} size="xs" />
+                  <Avatar id={p.avatar} emotion={isEliminated ? 'worried' : p.isBusted ? 'worried' : p.hasBlackjack ? 'happy' : isTurn ? 'thinking' : 'happy'} size={24} />
                   <span className="text-[7px] font-black text-white truncate max-w-[48px] leading-tight mt-0.5">
                     {p.name} {isMe ? '(YOU)' : ''}
                   </span>
                   <div className="text-[7px] font-black leading-tight">
-                    {p.isBusted ? (
+                    {isEliminated ? (
+                      <span className="text-slate-500">OUT</span>
+                    ) : p.isBusted ? (
                       <span className="text-red-400 bg-red-950/80 px-1 py-0.2 rounded border border-red-500/40">
                         💥 BUST ({p.score})
                       </span>
                     ) : p.hasBlackjack ? (
                       <span className="text-[#ffcc00] bg-amber-950/80 px-1 py-0.2 rounded border border-amber-400/60 shadow-[0_0_8px_rgba(255,204,0,0.5)] animate-pulse">
-                        🔥 NATURAL 21
+                        🔥 21 (+15)
                       </span>
                     ) : (
-                      <span className="text-[#00ff66]">SCORE: {p.score}</span>
+                      <span className="text-[#00ff66]">SCORE: {p.score} (BET: {p.bet})</span>
                     )}
                   </div>
                 </div>
@@ -337,7 +335,7 @@ export function BlackjackGame({
               <h2 className="text-xs font-black uppercase tracking-wider text-[#00ff66]">
                 {gameState.stage === 'match_ended'
                   ? `🏆 ${gameState.matchChampion?.name?.toUpperCase() || gameState.winner?.toUpperCase() || 'PLAYER'} WINS MATCH!`
-                  : 'ROUND COMPLETED'}
+                  : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5} COMPLETED`}
               </h2>
 
               {gameState.winningHandDesc && (
@@ -346,13 +344,21 @@ export function BlackjackGame({
                 </p>
               )}
 
-              {/* Standings Table */}
+              {/* Standings Table sorted by Chips */}
               <div className="space-y-1 bg-slate-900 border border-slate-800 p-2 rounded text-[8px] font-bold">
-                <div className="text-slate-400 text-[7px] uppercase tracking-wider mb-1">TABLE STANDINGS (TARGET: 2 WINS)</div>
-                {gameState.players.map((p) => (
+                <div className="text-slate-400 text-[7px] uppercase tracking-wider mb-1 flex justify-between">
+                  <span>PLAYER</span>
+                  <span>CHIPS (START: 100)</span>
+                </div>
+                {sortedByChips.map((p, rankIdx) => (
                   <div key={p.id} className="flex justify-between items-center px-1">
-                    <span className="text-white truncate max-w-[120px]">{p.name} {p.id === 'player' ? '(You)' : ''}</span>
-                    <span className="text-[#ffcc00] font-black">⭐ {p.wins}/{gameState.targetWins} WINS</span>
+                    <span className="text-white truncate max-w-[120px]">
+                      {rankIdx === 0 ? '🥇 ' : rankIdx === 1 ? '🥈 ' : rankIdx === 2 ? '🥉 ' : '4. '}
+                      {p.name} {p.id === 'player' ? '(You)' : ''}
+                    </span>
+                    <span className={p.chips > 0 ? "text-[#ffcc00] font-black" : "text-red-400 font-black"}>
+                      {p.chips > 0 ? `💰 ${p.chips} CHIPS` : '💀 OUT'}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -360,7 +366,7 @@ export function BlackjackGame({
               {gameState.stage === 'match_ended' && gameState.winningPayout && gameState.winningPayout > 0 && (
                 <div className="bg-amber-950/60 border border-amber-500/50 p-1.5 rounded text-[9px] font-black text-[#ffcc00] flex items-center justify-center gap-1">
                   <Coins className="w-3.5 h-3.5" />
-                  <span>TOTAL PRIZE: +{gameState.winningPayout} TKT</span>
+                  <span>CHAMPION PRIZE: +{gameState.winningPayout} TKT</span>
                 </div>
               )}
 
@@ -397,8 +403,10 @@ export function BlackjackGame({
             <span>{canPlay ? '👉 YOUR TURN - CHOOSE ACTION:' : `⏳ WAITING FOR ${activePlayer?.name?.toUpperCase()}...`}</span>
             {humanPlayer && (
               <div className="flex items-center gap-1 text-white">
-                <span>YOUR SCORE:</span>
-                <strong className="text-[#ffcc00] text-[9.5px]">{humanPlayer.score}</strong>
+                <span>CHIPS:</span>
+                <strong className="text-[#ffcc00] text-[9.5px]">💰 {humanPlayer.chips}</strong>
+                <span className="ml-1">SCORE:</span>
+                <strong className="text-[#00d2ff] text-[9.5px]">{humanPlayer.score}</strong>
               </div>
             )}
           </div>
