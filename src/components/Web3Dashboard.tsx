@@ -1101,10 +1101,12 @@ export function Web3Dashboard({
       ?? fallbackStake
     );
     try {
+      const targetGame = result.gameType || pvpGameTab;
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
         mode: result.mode || 'pvp',
         stake: matchedStake,
+        gameType: targetGame,
         currentUserId,
         players: result.players || [],
         initialGameState: result.gameState || null,
@@ -6109,18 +6111,41 @@ export function Web3Dashboard({
 
                   {/* Create Room Button or Active Waiting Room Lobby */}
                   {!generatedLink && privateRoomStatus !== 'waiting' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrivateRoomStake(selectedStake);
-                        setPrivateRoomTargetPlayers(2);
-                        createPrivateRoom(selectedStake, 2);
-                      }}
-                      disabled={!authReady || privateRoomCreateState === 'creating'}
-                      className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
-                    >
-                      {privateRoomCreateState === 'creating' ? 'Creating Room...' : 'CREATE PRIVATE BLACKJACK ROOM'}
-                    </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-[8px] text-slate-300">
+                        <span>TABLE SIZE:</span>
+                        <div className="flex gap-1">
+                          {([2, 3, 4] as const).map((cnt) => (
+                            <button
+                              key={cnt}
+                              type="button"
+                              onClick={() => {
+                                sound.playPop();
+                                setPrivateRoomTargetPlayers(cnt);
+                              }}
+                              className={`px-2 py-0.5 border text-[8px] font-bold ${
+                                privateRoomTargetPlayers === cnt
+                                  ? 'bg-[#00ff66] text-black border-black font-black'
+                                  : 'bg-black text-slate-400 border-slate-800'
+                              }`}
+                            >
+                              {cnt}P
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrivateRoomStake(selectedStake);
+                          createPrivateRoom(selectedStake, privateRoomTargetPlayers);
+                        }}
+                        disabled={!authReady || privateRoomCreateState === 'creating'}
+                        className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
+                      >
+                        {privateRoomCreateState === 'creating' ? 'Creating Room...' : `CREATE PRIVATE BLACKJACK ROOM (${privateRoomTargetPlayers} SEATS)`}
+                      </button>
+                    </div>
                   ) : (
                     <div className="space-y-2 text-[9px] bg-black p-2 border border-black rounded">
                       <div className="flex justify-between items-center">
@@ -6128,7 +6153,7 @@ export function Web3Dashboard({
                           ROOM: {privateRoomCode || 'PENDING'}
                         </span>
                         <span className="text-[#ffcc00] font-bold text-[9px]">
-                          {privateRoomPlayersCount || 1}/2 PLAYERS
+                          {privateRoomPlayersCount || 1}/{privateRoomTargetPlayers} PLAYERS
                         </span>
                       </div>
 
@@ -6167,14 +6192,20 @@ export function Web3Dashboard({
                           <span className="text-white font-bold">{userName} (You)</span>
                           <span className="text-[#00ff66] font-bold">HOST</span>
                         </div>
-                        <div className="flex items-center justify-between bg-slate-900/50 border border-dashed border-slate-800 p-1 px-2 rounded-sm text-[8px]">
-                          <span className="text-slate-400 italic">
-                            {privateRoomPlayersCount >= 2 ? (privateRoomPlayersList[1]?.username || 'Player 2') : 'Waiting for friend to join with code...'}
-                          </span>
-                          <span className={privateRoomPlayersCount >= 2 ? "text-[#00ff66] font-bold" : "text-[#ffcc00] animate-pulse font-bold"}>
-                            {privateRoomPlayersCount >= 2 ? 'READY' : 'WAITING'}
-                          </span>
-                        </div>
+                        {Array.from({ length: privateRoomTargetPlayers - 1 }).map((_, idx) => {
+                          const slotIdx = idx + 1;
+                          const player = privateRoomPlayersList[slotIdx];
+                          return (
+                            <div key={slotIdx} className="flex items-center justify-between bg-slate-900/50 border border-dashed border-slate-800 p-1 px-2 rounded-sm text-[8px]">
+                              <span className={player ? "text-slate-200 font-bold" : "text-slate-500 italic"}>
+                                {player ? player.username : `Seat ${slotIdx + 1}: Waiting for player...`}
+                              </span>
+                              <span className={player ? "text-[#00ff66] font-bold" : "text-[#ffcc00] animate-pulse font-bold"}>
+                                {player ? 'READY' : 'OPEN'}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
 
                       {/* Launch Match Button */}
@@ -6189,11 +6220,11 @@ export function Web3Dashboard({
                           }}
                           className="w-full py-2 bg-[#00ff66] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive shadow cursor-pointer"
                         >
-                          START BLACKJACK MATCH (2 PLAYERS) ➔
+                          START BLACKJACK MATCH ({privateRoomPlayersCount}/{privateRoomTargetPlayers} PLAYERS) ➔
                         </button>
                       ) : (
                         <div className="w-full py-2 bg-slate-900 text-[#ffcc00] border border-slate-800 text-[8px] font-mono text-center uppercase animate-pulse">
-                          ⏳ Waiting for 2nd player to enter code {privateRoomCode}...
+                          ⏳ Waiting for friends to enter code {privateRoomCode}... (15s window)
                         </div>
                       )}
 

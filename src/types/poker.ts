@@ -14,6 +14,7 @@ export interface PokerCard {
   id: string;
   suit: PokerSuit;
   rank: PokerRank;
+  hidden?: boolean;
 }
 
 export type PokerHandRankType =
@@ -39,6 +40,7 @@ export type PokerPlayerId = string;
 
 export interface PokerPlayer {
   id: PokerPlayerId;
+  userId?: string;
   name: string;
   avatar: AvatarId;
   chips: number;
@@ -52,6 +54,7 @@ export interface PokerPlayer {
   hasActedThisStage?: boolean;
   eliminated?: boolean;
   isConnected?: boolean;
+  disconnectedAt?: number | null;
 }
 
 export type PokerStage =
@@ -61,7 +64,8 @@ export type PokerStage =
   | 'turn'
   | 'river'
   | 'showdown'
-  | 'ended';
+  | 'ended'
+  | 'match_ended';
 
 export interface PokerGameLog {
   id: string;
@@ -88,11 +92,18 @@ export interface PokerGameState {
   winningHandDesc?: string;
   isMatchOver?: boolean;
   matchWinnerName?: string;
+  winningPayout?: number;
   logs: PokerGameLog[];
   roundEndTimestamp?: number | null;
+  nextRoundStartsAt?: number | null;
+  turnStartedAt?: number;
+  turnTimeLeft?: number;
+  turnTimeoutSec?: number;
   stake: number;
   mode: 'offline' | 'pvp' | 'private';
   isDealing?: boolean;
   matchId?: string;
   roomCode?: string;
+  waitingForPlayers?: boolean;
+  connectionDeadlineAt?: number | null;
 }

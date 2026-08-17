@@ -61,7 +61,18 @@ export default function App() {
     stopSpectating,
   } = useUnoGame();
 
-  const [activeGameType, setActiveGameType] = useState<'uno' | 'poker' | 'blackjack'>('uno');
+  const [activeGameType, setActiveGameType] = useState<'uno' | 'poker' | 'blackjack'>(() => {
+    try {
+      const activeMatchRaw = localStorage.getItem('redoapp_active_match');
+      if (activeMatchRaw) {
+        const parsed = JSON.parse(activeMatchRaw);
+        if (parsed.gameType === 'blackjack' || parsed.gameType === 'poker') {
+          return parsed.gameType;
+        }
+      }
+    } catch {}
+    return 'uno';
+  });
   const {
     gameState: pokerState,
     turnTimeLeft: pokerTurnTimeLeft,

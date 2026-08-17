@@ -329,6 +329,60 @@ interface ServerBlackjackGameState {
   turnTimeoutSec?: number;
 }
 
+interface ServerPokerCard {
+  id: string;
+  suit: 'spades' | 'hearts' | 'diamonds' | 'clubs';
+  rank: number; // 2-14
+  hidden?: boolean;
+}
+
+interface ServerPokerPlayer {
+  userId: string;
+  username: string;
+  avatarId: string;
+  isAi: boolean;
+  isConnected?: boolean;
+  hasConnected?: boolean;
+  lastSeenAt?: number | null;
+  disconnectedAt?: number | null;
+  chips: number;
+  currentBet: number;
+  totalMatchInvested: number;
+  holeCards: ServerPokerCard[];
+  folded: boolean;
+  isAllIn: boolean;
+  lastAction?: string;
+  hasActedThisStage: boolean;
+  eliminated: boolean;
+  handScore?: number;
+  handDesc?: string;
+}
+
+interface ServerPokerGameState {
+  deck: ServerPokerCard[];
+  stage: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended' | 'match_ended';
+  pot: number;
+  currentBet: number;
+  minRaise: number;
+  communityCards: ServerPokerCard[];
+  players: ServerPokerPlayer[];
+  dealerIndex: number;
+  smallBlindIndex: number;
+  bigBlindIndex: number;
+  currentPlayerIndex: number;
+  smallBlindAmount: number;
+  bigBlindAmount: number;
+  winnerUserIds: string[];
+  winningCardIds: string[];
+  winningHandDesc?: string;
+  matchChampionUserId?: string | null;
+  nextRoundStartsAt?: number | null;
+  winningPayout?: number;
+  logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'bet' | 'fold' | 'deal' | 'win' }>;
+  turnStartedAt?: number;
+  turnTimeoutSec?: number;
+}
+
 
 interface LootboxClaimRecord {
   claimId: string;
@@ -490,6 +544,7 @@ interface ActiveMatch {
   settled: boolean;
   gameState: ServerGameState;
   blackjackGameState?: ServerBlackjackGameState;
+  pokerGameState?: ServerPokerGameState;
   payoutResult?: any;
   turnTimeoutSec?: number;
 }
@@ -3452,6 +3507,826 @@ function settleBlackjackMatch(activeMatch: ActiveMatch) {
   scheduleMatchCleanup(activeMatch.matchId);
 }
 
+const POKER_RANK_NAMES: Record<number, string> = {
+  2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10',
+  11: 'Jack', 12: 'Queen', 13: 'King', 14: 'Ace',
+};
+
+const POKER_SUIT_SYMBOLS: Record<string, string> = {
+  spades: '♠',
+  hearts: '♥',
+  diamonds: '♦',
+  clubs: '♣',
+};
+
+function generateServerPokerDeck(): ServerPokerCard[] {
+  const suits: Array<'spades' | 'hearts' | 'diamonds' | 'clubs'> = ['spades', 'hearts', 'diamonds', 'clubs'];
+  const deck: ServerPokerCard[] = [];
+  for (const suit of suits) {
+    for (let rank = 2; rank <= 14; rank++) {
+      deck.push({
+        id: `pk_${suit}_${rank}_${Math.random().toString(36).slice(2, 6)}`,
+        suit,
+        rank,
+      });
+    }
+  }
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+function get5CardCombinations<T>(array: T[], k = 5): T[][] {
+  if (k === 0) return [[]];
+  if (array.length === 0) return [];
+  const head = array[0];
+  const tail = array.slice(1);
+  const withHead = get5CardCombinations(tail, k - 1).map((comb) => [head, ...comb]);
+  const withoutHead = get5CardCombinations(tail, k);
+  return [...withHead, ...withoutHead];
+}
+
+function evaluateServerPoker5CardHand(cards: ServerPokerCard[]): {
+  rankType: string;
+  score: number;
+  description: string;
+  bestFive: ServerPokerCard[];
+} {
+  if (cards.length !== 5) {
+    throw new Error('evaluateServerPoker5CardHand requires exactly 5 cards');
+  }
+
+  const sorted = [...cards].sort((a, b) => b.rank - a.rank);
+  const isFlush = sorted.every((c) => c.suit === sorted[0].suit);
+
+  let isStraight = false;
+  let straightHighRank = 0;
+  const ranks = sorted.map((c) => c.rank);
+
+  if (ranks[0] - ranks[4] === 4 && new Set(ranks).size === 5) {
+    isStraight = true;
+    straightHighRank = ranks[0];
+  } else if (ranks[0] === 14 && ranks[1] === 5 && ranks[2] === 4 && ranks[3] === 3 && ranks[4] === 2) {
+    isStraight = true;
+    straightHighRank = 5; // A-2-3-4-5 wheel straight
+  }
+
+  const rankCounts: Record<number, number> = {};
+  for (const c of sorted) {
+    rankCounts[c.rank] = (rankCounts[c.rank] || 0) + 1;
+  }
+
+  const countEntries = Object.entries(rankCounts)
+    .map(([rankStr, count]) => ({ rank: Number(rankStr), count }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return b.rank - a.rank;
+    });
+
+  if (isFlush && isStraight) {
+    if (straightHighRank === 14) {
+      return {
+        rankType: 'royal_flush',
+        score: 900_000_000,
+        description: `Royal Flush of ${POKER_SUIT_SYMBOLS[sorted[0].suit]}`,
+        bestFive: sorted,
+      };
+    }
+    return {
+      rankType: 'straight_flush',
+      score: 800_000_000 + straightHighRank,
+      description: `Straight Flush, ${POKER_RANK_NAMES[straightHighRank]}-High`,
+      bestFive: sorted,
+    };
+  }
+
+  if (countEntries[0].count === 4) {
+    const quadRank = countEntries[0].rank;
+    const kicker = countEntries[1].rank;
+    const score = 700_000_000 + quadRank * 15 + kicker;
+    return {
+      rankType: 'four_of_a_kind',
+      score,
+      description: `Four of a Kind, ${POKER_RANK_NAMES[quadRank]}s`,
+      bestFive: sorted,
+    };
+  }
+
+  if (countEntries[0].count === 3 && countEntries[1].count === 2) {
+    const tripRank = countEntries[0].rank;
+    const pairRank = countEntries[1].rank;
+    const score = 600_000_000 + tripRank * 15 + pairRank;
+    return {
+      rankType: 'full_house',
+      score,
+      description: `Full House, ${POKER_RANK_NAMES[tripRank]}s full of ${POKER_RANK_NAMES[pairRank]}s`,
+      bestFive: sorted,
+    };
+  }
+
+  if (isFlush) {
+    let score = 500_000_000;
+    for (let i = 0; i < 5; i++) {
+      score += sorted[i].rank * Math.pow(15, 4 - i);
+    }
+    return {
+      rankType: 'flush',
+      score,
+      description: `Flush, ${POKER_RANK_NAMES[sorted[0].rank]}-High`,
+      bestFive: sorted,
+    };
+  }
+
+  if (isStraight) {
+    return {
+      rankType: 'straight',
+      score: 400_000_000 + straightHighRank,
+      description: `Straight, ${POKER_RANK_NAMES[straightHighRank]}-High`,
+      bestFive: sorted,
+    };
+  }
+
+  if (countEntries[0].count === 3) {
+    const tripRank = countEntries[0].rank;
+    const k1 = countEntries[1].rank;
+    const k2 = countEntries[2].rank;
+    const score = 300_000_000 + tripRank * 225 + k1 * 15 + k2;
+    return {
+      rankType: 'three_of_a_kind',
+      score,
+      description: `Three of a Kind, ${POKER_RANK_NAMES[tripRank]}s`,
+      bestFive: sorted,
+    };
+  }
+
+  if (countEntries[0].count === 2 && countEntries[1].count === 2) {
+    const p1 = countEntries[0].rank;
+    const p2 = countEntries[1].rank;
+    const k = countEntries[2].rank;
+    const score = 200_000_000 + p1 * 225 + p2 * 15 + k;
+    return {
+      rankType: 'two_pair',
+      score,
+      description: `Two Pair, ${POKER_RANK_NAMES[p1]}s and ${POKER_RANK_NAMES[p2]}s`,
+      bestFive: sorted,
+    };
+  }
+
+  if (countEntries[0].count === 2) {
+    const p = countEntries[0].rank;
+    const k1 = countEntries[1].rank;
+    const k2 = countEntries[2].rank;
+    const k3 = countEntries[3].rank;
+    const score = 100_000_000 + p * 3375 + k1 * 225 + k2 * 15 + k3;
+    return {
+      rankType: 'one_pair',
+      score,
+      description: `Pair of ${POKER_RANK_NAMES[p]}s`,
+      bestFive: sorted,
+    };
+  }
+
+  let score = 0;
+  for (let i = 0; i < 5; i++) {
+    score += sorted[i].rank * Math.pow(15, 4 - i);
+  }
+  return {
+    rankType: 'high_card',
+    score,
+    description: `High Card, ${POKER_RANK_NAMES[sorted[0].rank]}`,
+    bestFive: sorted,
+  };
+}
+
+function evaluateServerPoker7CardHand(cards: ServerPokerCard[]): {
+  rankType: string;
+  score: number;
+  description: string;
+  bestFive: ServerPokerCard[];
+} {
+  if (cards.length < 5) {
+    const sorted = [...cards].sort((a, b) => b.rank - a.rank);
+    return {
+      rankType: 'high_card',
+      score: sorted[0]?.rank || 0,
+      description: sorted[0] ? `High Card ${POKER_RANK_NAMES[sorted[0].rank]}` : 'High Card',
+      bestFive: sorted,
+    };
+  }
+
+  const combinations = get5CardCombinations(cards, 5);
+  let bestHand: { rankType: string; score: number; description: string; bestFive: ServerPokerCard[] } | null = null;
+
+  for (const comb of combinations) {
+    const evaluated = evaluateServerPoker5CardHand(comb);
+    if (!bestHand || evaluated.score > bestHand.score) {
+      bestHand = evaluated;
+    }
+  }
+
+  return bestHand!;
+}
+
+function createInitialPokerMatchState(players: QueuePlayer[], stake: number): ServerPokerGameState {
+  const deck = generateServerPokerDeck();
+  const STARTING_CHIPS = 100;
+  const SMALL_BLIND = 1;
+  const BIG_BLIND = 2;
+
+  const serverPlayers: ServerPokerPlayer[] = players.map((p) => {
+    const isAi = p.isAi || p.userId.startsWith('bot_') || p.userId.startsWith('waiting_for_player_');
+    const c1 = deck.pop()!;
+    const c2 = deck.pop()!;
+    return {
+      userId: p.userId,
+      username: p.username,
+      avatarId: p.avatarId,
+      isAi,
+      isConnected: true,
+      hasConnected: !isAi && !p.userId.startsWith('waiting_for_player_'),
+      lastSeenAt: Date.now(),
+      disconnectedAt: null,
+      chips: STARTING_CHIPS,
+      currentBet: 0,
+      totalMatchInvested: 0,
+      holeCards: [c1, c2],
+      folded: false,
+      isAllIn: false,
+      hasActedThisStage: false,
+      eliminated: false,
+    };
+  });
+
+  const dealerIdx = 0;
+  const sbIdx = serverPlayers.length > 2 ? 1 : 0;
+  const bbIdx = serverPlayers.length > 2 ? 2 : 1;
+  const firstTurnIdx = serverPlayers.length > 2 ? (bbIdx + 1) % serverPlayers.length : 0;
+
+  serverPlayers[sbIdx].chips -= SMALL_BLIND;
+  serverPlayers[sbIdx].currentBet = SMALL_BLIND;
+  serverPlayers[sbIdx].totalMatchInvested = SMALL_BLIND;
+  serverPlayers[sbIdx].lastAction = `SB (${SMALL_BLIND})`;
+
+  serverPlayers[bbIdx].chips -= BIG_BLIND;
+  serverPlayers[bbIdx].currentBet = BIG_BLIND;
+  serverPlayers[bbIdx].totalMatchInvested = BIG_BLIND;
+  serverPlayers[bbIdx].lastAction = `BB (${BIG_BLIND})`;
+
+  const pot = SMALL_BLIND + BIG_BLIND;
+
+  return {
+    deck,
+    stage: 'preflop',
+    pot,
+    currentBet: BIG_BLIND,
+    minRaise: BIG_BLIND * 2,
+    communityCards: [],
+    players: serverPlayers,
+    dealerIndex: dealerIdx,
+    smallBlindIndex: sbIdx,
+    bigBlindIndex: bbIdx,
+    currentPlayerIndex: firstTurnIdx,
+    smallBlindAmount: SMALL_BLIND,
+    bigBlindAmount: BIG_BLIND,
+    winnerUserIds: [],
+    winningCardIds: [],
+    matchChampionUserId: null,
+    nextRoundStartsAt: null,
+    logs: [createServerLog(`Texas Hold'em match started. Blinds ${SMALL_BLIND}/${BIG_BLIND}`, 'info')],
+    turnStartedAt: Date.now(),
+    turnTimeoutSec: 15,
+  };
+}
+
+function checkPokerMatchChampion(match: ActiveMatch) {
+  const pk = match.pokerGameState;
+  if (!pk) return;
+
+  pk.players.forEach((p) => {
+    if (p.chips <= 0) {
+      p.eliminated = true;
+    }
+  });
+
+  const survivors = pk.players.filter((p) => !p.eliminated && p.chips > 0);
+  if (survivors.length <= 1) {
+    const champion = survivors[0] || pk.players[0];
+    pk.stage = 'match_ended';
+    pk.matchChampionUserId = champion.userId;
+    pk.winnerUserIds = [champion.userId];
+    pk.winningHandDesc = `🏆 ${champion.username.toUpperCase()} WINS THE POKER MATCH!`;
+    pk.logs = [createServerLog(pk.winningHandDesc, 'win'), ...pk.logs].slice(0, 50);
+    settlePokerMatch(match);
+  } else {
+    pk.nextRoundStartsAt = Date.now() + 5000;
+  }
+}
+
+function advancePokerStage(match: ActiveMatch) {
+  const pk = match.pokerGameState;
+  if (!pk || pk.stage === 'ended' || pk.stage === 'match_ended') return;
+
+  const active = pk.players.filter((p) => !p.folded && !p.eliminated);
+  if (active.length <= 1) {
+    advancePokerTurn(match);
+    return;
+  }
+
+  // Reset stage bets for next stage
+  pk.players.forEach((p) => {
+    p.currentBet = 0;
+    p.hasActedThisStage = false;
+    if (!p.folded && !p.isAllIn && !p.eliminated) {
+      p.lastAction = undefined;
+    }
+  });
+  pk.currentBet = 0;
+  pk.minRaise = pk.bigBlindAmount;
+
+  if (pk.stage === 'preflop') {
+    pk.stage = 'flop';
+    pk.communityCards = [pk.deck.pop()!, pk.deck.pop()!, pk.deck.pop()!];
+    pk.logs = [createServerLog(`Flop dealt: ${pk.communityCards.map(c => c.rank + c.suit[0]).join(' ')}`, 'deal'), ...pk.logs].slice(0, 50);
+  } else if (pk.stage === 'flop') {
+    pk.stage = 'turn';
+    const c = pk.deck.pop()!;
+    pk.communityCards.push(c);
+    pk.logs = [createServerLog(`Turn card dealt: ${c.rank + c.suit[0]}`, 'deal'), ...pk.logs].slice(0, 50);
+  } else if (pk.stage === 'turn') {
+    pk.stage = 'river';
+    const c = pk.deck.pop()!;
+    pk.communityCards.push(c);
+    pk.logs = [createServerLog(`River card dealt: ${c.rank + c.suit[0]}`, 'deal'), ...pk.logs].slice(0, 50);
+  } else if (pk.stage === 'river') {
+    pk.stage = 'showdown';
+  }
+
+  const nonAllIn = active.filter((p) => !p.isAllIn);
+  if (nonAllIn.length <= 1 && pk.stage !== 'showdown') {
+    while (pk.communityCards.length < 5) {
+      pk.communityCards.push(pk.deck.pop()!);
+    }
+    pk.stage = 'showdown';
+  }
+
+  if (pk.stage === 'showdown') {
+    let bestScore = -1;
+    let winners: ServerPokerPlayer[] = [];
+    let bestDesc = '';
+    let winningBestFive: ServerPokerCard[] = [];
+
+    active.forEach((p) => {
+      const evalRes = evaluateServerPoker7CardHand([...p.holeCards, ...pk.communityCards]);
+      p.handScore = evalRes.score;
+      p.handDesc = evalRes.description;
+      if (evalRes.score > bestScore) {
+        bestScore = evalRes.score;
+        winners = [p];
+        bestDesc = evalRes.description;
+        winningBestFive = evalRes.bestFive;
+      } else if (evalRes.score === bestScore) {
+        winners.push(p);
+      }
+    });
+
+    const splitPot = Math.floor(pk.pot / winners.length);
+    winners.forEach((w) => {
+      w.chips += splitPot;
+    });
+
+    pk.winnerUserIds = winners.map((w) => w.userId);
+    pk.winningCardIds = winningBestFive.map((c) => c.id);
+    const winNames = winners.map((w) => w.username).join(' & ');
+    pk.winningHandDesc = `${winNames} won with ${bestDesc}! (${splitPot} chips each)`;
+    pk.logs = [createServerLog(pk.winningHandDesc, 'win'), ...pk.logs].slice(0, 50);
+    pk.stage = 'ended';
+
+    checkPokerMatchChampion(match);
+    return;
+  }
+
+  let nextIdx = (pk.dealerIndex + 1) % pk.players.length;
+  let count = 0;
+  while ((pk.players[nextIdx].folded || pk.players[nextIdx].isAllIn || pk.players[nextIdx].eliminated) && count < pk.players.length) {
+    nextIdx = (nextIdx + 1) % pk.players.length;
+    count++;
+  }
+  pk.currentPlayerIndex = nextIdx;
+  pk.turnStartedAt = Date.now();
+}
+
+function advancePokerTurn(match: ActiveMatch) {
+  const pk = match.pokerGameState;
+  if (!pk || pk.stage === 'ended' || pk.stage === 'match_ended') return;
+
+  const active = pk.players.filter((p) => !p.folded && !p.eliminated);
+  if (active.length <= 1) {
+    const winner = active[0] || pk.players[0];
+    winner.chips += pk.pot;
+    pk.winnerUserIds = [winner.userId];
+    pk.winningCardIds = winner.holeCards.map((c) => c.id);
+    pk.winningHandDesc = `All opponents folded. ${winner.username} wins pot of ${pk.pot} chips!`;
+    pk.logs = [createServerLog(pk.winningHandDesc, 'win'), ...pk.logs].slice(0, 50);
+    pk.stage = 'ended';
+
+    checkPokerMatchChampion(match);
+    return;
+  }
+
+  const allActedAndMatched = active.every(
+    (p) => p.isAllIn || (p.hasActedThisStage && p.currentBet === pk.currentBet)
+  );
+
+  if (allActedAndMatched) {
+    advancePokerStage(match);
+  } else {
+    let nextIdx = (pk.currentPlayerIndex + 1) % pk.players.length;
+    let count = 0;
+    while ((pk.players[nextIdx].folded || pk.players[nextIdx].isAllIn || pk.players[nextIdx].eliminated) && count < pk.players.length) {
+      nextIdx = (nextIdx + 1) % pk.players.length;
+      count++;
+    }
+    pk.currentPlayerIndex = nextIdx;
+    pk.turnStartedAt = Date.now();
+  }
+}
+
+function startNextPokerRound(match: ActiveMatch) {
+  const pk = match.pokerGameState;
+  if (!pk || pk.stage === 'match_ended') return;
+
+  pk.players.forEach((p) => {
+    if (p.chips <= 0) p.eliminated = true;
+  });
+
+  const survivors = pk.players.filter((p) => !p.eliminated && p.chips > 0);
+  if (survivors.length <= 1) {
+    checkPokerMatchChampion(match);
+    return;
+  }
+
+  const deck = generateServerPokerDeck();
+  pk.deck = deck;
+
+  let nextDealerIdx = (pk.dealerIndex + 1) % pk.players.length;
+  while (pk.players[nextDealerIdx].eliminated || pk.players[nextDealerIdx].chips <= 0) {
+    nextDealerIdx = (nextDealerIdx + 1) % pk.players.length;
+  }
+  pk.dealerIndex = nextDealerIdx;
+
+  let sbIdx = survivors.length > 2 ? (nextDealerIdx + 1) % pk.players.length : nextDealerIdx;
+  while (pk.players[sbIdx].eliminated || pk.players[sbIdx].chips <= 0) {
+    sbIdx = (sbIdx + 1) % pk.players.length;
+  }
+  pk.smallBlindIndex = sbIdx;
+
+  let bbIdx = (sbIdx + 1) % pk.players.length;
+  while (pk.players[bbIdx].eliminated || pk.players[bbIdx].chips <= 0) {
+    bbIdx = (bbIdx + 1) % pk.players.length;
+  }
+  pk.bigBlindIndex = bbIdx;
+
+  let firstTurnIdx = survivors.length > 2 ? (bbIdx + 1) % pk.players.length : sbIdx;
+  while (pk.players[firstTurnIdx].eliminated || pk.players[firstTurnIdx].chips <= 0) {
+    firstTurnIdx = (firstTurnIdx + 1) % pk.players.length;
+  }
+  pk.currentPlayerIndex = firstTurnIdx;
+
+  pk.players.forEach((p) => {
+    p.currentBet = 0;
+    p.totalMatchInvested = 0;
+    p.folded = p.eliminated || p.chips <= 0;
+    p.isAllIn = false;
+    p.hasActedThisStage = false;
+    p.lastAction = undefined;
+    p.holeCards = p.folded ? [] : [deck.pop()!, deck.pop()!];
+  });
+
+  const sbPost = Math.min(pk.players[sbIdx].chips, pk.smallBlindAmount);
+  pk.players[sbIdx].chips -= sbPost;
+  pk.players[sbIdx].currentBet = sbPost;
+  pk.players[sbIdx].totalMatchInvested = sbPost;
+  pk.players[sbIdx].lastAction = `SB (${sbPost})`;
+  if (pk.players[sbIdx].chips === 0) pk.players[sbIdx].isAllIn = true;
+
+  const bbPost = Math.min(pk.players[bbIdx].chips, pk.bigBlindAmount);
+  pk.players[bbIdx].chips -= bbPost;
+  pk.players[bbIdx].currentBet = bbPost;
+  pk.players[bbIdx].totalMatchInvested = bbPost;
+  pk.players[bbIdx].lastAction = `BB (${bbPost})`;
+  if (pk.players[bbIdx].chips === 0) pk.players[bbIdx].isAllIn = true;
+
+  pk.pot = sbPost + bbPost;
+  pk.currentBet = Math.max(sbPost, bbPost);
+  pk.minRaise = pk.currentBet * 2;
+  pk.communityCards = [];
+  pk.winnerUserIds = [];
+  pk.winningCardIds = [];
+  pk.winningHandDesc = undefined;
+  pk.nextRoundStartsAt = null;
+  pk.stage = 'preflop';
+  pk.turnStartedAt = Date.now();
+  pk.logs = [createServerLog(`Next hand started. Blinds ${pk.smallBlindAmount}/${pk.bigBlindAmount}`, 'info'), ...pk.logs].slice(0, 50);
+}
+
+function applyPokerAction(match: ActiveMatch, userId: string, rawAction: string, betAmount?: number) {
+  const pk = match.pokerGameState;
+  if (!pk) throw new Error('Poker game state not found.');
+
+  const action = rawAction.replace(/^poker_/, '');
+  if (action === 'next_hand' || action === 'poker_next_hand') {
+    if (pk.stage === 'ended') {
+      startNextPokerRound(match);
+      return;
+    }
+  }
+
+  if (pk.stage === 'ended' || pk.stage === 'match_ended') {
+    throw new Error('Hand is already ended.');
+  }
+
+  const currPlayer = pk.players[pk.currentPlayerIndex];
+  if (!currPlayer || currPlayer.userId !== userId) {
+    throw new Error('Not your turn.');
+  }
+
+  const needed = pk.currentBet - currPlayer.currentBet;
+
+  if (action === 'fold') {
+    currPlayer.folded = true;
+    currPlayer.hasActedThisStage = true;
+    currPlayer.lastAction = 'FOLD';
+    pk.logs = [createServerLog(`${currPlayer.username} folded`, 'fold'), ...pk.logs].slice(0, 50);
+    advancePokerTurn(match);
+  } else if (action === 'check') {
+    if (needed > 0) {
+      throw new Error(`Cannot check; ${needed} chips needed to call.`);
+    }
+    currPlayer.hasActedThisStage = true;
+    currPlayer.lastAction = 'CHECK';
+    pk.logs = [createServerLog(`${currPlayer.username} checked`, 'bet'), ...pk.logs].slice(0, 50);
+    advancePokerTurn(match);
+  } else if (action === 'call') {
+    if (needed <= 0) {
+      currPlayer.hasActedThisStage = true;
+      currPlayer.lastAction = 'CHECK';
+      pk.logs = [createServerLog(`${currPlayer.username} checked`, 'bet'), ...pk.logs].slice(0, 50);
+      advancePokerTurn(match);
+      return;
+    }
+    const callAmount = Math.min(currPlayer.chips, needed);
+    currPlayer.chips -= callAmount;
+    currPlayer.currentBet += callAmount;
+    currPlayer.totalMatchInvested += callAmount;
+    if (currPlayer.chips === 0) {
+      currPlayer.isAllIn = true;
+      currPlayer.lastAction = 'ALL-IN';
+    } else {
+      currPlayer.lastAction = `CALL ${callAmount}`;
+    }
+    currPlayer.hasActedThisStage = true;
+    pk.pot += callAmount;
+    pk.logs = [createServerLog(`${currPlayer.username} ${currPlayer.lastAction}`, 'bet'), ...pk.logs].slice(0, 50);
+    advancePokerTurn(match);
+  } else if (action === 'raise') {
+    const targetTotalBet = Number(betAmount);
+    if (!Number.isFinite(targetTotalBet) || targetTotalBet <= pk.currentBet) {
+      throw new Error(`Raise amount must exceed current bet (${pk.currentBet}).`);
+    }
+    const additionalNeeded = targetTotalBet - currPlayer.currentBet;
+    const actualBet = Math.min(currPlayer.chips, additionalNeeded);
+    const newCurrentBet = currPlayer.currentBet + actualBet;
+
+    currPlayer.chips -= actualBet;
+    currPlayer.currentBet = newCurrentBet;
+    currPlayer.totalMatchInvested += actualBet;
+    if (currPlayer.chips === 0) {
+      currPlayer.isAllIn = true;
+      currPlayer.lastAction = 'ALL-IN';
+    } else {
+      currPlayer.lastAction = `RAISE ${newCurrentBet}`;
+    }
+    currPlayer.hasActedThisStage = true;
+    pk.pot += actualBet;
+    pk.currentBet = newCurrentBet;
+    pk.minRaise = newCurrentBet + pk.bigBlindAmount;
+
+    pk.players.forEach((p, idx) => {
+      if (idx !== pk.currentPlayerIndex && !p.folded && !p.isAllIn && !p.eliminated) {
+        p.hasActedThisStage = false;
+      }
+    });
+
+    pk.logs = [createServerLog(`${currPlayer.username} ${currPlayer.lastAction}`, 'bet'), ...pk.logs].slice(0, 50);
+    advancePokerTurn(match);
+  } else if (action === 'all_in') {
+    const allInAmount = currPlayer.chips;
+    const newCurrentBet = currPlayer.currentBet + allInAmount;
+    currPlayer.chips = 0;
+    currPlayer.currentBet = newCurrentBet;
+    currPlayer.totalMatchInvested += allInAmount;
+    currPlayer.isAllIn = true;
+    currPlayer.hasActedThisStage = true;
+    currPlayer.lastAction = 'ALL-IN';
+    pk.pot += allInAmount;
+
+    if (newCurrentBet > pk.currentBet) {
+      pk.currentBet = newCurrentBet;
+      pk.minRaise = newCurrentBet + pk.bigBlindAmount;
+      pk.players.forEach((p, idx) => {
+        if (idx !== pk.currentPlayerIndex && !p.folded && !p.isAllIn && !p.eliminated) {
+          p.hasActedThisStage = false;
+        }
+      });
+    }
+
+    pk.logs = [createServerLog(`${currPlayer.username} went ALL-IN (${allInAmount})`, 'bet'), ...pk.logs].slice(0, 50);
+    advancePokerTurn(match);
+  } else {
+    throw new Error(`Unsupported poker action: ${action}`);
+  }
+}
+
+function settlePokerMatch(activeMatch: ActiveMatch) {
+  if (activeMatch.settled) return;
+
+  const pk = activeMatch.pokerGameState;
+  if (!pk) return;
+
+  const champion = pk.players.find((p) => p.userId === pk.matchChampionUserId) || pk.players[0];
+  const grossPot = activeMatch.stake * activeMatch.players.length;
+  const seasonFund = round2(grossPot * 0.02);
+  const burnFund = round2(grossPot * 0.02);
+  const netPrizePool = round2(grossPot - seasonFund - burnFund);
+
+  pk.winningPayout = netPrizePool;
+
+  pk.players.forEach((player) => {
+    if (player.userId.startsWith('bot_') || player.userId.startsWith('waiting_for_player_')) return;
+    const user = getUser(player.userId);
+    const isWinner = player.userId === champion?.userId;
+    const grossPayout = isWinner ? netPrizePool : 0;
+    const referralSettlement = activeMatch.mode === 'pvp' && grossPayout > 0
+      ? applyReferralMatchBonus(user, grossPayout, activeMatch.matchId)
+      : { inviterBonus: 0, netPayout: grossPayout };
+
+    const matchPayoutLedgerId = `match-payout:${activeMatch.matchId}:${user.userId}`;
+    const payoutAlreadyCredited = user.transactions.some((entry) => entry.id === matchPayoutLedgerId);
+
+    if (!payoutAlreadyCredited) {
+      user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
+      if (referralSettlement.netPayout > 0) {
+        user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+        createLedgerEntry(user, {
+          id: matchPayoutLedgerId,
+          event: `${activeMatch.mode === 'pvp' ? 'PVP Poker' : 'Private Poker'} Payout`,
+          value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+          type: 'match_payout',
+          amount: referralSettlement.netPayout,
+        });
+      }
+
+      if (activeMatch.mode === 'pvp') {
+        updateQuestProgress(user.userId, 'play_online', 1);
+      } else {
+        updateQuestProgress(user.userId, 'play_private', 1);
+      }
+      if (isWinner) {
+        updateQuestProgress(user.userId, 'win_any', 1);
+      }
+    }
+    maybeActivateReferral(user, activeMatch.matchId);
+    claimCompletedQuests(user);
+    schedulePersist({ userId: user.userId });
+  });
+
+  activeMatch.settled = true;
+  activeMatch.players.forEach((player) => {
+    activeMatchByUser.delete(player.userId);
+  });
+
+  activeMatch.payoutResult = {
+    grossPot,
+    seasonFund,
+    burnFund,
+    netPrizePool,
+    winnerUserId: champion?.userId,
+  };
+
+  schedulePersist({ matchId: activeMatch.matchId });
+  flushTelegramNotifications().catch(() => undefined);
+
+  const associatedRoom = Array.from(privateRooms.values()).find((r) => r.matchId === activeMatch.matchId);
+  if (associatedRoom) {
+    const roomCode = associatedRoom.roomCode;
+    const subscribers = privateRoomSubscribers.get(roomCode);
+    subscribers?.forEach((response) => {
+      sendSse(response, 'private-room-completed', {
+        roomCode,
+        reason: 'The poker match has concluded.',
+      });
+      response.end();
+    });
+    privateRoomSubscribers.delete(roomCode);
+    privateRooms.delete(roomCode);
+    schedulePersist({ deleteRoomCode: roomCode });
+  }
+
+  scheduleMatchCleanup(activeMatch.matchId);
+}
+
+function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
+  const pk = match.pokerGameState;
+  if (!pk) return null;
+
+  const userIndex = pk.players.findIndex((p) => p.userId === userId);
+  const isSpectator = userIndex === -1;
+  const isShowdownOrEnded = pk.stage === 'showdown' || pk.stage === 'ended' || pk.stage === 'match_ended';
+
+  const mappedPlayers = pk.players.map((p, idx) => {
+    const isMe = !isSpectator && p.userId === userId;
+    const localId = isMe ? 'player' : `opponent_${idx}`;
+    const holeCards = isMe || isShowdownOrEnded
+      ? p.holeCards
+      : p.holeCards.map((c, cIdx) => ({
+          id: `hidden_card_${idx}_${cIdx}`,
+          suit: 'spades' as const,
+          rank: 0,
+          hidden: true,
+        }));
+
+    return {
+      id: localId,
+      userId: p.userId,
+      name: p.username,
+      avatar: p.avatarId,
+      chips: p.chips,
+      currentBet: p.currentBet,
+      totalMatchInvested: p.totalMatchInvested,
+      holeCards,
+      folded: p.folded,
+      isAllIn: p.isAllIn,
+      isAi: p.isAi,
+      lastAction: p.lastAction,
+      hasActedThisStage: p.hasActedThisStage,
+      eliminated: p.eliminated,
+      isConnected: p.isConnected !== false,
+      disconnectedAt: p.disconnectedAt || null,
+    };
+  });
+
+  const winnerIds = pk.winnerUserIds.map((wId) => {
+    const pIdx = pk.players.findIndex((p) => p.userId === wId);
+    return !isSpectator && wId === userId ? 'player' : `opponent_${pIdx}`;
+  });
+
+  const champion = pk.players.find((p) => p.userId === pk.matchChampionUserId);
+  const turnTimeLeft = Math.max(0, Math.ceil((15_000 - (Date.now() - (pk.turnStartedAt || Date.now()))) / 1000));
+
+  const pokerGameState = {
+    stage: pk.stage,
+    pot: pk.pot,
+    currentBet: pk.currentBet,
+    minRaise: pk.minRaise,
+    communityCards: pk.communityCards,
+    players: mappedPlayers,
+    dealerIndex: pk.dealerIndex,
+    smallBlindIndex: pk.smallBlindIndex,
+    bigBlindIndex: pk.bigBlindIndex,
+    currentPlayerIndex: pk.currentPlayerIndex,
+    smallBlindAmount: pk.smallBlindAmount,
+    bigBlindAmount: pk.bigBlindAmount,
+    winnerIds,
+    winningCardIds: pk.winningCardIds,
+    winningHandDesc: pk.winningHandDesc,
+    isMatchOver: pk.stage === 'match_ended',
+    matchWinnerName: champion?.username,
+    winningPayout: pk.winningPayout,
+    logs: pk.logs.slice(0, 20),
+    turnTimeLeft,
+    turnStartedAt: pk.turnStartedAt,
+    stake: match.stake,
+    mode: match.mode,
+    matchId: match.matchId,
+    roomCode: (match as any).roomCode,
+    nextRoundStartsAt: pk.nextRoundStartsAt || null,
+    waitingForPlayers: !match.playStartedAt,
+    connectionDeadlineAt: match.connectionDeadlineAt || null,
+  };
+
+  return {
+    matchId: match.matchId,
+    mode: match.mode,
+    stake: match.stake,
+    gameType: 'poker',
+    isSpectator,
+    pokerGameState,
+    gameState: pokerGameState as any,
+  };
+}
+
 function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
   const bj = match.blackjackGameState;
   if (!bj) return null;
@@ -3570,6 +4445,9 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
 }
 
 function buildPerspectiveState(match: ActiveMatch, userId: string) {
+  if (match.gameType === 'poker' || match.pokerGameState) {
+    return buildPokerPerspectiveState(match, userId);
+  }
   if (match.gameType === 'blackjack' || match.blackjackGameState) {
     return buildBlackjackPerspectiveState(match, userId);
   }
@@ -3807,16 +4685,20 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     stake,
     players,
     createdAt,
-    connectionDeadlineAt: mode === 'pvp' ? createdAt + 60_000 : undefined,
+    connectionDeadlineAt: (mode === 'pvp' || waitsForPrivatePlayers) ? createdAt + 15_000 : undefined,
     playStartedAt: waitsForPlayers ? null : createdAt,
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
     gameState: createInitialMatchState(players),
     blackjackGameState: gameType === 'blackjack' ? createInitialBlackjackMatchState(players, stake) : undefined,
+    pokerGameState: gameType === 'poker' ? createInitialPokerMatchState(players, stake) : undefined,
   };
   activeMatch.gameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
   if (activeMatch.blackjackGameState) {
     activeMatch.blackjackGameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
+  }
+  if (activeMatch.pokerGameState) {
+    activeMatch.pokerGameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
   }
   activeMatches.set(matchId, activeMatch);
   players.forEach((queuedPlayer) => {
@@ -3916,11 +4798,17 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
 function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   ensureMatchLifecycle(match);
   if (match.mode !== 'pvp' || match.playStartedAt) return true;
+  const isTournament = match.matchId.startsWith('tourn-');
+  const timeoutMs = 15_000;
+  const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
+  
+  // While within the 15-second lobby, wait if table has fewer than 4 players so others can join
+  if (match.players.length < 4 && !deadlineReached) {
+    return false;
+  }
+
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
   const allConnected = connectedPlayers.length === match.gameState.players.length;
-  const isTournament = match.matchId.startsWith('tourn-');
-  const timeoutMs = isTournament ? 20_000 : 20_000;
-  const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
   if (!allConnected && !deadlineReached) return false;
   
   if (deadlineReached && !allConnected) {
@@ -3936,6 +4824,9 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
       match.gameState.turnStartedAt = now;
       if (match.blackjackGameState) {
         match.blackjackGameState.turnStartedAt = now;
+      }
+      if (match.pokerGameState) {
+        match.pokerGameState.turnStartedAt = now;
       }
       match.gameState.logs = [
         createServerLog('🎮 Tournament match started. Non-connected players are in shadow mode (skipping turns until reconnected).', 'info'),
@@ -3971,6 +4862,16 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
           }
         });
       }
+      if (match.pokerGameState) {
+        match.pokerGameState.players.forEach((p) => {
+          if (!p.hasConnected && !p.isAi) {
+            p.isAi = true;
+            p.isConnected = true;
+            p.hasConnected = true;
+            p.username = `Bot ${p.username}`;
+          }
+        });
+      }
       match.gameState.logs = [
         createServerLog('🔌 Absent player replaced by AI bot. Free match starting.', 'info'),
         ...match.gameState.logs,
@@ -3990,6 +4891,9 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   if (match.blackjackGameState) {
     match.blackjackGameState.turnStartedAt = now;
   }
+  if (match.pokerGameState) {
+    match.pokerGameState.turnStartedAt = now;
+  }
   match.gameState.logs = [createServerLog('All available players are ready. Match started.', 'info'), ...match.gameState.logs].slice(0, 50);
   schedulePersist({ matchId: match.matchId });
   broadcastMatch(match.matchId);
@@ -3998,12 +4902,26 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
 
 function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   ensureMatchLifecycle(match);
+  if (match.pokerGameState) {
+    const pkPlayer = match.pokerGameState.players.find((entry) => entry.userId === userId);
+    if (pkPlayer) {
+      pkPlayer.isAi = false;
+      pkPlayer.isConnected = true;
+      pkPlayer.hasConnected = true;
+      pkPlayer.lastSeenAt = Date.now();
+      pkPlayer.disconnectedAt = null;
+    }
+  }
   if (match.blackjackGameState) {
     const bjPlayer = match.blackjackGameState.players.find((entry) => entry.userId === userId);
     if (bjPlayer) {
       bjPlayer.isAi = false;
       bjPlayer.isConnected = true;
       bjPlayer.hasConnected = true;
+      bjPlayer.lastSeenAt = Date.now();
+      bjPlayer.disconnectedAt = null;
+    }
+  }
       bjPlayer.lastSeenAt = Date.now();
       bjPlayer.disconnectedAt = null;
     }
@@ -5915,7 +6833,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       (m.gameType || 'uno') === gameType &&
       m.stake === stakeAmount &&
       !m.settled &&
-      m.gameState.phase !== 'game_over' &&
+      !m.playStartedAt &&
       m.players.length < 4 &&
       !m.players.some((p) => p.userId === userId)
   );
@@ -5960,6 +6878,40 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       emotion: 'happy',
     });
 
+    if (openActiveMatch.blackjackGameState) {
+      if (openActiveMatch.blackjackGameState.shoe.length < 5) {
+        openActiveMatch.blackjackGameState.shoe = generateServerBlackjackShoe(4);
+      }
+      const c1 = openActiveMatch.blackjackGameState.shoe.pop()!;
+      const c2 = openActiveMatch.blackjackGameState.shoe.pop()!;
+      const pEval = evaluateServerBlackjackHand([c1, c2]);
+      const betAmount = openActiveMatch.stake > 0 ? openActiveMatch.stake : 10;
+      openActiveMatch.blackjackGameState.players.push({
+        userId,
+        username,
+        avatarId,
+        isAi: false,
+        isConnected: true,
+        hasConnected: true,
+        lastSeenAt: Date.now(),
+        disconnectedAt: null,
+        cards: [c1, c2],
+        bet: betAmount,
+        chips: 100,
+        score: pEval.score,
+        isSoft: pEval.isSoft,
+        isBusted: false,
+        hasBlackjack: pEval.hasBlackjack,
+        status: pEval.hasBlackjack ? 'blackjack' : 'playing',
+        wins: 0,
+      });
+      openActiveMatch.blackjackGameState.pot = betAmount * openActiveMatch.blackjackGameState.players.length;
+      openActiveMatch.blackjackGameState.logs = [
+        createServerLog(`👋 ${username} joined the Blackjack table! (${openActiveMatch.players.length}/4)`, 'info'),
+        ...openActiveMatch.blackjackGameState.logs,
+      ].slice(0, 50);
+    }
+
     openActiveMatch.gameState.logs = [
       createServerLog(`👋 ${username} joined the public table! (${openActiveMatch.players.length}/4)`, 'info'),
       ...openActiveMatch.gameState.logs,
@@ -5968,6 +6920,10 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     schedulePersist({ userId });
     schedulePersist({ matchId: openActiveMatch.matchId });
     broadcastMatch(openActiveMatch.matchId);
+
+    if (openActiveMatch.players.length >= 4) {
+      maybeStartPublicMatch(openActiveMatch);
+    }
 
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,

@@ -306,7 +306,11 @@ export function useUnoGame() {
           matchId: string;
           currentUserId: string;
           isSpectator?: boolean;
+          gameType?: string;
         };
+        if (activeMatch.gameType && activeMatch.gameType !== 'uno') {
+          return false;
+        }
         matchIdToFetch = activeMatch.matchId || null;
         userIdForFetch = activeMatch.currentUserId || null;
         if (activeMatch.isSpectator) {
@@ -728,6 +732,9 @@ export function useUnoGame() {
       let initialRemoteState: GameState | null = null;
       try {
         const activeMatch = JSON.parse(localStorage.getItem('redoapp_active_match')!);
+        if (activeMatch.gameType && activeMatch.gameType !== 'uno') {
+          return;
+        }
         remoteMatchIdRef.current = activeMatch.matchId;
         remoteUserIdRef.current = activeMatch.currentUserId;
         const initialStateIsFresh = Date.now() - Number(activeMatch.createdAt || 0) < 30_000;
