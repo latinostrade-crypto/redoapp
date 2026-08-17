@@ -72,13 +72,17 @@ function BlackjackCardView({
 }) {
   if (hidden || card.hidden) {
     return (
-      <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-slate-950 border-2 border-black rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none shrink-0">
+      <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-[#e63946] border-2 border-black rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none shrink-0">
         <img
           src="/card-thumbs/back.jpeg"
           alt="Card Back"
           className="w-full h-full object-cover select-none pointer-events-none rounded-[3px]"
+          style={{ imageRendering: 'pixelated' }}
           onError={(e) => {
-            (e.target as HTMLElement).style.display = 'none';
+            const img = e.target as HTMLImageElement;
+            if (!img.src.includes('./card-thumbs')) {
+              img.src = './card-thumbs/back.jpeg';
+            }
           }}
         />
       </div>
