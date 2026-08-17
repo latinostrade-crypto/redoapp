@@ -93,6 +93,8 @@ export default function App() {
   const {
     gameState: blackjackState,
     turnTimeLeft: blackjackTurnTimeLeft,
+    selectedBet: blackjackSelectedBet,
+    placeBet: handleBlackjackPlaceBet,
     startBlackjackSession,
     playerHit: handleBlackjackHit,
     playerStand: handleBlackjackStand,
@@ -700,6 +702,8 @@ export default function App() {
           <BlackjackGame
             gameState={blackjackState}
             turnTimeLeft={blackjackTurnTimeLeft}
+            selectedBet={blackjackSelectedBet}
+            onPlaceBet={handleBlackjackPlaceBet}
             onHit={handleBlackjackHit}
             onStand={handleBlackjackStand}
             onDoubleDown={handleBlackjackDoubleDown}

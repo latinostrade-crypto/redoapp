@@ -17,6 +17,8 @@ import {
   Play,
   Loader2,
   Skull,
+  Minus,
+  Sparkles,
 } from 'lucide-react';
 import {
   BlackjackCard,
@@ -28,6 +30,8 @@ import { sound } from '../utils/sound';
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
   turnTimeLeft: number;
+  selectedBet?: number;
+  onPlaceBet?: (amount: number) => void;
   onHit: () => void;
   onStand: () => void;
   onDoubleDown: () => void;
@@ -56,7 +60,16 @@ function ChipStack({ amount, label }: { amount: number; label?: string }) {
   );
 }
 
-function BlackjackCardView({ card, hidden }: { card: BlackjackCard; hidden?: boolean; key?: string | number }) {
+function BlackjackCardView({
+  card,
+  hidden,
+  isDealerHoleCard,
+}: {
+  card: BlackjackCard;
+  hidden?: boolean;
+  isDealerHoleCard?: boolean;
+  key?: string | number;
+}) {
   if (hidden || card.hidden) {
     return (
       <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-gradient-to-br from-blue-900 to-indigo-950 border-2 border-white/80 rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none">
@@ -75,8 +88,9 @@ function BlackjackCardView({ card, hidden }: { card: BlackjackCard; hidden?: boo
 
   return (
     <motion.div
-      initial={{ scale: 0.8, y: -10, opacity: 0 }}
-      animate={{ scale: 1, y: 0, opacity: 1 }}
+      initial={isDealerHoleCard ? { rotateY: 180, scale: 0.9 } : { scale: 0.8, y: -12, opacity: 0 }}
+      animate={{ rotateY: 0, scale: 1, y: 0, opacity: 1 }}
+      transition={{ duration: 0.4, ease: 'easeOut' }}
       className={`w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-white border-2 border-black rounded-md shadow-md flex flex-col justify-between p-0.5 select-none relative ${
         isRed ? 'text-red-600' : 'text-slate-950'
       }`}
@@ -91,6 +105,8 @@ function BlackjackCardView({ card, hidden }: { card: BlackjackCard; hidden?: boo
 export function BlackjackGame({
   gameState,
   turnTimeLeft,
+  selectedBet = 10,
+  onPlaceBet,
   onHit,
   onStand,
   onDoubleDown,
@@ -98,17 +114,38 @@ export function BlackjackGame({
   onReturnToLobby,
 }: BlackjackGameProps) {
   const [muted, setMuted] = useState(sound.getMuted());
-  const [nextHandCountdown, setNextHandCountdown] = useState(5);
+  const [nextHandCountdown, setNextHandCountdown] = useState(6);
+  const [currentBetAmount, setCurrentBetAmount] = useState<number>(selectedBet);
+  const [showFlyingChips, setShowFlyingChips] = useState(false);
 
   const toggleMute = () => {
     sound.toggleMute();
     setMuted(sound.getMuted());
   };
 
+  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
+  const maxAvailableBet = humanPlayer?.chips ? humanPlayer.chips + (humanPlayer.bet || 0) : 100;
+
+  const handleBetChange = (newAmount: number) => {
+    const clamped = Math.max(5, Math.min(maxAvailableBet, newAmount));
+    setCurrentBetAmount(clamped);
+    onPlaceBet?.(clamped);
+  };
+
+  // Trigger flying chips animation when round ends with winners
+  useEffect(() => {
+    if (gameState.stage === 'round_ended' || gameState.stage === 'match_ended') {
+      setShowFlyingChips(true);
+      const timer = setTimeout(() => setShowFlyingChips(false), 2400);
+      return () => clearTimeout(timer);
+    }
+    setShowFlyingChips(false);
+  }, [gameState.stage]);
+
   // Next Hand Auto-Countdown Timer when round ends
   useEffect(() => {
     if (gameState.stage !== 'round_ended') {
-      setNextHandCountdown(5);
+      setNextHandCountdown(6);
       return;
     }
 
@@ -131,7 +168,6 @@ export function BlackjackGame({
   const activePlayer = gameState.players[gameState.currentPlayerIndex];
   const isHumanActiveTurn = gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer?.id === 'player';
   const canPlay = isHumanActiveTurn && !activePlayer?.eliminated;
-  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
   const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2 && activePlayer.chips >= activePlayer.bet;
 
   // Calculate chip leader
@@ -139,7 +175,7 @@ export function BlackjackGame({
   const chipLeader = sortedByChips[0];
 
   return (
-    <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
+    <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[560px]">
       
       {/* 1. TOP HEADER CONTROL BAR */}
       <header className="flex justify-between items-center bg-slate-950 border border-black px-2.5 py-1 z-20 rounded">
@@ -180,7 +216,7 @@ export function BlackjackGame({
       </header>
 
       {/* 2. CASINO FELT TABLE WITH MULTI-SEAT PLAYERS */}
-      <div className="w-full h-[400px] min-[380px]:h-[430px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[40px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-between p-2 z-10 shrink-0">
+      <div className="w-full h-[410px] min-[380px]:h-[440px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[40px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-between p-2 z-10 shrink-0">
         
         {/* Felt Pattern */}
         <div className="absolute inset-0 opacity-10 pointer-events-none rounded-[35px] bg-[radial-gradient(#00ff66_1px,transparent_1px)] [background-size:10px_10px]" />
@@ -199,13 +235,14 @@ export function BlackjackGame({
               </span>
             </div>
 
-            {/* Dealer Cards */}
+            {/* Dealer Cards (With animated Hole Card flip on dealer turn) */}
             <div className="flex -space-x-2 shrink-0">
               {gameState.dealer.cards.map((c, idx) => (
                 <BlackjackCardView
                   key={c.id || idx}
                   card={c}
                   hidden={c.hidden === true || (idx === 1 && gameState.stage === 'player_turn')}
+                  isDealerHoleCard={idx === 1 && gameState.stage !== 'player_turn'}
                 />
               ))}
             </div>
@@ -213,7 +250,7 @@ export function BlackjackGame({
         </div>
 
         {/* TABLE CENTER: POT & TURN STATUS / WAITING BANNER */}
-        <div className="flex flex-col items-center gap-1 z-20 pointer-events-none my-auto">
+        <div className="flex flex-col items-center gap-1 z-20 pointer-events-none my-auto relative">
           {gameState.waitingForPlayers ? (
             <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse">
               <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
@@ -232,6 +269,28 @@ export function BlackjackGame({
                 )}
               </div>
 
+              {/* FLYING CHIPS ANIMATION WHEN ROUND ENDS */}
+              {showFlyingChips && (
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  {[...Array(6)].map((_, i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ scale: 0, x: 0, y: 0, opacity: 1 }}
+                      animate={{
+                        scale: [0.5, 1.2, 0.8],
+                        x: (i % 2 === 0 ? 1 : -1) * (30 + i * 18),
+                        y: 40 + i * 12,
+                        opacity: [1, 1, 0],
+                      }}
+                      transition={{ duration: 1.2, delay: i * 0.12, ease: 'easeOut' }}
+                      className="absolute"
+                    >
+                      <ChipStackIcon className="w-5 h-5 text-[#ffcc00] drop-shadow-[0_0_8px_#ffcc00]" />
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+
               {/* TURN TIMER BADGE */}
               {gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer && (
                 <motion.div
@@ -248,6 +307,17 @@ export function BlackjackGame({
                 >
                   <Timer className={`w-3 h-3 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
                   <span>{activePlayer.id === 'player' ? 'YOUR TURN' : `${activePlayer.name.toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
+                </motion.div>
+              )}
+
+              {gameState.stage === 'dealer_turn' && (
+                <motion.div
+                  animate={{ scale: [1, 1.05, 1] }}
+                  transition={{ repeat: Infinity, duration: 0.8 }}
+                  className="px-3 py-0.5 rounded-full border border-blue-400 bg-blue-950/90 font-black text-[9px] text-blue-300 flex items-center gap-1 uppercase backdrop-blur-md shadow-[0_0_12px_rgba(0,180,255,0.4)]"
+                >
+                  <Sparkles className="w-3 h-3 animate-spin" />
+                  <span>DEALER IS DRAWING CARDS...</span>
                 </motion.div>
               )}
             </>
@@ -278,6 +348,24 @@ export function BlackjackGame({
                 <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
                   💰 {p.chips} CHIPS
                 </div>
+
+                {/* Floating Profit Notification on Round End */}
+                {typeof p.lastProfit === 'number' && (gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, y: -16, scale: 1.1 }}
+                    transition={{ duration: 0.5 }}
+                    className={`absolute -top-6 px-1.5 py-0.2 rounded font-black text-[8px] z-40 border shadow-lg ${
+                      p.lastProfit > 0
+                        ? 'bg-emerald-950 border-emerald-400 text-[#00ff66]'
+                        : p.lastProfit === 0
+                        ? 'bg-slate-900 border-slate-400 text-slate-200'
+                        : 'bg-red-950 border-red-500 text-red-300'
+                    }`}
+                  >
+                    {p.lastProfit > 0 ? `+${p.lastProfit} 💰` : p.lastProfit === 0 ? 'PUSH' : `${p.lastProfit} 💰`}
+                  </motion.div>
+                )}
 
                 {/* Cards */}
                 <div className="flex -space-x-3 mb-1 shrink-0 min-h-[50px] items-center justify-center">
@@ -321,64 +409,66 @@ export function BlackjackGame({
         </div>
       </div>
 
-      {/* 3. ROUND ENDED / MATCH CHAMPION MODAL */}
+      {/* 3. COMPACT & SEMI-TRANSPARENT ROUND ENDED / MATCH STANDINGS MODAL */}
       <AnimatePresence>
         {(gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-3 backdrop-blur-sm"
+            initial={{ opacity: 0, scale: 0.95, y: -10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="absolute top-12 left-1/2 -translate-x-1/2 z-50 w-[90%] max-w-[290px] pointer-events-auto"
           >
-            <div className="bg-slate-950 border-2 border-[#00ff66] p-4 rounded-xl max-w-xs w-full text-center space-y-3 shadow-[0_0_35px_#00ff66]">
-              <Trophy className="w-10 h-10 text-[#ffcc00] mx-auto animate-bounce" />
-              <h2 className="text-xs font-black uppercase tracking-wider text-[#00ff66]">
-                {gameState.stage === 'match_ended'
-                  ? `🏆 ${gameState.matchChampion?.name?.toUpperCase() || gameState.winner?.toUpperCase() || 'PLAYER'} WINS MATCH!`
-                  : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5} COMPLETED`}
-              </h2>
+            <div className="bg-slate-950/85 backdrop-blur-md border-2 border-[#00ff66]/70 p-2.5 rounded-xl text-center space-y-2 shadow-[0_0_25px_rgba(0,255,102,0.4)]">
+              <div className="flex items-center justify-center gap-1 text-[#ffcc00]">
+                <Trophy className="w-4 h-4 text-[#ffcc00] animate-bounce" />
+                <h2 className="text-[10px] font-black uppercase tracking-wider text-[#00ff66]">
+                  {gameState.stage === 'match_ended'
+                    ? `🏆 ${gameState.matchChampion?.name?.toUpperCase() || gameState.winner?.toUpperCase() || 'PLAYER'} WINS!`
+                    : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5} RESULTS`}
+                </h2>
+              </div>
 
               {gameState.winningHandDesc && (
-                <p className="text-[9.5px] text-slate-200 font-bold bg-black/80 border border-black p-2 rounded leading-relaxed">
+                <p className="text-[8px] text-slate-200 font-bold bg-black/70 border border-slate-800 p-1.5 rounded leading-relaxed">
                   {gameState.winningHandDesc}
                 </p>
               )}
 
               {/* Standings Table sorted by Chips */}
-              <div className="space-y-1 bg-slate-900 border border-slate-800 p-2 rounded text-[8px] font-bold">
-                <div className="text-slate-400 text-[7px] uppercase tracking-wider mb-1 flex justify-between">
+              <div className="space-y-0.5 bg-black/60 border border-slate-800 p-1.5 rounded text-[7.5px] font-bold max-h-[90px] overflow-y-auto">
+                <div className="text-slate-400 text-[6.5px] uppercase tracking-wider flex justify-between border-b border-slate-800 pb-0.5">
                   <span>PLAYER</span>
-                  <span>CHIPS (START: 100)</span>
+                  <span>CHIPS</span>
                 </div>
                 {sortedByChips.map((p, rankIdx) => (
-                  <div key={p.id} className="flex justify-between items-center px-1">
-                    <span className="text-white truncate max-w-[120px]">
+                  <div key={p.id} className="flex justify-between items-center py-0.5">
+                    <span className="text-white truncate max-w-[110px]">
                       {rankIdx === 0 ? '🥇 ' : rankIdx === 1 ? '🥈 ' : rankIdx === 2 ? '🥉 ' : '4. '}
                       {p.name} {p.id === 'player' ? '(You)' : ''}
                     </span>
                     <span className={p.chips > 0 ? "text-[#ffcc00] font-black" : "text-red-400 font-black"}>
-                      {p.chips > 0 ? `💰 ${p.chips} CHIPS` : '💀 OUT'}
+                      {p.chips > 0 ? `💰 ${p.chips}` : '💀 OUT'}
                     </span>
                   </div>
                 ))}
               </div>
 
               {gameState.stage === 'match_ended' && gameState.winningPayout && gameState.winningPayout > 0 && (
-                <div className="bg-amber-950/60 border border-amber-500/50 p-1.5 rounded text-[9px] font-black text-[#ffcc00] flex items-center justify-center gap-1">
-                  <Coins className="w-3.5 h-3.5" />
+                <div className="bg-amber-950/70 border border-amber-500/50 p-1 rounded text-[8px] font-black text-[#ffcc00] flex items-center justify-center gap-1">
+                  <Coins className="w-3 h-3" />
                   <span>CHAMPION PRIZE: +{gameState.winningPayout} TKT</span>
                 </div>
               )}
 
               {/* Action Buttons */}
-              <div className="space-y-1.5 pt-1">
+              <div className="space-y-1 pt-0.5">
                 {gameState.stage === 'round_ended' && (
                   <button
                     type="button"
                     onClick={onNextHand}
-                    className="w-full py-2 bg-[#00ff66] text-black border-2 border-black font-black text-[10px] uppercase pixel-btn-interactive shadow flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-1.5 bg-[#00ff66] text-black border border-black font-black text-[9px] uppercase pixel-btn-interactive shadow flex items-center justify-center gap-1 cursor-pointer"
                   >
-                    <Play className="w-3.5 h-3.5 fill-black text-black" />
+                    <Play className="w-3 h-3 fill-black text-black" />
                     <span>NEXT HAND ({nextHandCountdown}S)</span>
                   </button>
                 )}
@@ -386,7 +476,7 @@ export function BlackjackGame({
                 <button
                   type="button"
                   onClick={onReturnToLobby}
-                  className="w-full py-2 bg-red-950 text-red-200 border border-red-500 font-bold text-[9px] uppercase pixel-btn-interactive cursor-pointer"
+                  className="w-full py-1 bg-red-950/80 text-red-200 border border-red-500/60 font-bold text-[8px] uppercase pixel-btn-interactive cursor-pointer"
                 >
                   RETURN TO LOBBY
                 </button>
@@ -396,7 +486,7 @@ export function BlackjackGame({
         )}
       </AnimatePresence>
 
-      {/* 4. PLAYER ACTION CONTROLS (HIT / STAND / DOUBLE) */}
+      {/* 4. BET ADJUSTMENT & PLAYER ACTION CONTROLS */}
       {gameState.stage === 'player_turn' && !gameState.isDealing && (
         <div className="bg-slate-950 border border-black p-2 rounded-lg z-20 flex flex-col gap-1.5 shadow-lg">
           <div className="flex justify-between items-center text-[8.5px] font-bold text-[#00ff66]">
@@ -452,6 +542,59 @@ export function BlackjackGame({
                 <span>DOUBLE</span>
               </div>
               <span className="text-[6.5px] text-amber-300/80 font-normal mt-0.5">2x bet</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 5. INTERACTIVE BET ADJUSTER (Available when round is ended / setting up next hand) */}
+      {(gameState.stage === 'round_ended' || gameState.stage === 'idle') && humanPlayer && !humanPlayer.eliminated && (
+        <div className="bg-slate-950/90 border border-[#ffcc00]/50 p-2 rounded-lg z-20 flex flex-col gap-1 shadow-md">
+          <div className="flex justify-between items-center text-[8px] font-black text-amber-300">
+            <span>⚙️ ADJUST BET FOR NEXT HAND:</span>
+            <span className="text-[#ffcc00]">CURRENT BET: {currentBetAmount} 💰</span>
+          </div>
+
+          <div className="flex items-center justify-between gap-1">
+            <button
+              type="button"
+              onClick={() => handleBetChange(currentBetAmount - 5)}
+              className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white text-[8px] font-black rounded cursor-pointer"
+            >
+              <Minus className="w-2.5 h-2.5 inline mr-0.5" />5
+            </button>
+
+            <div className="flex items-center gap-1">
+              {[5, 10, 25, 50].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleBetChange(preset)}
+                  className={`px-2 py-1 border text-[8px] font-black rounded cursor-pointer ${
+                    currentBetAmount === preset
+                      ? 'bg-[#ffcc00] text-black border-black font-black'
+                      : 'bg-black text-slate-300 border-slate-800'
+                  }`}
+                >
+                  {preset}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => handleBetChange(maxAvailableBet)}
+                className="px-2 py-1 bg-amber-950 border border-amber-500 text-amber-300 text-[8px] font-black rounded cursor-pointer hover:bg-amber-900"
+              >
+                MAX
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleBetChange(currentBetAmount + 5)}
+              className="px-2 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white text-[8px] font-black rounded cursor-pointer"
+            >
+              <Plus className="w-2.5 h-2.5 inline mr-0.5" />5
             </button>
           </div>
         </div>

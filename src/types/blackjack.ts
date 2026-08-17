@@ -36,9 +36,9 @@ export interface BlackjackPlayer {
   lastProfit?: number;
 }
 
-export type BlackjackStage = 'idle' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
+export type BlackjackStage = 'idle' | 'betting' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
 
-export type BlackjackActionType = 'hit' | 'stand' | 'double' | 'next_hand';
+export type BlackjackActionType = 'hit' | 'stand' | 'double' | 'next_hand' | 'place_bet';
 
 export interface BlackjackGameState {
   stage: BlackjackStage;

@@ -3212,30 +3212,68 @@ function advanceBlackjackTurn(match: ActiveMatch) {
     bj.turnStartedAt = Date.now();
   } else {
     // All players finished their turn -> Dealer turn!
-    bj.stage = 'dealer_turn';
-    bj.turnStartedAt = Date.now();
-    runServerDealerSequence(match);
+    startServerDealerTurn(match);
   }
 }
 
-function runServerDealerSequence(match: ActiveMatch) {
+function startServerDealerTurn(match: ActiveMatch) {
   const bj = match.blackjackGameState;
   if (!bj) return;
 
   bj.stage = 'dealer_turn';
+  bj.turnStartedAt = Date.now();
+  const dEval = evaluateServerBlackjackHand(bj.dealer.cards);
+  bj.dealer.score = dEval.score;
+  bj.dealer.isSoft = dEval.isSoft;
+  bj.dealer.isBusted = dEval.isBusted;
+  bj.dealer.status = dEval.isBusted ? 'busted' : 'playing';
+
+  schedulePersist({ matchId: match.matchId });
+  broadcastMatch(match.matchId);
+
+  // Step 1: Wait 1200ms after flipping the hole card before drawing additional cards
+  setTimeout(() => {
+    stepServerDealerDraw(match);
+  }, 1200);
+}
+
+function stepServerDealerDraw(match: ActiveMatch) {
+  const bj = match.blackjackGameState;
+  if (!bj || bj.stage !== 'dealer_turn') return;
 
   const activePlayers = bj.players.filter((p) => !p.eliminated);
   const anyStandingPlayer = activePlayers.some((p) => !p.isBusted);
   let dEval = evaluateServerBlackjackHand(bj.dealer.cards);
 
-  if (anyStandingPlayer) {
-    while (dEval.score < 17 && bj.shoe.length > 0) {
-      const card = bj.shoe.pop()!;
-      bj.dealer.cards.push(card);
-      dEval = evaluateServerBlackjackHand(bj.dealer.cards);
-    }
-  }
+  if (anyStandingPlayer && dEval.score < 17 && bj.shoe.length > 0) {
+    const card = bj.shoe.pop()!;
+    bj.dealer.cards.push(card);
+    dEval = evaluateServerBlackjackHand(bj.dealer.cards);
+    bj.dealer.score = dEval.score;
+    bj.dealer.isSoft = dEval.isSoft;
+    bj.dealer.isBusted = dEval.isBusted;
+    bj.dealer.status = dEval.isBusted ? 'busted' : 'playing';
 
+    bj.logs = [createServerLog(`🃏 Dealer draws a card (Score: ${dEval.score})`, 'draw'), ...bj.logs].slice(0, 50);
+    schedulePersist({ matchId: match.matchId });
+    broadcastMatch(match.matchId);
+
+    // Schedule next draw after 1100ms
+    setTimeout(() => {
+      stepServerDealerDraw(match);
+    }, 1100);
+  } else {
+    // Dealer finished drawing -> finalize round settlement!
+    finalizeServerDealerSequence(match);
+  }
+}
+
+function finalizeServerDealerSequence(match: ActiveMatch) {
+  const bj = match.blackjackGameState;
+  if (!bj) return;
+
+  const activePlayers = bj.players.filter((p) => !p.eliminated);
+  const dEval = evaluateServerBlackjackHand(bj.dealer.cards);
   bj.dealer.score = dEval.score;
   bj.dealer.isSoft = dEval.isSoft;
   bj.dealer.isBusted = dEval.isBusted;
@@ -3307,20 +3345,23 @@ function runServerDealerSequence(match: ActiveMatch) {
     let handSummary = '';
     if (roundWinners.length > 0) {
       const names = roundWinners.map((w) => w.username).join(', ');
-      handSummary = `⭐ ${names} won Hand ${bj.currentHand}! Dealer: ${dEval.isBusted ? 'BUST (' + dEval.score + ')' : dEval.score}. Hand ${bj.currentHand + 1}/${bj.maxHands} in 5s...`;
+      handSummary = `⭐ ${names} won Hand ${bj.currentHand}! Dealer: ${dEval.isBusted ? 'BUST (' + dEval.score + ')' : dEval.score}. Hand ${bj.currentHand + 1}/${bj.maxHands} in 6s...`;
       bj.roundWinnerUserId = roundWinners[0].userId;
       bj.roundWinnerName = names;
     } else if (dEval.isBusted) {
-      handSummary = `Dealer busted (${dEval.score})! Hand ${bj.currentHand + 1}/${bj.maxHands} in 5s...`;
+      handSummary = `Dealer busted (${dEval.score})! Hand ${bj.currentHand + 1}/${bj.maxHands} in 6s...`;
     } else {
-      handSummary = `Dealer won Hand ${bj.currentHand} (${dEval.score}). Hand ${bj.currentHand + 1}/${bj.maxHands} in 5s...`;
+      handSummary = `Dealer won Hand ${bj.currentHand} (${dEval.score}). Hand ${bj.currentHand + 1}/${bj.maxHands} in 6s...`;
     }
 
     bj.stage = 'round_ended';
     bj.winningHandDesc = handSummary;
-    bj.nextRoundStartsAt = Date.now() + 5000;
+    bj.nextRoundStartsAt = Date.now() + 6000;
     bj.logs = [createServerLog(handSummary, 'info'), ...bj.logs].slice(0, 50);
   }
+
+  schedulePersist({ matchId: match.matchId });
+  broadcastMatch(match.matchId);
 }
 
 function startNextBlackjackRound(match: ActiveMatch) {
@@ -3389,17 +3430,34 @@ function startNextBlackjackRound(match: ActiveMatch) {
   bj.logs = [createServerLog(`🃏 Hand ${bj.currentHand}/${bj.maxHands} dealt!`, 'info'), ...bj.logs].slice(0, 50);
 
   if (bj.stage === 'dealer_turn') {
-    runServerDealerSequence(match);
+    startServerDealerTurn(match);
   }
 }
 
-function applyBlackjackAction(match: ActiveMatch, userId: string, action: string) {
+function applyBlackjackAction(match: ActiveMatch, userId: string, action: string, amount?: number) {
   if (!match.playStartedAt) {
     throw new Error('Waiting for all players to connect.');
   }
   const bj = match.blackjackGameState;
   if (!bj) {
     throw new Error('Blackjack game state not found.');
+  }
+
+  if (action === 'blackjack_place_bet' || action === 'place_bet' || action === 'bet') {
+    const requestedBet = typeof amount === 'number' && Number.isFinite(amount)
+      ? Math.max(5, Math.min(100, Math.floor(amount)))
+      : 10;
+    const p = bj.players.find((pl) => pl.userId === userId);
+    if (p && !p.eliminated) {
+      const oldBet = p.bet;
+      const effectiveBet = Math.min(requestedBet, p.chips + oldBet);
+      p.chips = (p.chips + oldBet) - effectiveBet;
+      p.bet = effectiveBet;
+      bj.pot = bj.players.reduce((sum, pl) => sum + pl.bet, 0);
+      bj.logs = [createServerLog(`${p.username} set bet to ${p.bet} chips!`, 'action'), ...bj.logs].slice(0, 50);
+      schedulePersist({ matchId: match.matchId });
+      return;
+    }
   }
 
   if (action === 'blackjack_next_hand' || action === 'next_hand') {
@@ -8040,8 +8098,8 @@ app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) =>
   try {
     if (activeMatch.gameType === 'poker' || activeMatch.pokerGameState || action.startsWith('poker_') || action === 'fold' || action === 'check' || action === 'call' || action === 'raise' || action === 'all_in') {
       applyPokerAction(activeMatch, userId, action, amount);
-    } else if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand') {
-      applyBlackjackAction(activeMatch, userId, action);
+    } else if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand' || action === 'place_bet' || action === 'bet') {
+      applyBlackjackAction(activeMatch, userId, action, amount);
     } else if (action === 'play') {
       if (!cardId) {
         return res.status(400).json({ error: 'Missing cardId for play action.' });

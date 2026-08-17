@@ -31,6 +31,7 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
 export function useBlackjackGame(options?: {
   onSettlement?: (payout: number, won: boolean, push: boolean) => void;
 }) {
+  const [selectedBet, setSelectedBet] = useState<number>(DEFAULT_BET);
   const [remoteMatchId, setRemoteMatchId] = useState<string | null>(() => {
     try {
       const raw = localStorage.getItem('redoapp_active_match');
@@ -136,13 +137,13 @@ export function useBlackjackGame(options?: {
       }));
       setTurnTimeLeft(TURN_DURATION_SEC);
     } else {
-      // All players have taken their turns; Dealer now draws!
+      // All players have taken their turns; Dealer now draws with paced animation!
       setGameState((prev) => ({
         ...prev,
         players: currentPlayers,
         stage: 'dealer_turn',
       }));
-      setTimeout(() => runDealerDrawSequence(currentPlayers), 100);
+      setTimeout(() => runDealerDrawSequence(currentPlayers), 300);
     }
   }, []);
 
@@ -180,7 +181,7 @@ export function useBlackjackGame(options?: {
             },
           }));
 
-          const timer = window.setTimeout(drawNextDealerCard, 700);
+          const timer = window.setTimeout(drawNextDealerCard, 1000);
           dealingTimeoutsRef.current.push(timer);
         } else {
           isDealerDrawingRef.current = false;
@@ -279,7 +280,7 @@ export function useBlackjackGame(options?: {
       };
 
       sound.playPop();
-      const initialDealerPause = window.setTimeout(drawNextDealerCard, 600);
+      const initialDealerPause = window.setTimeout(drawNextDealerCard, 1000);
       dealingTimeoutsRef.current.push(initialDealerPause);
     },
     [gameState.currentHand, gameState.dealer.cards, gameState.maxHands, gameState.stake, options]
@@ -296,7 +297,8 @@ export function useBlackjackGame(options?: {
       stake: number,
       roomCode?: string,
       matchId?: string,
-      handNum = 1
+      handNum = 1,
+      betOverride?: number
     ) => {
       clearDealingTimeouts();
       isDealerDrawingRef.current = false;
@@ -308,7 +310,7 @@ export function useBlackjackGame(options?: {
         deckRef.current = deck;
       }
 
-      const standardBet = DEFAULT_BET;
+      const activeBet = betOverride || selectedBet || DEFAULT_BET;
       let totalPot = 0;
 
       const dealtPlayers: BlackjackPlayer[] = currentPlayers.map((p) => {
@@ -324,7 +326,7 @@ export function useBlackjackGame(options?: {
           };
         }
 
-        const betAmount = Math.min(standardBet, p.chips);
+        const betAmount = Math.min(activeBet, p.chips);
         const c1 = deck.pop()!;
         const c2 = deck.pop()!;
         const pEval = evaluateBlackjackHand([c1, c2]);
@@ -377,7 +379,7 @@ export function useBlackjackGame(options?: {
           {
             id: Math.random().toString(36).substring(2, 9),
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            message: `Hand ${handNum}/${MAX_HANDS} dealt for active players vs Dealer!`,
+            message: `Hand ${handNum}/${MAX_HANDS} dealt with ${activeBet} chips bet!`,
           },
         ],
         isDealing: false,
@@ -388,7 +390,39 @@ export function useBlackjackGame(options?: {
       });
       setTurnTimeLeft(TURN_DURATION_SEC);
     },
-    []
+    [selectedBet]
+  );
+
+  /**
+   * Adjust player's bet before deal / during round setup
+   */
+  const placeBet = useCallback(
+    async (amount: number) => {
+      sound.playPop();
+      setSelectedBet(amount);
+
+      if (remoteMatchId) {
+        try {
+          const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+            '/api/matches/action',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                matchId: remoteMatchId,
+                action: 'place_bet',
+                amount,
+              }),
+            }
+          );
+          const state = result.blackjackGameState || result.gameState;
+          if (state) setGameState(state);
+        } catch (err) {
+          console.error('Blackjack place_bet error', err);
+          syncRemoteMatchState();
+        }
+      }
+    },
+    [remoteMatchId, syncRemoteMatchState]
   );
 
   /**
@@ -664,34 +698,39 @@ export function useBlackjackGame(options?: {
   /**
    * Start next round keeping chips intact
    */
-  const nextHand = useCallback(async () => {
-    sound.playShuffle();
+  const nextHand = useCallback(
+    async (betForNextHand?: number) => {
+      sound.playShuffle();
+      const nextBet = betForNextHand || selectedBet;
 
-    if (remoteMatchId) {
-      try {
-        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'next_hand',
-            }),
-          }
-        );
-        const state = result.blackjackGameState || result.gameState;
-        if (state) setGameState(state);
-      } catch (err) {
-        console.error('Blackjack next_hand action error', err);
-        syncRemoteMatchState();
+      if (remoteMatchId) {
+        try {
+          const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+            '/api/matches/action',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                matchId: remoteMatchId,
+                action: 'next_hand',
+                amount: nextBet,
+              }),
+            }
+          );
+          const state = result.blackjackGameState || result.gameState;
+          if (state) setGameState(state);
+        } catch (err) {
+          console.error('Blackjack next_hand action error', err);
+          syncRemoteMatchState();
+        }
+        return;
       }
-      return;
-    }
 
-    // Offline mode
-    const nextHandNum = gameState.currentHand + 1;
-    dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId, nextHandNum);
-  }, [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake, remoteMatchId, syncRemoteMatchState]);
+      // Offline mode
+      const nextHandNum = gameState.currentHand + 1;
+      dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId, nextHandNum, nextBet);
+    },
+    [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake, remoteMatchId, selectedBet, syncRemoteMatchState]
+  );
 
   // SSE Stream Listener for Online Multiplayer
   useEffect(() => {
@@ -783,7 +822,7 @@ export function useBlackjackGame(options?: {
       } else {
         playerStand();
       }
-    }, 800);
+    }, 900);
 
     return () => clearTimeout(timer);
   }, [gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, playerHit, playerStand, remoteMatchId]);
@@ -810,6 +849,9 @@ export function useBlackjackGame(options?: {
   return {
     gameState,
     turnTimeLeft,
+    selectedBet,
+    setSelectedBet,
+    placeBet,
     startBlackjackSession,
     playerHit,
     playerStand,
