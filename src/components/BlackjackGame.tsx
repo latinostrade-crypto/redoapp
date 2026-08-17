@@ -72,10 +72,15 @@ function BlackjackCardView({
 }) {
   if (hidden || card.hidden) {
     return (
-      <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-gradient-to-br from-blue-900 to-indigo-950 border-2 border-white/80 rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none">
-        <div className="w-6 h-10 border border-blue-400/40 rounded flex items-center justify-center">
-          <span className="text-[10px] font-black text-blue-300">🎴</span>
-        </div>
+      <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-slate-950 border-2 border-black rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none shrink-0">
+        <img
+          src="/card-thumbs/back.jpeg"
+          alt="Card Back"
+          className="w-full h-full object-cover select-none pointer-events-none rounded-[3px]"
+          onError={(e) => {
+            (e.target as HTMLElement).style.display = 'none';
+          }}
+        />
       </div>
     );
   }
@@ -243,6 +248,12 @@ export function BlackjackGame({
                   isDealerHoleCard={idx === 1 && gameState.stage !== 'player_turn'}
                 />
               ))}
+            </div>
+
+            {/* Visual Casino Deck Shoe */}
+            <div className="relative w-6 h-9 min-[380px]:w-7 min-[380px]:h-11 bg-slate-950 border border-black rounded shadow-md overflow-hidden shrink-0 ml-1">
+              <div className="absolute inset-0 bg-slate-900 translate-x-0.5 translate-y-0.5 rounded" />
+              <img src="/card-thumbs/back.jpeg" alt="Deck" className="w-full h-full object-cover relative z-10 rounded-[2px]" />
             </div>
           </div>
         </div>
