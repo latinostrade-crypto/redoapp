@@ -220,7 +220,8 @@ export default function App() {
   const connectedPlayerCount = gameState.players.filter((player) => player.isConnected !== false).length;
   const totalMatchPlayerCount = gameState.players.length;
   const isRemoteTableHydrating =
-    (gameMode === 'pvp' || gameMode === 'private')
+    activeGameType === 'uno'
+    && (gameMode === 'pvp' || gameMode === 'private')
     && gameState.phase !== 'setup'
     && gameState.phase !== 'game_over'
     && (
