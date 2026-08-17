@@ -5390,6 +5390,7 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
     players: room.players,
     matchId: room.matchId || null,
     gameType: room.gameType || 'uno',
+    hostUserId: room.hostUserId,
   };
 }
 
@@ -7670,7 +7671,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
       activeMatchByUser.set(userId, match.matchId);
 
       const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
-      if (!anyLeft || room.players.length >= 2) {
+      if (!anyLeft && room.status !== 'started') {
         const startedAt = Date.now();
         room.status = 'started';
         match.costsCommitted = true;
@@ -7684,6 +7685,10 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
         }
       }
     }
+  }
+
+  if (room.status === 'started') {
+    commitPrivateRoomCosts(room, [newPlayer]);
   }
 
   privateRooms.set(room.roomCode, room);
@@ -7703,9 +7708,66 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     status: room.status,
     matchId: room.matchId || null,
     players: room.players,
+    hostUserId: room.hostUserId,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
+  });
+});
+
+app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), (req: AuthenticatedRequest, res) => {
+  const { roomCode } = req.body as { roomCode: string; userId?: string };
+  const userId = getPrivateRoomUserId(req, req.body as Record<string, unknown>);
+  if (!userId) {
+    return res.status(400).json({ error: 'Missing private room user id.' });
+  }
+
+  const room = privateRooms.get(String(roomCode || '').toUpperCase());
+  if (!room) {
+    return res.status(404).json({ error: 'Private room not found.' });
+  }
+
+  if (room.hostUserId !== userId) {
+    return res.status(403).json({ error: 'Only the room creator can start the match.' });
+  }
+
+  if (room.players.length < 2) {
+    return res.status(400).json({ error: 'At least 2 players are required to start.' });
+  }
+
+  const match = room.matchId ? activeMatches.get(room.matchId) : null;
+  if (!match) {
+    return res.status(404).json({ error: 'Match not found.' });
+  }
+
+  if (!commitPrivateRoomCosts(room, room.players)) {
+    return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
+  }
+
+  const startedAt = Date.now();
+  room.status = 'started';
+  match.costsCommitted = true;
+  match.playStartedAt = startedAt;
+  match.gameState.turnStartedAt = startedAt;
+  if (match.blackjackGameState) {
+    match.blackjackGameState.turnStartedAt = startedAt;
+  }
+  if (match.pokerGameState) {
+    match.pokerGameState.turnStartedAt = startedAt;
+  }
+
+  privateRooms.set(room.roomCode, room);
+  schedulePersist({ roomCode: room.roomCode, matchId: room.matchId || undefined });
+  broadcastMatch(match.matchId);
+  broadcastPrivateRoom(room.roomCode);
+
+  return res.json({
+    success: true,
+    roomCode: room.roomCode,
+    status: 'started',
+    matchId: room.matchId,
+    playersCount: room.players.length,
+    gameType: room.gameType || 'uno',
   });
 });
 
@@ -7916,6 +7978,8 @@ app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
     maxPlayers: MAX_MATCH_PLAYERS,
     players: room.players,
     matchId: room.matchId || null,
+    gameType: room.gameType || 'uno',
+    hostUserId: room.hostUserId,
   });
 });
 

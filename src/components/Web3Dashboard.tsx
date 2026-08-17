@@ -580,6 +580,7 @@ type PrivateRoomResponse = {
   matchId?: string;
   stake?: number;
   gameType?: 'uno' | 'poker' | 'blackjack';
+  hostUserId?: string;
   players?: PrivateRoomPlayer[];
   availableTickets?: number;
   heldTickets?: number;
@@ -1014,6 +1015,7 @@ export function Web3Dashboard({
   const [privateRoomError, setPrivateRoomError] = useState('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [privateRoomPlayersList, setPrivateRoomPlayersList] = useState<PrivateRoomPlayer[]>([]);
+  const [privateRoomHostUserId, setPrivateRoomHostUserId] = useState<string>('');
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState<boolean>(() => {
     try {
@@ -1381,6 +1383,7 @@ export function Web3Dashboard({
     setPrivateJoinCode('');
     setPrivateRoomPlayersCount(0);
     setPrivateRoomPlayersList([]);
+    setPrivateRoomHostUserId('');
     setPrivateRoomStatus('idle');
     setPrivateRoomCreateState('idle');
     setPrivateRoomError('');
@@ -1396,9 +1399,14 @@ export function Web3Dashboard({
     };
   }, [resetPrivateRoomState]);
 
-  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
+  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
     const count = result.playersCount || result.players?.length || 1;
     setPrivateRoomPlayersCount(count);
+    if (result.hostUserId) {
+      setPrivateRoomHostUserId(result.hostUserId);
+    } else if (result.players?.[0]?.userId) {
+      setPrivateRoomHostUserId(result.players[0].userId);
+    }
     if (Array.isArray(result.players)) {
       setPrivateRoomPlayersList(result.players);
     }
@@ -1409,7 +1417,7 @@ export function Web3Dashboard({
     if (result.gameType) {
       setPvpGameTab(result.gameType);
     }
-    if ((result.status === 'started' || result.status === 'ready' || count >= 2) && result.matchId) {
+    if (result.status === 'started' && result.matchId) {
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
         mode: 'private',
@@ -1428,6 +1436,9 @@ export function Web3Dashboard({
       } else {
         onStartGame('private', privateRoomStake);
       }
+    } else {
+      setPrivateRoomStatus('waiting');
+      setPrivateRoomCreateState('waiting');
     }
   }, [privateRoomStake, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, privateRoomCode, pvpGameTab]);
 
@@ -1436,16 +1447,197 @@ export function Web3Dashboard({
     setPrivateRoomError('');
     setPrivateJoinCode(roomCodeToUse);
     setPrivateRoomCode(result.roomCode);
-    setGoldenTickets(result.availableTickets);
-    setHeldTickets(result.heldTickets);
+    if (result.availableTickets !== undefined) setGoldenTickets(result.availableTickets);
+    if (result.heldTickets !== undefined) setHeldTickets(result.heldTickets);
     if (result.gameType) {
       setPvpGameTab(result.gameType);
     }
+    setCurrentTab('pvp');
+    setPvpSubMode('private');
     applyPrivateRoomState(result);
-    if (result.status !== 'started' && (result.playersCount || result.players?.length || 1) < 2) {
-      setPrivateRoomStatus('waiting');
-      setPrivateRoomCreateState('waiting');
+  };
+
+  const handleStartPrivateRoomMatch = useCallback(async () => {
+    const code = privateRoomCode || privateJoinCode;
+    if (!code) return;
+    sound.playShuffle();
+    try {
+      const res = await apiRequest<{ success: boolean; status: string; matchId?: string; playersCount?: number; gameType?: 'uno' | 'poker' | 'blackjack' }>('/api/private-rooms/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          roomCode: code,
+          userId: currentUserId,
+        }),
+      });
+      if (res.status === 'started' && res.matchId) {
+        applyPrivateRoomState(res as any);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to start match.';
+      setPrivateRoomError(message);
+      alert(message);
     }
+  }, [privateRoomCode, privateJoinCode, currentUserId, applyPrivateRoomState]);
+
+  const renderPrivateWaitingRoomLobby = (gameTitle: string) => {
+    const isCurrentPlayerHost = Boolean(
+      currentUserId && (
+        (privateRoomHostUserId && privateRoomHostUserId === currentUserId) ||
+        (!privateRoomHostUserId && privateRoomPlayersList[0]?.userId === currentUserId)
+      )
+    );
+
+    return (
+      <div className="space-y-2.5 text-[9px] bg-black p-3 border-2 border-black rounded shadow-[2px_2px_0_#000] font-mono">
+        {/* Header */}
+        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+          <div className="flex items-center gap-1.5">
+            <span className="px-2 py-0.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase rounded-sm border border-black">
+              ROOM #{privateRoomCode || 'PENDING'}
+            </span>
+            {isCurrentPlayerHost && (
+              <span className="px-1.5 py-0.5 bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/40 font-mono text-[7.5px] font-bold uppercase rounded-sm">
+                👑 HOST
+              </span>
+            )}
+          </div>
+          <span className="text-[#00ff66] font-mono font-black text-[9px]">
+            {privateRoomPlayersCount || 1}/{privateRoomTargetPlayers} PLAYERS
+          </span>
+        </div>
+
+        {/* Status Alert Banner */}
+        <div className={`p-2 rounded border text-[8px] font-mono leading-relaxed ${
+          isCurrentPlayerHost
+            ? (privateRoomPlayersCount >= 2 
+                ? 'bg-[#00ff66]/10 border-[#00ff66]/40 text-[#00ff66]' 
+                : 'bg-[#ffcc00]/10 border-[#ffcc00]/40 text-[#ffcc00] animate-pulse')
+            : 'bg-[#00d2ff]/10 border-[#00d2ff]/40 text-[#00d2ff] animate-pulse'
+        }`}>
+          {isCurrentPlayerHost ? (
+            privateRoomPlayersCount >= 2 ? (
+              <div className="flex items-center gap-1.5 font-bold">
+                <span>✨</span>
+                <span>{privateRoomPlayersCount} players ready! You can start now or wait for more players.</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 font-bold">
+                <span>⏳</span>
+                <span>Waiting for friends to join... Share the invite link below! (Min 2 players to start)</span>
+              </div>
+            )
+          ) : (
+            <div className="flex items-center gap-1.5 font-bold">
+              <span>⏳</span>
+              <span>Connected to Room #{privateRoomCode}! Waiting for Host to start the match...</span>
+            </div>
+          )}
+        </div>
+
+        {/* Share & Invite Buttons */}
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              sound.playPop();
+              const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
+              const text = encodeURIComponent(`Join my private ${gameTitle} room: ${privateRoomCode}! 🃏💥`);
+              const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
+              const tg = (window as any).Telegram?.WebApp;
+              if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+              else window.open(shareUrl, '_blank');
+            }}
+            className="flex-1 py-2 bg-[#00ff66] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black shadow-[1px_1px_0_#000] flex items-center justify-center gap-1 cursor-pointer"
+          >
+            <span>INVITE FRIEND</span>
+            <span>➔</span>
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              sound.playPop();
+              await copyTextSafely(privateRoomCode);
+              alert(`Room code ${privateRoomCode} copied!`);
+            }}
+            className="px-3 py-2 bg-[#00d2ff] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black shadow-[1px_1px_0_#000] cursor-pointer"
+          >
+            Copy Code
+          </button>
+        </div>
+
+        {/* Player Slots */}
+        <div className="space-y-1.5 py-1">
+          {Array.from({ length: privateRoomTargetPlayers }).map((_, idx) => {
+            const player = privateRoomPlayersList[idx];
+            const isJoined = Boolean(player);
+            const isSelf = player && currentUserId && player.userId === currentUserId;
+            const isSlotHost = idx === 0;
+
+            return (
+              <div
+                key={idx}
+                className={`flex items-center justify-between p-1.5 px-2.5 rounded-sm border ${
+                  isJoined
+                    ? (isSelf ? 'bg-slate-800/90 border-[#ffcc00]/50' : 'bg-slate-900 border-slate-800')
+                    : 'bg-slate-950/60 border-dashed border-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-2 truncate pr-2">
+                  <Avatar id={player ? player.avatarId : 'koala'} size={22} />
+                  <div className="flex flex-col truncate">
+                    <span className={`text-[8.5px] truncate ${isJoined ? 'font-bold text-white' : 'text-slate-500 italic'}`}>
+                      {player ? `${player.username}${isSelf ? ' (You)' : ''}` : `Slot ${idx + 1}: Open seat`}
+                    </span>
+                    {!isJoined && (
+                      <span className="text-[6.5px] text-slate-500 font-mono">
+                        (can join anytime)
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <span className={`text-[8px] font-black shrink-0 px-1.5 py-0.5 rounded-sm ${
+                  isJoined
+                    ? (isSlotHost ? 'bg-[#ffcc00] text-black' : 'bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/30')
+                    : 'text-slate-500 border border-slate-800'
+                }`}>
+                  {isJoined ? (isSlotHost ? 'HOST' : 'READY') : 'OPEN'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Host Action or Guest Waiting Banner */}
+        {isCurrentPlayerHost ? (
+          privateRoomPlayersCount >= 2 ? (
+            <button
+              type="button"
+              onClick={handleStartPrivateRoomMatch}
+              className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] font-black uppercase pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer active:translate-y-0.5"
+            >
+              START {gameTitle.toUpperCase()} MATCH ({privateRoomPlayersCount} PLAYERS) ➔
+            </button>
+          ) : (
+            <div className="w-full py-2.5 bg-slate-900/80 text-[#ffcc00] border border-slate-800 text-[8.5px] font-mono text-center uppercase animate-pulse">
+              ⏳ Waiting for at least 1 more player to start...
+            </div>
+          )
+        ) : (
+          <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase animate-pulse">
+            ⏳ Waiting for Host to start the table...
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={cancelWaitingPrivateRoom}
+          disabled={privateRoomCanceling}
+          className="w-full py-1.5 bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-900 text-[8px] font-bold uppercase pixel-btn-interactive disabled:opacity-50 cursor-pointer"
+        >
+          {privateRoomCanceling ? 'Leaving Room...' : (isCurrentPlayerHost ? 'Cancel Room' : 'Leave Room')}
+        </button>
+      </div>
+    );
   };
 
   const joinPrivateRoomByCode = useCallback((roomCodeInput?: string) => {
@@ -5346,130 +5538,7 @@ export function Web3Dashboard({
                             : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       ) : (
-                        <div className="space-y-2 text-[9px]">
-                          <div className="flex gap-1 flex-wrap">
-                            <input
-                              type="text"
-                              readOnly
-                              value={generatedLink}
-                              className="w-full bg-black border border-black text-slate-350 px-2 py-1.5 text-[7px] font-mono focus:outline-none select-all mb-1"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                sound.playPop();
-                                const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
-                                const text = encodeURIComponent("Join my private REDOapp room! 🎮🃏");
-                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
-                                const tg = (window as any).Telegram?.WebApp;
-                                if (tg?.openTelegramLink) {
-                                  tg.openTelegramLink(shareUrl);
-                                } else {
-                                  window.open(shareUrl, '_blank');
-                                }
-                              }}
-                              className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black flex items-center justify-center gap-0.5 shadow-[2px_2px_0_#000]"
-                            >
-                              INVITE FRIEND ➔
-                            </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                sound.playPop();
-                                await copyTextSafely(generatedLink);
-                                alert('Link copied.');
-                              }}
-                              className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
-                            >
-                              Copy
-                            </button>
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                if (!privateRoomCode) return;
-                                sound.playPop();
-                                const sharePayload = buildPrivateRoomSharePayload(privateRoomCode);
-                                await copyTextSafely(sharePayload.telegramSchemeLink);
-                                alert('Telegram deep link copied.');
-                              }}
-                              className="px-2 py-1.5 bg-[#ffcc00] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
-                            >
-                              Tg Link
-                            </button>
-                          </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (privateStakeRequiresWallet && !walletConnected) {
-                              connectWallet();
-                              return;
-                            }
-                            sound.playPop();
-                            if (privateRoomStatus === 'waiting') {
-                              setCurrentTab('pvp');
-                              setPvpSubMode('private');
-                              return;
-                            }
-                            setShowRoomDisclaimer(true);
-                          }}
-                          disabled={privateRoomStatus === 'waiting'}
-                          className="w-full py-1.5 bg-black text-slate-200 border border-black text-[9px] font-black uppercase pixel-btn-interactive disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          {privateRoomStatus === 'waiting' ? 'Waiting For Players' : 'Enter Room'}
-                        </button>
-                          <div className="bg-black p-2.5 border border-black space-y-2 text-[9px]">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[#ffcc00] font-black uppercase text-[9px]">
-                                ROOM: {privateRoomCode || 'PENDING'}
-                              </span>
-                              <span className="text-[#00ff66] font-bold text-[9px]">
-                                {privateRoomPlayersCount}/{privateRoomTargetPlayers} PLAYERS
-                              </span>
-                            </div>
-
-                            <div className="text-[8px] font-mono">
-                              {privateRoomTargetPlayers - privateRoomPlayersCount > 0 ? (
-                                <span className="text-[#ffcc00] animate-pulse">
-                                  ⏳ Waiting for {privateRoomTargetPlayers - privateRoomPlayersCount} more player{privateRoomTargetPlayers - privateRoomPlayersCount > 1 ? 's' : ''}...
-                                </span>
-                              ) : (
-                                <span className="text-[#00ff66] font-bold">
-                                  ✅ Table full! Launching match...
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-1 pt-1">
-                              {Array.from({ length: privateRoomTargetPlayers }).map((_, idx) => {
-                                const player = privateRoomPlayersList[idx];
-                                const isJoined = Boolean(player);
-                                return (
-                                  <div key={idx} className="flex items-center justify-between bg-slate-900 border border-slate-800 p-1.5 px-2 rounded-sm">
-                                    <div className="flex items-center gap-1.5 truncate pr-2">
-                                      <Avatar id={player ? player.avatarId : 'koala'} size={20} />
-                                      <span className={isJoined ? "font-bold text-white text-[9px] truncate" : "text-slate-500 italic text-[8px] truncate"}>
-                                        {player ? player.username : `Slot ${idx + 1}: Waiting...`}
-                                      </span>
-                                    </div>
-                                    <span className={isJoined ? "text-[#00ff66] font-black text-[8px] shrink-0" : "text-[#ffcc00] animate-pulse text-[8px] shrink-0"}>
-                                      {isJoined ? (idx === 0 ? 'HOST' : 'READY') : 'WAITING'}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          {privateRoomStatus === 'waiting' && (
-                            <button
-                              type="button"
-                              onClick={cancelWaitingPrivateRoom}
-                              disabled={privateRoomCanceling}
-                              className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive disabled:opacity-60 disabled:cursor-wait"
-                            >
-                              {privateRoomCanceling ? 'Cancelling...' : 'Cancel Room & Leave'}
-                            </button>
-                          )}
-                        </div>
+                        renderPrivateWaitingRoomLobby('UNO')
                       )}
                     </div>
                   )}
@@ -5687,89 +5756,7 @@ export function Web3Dashboard({
                       {privateRoomCreateState === 'creating' ? 'Creating Room...' : 'CREATE PRIVATE POKER ROOM'}
                     </button>
                   ) : (
-                    <div className="space-y-2 text-[9px] bg-black p-2 border border-black rounded">
-                      <div className="flex justify-between items-center">
-                        <span className="text-[#ffcc00] font-black uppercase text-[10px]">
-                          ROOM: {privateRoomCode || 'PENDING'}
-                        </span>
-                        <span className="text-[#00ff66] font-bold text-[9px]">
-                          {privateRoomPlayersCount || 1}/4 PLAYERS
-                        </span>
-                      </div>
-
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            sound.playPop();
-                            const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
-                            const text = encodeURIComponent(`Join my private Poker room: ${privateRoomCode}! 🃏♠️`);
-                            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
-                            const tg = (window as any).Telegram?.WebApp;
-                            if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
-                            else window.open(shareUrl, '_blank');
-                          }}
-                          className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
-                        >
-                          INVITE FRIEND ➔
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            sound.playPop();
-                            await copyTextSafely(privateRoomCode);
-                            alert(`Room code ${privateRoomCode} copied!`);
-                          }}
-                          className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
-                        >
-                          Copy Code
-                        </button>
-                      </div>
-
-                      {/* Player Slots */}
-                      <div className="space-y-1 py-1">
-                        <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-1 px-2 rounded-sm text-[8px]">
-                          <span className="text-white font-bold">{userName} (You)</span>
-                          <span className="text-[#00ff66] font-bold">HOST</span>
-                        </div>
-                        <div className="flex items-center justify-between bg-slate-900/50 border border-dashed border-slate-800 p-1 px-2 rounded-sm text-[8px]">
-                          <span className="text-slate-400 italic">
-                            {privateRoomPlayersCount >= 2 ? (privateRoomPlayersList[1]?.username || 'Player 2') : 'Waiting for friend to join with code...'}
-                          </span>
-                          <span className={privateRoomPlayersCount >= 2 ? "text-[#00ff66] font-bold" : "text-[#ffcc00] animate-pulse font-bold"}>
-                            {privateRoomPlayersCount >= 2 ? 'READY' : 'WAITING'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Launch Match Button */}
-                      {privateRoomPlayersCount >= 2 ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            sound.playShuffle();
-                            if (onStartPokerGame) {
-                              onStartPokerGame('private', selectedStake, privateRoomCode);
-                            }
-                          }}
-                          className="w-full py-2 bg-[#00ff66] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive shadow cursor-pointer"
-                        >
-                          START POKER MATCH ({privateRoomPlayersCount} PLAYERS) ➔
-                        </button>
-                      ) : (
-                        <div className="w-full py-2 bg-slate-900 text-[#ffcc00] border border-slate-800 text-[8px] font-mono text-center uppercase animate-pulse">
-                          ⏳ Waiting for 2nd player to enter code {privateRoomCode}...
-                        </div>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={cancelWaitingPrivateRoom}
-                        className="w-full py-1 bg-red-950 text-red-300 border border-red-900 text-[8px] font-bold uppercase pixel-btn-interactive"
-                      >
-                        Cancel Room
-                      </button>
-                    </div>
+                    renderPrivateWaitingRoomLobby('Poker')
                   )}
                 </div>
               )}
@@ -6030,95 +6017,7 @@ export function Web3Dashboard({
                       </button>
                     </div>
                   ) : (
-                    <div className="space-y-2 text-[9px] bg-black p-2 border border-black rounded">
-                      <div className="flex justify-between items-center">
-                        <span className="text-[#00ff66] font-black uppercase text-[10px]">
-                          ROOM: {privateRoomCode || 'PENDING'}
-                        </span>
-                        <span className="text-[#ffcc00] font-bold text-[9px]">
-                          {privateRoomPlayersCount || 1}/{privateRoomTargetPlayers} PLAYERS
-                        </span>
-                      </div>
-
-                      <div className="flex gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            sound.playPop();
-                            const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
-                            const text = encodeURIComponent(`Join my private Blackjack room: ${privateRoomCode}! 🃏⚡`);
-                            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
-                            const tg = (window as any).Telegram?.WebApp;
-                            if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
-                            else window.open(shareUrl, '_blank');
-                          }}
-                          className="flex-1 px-2 py-1.5 bg-[#00ff66] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
-                        >
-                          INVITE FRIEND ➔
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            sound.playPop();
-                            await copyTextSafely(privateRoomCode);
-                            alert(`Room code ${privateRoomCode} copied!`);
-                          }}
-                          className="px-2 py-1.5 bg-[#00d2ff] text-black text-[8px] font-black uppercase pixel-btn-interactive border border-black"
-                        >
-                          Copy Code
-                        </button>
-                      </div>
-
-                      {/* Player Slots */}
-                      <div className="space-y-1 py-1">
-                        <div className="flex items-center justify-between bg-slate-900 border border-slate-800 p-1 px-2 rounded-sm text-[8px]">
-                          <span className="text-white font-bold">{userName} (You)</span>
-                          <span className="text-[#00ff66] font-bold">HOST</span>
-                        </div>
-                        {Array.from({ length: privateRoomTargetPlayers - 1 }).map((_, idx) => {
-                          const slotIdx = idx + 1;
-                          const player = privateRoomPlayersList[slotIdx];
-                          return (
-                            <div key={slotIdx} className="flex items-center justify-between bg-slate-900/50 border border-dashed border-slate-800 p-1 px-2 rounded-sm text-[8px]">
-                              <span className={player ? "text-slate-200 font-bold" : "text-slate-500 italic"}>
-                                {player ? player.username : `Seat ${slotIdx + 1}: Waiting for player...`}
-                              </span>
-                              <span className={player ? "text-[#00ff66] font-bold" : "text-[#ffcc00] animate-pulse font-bold"}>
-                                {player ? 'READY' : 'OPEN'}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      {/* Launch Match Button */}
-                      {privateRoomPlayersCount >= 2 ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            sound.playShuffle();
-                            if (onStartBlackjackGame) {
-                              onStartBlackjackGame('private', selectedStake, privateRoomCode);
-                            }
-                          }}
-                          className="w-full py-2 bg-[#00ff66] text-black border border-black text-[9px] font-black uppercase pixel-btn-interactive shadow cursor-pointer"
-                        >
-                          START BLACKJACK MATCH ({privateRoomPlayersCount}/{privateRoomTargetPlayers} PLAYERS) ➔
-                        </button>
-                      ) : (
-                        <div className="w-full py-2 bg-slate-900 text-[#ffcc00] border border-slate-800 text-[8px] font-mono text-center uppercase animate-pulse">
-                          ⏳ Waiting for friends to enter code {privateRoomCode}... (15s window)
-                        </div>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={cancelWaitingPrivateRoom}
-                        className="w-full py-1 bg-red-950 text-red-300 border border-red-900 text-[8px] font-bold uppercase pixel-btn-interactive"
-                      >
-                        Cancel Room
-                      </button>
-                    </div>
+                    renderPrivateWaitingRoomLobby('Blackjack')
                   )}
                 </div>
               )}
