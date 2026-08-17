@@ -159,9 +159,9 @@ export default function App() {
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
 
   const handleStartPokerGame = useCallback(
-    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => {
+    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
       setActiveGameType('poker');
-      startPokerSession(selectedAvatar, userName, mode, stake, roomCode);
+      startPokerSession(selectedAvatar, userName, mode, stake, roomCode, matchId);
     },
     [selectedAvatar, startPokerSession, userName]
   );

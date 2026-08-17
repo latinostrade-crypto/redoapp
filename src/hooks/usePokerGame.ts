@@ -14,6 +14,7 @@ import {
 import { AvatarId } from '../types';
 import { createShuffledPokerDeck, evaluate7CardHand } from '../utils/pokerEvaluator';
 import { sound } from '../utils/sound';
+import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 
 const STARTING_CHIPS = 100;
 const SMALL_BLIND = 1;
@@ -29,7 +30,21 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
 export function usePokerGame(options?: {
   onSettlement?: (payout: number, won: boolean) => void;
 }) {
-  const [gameState, setGameState] = useState<PokerGameState>({
+  const [remoteMatchId, setRemoteMatchId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem('redoapp_active_match');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.gameType === 'poker' && parsed.matchId) {
+          return parsed.matchId;
+        }
+      }
+    } catch {}
+    return null;
+  });
+
+  const [gameState, setGameState] = useState<PokerGameState>(() => ({
     stage: 'idle',
     pot: 0,
     currentBet: 0,
@@ -48,13 +63,19 @@ export function usePokerGame(options?: {
     stake: 0,
     mode: 'offline',
     isDealing: false,
-  });
+    waitingForPlayers: Boolean(remoteMatchId),
+    matchId: remoteMatchId || undefined,
+  }));
 
   const [turnTimeLeft, setTurnTimeLeft] = useState(TURN_TIME_LIMIT_SEC);
   const deckRef = useRef<PokerCard[]>([]);
   const isProcessingBotRef = useRef(false);
   const isAdvancingRef = useRef(false);
   const dealingTimeoutsRef = useRef<number[]>([]);
+
+  // Online Multiplayer state tracking
+  const remoteMatchStreamRef = useRef<EventSource | null>(null);
+  const settledRef = useRef<boolean>(false);
 
   const clearDealingTimeouts = () => {
     dealingTimeoutsRef.current.forEach((t) => clearTimeout(t));
@@ -77,6 +98,28 @@ export function usePokerGame(options?: {
   }, []);
 
   /**
+   * Sync authoritative state from backend in online mode
+   */
+  const syncRemoteMatchState = useCallback(async (matchIdToSync = remoteMatchId) => {
+    if (!matchIdToSync) return;
+    try {
+      const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
+        `/api/matches/state/${encodeURIComponent(matchIdToSync)}`,
+        { retryOnNetworkError: true, networkAttempts: 2 }
+      );
+      const state = result.pokerGameState || result.gameState;
+      if (state) {
+        setGameState(state);
+        if (typeof state.turnTimeLeft === 'number') {
+          setTurnTimeLeft(state.turnTimeLeft);
+        }
+      }
+    } catch {
+      // Ignored in background polling
+    }
+  }, [remoteMatchId]);
+
+  /**
    * Start a new Texas Hold'em Poker Session
    */
   const startPokerSession = useCallback(
@@ -91,6 +134,40 @@ export function usePokerGame(options?: {
       sound.playShuffle();
       clearDealingTimeouts();
       isAdvancingRef.current = false;
+      settledRef.current = false;
+
+      let resolvedMatchId = matchId;
+      if (!resolvedMatchId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('redoapp_active_match');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.matchId) {
+              resolvedMatchId = parsed.matchId;
+            }
+          }
+        } catch {}
+      }
+
+      if (mode === 'pvp' || mode === 'private') {
+        setRemoteMatchId(resolvedMatchId || null);
+        setGameState((prev) => ({
+          ...prev,
+          mode,
+          matchId: resolvedMatchId,
+          roomCode,
+          stake,
+          stage: 'preflop',
+          waitingForPlayers: true,
+        }));
+        if (resolvedMatchId) {
+          syncRemoteMatchState(resolvedMatchId);
+        }
+        return;
+      }
+
+      // Offline Practice Mode vs 3 AI Bots
+      setRemoteMatchId(null);
 
       const deck = createShuffledPokerDeck();
       deckRef.current = deck;
@@ -108,79 +185,20 @@ export function usePokerGame(options?: {
         isAi: false,
       };
 
-      const allPlayers: PokerPlayer[] = [humanPlayer];
+      const bots: PokerPlayer[] = DEFAULT_BOTS.map((bot, idx) => ({
+        id: `ai_${idx + 1}`,
+        name: bot.name,
+        avatar: bot.avatar,
+        chips: STARTING_CHIPS,
+        currentBet: 0,
+        totalMatchInvested: 0,
+        holeCards: [],
+        folded: false,
+        isAllIn: false,
+        isAi: true,
+      }));
 
-      if (mode === 'offline') {
-        // Free Practice vs 3 AI Bots
-        const bots: PokerPlayer[] = DEFAULT_BOTS.map((bot, idx) => ({
-          id: `ai_${idx + 1}`,
-          name: bot.name,
-          avatar: bot.avatar,
-          chips: STARTING_CHIPS,
-          currentBet: 0,
-          totalMatchInvested: 0,
-          holeCards: [],
-          folded: false,
-          isAllIn: false,
-          isAi: true,
-        }));
-        allPlayers.push(...bots);
-      } else {
-        // Strictly Real Multiplayer PVP (NO BOTS)
-        let activePlayersList: Array<{ userId: string; username: string; avatarId: string }> = [];
-        try {
-          const raw = localStorage.getItem('redoapp_active_match');
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed.players) && parsed.players.length > 0) {
-              activePlayersList = parsed.players;
-            }
-          }
-        } catch {}
-
-        if (activePlayersList.length > 1) {
-          allPlayers.length = 0; // reset
-          const myStoredId = typeof window !== 'undefined'
-            ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
-            : '';
-          activePlayersList.forEach((p, idx) => {
-            const isMe = (myStoredId && p.userId === myStoredId) || p.username === userName;
-            allPlayers.push({
-              id: isMe ? 'player' : `opponent_${idx}`,
-              name: p.username || `Player ${idx + 1}`,
-              avatar: (p.avatarId as AvatarId) || (isMe ? userAvatar : 'fox'),
-              chips: STARTING_CHIPS,
-              currentBet: 0,
-              totalMatchInvested: 0,
-              holeCards: [],
-              folded: false,
-              isAllIn: false,
-              isAi: false,
-            });
-          });
-          if (!allPlayers.some((p) => p.id === 'player') && allPlayers.length > 0) {
-            allPlayers[0].id = 'player';
-            allPlayers[0].name = userName || allPlayers[0].name;
-            allPlayers[0].avatar = userAvatar;
-          }
-        } else {
-          // 2-Player Heads-Up PVP Table (Real Opponent)
-          const opponentName = userName.startsWith('PC') ? 'Phone_Player' : 'Opponent';
-          const opponentAvatar: AvatarId = userAvatar === 'rabbit' ? 'fox' : 'rabbit';
-          allPlayers.push({
-            id: 'opponent',
-            name: opponentName,
-            avatar: opponentAvatar,
-            chips: STARTING_CHIPS,
-            currentBet: 0,
-            totalMatchInvested: 0,
-            holeCards: [],
-            folded: false,
-            isAllIn: false,
-            isAi: false,
-          });
-        }
-      }
+      const allPlayers: PokerPlayer[] = [humanPlayer, ...bots];
 
       // Dealer position
       const dealerIdx = 0;
@@ -223,7 +241,7 @@ export function usePokerGame(options?: {
           {
             id: '1',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            message: `Texas Hold'em started (${mode.toUpperCase()}, stake: ${stake} TKT). Blinds: ${SMALL_BLIND}/${BIG_BLIND}`,
+            message: `Texas Hold'em started (Practice vs Bots). Blinds: ${SMALL_BLIND}/${BIG_BLIND}`,
             type: 'info',
           },
         ],
@@ -232,6 +250,7 @@ export function usePokerGame(options?: {
         isDealing: true,
         roomCode,
         matchId,
+        waitingForPlayers: false,
       });
 
       // Deal card 1 to all (delay 250ms)
@@ -262,11 +281,12 @@ export function usePokerGame(options?: {
 
       dealingTimeoutsRef.current = [t1, t2];
     },
-    []
+    [syncRemoteMatchState]
   );
 
   /**
    * Advances game to the next betting round (Preflop -> Flop 3 cards -> Turn 1 card -> River 1 card -> Showdown)
+   * (Offline Mode)
    */
   const advanceStage = useCallback(() => {
     if (isAdvancingRef.current) return;
@@ -280,8 +300,6 @@ export function usePokerGame(options?: {
         const winner = activePlayers[0];
         sound.playPop();
         isAdvancingRef.current = false;
-
-        const won = winner.id === 'player';
 
         return {
           ...prev,
@@ -305,25 +323,21 @@ export function usePokerGame(options?: {
       let nextCommunity: PokerCard[] = [];
 
       if (prev.stage === 'preflop') {
-        // Preflop -> FLOP (Strictly 3 cards!)
         nextStage = 'flop';
         const flopCards = [nextDeck.pop()!, nextDeck.pop()!, nextDeck.pop()!];
         nextCommunity = flopCards;
         sound.playShuffle();
       } else if (prev.stage === 'flop') {
-        // Flop (3 cards) -> TURN (Strictly 1 card -> 4 cards total!)
         nextStage = 'turn';
         const turnCard = nextDeck.pop()!;
         nextCommunity = [...prev.communityCards.slice(0, 3), turnCard];
         sound.playPop();
       } else if (prev.stage === 'turn') {
-        // Turn (4 cards) -> RIVER (Strictly 1 card -> 5 cards total!)
         nextStage = 'river';
         const riverCard = nextDeck.pop()!;
         nextCommunity = [...prev.communityCards.slice(0, 4), riverCard];
         sound.playPop();
       } else if (prev.stage === 'river') {
-        // River -> SHOWDOWN
         nextStage = 'showdown';
         nextCommunity = [...prev.communityCards];
       }
@@ -387,10 +401,10 @@ export function usePokerGame(options?: {
         currentPlayerIndex: nextTurn,
       };
     });
-  }, [options]);
+  }, []);
 
   /**
-   * Check if current betting round is completed
+   * Check if current betting round is completed (Offline Mode)
    */
   const checkRoundCompletion = useCallback(
     (currentPlayers: PokerPlayer[], currentBet: number, lastActorIdx: number) => {
@@ -421,27 +435,77 @@ export function usePokerGame(options?: {
   /**
    * Action: FOLD
    */
-  const playerFold = useCallback(() => {
+  const playerFold = useCallback(async () => {
     sound.playPop();
+
+    if (remoteMatchId) {
+      try {
+        const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchId,
+              action: 'fold',
+            }),
+          }
+        );
+        const state = result.pokerGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Poker fold action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
     setGameState((prev) => {
       const currIdx = prev.currentPlayerIndex;
       const updatedPlayers = prev.players.map((p, idx) =>
         idx === currIdx ? { ...p, folded: true, hasActedThisStage: true, lastAction: 'FOLD' } : p
       );
-      addLog(`${prev.players[currIdx].name} folded`, 'fold');
+      addLog(`${prev.players[currIdx]?.name || 'Player'} folded`, 'fold');
       setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
       return { ...prev, players: updatedPlayers };
     });
-  }, [addLog, checkRoundCompletion]);
+  }, [addLog, checkRoundCompletion, remoteMatchId, syncRemoteMatchState]);
 
   /**
    * Action: CHECK / CALL
    */
-  const playerCallOrCheck = useCallback(() => {
+  const playerCallOrCheck = useCallback(async () => {
     sound.playPop();
+
+    if (remoteMatchId) {
+      const human = gameState.players.find((p) => p.id === 'player');
+      const needed = human ? gameState.currentBet - human.currentBet : 0;
+      const action = needed <= 0 ? 'check' : 'call';
+      try {
+        const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchId,
+              action,
+            }),
+          }
+        );
+        const state = result.pokerGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Poker call/check action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
     setGameState((prev) => {
       const currIdx = prev.currentPlayerIndex;
       const player = prev.players[currIdx];
+      if (!player) return prev;
       const needed = prev.currentBet - player.currentBet;
 
       if (needed <= 0) {
@@ -477,17 +541,42 @@ export function usePokerGame(options?: {
       setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
       return { ...prev, pot: nextPot, players: updatedPlayers };
     });
-  }, [addLog, checkRoundCompletion]);
+  }, [addLog, checkRoundCompletion, gameState.currentBet, gameState.players, remoteMatchId, syncRemoteMatchState]);
 
   /**
    * Action: RAISE
    */
   const playerRaise = useCallback(
-    (raiseToAmount: number) => {
+    async (raiseToAmount: number) => {
       sound.playPop();
+
+      if (remoteMatchId) {
+        try {
+          const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
+            '/api/matches/action',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                matchId: remoteMatchId,
+                action: 'raise',
+                amount: raiseToAmount,
+              }),
+            }
+          );
+          const state = result.pokerGameState || result.gameState;
+          if (state) setGameState(state);
+        } catch (err) {
+          console.error('Poker raise action error', err);
+          syncRemoteMatchState();
+        }
+        return;
+      }
+
+      // Offline mode
       setGameState((prev) => {
         const currIdx = prev.currentPlayerIndex;
         const player = prev.players[currIdx];
+        if (!player) return prev;
         const additionalNeeded = raiseToAmount - player.currentBet;
         const actualBet = Math.min(player.chips, additionalNeeded);
         const isAllIn = actualBet >= player.chips;
@@ -523,113 +612,39 @@ export function usePokerGame(options?: {
         };
       });
     },
-    [addLog, checkRoundCompletion]
+    [addLog, checkRoundCompletion, remoteMatchId, syncRemoteMatchState]
   );
-
-  /**
-   * Bot Action Engine
-   */
-  useEffect(() => {
-    if (gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
-
-    const currPlayer = gameState.players[gameState.currentPlayerIndex];
-    if (!currPlayer || !currPlayer.isAi || currPlayer.folded || currPlayer.isAllIn || currPlayer.eliminated) return;
-
-    if (isProcessingBotRef.current) return;
-    isProcessingBotRef.current = true;
-
-    const timer = setTimeout(() => {
-      isProcessingBotRef.current = false;
-      const callNeeded = gameState.currentBet - currPlayer.currentBet;
-
-      const handEval = evaluate7CardHand([...currPlayer.holeCards, ...gameState.communityCards]);
-      const isGoodHand = handEval.rankType !== 'high_card' || (currPlayer.holeCards[0]?.rank ?? 0) >= 10;
-
-      if (callNeeded === 0) {
-        if (isGoodHand && Math.random() > 0.6) {
-          playerRaise(gameState.currentBet + BIG_BLIND);
-        } else {
-          playerCallOrCheck();
-        }
-      } else {
-        if (callNeeded > currPlayer.chips * 0.6 && !isGoodHand) {
-          playerFold();
-        } else if (isGoodHand && Math.random() > 0.7 && currPlayer.chips > callNeeded + BIG_BLIND) {
-          playerRaise(gameState.currentBet + BIG_BLIND * 2);
-        } else {
-          playerCallOrCheck();
-        }
-      }
-    }, 750 + Math.floor(Math.random() * 500));
-
-    return () => {
-      clearTimeout(timer);
-      isProcessingBotRef.current = false;
-    };
-  }, [
-    gameState.stage,
-    gameState.isDealing,
-    gameState.currentPlayerIndex,
-    gameState.currentBet,
-    gameState.communityCards,
-    gameState.players,
-    playerCallOrCheck,
-    playerFold,
-    playerRaise,
-  ]);
-
-  /**
-   * Auto advance if all remaining active players are All-In
-   */
-  useEffect(() => {
-    if (gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
-    const active = gameState.players.filter((p) => !p.folded && !p.eliminated);
-    const nonAllIn = active.filter((p) => !p.isAllIn);
-
-    if (active.length > 1 && nonAllIn.length <= 1) {
-      const timer = setTimeout(() => {
-        advanceStage();
-      }, 750);
-      return () => clearTimeout(timer);
-    }
-  }, [gameState.stage, gameState.isDealing, gameState.communityCards.length, gameState.players, advanceStage]);
-
-  /**
-   * Turn timer countdown effect (15 seconds)
-   */
-  useEffect(() => {
-    if (gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
-
-    const timer = setInterval(() => {
-      setTurnTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          const curr = gameState.players[gameState.currentPlayerIndex];
-          if (curr && !curr.folded && !curr.isAllIn && !curr.eliminated) {
-            const callNeeded = gameState.currentBet - curr.currentBet;
-            if (callNeeded <= 0) {
-              playerCallOrCheck();
-            } else {
-              playerFold();
-            }
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [gameState.stage, gameState.isDealing, gameState.currentPlayerIndex, gameState.currentBet, gameState.players, playerCallOrCheck, playerFold]);
 
   /**
    * Action: NEXT HAND
    */
-  const nextHand = useCallback(() => {
+  const nextHand = useCallback(async () => {
     sound.playShuffle();
     clearDealingTimeouts();
     isAdvancingRef.current = false;
 
+    if (remoteMatchId) {
+      try {
+        const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchId,
+              action: 'next_hand',
+            }),
+          }
+        );
+        const state = result.pokerGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Poker next_hand action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
     setGameState((prev) => {
       const updatedEliminated = prev.players.map((p) => ({
         ...p,
@@ -641,7 +656,7 @@ export function usePokerGame(options?: {
 
       if (activeSurvivors.length <= 1 || (humanPlayer && humanPlayer.chips <= 0)) {
         const winner = activeSurvivors[0] || prev.players[0];
-        const isHumanWinner = winner.id === 'player';
+        const isHumanWinner = winner?.id === 'player';
         const matchPayout = isHumanWinner && prev.stake > 0
           ? Math.round(prev.stake * prev.players.length * 0.96 * 100) / 100
           : 0;
@@ -654,10 +669,10 @@ export function usePokerGame(options?: {
           ...prev,
           stage: 'ended',
           isMatchOver: true,
-          matchWinnerName: winner.name,
-          winnerIds: [winner.id],
+          matchWinnerName: winner?.name || 'Winner',
+          winnerIds: winner ? [winner.id] : [],
           winningCardIds: [],
-          winningHandDesc: isHumanWinner ? 'MATCH CHAMPION! You won all the chips!' : `${winner.name} won the poker match!`,
+          winningHandDesc: isHumanWinner ? 'MATCH CHAMPION! You won all the chips!' : `${winner?.name || 'Winner'} won the poker match!`,
         };
       }
 
@@ -760,7 +775,184 @@ export function usePokerGame(options?: {
         isDealing: true,
       };
     });
-  }, []);
+  }, [options, remoteMatchId, syncRemoteMatchState]);
+
+  // SSE Stream Listener for Online Multiplayer
+  useEffect(() => {
+    if (!remoteMatchId) {
+      return;
+    }
+
+    remoteMatchStreamRef.current?.close();
+    const stream = new EventSource(buildAuthenticatedUrl(`/api/matches/stream/${encodeURIComponent(remoteMatchId)}`));
+    remoteMatchStreamRef.current = stream;
+
+    stream.addEventListener('match-state', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        const pkState: PokerGameState = payload.pokerGameState || payload.gameState;
+        if (pkState) {
+          setGameState(pkState);
+          if (typeof pkState.turnTimeLeft === 'number') {
+            setTurnTimeLeft(pkState.turnTimeLeft);
+          }
+
+          if ((pkState.stage === 'match_ended' || pkState.isMatchOver) && !settledRef.current) {
+            settledRef.current = true;
+            const humanPlayer = pkState.players.find((p) => p.id === 'player');
+            const isHumanWinner = Boolean(
+              humanPlayer && (
+                pkState.matchWinnerName === humanPlayer.name ||
+                pkState.winnerIds?.includes(humanPlayer.id)
+              )
+            );
+            if (isHumanWinner) {
+              sound.playVictory();
+              options?.onSettlement?.(pkState.winningPayout || 0, true);
+            } else {
+              options?.onSettlement?.(0, false);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('SSE match-state parse error', err);
+      }
+    });
+
+    stream.addEventListener('match-cancelled', () => {
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
+      setRemoteMatchId(null);
+      setGameState((prev) => ({
+        ...prev,
+        stage: 'idle',
+        players: [],
+        winnerIds: [],
+        logs: [],
+      }));
+    });
+
+    stream.onerror = () => {
+      syncRemoteMatchState(remoteMatchId);
+    };
+
+    return () => {
+      stream.close();
+      if (remoteMatchStreamRef.current === stream) {
+        remoteMatchStreamRef.current = null;
+      }
+    };
+  }, [options, remoteMatchId, syncRemoteMatchState]);
+
+  // Fallback Polling during Online Match Setup / Play
+  useEffect(() => {
+    if (!remoteMatchId || gameState.stage === 'match_ended' || gameState.isMatchOver) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      syncRemoteMatchState(remoteMatchId);
+    }, gameState.waitingForPlayers ? 1500 : 4000);
+
+    return () => window.clearInterval(interval);
+  }, [gameState.isMatchOver, gameState.stage, gameState.waitingForPlayers, remoteMatchId, syncRemoteMatchState]);
+
+  /**
+   * Bot Action Engine (Offline Mode Only)
+   */
+  useEffect(() => {
+    if (remoteMatchId || gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
+
+    const currPlayer = gameState.players[gameState.currentPlayerIndex];
+    if (!currPlayer || !currPlayer.isAi || currPlayer.folded || currPlayer.isAllIn || currPlayer.eliminated) return;
+
+    if (isProcessingBotRef.current) return;
+    isProcessingBotRef.current = true;
+
+    const timer = setTimeout(() => {
+      isProcessingBotRef.current = false;
+      const callNeeded = gameState.currentBet - currPlayer.currentBet;
+
+      const handEval = evaluate7CardHand([...currPlayer.holeCards, ...gameState.communityCards]);
+      const isGoodHand = handEval.rankType !== 'high_card' || (currPlayer.holeCards[0]?.rank ?? 0) >= 10;
+
+      if (callNeeded === 0) {
+        if (isGoodHand && Math.random() > 0.6) {
+          playerRaise(gameState.currentBet + BIG_BLIND);
+        } else {
+          playerCallOrCheck();
+        }
+      } else {
+        if (callNeeded > currPlayer.chips * 0.6 && !isGoodHand) {
+          playerFold();
+        } else if (isGoodHand && Math.random() > 0.7 && currPlayer.chips > callNeeded + BIG_BLIND) {
+          playerRaise(gameState.currentBet + BIG_BLIND * 2);
+        } else {
+          playerCallOrCheck();
+        }
+      }
+    }, 750 + Math.floor(Math.random() * 500));
+
+    return () => {
+      clearTimeout(timer);
+      isProcessingBotRef.current = false;
+    };
+  }, [
+    remoteMatchId,
+    gameState.stage,
+    gameState.isDealing,
+    gameState.currentPlayerIndex,
+    gameState.currentBet,
+    gameState.communityCards,
+    gameState.players,
+    playerCallOrCheck,
+    playerFold,
+    playerRaise,
+  ]);
+
+  /**
+   * Auto advance if all remaining active players are All-In (Offline Mode Only)
+   */
+  useEffect(() => {
+    if (remoteMatchId || gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
+    const active = gameState.players.filter((p) => !p.folded && !p.eliminated);
+    const nonAllIn = active.filter((p) => !p.isAllIn);
+
+    if (active.length > 1 && nonAllIn.length <= 1) {
+      const timer = setTimeout(() => {
+        advanceStage();
+      }, 750);
+      return () => clearTimeout(timer);
+    }
+  }, [remoteMatchId, gameState.stage, gameState.isDealing, gameState.communityCards.length, gameState.players, advanceStage]);
+
+  /**
+   * Turn timer countdown effect (15 seconds) (Offline Mode Only)
+   */
+  useEffect(() => {
+    if (remoteMatchId || gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
+
+    const timer = setInterval(() => {
+      setTurnTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          const curr = gameState.players[gameState.currentPlayerIndex];
+          if (curr && !curr.folded && !curr.isAllIn && !curr.eliminated) {
+            const callNeeded = gameState.currentBet - curr.currentBet;
+            if (callNeeded <= 0) {
+              playerCallOrCheck();
+            } else {
+              playerFold();
+            }
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [remoteMatchId, gameState.stage, gameState.isDealing, gameState.currentPlayerIndex, gameState.currentBet, gameState.players, playerCallOrCheck, playerFold]);
 
   useEffect(() => {
     return () => clearDealingTimeouts();

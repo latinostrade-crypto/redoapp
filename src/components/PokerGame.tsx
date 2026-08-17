@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PokerCard, PokerGameState } from '../types/poker';
 import { sound } from '../utils/sound';
-import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, Minus } from 'lucide-react';
+import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, Minus, Loader2 } from 'lucide-react';
 import { Avatar } from './Avatars';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 
@@ -382,33 +382,42 @@ export function PokerGame({
             </div>
           </div>
 
-          {/* PROMINENT BLINKING TURN TIMER DIRECTLY UNDER COMMUNITY CARDS */}
-          {gameState.stage !== 'idle' && gameState.stage !== 'ended' && (
-            <motion.div
-              animate={{
-                scale: turnTimeLeft <= 5 ? [1, 1.1, 1] : [1, 1.03, 1],
-                boxShadow: turnTimeLeft <= 5
-                  ? ['0 0 10px #ff3333', '0 0 25px #ff3333', '0 0 10px #ff3333']
-                  : isHumanTurn
-                  ? ['0 0 10px #00ff66', '0 0 20px #00ff66', '0 0 10px #00ff66']
-                  : ['0 0 6px #00d2ff', '0 0 14px #00d2ff', '0 0 6px #00d2ff'],
-              }}
-              transition={{ repeat: Infinity, duration: turnTimeLeft <= 5 ? 0.45 : 0.9 }}
-              className={`px-3 py-1 rounded-full border-2 font-black text-[9px] min-[380px]:text-[9.5px] flex items-center gap-1.5 tracking-wider uppercase backdrop-blur-md select-none ${
-                turnTimeLeft <= 5
-                  ? 'bg-red-950 border-red-500 text-red-300 animate-pulse'
-                  : isHumanTurn
-                  ? 'bg-black/95 border-[#00ff66] text-[#00ff66]'
-                  : 'bg-black/95 border-[#00d2ff] text-[#00d2ff]'
-              }`}
-            >
-              <Timer className={`w-3.5 h-3.5 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
-              <span>
-                {isHumanTurn
-                  ? `YOUR TURN: ${turnTimeLeft}S`
-                  : `${gameState.players[gameState.currentPlayerIndex]?.name || 'PLAYER'}: ${turnTimeLeft}S`}
+          {/* PROMINENT BLINKING TURN TIMER OR WAITING BANNER DIRECTLY UNDER COMMUNITY CARDS */}
+          {gameState.waitingForPlayers ? (
+            <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse select-none">
+              <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+              <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
+                WAITING FOR PLAYERS TO CONNECT...
               </span>
-            </motion.div>
+            </div>
+          ) : (
+            gameState.stage !== 'idle' && gameState.stage !== 'ended' && (
+              <motion.div
+                animate={{
+                  scale: turnTimeLeft <= 5 ? [1, 1.1, 1] : [1, 1.03, 1],
+                  boxShadow: turnTimeLeft <= 5
+                    ? ['0 0 10px #ff3333', '0 0 25px #ff3333', '0 0 10px #ff3333']
+                    : isHumanTurn
+                    ? ['0 0 10px #00ff66', '0 0 20px #00ff66', '0 0 10px #00ff66']
+                    : ['0 0 6px #00d2ff', '0 0 14px #00d2ff', '0 0 6px #00d2ff'],
+                }}
+                transition={{ repeat: Infinity, duration: turnTimeLeft <= 5 ? 0.45 : 0.9 }}
+                className={`px-3 py-1 rounded-full border-2 font-black text-[9px] min-[380px]:text-[9.5px] flex items-center gap-1.5 tracking-wider uppercase backdrop-blur-md select-none ${
+                  turnTimeLeft <= 5
+                    ? 'bg-red-950 border-red-500 text-red-300 animate-pulse'
+                    : isHumanTurn
+                    ? 'bg-black/95 border-[#00ff66] text-[#00ff66]'
+                    : 'bg-black/95 border-[#00d2ff] text-[#00d2ff]'
+                }`}
+              >
+                <Timer className={`w-3.5 h-3.5 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
+                <span>
+                  {isHumanTurn
+                    ? `YOUR TURN: ${turnTimeLeft}S`
+                    : `${gameState.players[gameState.currentPlayerIndex]?.name || 'PLAYER'}: ${turnTimeLeft}S`}
+                </span>
+              </motion.div>
+            )
           )}
         </div>
 

@@ -265,6 +265,8 @@ interface ServerGamePlayer {
   disconnectedAt?: number | null;
 }
 
+type ServerGameLogType = 'info' | 'play' | 'draw' | 'action' | 'win' | 'bet' | 'fold' | 'deal';
+
 interface ServerGameState {
   deck: ServerCard[];
   discardPile: ServerCard[];
@@ -275,7 +277,7 @@ interface ServerGameState {
   activeValue: ServerCard['value'];
   phase: 'playing' | 'game_over' | 'round_over';
   winnerUserId: string | null;
-  logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'play' | 'draw' | 'action' | 'win' }>;
+  logs: Array<{ id: string; timestamp: string; message: string; type: ServerGameLogType }>;
   consecutiveDraws: number;
   turnStartedAt?: number;
 }
@@ -324,7 +326,7 @@ interface ServerBlackjackGameState {
   nextRoundStartsAt?: number | null;
   winningHandDesc?: string;
   winningPayout?: number;
-  logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'play' | 'draw' | 'action' | 'win' }>;
+  logs: Array<{ id: string; timestamp: string; message: string; type: ServerGameLogType }>;
   turnStartedAt?: number;
   turnTimeoutSec?: number;
 }
@@ -378,7 +380,7 @@ interface ServerPokerGameState {
   matchChampionUserId?: string | null;
   nextRoundStartsAt?: number | null;
   winningPayout?: number;
-  logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'bet' | 'fold' | 'deal' | 'win' }>;
+  logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'play' | 'draw' | 'action' | 'win' | 'bet' | 'fold' | 'deal' }>;
   turnStartedAt?: number;
   turnTimeoutSec?: number;
 }
@@ -2936,7 +2938,7 @@ function isValidServerMove(card: ServerCard, activeColor: CardColor, activeValue
   return card.color === 'wild' || card.color === activeColor || card.value === activeValue;
 }
 
-function createServerLog(message: string, type: 'info' | 'play' | 'draw' | 'action' | 'win' = 'info') {
+function createServerLog(message: string, type: 'info' | 'play' | 'draw' | 'action' | 'win' | 'bet' | 'fold' | 'deal' = 'info') {
   return {
     id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -4918,10 +4920,6 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
       bjPlayer.isAi = false;
       bjPlayer.isConnected = true;
       bjPlayer.hasConnected = true;
-      bjPlayer.lastSeenAt = Date.now();
-      bjPlayer.disconnectedAt = null;
-    }
-  }
       bjPlayer.lastSeenAt = Date.now();
       bjPlayer.disconnectedAt = null;
     }
@@ -7448,6 +7446,18 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
         }
       }
 
+      if (match.pokerGameState) {
+        const pkPlayerIdx = match.pokerGameState.players.findIndex(p => p.userId === placeholderUserId);
+        if (pkPlayerIdx !== -1) {
+          match.pokerGameState.players[pkPlayerIdx].userId = userId;
+          match.pokerGameState.players[pkPlayerIdx].username = username;
+          match.pokerGameState.players[pkPlayerIdx].avatarId = avatarId;
+          match.pokerGameState.players[pkPlayerIdx].isAi = false;
+          match.pokerGameState.players[pkPlayerIdx].isConnected = true;
+          match.pokerGameState.players[pkPlayerIdx].hasConnected = true;
+        }
+      }
+
       activeMatchByUser.set(userId, match.matchId);
 
       const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
@@ -7459,6 +7469,9 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
         match.gameState.turnStartedAt = startedAt;
         if (match.blackjackGameState) {
           match.blackjackGameState.turnStartedAt = startedAt;
+        }
+        if (match.pokerGameState) {
+          match.pokerGameState.turnStartedAt = startedAt;
         }
       }
     }
@@ -7955,11 +7968,12 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
 });
 
 app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
-  const { matchId, action, cardId, chosenColor } = req.body as {
+  const { matchId, action, cardId, chosenColor, amount } = req.body as {
     matchId: string;
-    action: 'play' | 'draw' | 'pass' | 'blackjack_hit' | 'blackjack_stand' | 'blackjack_double' | 'blackjack_next_hand' | 'hit' | 'stand' | 'double' | 'next_hand';
+    action: string;
     cardId?: string;
     chosenColor?: CardColor;
+    amount?: number;
   };
   const userId = getAuthenticatedUserId(req);
 
@@ -7969,7 +7983,9 @@ app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) =>
   }
 
   try {
-    if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand') {
+    if (activeMatch.gameType === 'poker' || activeMatch.pokerGameState || action.startsWith('poker_') || action === 'fold' || action === 'check' || action === 'call' || action === 'raise' || action === 'all_in') {
+      applyPokerAction(activeMatch, userId, action, amount);
+    } else if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand') {
       applyBlackjackAction(activeMatch, userId, action);
     } else if (action === 'play') {
       if (!cardId) {
@@ -7985,9 +8001,6 @@ app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) =>
     }
 
     const perspective = buildPerspectiveState(activeMatch, userId);
-    // The action functions already schedule a durable write. Do not make a
-    // player's card animation wait on a full Supabase batch (which may include
-    // unrelated rows): publish the authoritative in-memory result immediately.
     broadcastMatch(matchId);
     return res.json({
       success: true,
@@ -8295,6 +8308,58 @@ setInterval(() => {
   for (const [matchId, match] of activeMatches.entries()) {
     if (match.settled) {
       match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      continue;
+    }
+
+    if (match.gameType === 'poker' && match.pokerGameState) {
+      const pk = match.pokerGameState;
+      if (pk.stage === 'match_ended') {
+        match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+        settlePokerMatch(match);
+        continue;
+      }
+      if (match.mode === 'pvp' && !match.playStartedAt) {
+        maybeStartPublicMatch(match, now);
+        continue;
+      }
+      if (!match.playStartedAt) {
+        continue;
+      }
+
+      // Check auto-next-hand for ended stage
+      if (pk.stage === 'ended') {
+        if (pk.nextRoundStartsAt && now >= pk.nextRoundStartsAt) {
+          startNextPokerRound(match);
+          broadcastMatch(matchId);
+          schedulePersist({ matchId });
+        }
+        continue;
+      }
+
+      // Turn timeout for active player
+      if (pk.stage === 'preflop' || pk.stage === 'flop' || pk.stage === 'turn' || pk.stage === 'river') {
+        const currPlayer = pk.players[pk.currentPlayerIndex];
+        if (currPlayer && !currPlayer.folded && !currPlayer.isAllIn && !currPlayer.eliminated) {
+          if (!pk.turnStartedAt) {
+            pk.turnStartedAt = now;
+          }
+          const elapsedSec = Math.floor((now - pk.turnStartedAt) / 1000);
+          const isBot = Boolean(currPlayer.isAi || currPlayer.userId.startsWith('bot_') || currPlayer.isConnected === false);
+          const limit = isBot ? 1 : 15;
+          if (elapsedSec >= limit) {
+            const needed = pk.currentBet - currPlayer.currentBet;
+            if (needed <= 0) {
+              applyPokerAction(match, currPlayer.userId, 'check');
+            } else if (isBot && currPlayer.chips >= needed && Math.random() > 0.5) {
+              applyPokerAction(match, currPlayer.userId, 'call');
+            } else {
+              applyPokerAction(match, currPlayer.userId, 'fold');
+            }
+            broadcastMatch(matchId);
+            schedulePersist({ matchId });
+          }
+        }
+      }
       continue;
     }
 

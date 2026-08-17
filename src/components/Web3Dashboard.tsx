@@ -524,7 +524,7 @@ interface Web3DashboardProps {
   xpProgressPercentage: number;
   playerXp: number;
   onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
-  onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
+  onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onStartBlackjackGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
@@ -1122,7 +1122,7 @@ export function Web3Dashboard({
         setMatchmakingState('success');
         const targetGame = result.gameType || pvpGameTab;
         if (targetGame === 'poker' && onStartPokerGame) {
-          onStartPokerGame(result.mode || 'pvp', matchedStake);
+          onStartPokerGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
         } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
           onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
         } else {
@@ -1422,7 +1422,7 @@ export function Web3Dashboard({
       setPrivateRoomStatus('ready');
       setPrivateRoomCreateState('idle');
       if (targetGame === 'poker' && onStartPokerGame) {
-        onStartPokerGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
+        onStartPokerGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode, result.matchId || undefined);
       } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
         onStartBlackjackGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode, result.matchId || undefined);
       } else {
@@ -2051,7 +2051,7 @@ export function Web3Dashboard({
         if (matchGameType === 'blackjack' && onStartBlackjackGame) {
           onStartBlackjackGame(match.mode, match.stake, (match as any).roomCode || undefined, match.matchId);
         } else if (matchGameType === 'poker' && onStartPokerGame) {
-          onStartPokerGame(match.mode, match.stake, (match as any).roomCode || undefined);
+          onStartPokerGame(match.mode, match.stake, (match as any).roomCode || undefined, match.matchId);
         } else {
           onStartGame(match.mode, match.stake);
         }
@@ -5067,141 +5067,7 @@ export function Web3Dashboard({
                         {/* Matchmaking Queue Button */}
                         <button
                           type="button"
-                          onClick={() => {
-                            if (!authReady) {
-                              const message = 'Session is still syncing with the backend. Try again in a moment.';
-                              setPublicQueueError(message);
-                              alert(message);
-                              return;
-                            }
-                            if (selectedStake > 0 && (!walletConnected || !rawAddress)) {
-                              const message = 'Connect wallet first for ticket-stake public matches.';
-                              setPublicQueueError(message);
-                              alert(message);
-                              return;
-                            }
-                            const requiredEnergy = selectedStake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
-                            if (energy.energy < requiredEnergy) {
-                              const message = selectedStake === 0
-                                ? `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`
-                                : `You need ${PUBLIC_STAKE_MATCH_ENERGY_COST} energy to join a public game.`;
-                              setPublicQueueError(message);
-                              alert(message);
-                              return;
-                            }
-                            if (selectedStake > 0 && goldenTickets < selectedStake) {
-                              const message = `You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`;
-                              setPublicQueueError(message);
-                              alert(message);
-                              return;
-                            }
-                            sound.playShuffle();
-                            wakeBackend();
-                            setPublicQueueError('');
-                            setQueueLength(1);
-                            setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
-                            publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
-                            const joinAttempt = publicJoinAttemptRef.current + 1;
-                            publicJoinAttemptRef.current = joinAttempt;
-                            publicJoinStartedAtRef.current = Date.now();
-                            setMatchmakingState('joining');
-                            const joinPayload = {
-                              username: userName,
-                              avatarId: selectedAvatar,
-                              walletAddress: rawAddress || null,
-                              stake: selectedStake,
-                              mode: 'pvp' as const,
-                            };
-                            let joinSettled = false;
-                            apiRequest<PublicMatchmakerResponse>('/api/matchmaker/join', {
-                              method: 'POST',
-                              retryOnNetworkError: true,
-                              networkAttempts: 3,
-                              timeoutMs: 45000,
-                              body: JSON.stringify(joinPayload),
-                            }).then((result) => {
-                              if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
-                              joinSettled = true;
-                              setGoldenTickets(result.availableTickets);
-                              setHeldTickets(result.heldTickets);
-                              if (result.energy) {
-                                updateProfileEnergy(result.energy);
-                              }
-                              setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
-                              setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
-                              if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
-                                openPublicMatch(result.matchmaker, selectedStake);
-                                return;
-                              }
-                              setMatchmakingState('searching');
-                            }).catch(async (error) => {
-                              if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
-                              fetchFullProfile().catch(() => undefined);
-                              // The server may have accepted the idempotent join
-                              // even when Telegram/WebView dropped the response.
-                              // Ask the authoritative status endpoint before
-                              // showing a false "connection interrupted" error.
-                              try {
-                                const recovered = await getPublicQueueStatusViaSameOrigin()
-                                  .catch(() => getPublicQueueStatusViaScript())
-                                  .catch(() => getPublicQueueStatusViaBridge())
-                                  .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
-                                    timeoutMs: 12_000,
-                                    retryOnNetworkError: true,
-                                    networkAttempts: 2,
-                                  }));
-                                if (publicJoinAttemptRef.current !== joinAttempt) return;
-                                if (recovered.status === 'searching') {
-                                  setQueueLength(recovered.queueLength || 1);
-                                  setMatchmakingTimer(recovered.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
-                                  setMatchmakingState('searching');
-                                  return;
-                                }
-                                if (recovered.status === 'ready' && recovered.matchId) {
-                                  openPublicMatch(recovered, selectedStake);
-                                  return;
-                                }
-                                if (recovered.status === 'expired') {
-                                  setMatchmakingState('idle');
-                                  setPublicQueueError(recovered.message || 'No compatible opponent joined the queue. No tickets or energy were charged.');
-                                  return;
-                                }
-                              } catch {
-                                // The original request error below remains the
-                                // useful message when status cannot be reached.
-                              }
-                              const message = error instanceof Error ? error.message : 'Failed to join public queue.';
-                              setMatchmakingState('idle');
-                              setPublicQueueError(message);
-                            });
-                            // The regular JSON POST is preferred, but some Telegram
-                            // WebViews keep its CORS preflight pending forever. Do
-                            // not make a real player wait for that request's 45 s
-                            // timeout: the no-preflight iframe route is idempotent
-                            // and returns the same server-authoritative result.
-                            window.setTimeout(() => {
-                              if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
-                              joinPublicQueueViaBridge(joinPayload).then((result) => {
-                                if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
-                                joinSettled = true;
-                                setGoldenTickets(result.availableTickets);
-                                setHeldTickets(result.heldTickets);
-                                if (result.energy) {
-                                  updateProfileEnergy(result.energy);
-                                }
-                                setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
-                                setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
-                                if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
-                                  openPublicMatch(result.matchmaker, selectedStake);
-                                  return;
-                                }
-                                setMatchmakingState('searching');
-                              }).catch(() => {
-                                // The direct request keeps retrying and its existing
-                                // recovery path reports a failure if both routes fail.
-                              });
-                            }, 1_000);
-                          }}
+                          onClick={handleStartMatchmakingQueue}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {selectedStake === 0 ? 'JOIN FREE PUBLIC' : 'JOIN REAL QUEUE'}
