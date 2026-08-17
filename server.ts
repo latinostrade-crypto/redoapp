@@ -584,6 +584,8 @@ interface MatchmakingStatusPayload {
   // The first player-specific table snapshot travels with `ready`. Mobile
   // Telegram WebViews must not need a second request before rendering cards.
   gameState?: Record<string, unknown>;
+  blackjackGameState?: Record<string, unknown>;
+  pokerGameState?: Record<string, unknown>;
 }
 
 interface PersistedState {
@@ -1809,16 +1811,25 @@ function buildBootstrapProfileResponse(user: UserState) {
   let activeMatchInfo = null;
   if (activeMatchId) {
     const match = activeMatches.get(activeMatchId);
-    const hasPlaceholders = match?.players.some((p) => p.userId.startsWith('waiting_for_player_'));
-    if (match && !match.settled && match.gameState.phase !== 'game_over' && (!hasPlaceholders || match.playStartedAt)) {
+    const isGameOver = match && (
+      match.settled ||
+      (match.gameType === 'poker' ? match.pokerGameState?.stage === 'match_ended' :
+       match.gameType === 'blackjack' ? match.blackjackGameState?.stage === 'match_ended' :
+       match.gameState.phase === 'game_over')
+    );
+    if (match && !isGameOver) {
+      markMatchPlayerConnected(match, user.userId);
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
       const perspective = buildPerspectiveState(match, user.userId);
       activeMatchInfo = {
         matchId: match.matchId,
+        gameType: match.gameType || 'uno',
         mode: match.mode,
         stake: match.stake,
         roomCode: associatedRoom ? associatedRoom.roomCode : null,
-        gameState: perspective?.gameState,
+        gameState: (perspective as any)?.gameState,
+        blackjackGameState: (perspective as any)?.blackjackGameState,
+        pokerGameState: (perspective as any)?.pokerGameState,
         players: match.players.map(p => ({
           userId: p.userId,
           username: p.username,
@@ -5138,7 +5149,13 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   const activeMatchId = activeMatchByUser.get(userId);
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
-    if (activeMatch && !activeMatch.settled && activeMatch.gameState.phase !== 'game_over') {
+    const isGameOver = activeMatch && (
+      activeMatch.settled ||
+      (activeMatch.gameType === 'poker' ? activeMatch.pokerGameState?.stage === 'match_ended' :
+       activeMatch.gameType === 'blackjack' ? activeMatch.blackjackGameState?.stage === 'match_ended' :
+       activeMatch.gameState.phase === 'game_over')
+    );
+    if (activeMatch && !isGameOver) {
       markMatchPlayerConnected(activeMatch, userId);
       const perspective = buildPerspectiveState(activeMatch, userId);
       return {
@@ -5148,7 +5165,9 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
         stake: activeMatch.stake,
         mode: activeMatch.mode,
         gameType: activeMatch.gameType || 'uno',
-        gameState: perspective?.gameState,
+        gameState: (perspective as any)?.gameState,
+        blackjackGameState: (perspective as any)?.blackjackGameState,
+        pokerGameState: (perspective as any)?.pokerGameState,
       };
     } else {
       activeMatchByUser.delete(userId);
@@ -6880,8 +6899,15 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   expireTimedOutMatchmakingPlayers();
   const activeMatchId = activeMatchByUser.get(userId);
   const existingActiveMatch = activeMatchId ? activeMatches.get(activeMatchId) : null;
-  const isStaleMatch = existingActiveMatch && (Date.now() - (existingActiveMatch.playStartedAt || 0) > 120_000);
-  if (existingActiveMatch && !existingActiveMatch.settled && existingActiveMatch.gameState.phase !== 'game_over' && !isStaleMatch && !input.forceFresh) {
+  const isGameOver = existingActiveMatch && (
+    existingActiveMatch.settled ||
+    (existingActiveMatch.gameType === 'poker' ? existingActiveMatch.pokerGameState?.stage === 'match_ended' :
+     existingActiveMatch.gameType === 'blackjack' ? existingActiveMatch.blackjackGameState?.stage === 'match_ended' :
+     existingActiveMatch.gameState.phase === 'game_over')
+  );
+  const isStaleMatch = existingActiveMatch && (Date.now() - (existingActiveMatch.playStartedAt || existingActiveMatch.createdAt || Date.now()) > 600_000);
+  if (existingActiveMatch && !isGameOver && !isStaleMatch) {
+    markMatchPlayerConnected(existingActiveMatch, userId);
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
@@ -6890,7 +6916,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       matchmaker: tryActivateQueuedMatch(userId),
       replayed: true,
     });
-  } else if (activeMatchId) {
+  } else if (activeMatchId && (isGameOver || isStaleMatch)) {
     activeMatchByUser.delete(userId);
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
@@ -7144,16 +7170,25 @@ function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
   const activeMatchId = activeMatchByUser.get(userId);
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
-    if (activeMatch && !activeMatch.settled && activeMatch.gameState.phase !== 'game_over') {
+    const isGameOver = activeMatch && (
+      activeMatch.settled ||
+      (activeMatch.gameType === 'poker' ? activeMatch.pokerGameState?.stage === 'match_ended' :
+       activeMatch.gameType === 'blackjack' ? activeMatch.blackjackGameState?.stage === 'match_ended' :
+       activeMatch.gameState.phase === 'game_over')
+    );
+    if (activeMatch && !isGameOver) {
       markMatchPlayerConnected(activeMatch, userId);
       const perspective = buildPerspectiveState(activeMatch, userId);
       return sendMatchmakerStatusSuccess(req, res, {
         status: 'ready',
         matchId: activeMatch.matchId,
+        gameType: activeMatch.gameType || 'uno',
         players: activeMatch.players,
         stake: activeMatch.stake,
         mode: activeMatch.mode,
-        gameState: perspective?.gameState,
+        gameState: (perspective as any)?.gameState,
+        blackjackGameState: (perspective as any)?.blackjackGameState,
+        pokerGameState: (perspective as any)?.pokerGameState,
       });
     } else {
       activeMatchByUser.delete(userId);

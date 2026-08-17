@@ -5884,15 +5884,32 @@ export function Web3Dashboard({
                       ))}
                     </div>
 
-                    {selectedStake > 0 && (
-                      <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400">
+                    {selectedStake > 0 ? (
+                      <div className="bg-black/90 p-2 border border-black text-[7.5px] leading-relaxed space-y-1.5 text-slate-400 rounded">
                         <div className="flex justify-between items-center text-slate-300">
-                          <span>Match Format:</span>
-                          <span className="text-[#00ff66] font-bold">100 Chips Stack (5 Hands)</span>
+                          <span>Buy-in Entry:</span>
+                          <span className="text-[#00ff66] font-bold">{selectedStake.toFixed(2)} TKT ➔ 100 Match Chips</span>
                         </div>
                         <div className="flex justify-between items-center text-slate-300">
-                          <span>Champion Payout:</span>
-                          <span className="text-[#ffcc00] font-bold">96% Table Prize Pool</span>
+                          <span>Match Format:</span>
+                          <span className="text-[#00d2ff] font-bold">5 Hands Elimination (up to 4 players)</span>
+                        </div>
+                        <div className="flex justify-between items-center text-amber-300 bg-amber-950/40 px-1.5 py-1 rounded border border-amber-500/30">
+                          <span>Champion Prize (96%):</span>
+                          <span className="text-[#ffcc00] font-black">
+                            {(selectedStake * 2 * 0.96).toFixed(2)} TKT (2P) — {(selectedStake * 4 * 0.96).toFixed(2)} TKT (4P)
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-black/90 p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400 rounded">
+                        <div className="flex justify-between items-center text-slate-300">
+                          <span>Buy-in Entry:</span>
+                          <span className="text-[#00ff66] font-bold">FREE ➔ 100 Practice Chips</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-300">
+                          <span>Champion Reward:</span>
+                          <span className="text-[#00d2ff] font-bold">+50 XP & Win Leaderboard Points</span>
                         </div>
                       </div>
                     )}

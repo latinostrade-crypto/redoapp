@@ -178,7 +178,7 @@ export function BlackjackGame({
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[560px]">
       
       {/* 1. TOP HEADER CONTROL BAR */}
-      <header className="flex justify-between items-center bg-slate-950 border border-black px-2.5 py-1 z-20 rounded">
+      <header className="flex justify-between items-center bg-slate-950 border border-black px-2 py-1 z-20 rounded">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -191,14 +191,12 @@ export function BlackjackGame({
           <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
             HAND {gameState.currentHand || 1}/{gameState.maxHands || 5}
           </span>
+          <span className="text-[7.5px] font-black text-[#ffcc00] uppercase bg-black px-1.5 py-0.5 border border-black">
+            PRIZE: {gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT`}
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-[8px] font-black text-[#ffcc00] flex items-center gap-1 bg-black px-1.5 py-0.5 border border-black">
-            <ChipStackIcon className="w-3 h-3" />
-            <span>{gameState.stake === 0 ? 'FREE' : `${gameState.stake}TKT`}</span>
-          </span>
-
+        <div className="flex items-center gap-1.5">
           <span className="text-[8px] font-black text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
             BANKROLL: {humanPlayer?.chips ?? 100} 💰
           </span>
