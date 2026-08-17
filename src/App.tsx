@@ -164,9 +164,9 @@ export default function App() {
   }, [returnToLobby]);
 
   const handleStartBlackjackGame = useCallback(
-    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => {
+    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
       setActiveGameType('blackjack');
-      startBlackjackSession(selectedAvatar, userName, mode, stake, roomCode);
+      startBlackjackSession(selectedAvatar, userName, mode, stake, roomCode, matchId);
     },
     [selectedAvatar, startBlackjackSession, userName]
   );

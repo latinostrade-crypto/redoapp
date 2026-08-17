@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BlackjackCard, BlackjackGameState } from '../types/blackjack';
 import { sound } from '../utils/sound';
-import { RotateCcw, Volume2, VolumeX, Trophy, Coins, Play, Timer, Sparkles, Hand, Plus } from 'lucide-react';
+import { RotateCcw, Volume2, VolumeX, Trophy, Coins, Play, Timer, Plus, Hand, Loader2 } from 'lucide-react';
 import { Avatar } from './Avatars';
 import { ChipStackIcon } from './PokerGame';
 
@@ -54,13 +54,14 @@ function BlackjackCardView({
   card,
   hidden = false,
 }: {
-  card?: BlackjackCard;
+  card?: BlackjackCard & { hidden?: boolean };
   hidden?: boolean;
   key?: React.Key;
 }) {
   const cardSizeClass = 'w-10 h-14 min-[380px]:w-12 min-[380px]:h-16';
+  const isHidden = hidden || !card || card.hidden === true || card.rank === 0;
 
-  if (hidden || !card) {
+  if (isHidden) {
     return (
       <motion.div
         initial={{ scale: 0.3, x: 50, y: -40, rotate: -20, opacity: 0 }}
@@ -126,11 +127,18 @@ export function BlackjackGame({
       return;
     }
 
+    if (gameState.nextRoundStartsAt) {
+      const remaining = Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000));
+      setNextHandCountdown(remaining);
+    }
+
     const timer = setInterval(() => {
       setNextHandCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          onNextHand();
+          if (gameState.mode === 'offline') {
+            onNextHand();
+          }
           return 0;
         }
         return prev - 1;
@@ -138,13 +146,13 @@ export function BlackjackGame({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState.stage, onNextHand]);
+  }, [gameState.stage, gameState.nextRoundStartsAt, gameState.mode, onNextHand]);
 
   const activePlayer = gameState.players[gameState.currentPlayerIndex];
   const isHumanActiveTurn = gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer?.id === 'player';
   const canPlay = isHumanActiveTurn;
   const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
-  const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2 && activePlayer.chips >= activePlayer.bet;
+  const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2;
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
@@ -213,43 +221,54 @@ export function BlackjackGame({
                 <BlackjackCardView
                   key={c.id || idx}
                   card={c}
-                  hidden={idx === 1 && gameState.stage === 'player_turn'}
+                  hidden={c.hidden === true || (idx === 1 && gameState.stage === 'player_turn')}
                 />
               ))}
             </div>
           </div>
         </div>
 
-        {/* TABLE CENTER: POT & TURN STATUS */}
+        {/* TABLE CENTER: POT & TURN STATUS / WAITING BANNER */}
         <div className="flex flex-col items-center gap-1 z-20 pointer-events-none my-auto">
-          <div className="bg-slate-950/95 border border-[#ffcc00] px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(255,204,0,0.3)] flex items-center gap-1.5">
-            <ChipStack amount={gameState.pot} label="POT" />
-            <span className="text-[8.5px] font-black text-[#ffcc00] uppercase">
-              POT: {gameState.pot}
-            </span>
-          </div>
+          {gameState.waitingForPlayers ? (
+            <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse">
+              <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+              <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
+                WAITING FOR PLAYERS TO CONNECT...
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="bg-slate-950/95 border border-[#ffcc00] px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(255,204,0,0.3)] flex items-center gap-1.5">
+                <ChipStack amount={gameState.pot} label="POT" />
+                <span className="text-[8.5px] font-black text-[#ffcc00] uppercase">
+                  POT: {gameState.pot}
+                </span>
+              </div>
 
-          {/* TURN TIMER BADGE */}
-          {gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer && (
-            <motion.div
-              animate={{
-                scale: turnTimeLeft <= 5 ? [1, 1.08, 1] : [1, 1.02, 1],
-                boxShadow: turnTimeLeft <= 5
-                  ? ['0 0 8px #ff3333', '0 0 16px #ff3333', '0 0 8px #ff3333']
-                  : ['0 0 8px #00ff66', '0 0 16px #00ff66', '0 0 8px #00ff66'],
-              }}
-              transition={{ repeat: Infinity, duration: turnTimeLeft <= 5 ? 0.45 : 0.9 }}
-              className={`px-3 py-0.5 rounded-full border font-black text-[9px] flex items-center gap-1 uppercase backdrop-blur-md ${
-                turnTimeLeft <= 5 ? 'bg-red-950 border-red-500 text-red-300' : 'bg-black/95 border-[#00ff66] text-[#00ff66]'
-              }`}
-            >
-              <Timer className={`w-3 h-3 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
-              <span>{activePlayer.id === 'player' ? 'YOUR TURN' : `${activePlayer.name.toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
-            </motion.div>
+              {/* TURN TIMER BADGE */}
+              {gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer && (
+                <motion.div
+                  animate={{
+                    scale: turnTimeLeft <= 5 ? [1, 1.08, 1] : [1, 1.02, 1],
+                    boxShadow: turnTimeLeft <= 5
+                      ? ['0 0 8px #ff3333', '0 0 16px #ff3333', '0 0 8px #ff3333']
+                      : ['0 0 8px #00ff66', '0 0 16px #00ff66', '0 0 8px #00ff66'],
+                  }}
+                  transition={{ repeat: Infinity, duration: turnTimeLeft <= 5 ? 0.45 : 0.9 }}
+                  className={`px-3 py-0.5 rounded-full border font-black text-[9px] flex items-center gap-1 uppercase backdrop-blur-md ${
+                    turnTimeLeft <= 5 ? 'bg-red-950 border-red-500 text-red-300' : 'bg-black/95 border-[#00ff66] text-[#00ff66]'
+                  }`}
+                >
+                  <Timer className={`w-3 h-3 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
+                  <span>{activePlayer.id === 'player' ? 'YOUR TURN' : `${activePlayer.name.toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
+                </motion.div>
+              )}
+            </>
           )}
         </div>
 
-        {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS */}
+        {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS (UP TO 4) */}
         <div className="w-full flex items-end justify-around gap-1 z-30 pb-1">
           {gameState.players.map((p, idx) => {
             const isTurn = gameState.stage === 'player_turn' && gameState.currentPlayerIndex === idx;
@@ -280,12 +299,22 @@ export function BlackjackGame({
 
                 {/* Avatar + Info */}
                 <div className="flex flex-col items-center">
-                  <Avatar avatarId={p.avatar} emotion={p.isBusted ? 'worried' : isTurn ? 'thinking' : 'happy'} size="xs" />
+                  <Avatar avatarId={p.avatar} emotion={p.isBusted ? 'worried' : p.hasBlackjack ? 'happy' : isTurn ? 'thinking' : 'happy'} size="xs" />
                   <span className="text-[7px] font-black text-white truncate max-w-[48px] leading-tight mt-0.5">
                     {p.name} {isMe ? '(YOU)' : ''}
                   </span>
-                  <div className="text-[7px] font-black text-[#00ff66] leading-tight">
-                    {p.isBusted ? <span className="text-red-400">BUST</span> : p.hasBlackjack ? <span className="text-[#ffcc00]">BJ 21</span> : `SCORE: ${p.score}`}
+                  <div className="text-[7px] font-black leading-tight">
+                    {p.isBusted ? (
+                      <span className="text-red-400 bg-red-950/80 px-1 py-0.2 rounded border border-red-500/40">
+                        💥 BUST ({p.score})
+                      </span>
+                    ) : p.hasBlackjack ? (
+                      <span className="text-[#ffcc00] bg-amber-950/80 px-1 py-0.2 rounded border border-amber-400/60 shadow-[0_0_8px_rgba(255,204,0,0.5)] animate-pulse">
+                        🔥 NATURAL 21
+                      </span>
+                    ) : (
+                      <span className="text-[#00ff66]">SCORE: {p.score}</span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -307,7 +336,7 @@ export function BlackjackGame({
               <Trophy className="w-10 h-10 text-[#ffcc00] mx-auto animate-bounce" />
               <h2 className="text-xs font-black uppercase tracking-wider text-[#00ff66]">
                 {gameState.stage === 'match_ended'
-                  ? `🏆 ${gameState.matchChampion?.name.toUpperCase()} IS THE CHAMPION!`
+                  ? `🏆 ${gameState.matchChampion?.name?.toUpperCase() || gameState.winner?.toUpperCase() || 'PLAYER'} WINS MATCH!`
                   : 'ROUND COMPLETED'}
               </h2>
 
@@ -365,7 +394,7 @@ export function BlackjackGame({
       {gameState.stage === 'player_turn' && !gameState.isDealing && (
         <div className="bg-slate-950 border border-black p-2 rounded-lg z-20 flex flex-col gap-1.5 shadow-lg">
           <div className="flex justify-between items-center text-[8.5px] font-bold text-[#00ff66]">
-            <span>{canPlay ? '👉 YOUR TURN - CHOOSE ACTION:' : `⏳ WAITING FOR ${activePlayer?.name.toUpperCase()}...`}</span>
+            <span>{canPlay ? '👉 YOUR TURN - CHOOSE ACTION:' : `⏳ WAITING FOR ${activePlayer?.name?.toUpperCase()}...`}</span>
             {humanPlayer && (
               <div className="flex items-center gap-1 text-white">
                 <span>YOUR SCORE:</span>

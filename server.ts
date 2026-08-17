@@ -280,6 +280,56 @@ interface ServerGameState {
   turnStartedAt?: number;
 }
 
+interface ServerBlackjackCard {
+  id: string;
+  suit: 'spades' | 'hearts' | 'diamonds' | 'clubs';
+  rank: number; // 2-14
+  value: number; // 2-10, Face=10, Ace=11 or 1
+  hidden?: boolean;
+}
+
+interface ServerBlackjackPlayer {
+  userId: string;
+  username: string;
+  avatarId: string;
+  isAi: boolean;
+  isConnected?: boolean;
+  hasConnected?: boolean;
+  lastSeenAt?: number | null;
+  disconnectedAt?: number | null;
+  cards: ServerBlackjackCard[];
+  bet: number;
+  chips: number;
+  score: number;
+  isSoft: boolean;
+  isBusted: boolean;
+  hasBlackjack: boolean;
+  status: 'playing' | 'stood' | 'busted' | 'blackjack';
+  wins: number;
+}
+
+interface ServerBlackjackGameState {
+  shoe: ServerBlackjackCard[];
+  dealer: ServerBlackjackPlayer;
+  players: ServerBlackjackPlayer[];
+  currentPlayerIndex: number;
+  stage: 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
+  pot: number;
+  stake: number;
+  targetWins: number;
+  winnerUserId?: string | null;
+  matchChampionUserId?: string | null;
+  roundWinnerUserId?: string | null;
+  roundWinnerName?: string | null;
+  nextRoundStartsAt?: number | null;
+  winningHandDesc?: string;
+  winningPayout?: number;
+  logs: Array<{ id: string; timestamp: string; message: string; type: 'info' | 'play' | 'draw' | 'action' | 'win' }>;
+  turnStartedAt?: number;
+  turnTimeoutSec?: number;
+}
+
+
 interface LootboxClaimRecord {
   claimId: string;
   claimedAt: number;
@@ -439,6 +489,7 @@ interface ActiveMatch {
   costsCommitted?: boolean;
   settled: boolean;
   gameState: ServerGameState;
+  blackjackGameState?: ServerBlackjackGameState;
   payoutResult?: any;
   turnTimeoutSec?: number;
 }
@@ -1487,49 +1538,71 @@ function hydrateUser(user: UserState): boolean {
 function reconcileStuckUserBalances(user: UserState): boolean {
   let changed = false;
 
-  // 1. Clean up legacy artificial audit restores and admin boosts
+  // 1. Clean up legacy artificial audit restores and admin boosts from transactions
   const invalidTxs = user.transactions.filter(
     (tx) => tx.id && (tx.id.startsWith('auto-restore-audit-') || tx.id.startsWith('admin-boost-'))
   );
   if (invalidTxs.length > 0) {
-    const totalInvalidRestored = round2(invalidTxs.reduce((sum, tx) => sum + (tx.amount || 0), 0));
     user.transactions = user.transactions.filter(
       (tx) => !tx.id || (!tx.id.startsWith('auto-restore-audit-') && !tx.id.startsWith('admin-boost-'))
     );
-    user.availableTickets = round2(Math.max(0, user.availableTickets - totalInvalidRestored));
     changed = true;
-    console.log(`[Balance Cleanup] Removed ${totalInvalidRestored} artificial audit/boost TKT from user ${user.userId}.`);
   }
 
-  // 2. Clear unbacked artificial tickets for fresh users who have 0 real deposits, referrals, or match earnings
+  // 2. Calculate lifetime on-chain confirmed deposits
   const userDeposits = Array.from(depositIntents.values()).filter(
     (intent) => intent.userId === user.userId && intent.status === 'confirmed' && !intent.creditReversedAt
   );
-  const lifetimeDepositTickets = round2(
+  const lifetimeDeposits = round2(
     userDeposits.reduce((sum, intent) => sum + (intent.ticketAmount || 0), 0)
   );
+
+  // 3. Calculate lifetime credited referral earnings
   const userReferrals = Array.from(referralPayouts.values()).filter(
     (payout) => payout.recipientUserId === user.userId && payout.status === 'credited'
   );
-  const lifetimeReferralTickets = round2(
+  const lifetimeReferrals = round2(
     userReferrals.reduce((sum, payout) => sum + (payout.amount || 0), 0)
   );
-  const matchEarnings = round2(
+
+  // 4. Calculate lifetime withdrawals (pending + completed)
+  const userWithdrawals = Array.from(withdrawalRequests.values()).filter(
+    (req) => req.userId === user.userId && (req.status === 'completed' || req.status === 'pending')
+  );
+  const lifetimeWithdrawals = round2(
+    userWithdrawals.reduce((sum, req) => sum + (req.ticketAmount || 0), 0)
+  );
+
+  // 5. Calculate legitimate match payouts won from valid completed matches
+  const lifetimeMatchPayouts = round2(
     user.transactions
-      .filter((tx) => tx.type === 'match_payout' && tx.amount > 0)
+      .filter((tx) => tx.type === 'match_payout' && typeof tx.amount === 'number' && tx.amount > 0)
       .reduce((sum, tx) => sum + (tx.amount || 0), 0)
   );
 
-  const currentTotalTickets = round2(user.availableTickets + user.heldTickets);
-  if (currentTotalTickets > 0 && lifetimeDepositTickets === 0 && lifetimeReferralTickets === 0 && matchEarnings === 0 && user.transactions.length === 0) {
-    const previous = user.availableTickets;
-    user.availableTickets = 0;
-    user.heldTickets = 0;
-    changed = true;
-    console.log(`[Audit Reset] Cleared unbacked tickets for inactive user ${user.userId}: was ${previous} TKT, now 0 TKT.`);
-  }
+  // 6. Calculate total stakes held/spent on matches
+  const lifetimeStakesSpent = round2(
+    user.transactions
+      .filter((tx) => tx.type === 'stake_hold' && typeof tx.amount === 'number' && tx.amount < 0)
+      .reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0)
+  );
 
-  // 3. Release orphaned heldTickets (if user is not in match, room, or queue)
+  // 7. Calculate stake releases (refunds from cancelled/unstarted matches or rooms)
+  const lifetimeStakeReleases = round2(
+    user.transactions
+      .filter((tx) => tx.type === 'stake_release' && typeof tx.amount === 'number' && tx.amount > 0)
+      .reduce((sum, tx) => sum + (tx.amount || 0), 0)
+  );
+
+  // The maximum possible legitimate balance a user can possess
+  const maxLegitimateBalance = round2(
+    Math.max(
+      0,
+      lifetimeDeposits + lifetimeReferrals + lifetimeMatchPayouts + lifetimeStakeReleases - lifetimeStakesSpent - lifetimeWithdrawals
+    )
+  );
+
+  // 8. Release orphaned heldTickets (if user is not in match, room, or queue)
   if (user.heldTickets > 0) {
     const isMatched = activeMatchByUser.has(user.userId);
     const isQueued = matchmakingQueue.some((p) => p.userId === user.userId);
@@ -1551,7 +1624,16 @@ function reconcileStuckUserBalances(user: UserState): boolean {
     }
   }
 
-  // 4. Ensure non-negative bounds
+  // 9. Enforce strict upper bound: total balance CANNOT exceed maxLegitimateBalance
+  const currentTotal = round2(user.availableTickets + user.heldTickets);
+  if (currentTotal > maxLegitimateBalance) {
+    const oldBalance = user.availableTickets;
+    user.availableTickets = round2(Math.max(0, maxLegitimateBalance - user.heldTickets));
+    changed = true;
+    console.log(`[Audit Cap] Corrected inflated balance for user ${user.userId}: was ${oldBalance} TKT, capped to ${user.availableTickets} TKT (Max legitimate: ${maxLegitimateBalance} TKT).`);
+  }
+
+  // 10. Ensure non-negative bounds
   if (user.availableTickets < 0) {
     user.availableTickets = 0;
     changed = true;
@@ -2915,7 +2997,583 @@ function createInitialMatchState(players: QueuePlayer[]): ServerGameState {
   };
 }
 
+function generateServerBlackjackShoe(numDecks = 4): ServerBlackjackCard[] {
+  const suits: Array<'spades' | 'hearts' | 'diamonds' | 'clubs'> = ['spades', 'hearts', 'diamonds', 'clubs'];
+  const shoe: ServerBlackjackCard[] = [];
+  let counter = 0;
+  for (let d = 0; d < numDecks; d++) {
+    for (const suit of suits) {
+      for (let rank = 2; rank <= 14; rank++) {
+        let value = rank;
+        if (rank > 10 && rank < 14) value = 10;
+        if (rank === 14) value = 11;
+        shoe.push({
+          id: `bj_${suit}_${rank}_${d}_${counter++}_${Math.random().toString(36).slice(2, 6)}`,
+          suit,
+          rank,
+          value,
+        });
+      }
+    }
+  }
+  for (let i = shoe.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [shoe[i], shoe[j]] = [shoe[j], shoe[i]];
+  }
+  return shoe;
+}
+
+function evaluateServerBlackjackHand(cards: ServerBlackjackCard[]): {
+  score: number;
+  isSoft: boolean;
+  isBusted: boolean;
+  hasBlackjack: boolean;
+} {
+  let score = 0;
+  let aces = 0;
+
+  for (const card of cards) {
+    score += card.value;
+    if (card.rank === 14) {
+      aces += 1;
+    }
+  }
+
+  while (score > 21 && aces > 0) {
+    score -= 10;
+    aces -= 1;
+  }
+
+  const isSoft = aces > 0 && score <= 21;
+  const isBusted = score > 21;
+  const hasBlackjack = cards.length === 2 && score === 21;
+
+  return {
+    score,
+    isSoft,
+    isBusted,
+    hasBlackjack,
+  };
+}
+
+function createInitialBlackjackMatchState(players: QueuePlayer[], stake: number): ServerBlackjackGameState {
+  const shoe = generateServerBlackjackShoe(4);
+  const betAmount = stake > 0 ? stake : 10;
+
+  const serverPlayers: ServerBlackjackPlayer[] = players.map((p) => {
+    const isBot = Boolean(p.isAi || p.userId.startsWith('bot_') || p.userId.startsWith('waiting_for_player_'));
+    const c1 = shoe.pop()!;
+    const c2 = shoe.pop()!;
+    const evalResult = evaluateServerBlackjackHand([c1, c2]);
+    return {
+      userId: p.userId,
+      username: p.username,
+      avatarId: p.avatarId,
+      isAi: isBot,
+      isConnected: !isBot,
+      hasConnected: !isBot,
+      lastSeenAt: !isBot ? Date.now() : null,
+      disconnectedAt: null,
+      cards: [c1, c2],
+      bet: betAmount,
+      chips: 100,
+      score: evalResult.score,
+      isSoft: evalResult.isSoft,
+      isBusted: false,
+      hasBlackjack: evalResult.hasBlackjack,
+      status: evalResult.hasBlackjack ? ('blackjack' as const) : ('playing' as const),
+      wins: 0,
+    };
+  });
+
+  const d1 = shoe.pop()!;
+  const d2 = shoe.pop()!;
+  const dEval = evaluateServerBlackjackHand([d1, d2]);
+  const dealer: ServerBlackjackPlayer = {
+    userId: 'dealer',
+    username: 'Dealer (House)',
+    avatarId: 'bear',
+    isAi: true,
+    isConnected: true,
+    hasConnected: true,
+    cards: [d1, d2],
+    bet: 0,
+    chips: 9999,
+    score: dEval.score,
+    isSoft: dEval.isSoft,
+    isBusted: false,
+    hasBlackjack: dEval.hasBlackjack,
+    status: 'playing',
+    wins: 0,
+  };
+
+  const totalPot = betAmount * serverPlayers.length;
+
+  let initialPlayerIdx = 0;
+  while (initialPlayerIdx < serverPlayers.length && serverPlayers[initialPlayerIdx].status !== 'playing') {
+    initialPlayerIdx++;
+  }
+
+  const initialStage = initialPlayerIdx < serverPlayers.length ? 'player_turn' : 'dealer_turn';
+
+  return {
+    shoe,
+    dealer,
+    players: serverPlayers,
+    currentPlayerIndex: initialPlayerIdx < serverPlayers.length ? initialPlayerIdx : 0,
+    stage: initialStage,
+    pot: totalPot,
+    stake,
+    targetWins: 2,
+    winnerUserId: null,
+    matchChampionUserId: null,
+    logs: [createServerLog(`🃏 Round 1 dealt for ${serverPlayers.length} players vs Dealer. First to 2 wins!`, 'info')],
+    turnStartedAt: Date.now(),
+    turnTimeoutSec: 15,
+  };
+}
+
+function advanceBlackjackTurn(match: ActiveMatch) {
+  const bj = match.blackjackGameState;
+  if (!bj) return;
+
+  let nextIdx = bj.currentPlayerIndex + 1;
+  while (nextIdx < bj.players.length && bj.players[nextIdx].status !== 'playing') {
+    nextIdx++;
+  }
+
+  if (nextIdx < bj.players.length) {
+    bj.currentPlayerIndex = nextIdx;
+    bj.stage = 'player_turn';
+    bj.turnStartedAt = Date.now();
+  } else {
+    // All players finished their turn -> Dealer turn!
+    bj.stage = 'dealer_turn';
+    bj.turnStartedAt = Date.now();
+    runServerDealerSequence(match);
+  }
+}
+
+function runServerDealerSequence(match: ActiveMatch) {
+  const bj = match.blackjackGameState;
+  if (!bj) return;
+
+  bj.stage = 'dealer_turn';
+
+  const anyStandingPlayer = bj.players.some((p) => !p.isBusted);
+  let dEval = evaluateServerBlackjackHand(bj.dealer.cards);
+
+  if (anyStandingPlayer) {
+    while (dEval.score < 17 && bj.shoe.length > 0) {
+      const card = bj.shoe.pop()!;
+      bj.dealer.cards.push(card);
+      dEval = evaluateServerBlackjackHand(bj.dealer.cards);
+    }
+  }
+
+  bj.dealer.score = dEval.score;
+  bj.dealer.isSoft = dEval.isSoft;
+  bj.dealer.isBusted = dEval.isBusted;
+  bj.dealer.status = dEval.isBusted ? 'busted' : 'stood';
+
+  // Evaluate round winners
+  const roundWinners: ServerBlackjackPlayer[] = [];
+  bj.players.forEach((p) => {
+    let wonRound = false;
+    if (p.isBusted) {
+      wonRound = false;
+    } else if (dEval.isBusted) {
+      wonRound = true;
+    } else if (p.hasBlackjack && !dEval.hasBlackjack) {
+      wonRound = true;
+    } else if (p.score > dEval.score) {
+      wonRound = true;
+    } else if (p.score === dEval.score) {
+      // Tie (push) - no round win point awarded
+      wonRound = false;
+    } else {
+      wonRound = false;
+    }
+
+    if (wonRound) {
+      p.wins += 1;
+      roundWinners.push(p);
+    }
+  });
+
+  const champion = bj.players.find((p) => p.wins >= bj.targetWins);
+
+  let winningHandDesc = '';
+  if (champion) {
+    winningHandDesc = `🏆 ${champion.username.toUpperCase()} WINS THE MATCH! (${champion.wins}/${bj.targetWins} WINS)`;
+    bj.stage = 'match_ended';
+    bj.winnerUserId = champion.userId;
+    bj.matchChampionUserId = champion.userId;
+    bj.roundWinnerUserId = champion.userId;
+    bj.roundWinnerName = champion.username;
+    bj.winningHandDesc = winningHandDesc;
+    bj.logs = [createServerLog(winningHandDesc, 'win'), ...bj.logs].slice(0, 50);
+    settleBlackjackMatch(match);
+  } else {
+    if (roundWinners.length > 0) {
+      const names = roundWinners.map((w) => w.username).join(', ');
+      winningHandDesc = `⭐ ${names} won this round! Dealer score: ${dEval.isBusted ? 'BUST (' + dEval.score + ')' : dEval.score}. Next hand in 5s...`;
+      bj.roundWinnerUserId = roundWinners[0].userId;
+      bj.roundWinnerName = names;
+    } else if (dEval.isBusted) {
+      winningHandDesc = `Dealer busted (${dEval.score})! Next hand in 5s...`;
+    } else {
+      winningHandDesc = `Dealer won this round (${dEval.score}). Next hand in 5s...`;
+    }
+
+    bj.stage = 'round_ended';
+    bj.winningHandDesc = winningHandDesc;
+    bj.nextRoundStartsAt = Date.now() + 5000;
+    bj.logs = [createServerLog(winningHandDesc, 'info'), ...bj.logs].slice(0, 50);
+  }
+}
+
+function startNextBlackjackRound(match: ActiveMatch) {
+  const bj = match.blackjackGameState;
+  if (!bj || bj.stage === 'match_ended') return;
+
+  if (bj.shoe.length < (bj.players.length + 1) * 5) {
+    bj.shoe = generateServerBlackjackShoe(4);
+  }
+
+  const betAmount = match.stake > 0 ? match.stake : 10;
+
+  bj.players.forEach((p) => {
+    const c1 = bj.shoe.pop()!;
+    const c2 = bj.shoe.pop()!;
+    const pEval = evaluateServerBlackjackHand([c1, c2]);
+    p.cards = [c1, c2];
+    p.bet = betAmount;
+    p.score = pEval.score;
+    p.isSoft = pEval.isSoft;
+    p.isBusted = false;
+    p.hasBlackjack = pEval.hasBlackjack;
+    p.status = pEval.hasBlackjack ? 'blackjack' : 'playing';
+  });
+
+  const d1 = bj.shoe.pop()!;
+  const d2 = bj.shoe.pop()!;
+  const dEval = evaluateServerBlackjackHand([d1, d2]);
+  bj.dealer.cards = [d1, d2];
+  bj.dealer.score = dEval.score;
+  bj.dealer.isSoft = dEval.isSoft;
+  bj.dealer.isBusted = false;
+  bj.dealer.hasBlackjack = dEval.hasBlackjack;
+  bj.dealer.status = 'playing';
+
+  let nextIdx = 0;
+  while (nextIdx < bj.players.length && bj.players[nextIdx].status !== 'playing') {
+    nextIdx++;
+  }
+
+  bj.currentPlayerIndex = nextIdx < bj.players.length ? nextIdx : 0;
+  bj.stage = nextIdx < bj.players.length ? 'player_turn' : 'dealer_turn';
+  bj.nextRoundStartsAt = null;
+  bj.roundWinnerUserId = null;
+  bj.roundWinnerName = null;
+  bj.turnStartedAt = Date.now();
+  bj.logs = [createServerLog(`🃏 New round dealt! First to ${bj.targetWins} wins.`, 'info'), ...bj.logs].slice(0, 50);
+
+  if (bj.stage === 'dealer_turn') {
+    runServerDealerSequence(match);
+  }
+}
+
+function applyBlackjackAction(match: ActiveMatch, userId: string, action: string) {
+  if (!match.playStartedAt) {
+    throw new Error('Waiting for all players to connect.');
+  }
+  const bj = match.blackjackGameState;
+  if (!bj) {
+    throw new Error('Blackjack game state not found.');
+  }
+
+  if (action === 'blackjack_next_hand' || action === 'next_hand') {
+    if (bj.stage === 'round_ended') {
+      startNextBlackjackRound(match);
+      schedulePersist({ matchId: match.matchId });
+      return;
+    }
+    throw new Error('Round is not ended yet.');
+  }
+
+  if (bj.stage !== 'player_turn') {
+    throw new Error('Not player turn stage.');
+  }
+
+  const currentPlayer = bj.players[bj.currentPlayerIndex];
+  if (!currentPlayer || currentPlayer.userId !== userId) {
+    throw new Error('It is not your turn.');
+  }
+
+  if (action === 'blackjack_hit' || action === 'hit') {
+    if (bj.shoe.length === 0) {
+      bj.shoe = generateServerBlackjackShoe(4);
+    }
+    const card = bj.shoe.pop()!;
+    currentPlayer.cards.push(card);
+    const pEval = evaluateServerBlackjackHand(currentPlayer.cards);
+    currentPlayer.score = pEval.score;
+    currentPlayer.isSoft = pEval.isSoft;
+    currentPlayer.isBusted = pEval.isBusted;
+
+    bj.logs = [createServerLog(`${currentPlayer.username} hit and drew a card (score: ${pEval.score})`, 'draw'), ...bj.logs].slice(0, 50);
+
+    if (pEval.isBusted) {
+      currentPlayer.status = 'busted';
+      bj.logs = [createServerLog(`💥 ${currentPlayer.username} busted with ${pEval.score}!`, 'action'), ...bj.logs].slice(0, 50);
+      advanceBlackjackTurn(match);
+    } else if (pEval.score === 21) {
+      currentPlayer.status = 'stood';
+      advanceBlackjackTurn(match);
+    } else {
+      bj.turnStartedAt = Date.now();
+    }
+  } else if (action === 'blackjack_stand' || action === 'stand') {
+    currentPlayer.status = 'stood';
+    bj.logs = [createServerLog(`${currentPlayer.username} stood at score ${currentPlayer.score}`, 'play'), ...bj.logs].slice(0, 50);
+    advanceBlackjackTurn(match);
+  } else if (action === 'blackjack_double' || action === 'double') {
+    if (currentPlayer.cards.length !== 2) {
+      throw new Error('Double down is only allowed on the first 2 cards.');
+    }
+    currentPlayer.bet *= 2;
+    if (bj.shoe.length === 0) {
+      bj.shoe = generateServerBlackjackShoe(4);
+    }
+    const card = bj.shoe.pop()!;
+    currentPlayer.cards.push(card);
+    const pEval = evaluateServerBlackjackHand(currentPlayer.cards);
+    currentPlayer.score = pEval.score;
+    currentPlayer.isSoft = pEval.isSoft;
+    currentPlayer.isBusted = pEval.isBusted;
+    currentPlayer.status = pEval.isBusted ? 'busted' : 'stood';
+
+    bj.logs = [createServerLog(`${currentPlayer.username} doubled down! (score: ${pEval.score})`, 'action'), ...bj.logs].slice(0, 50);
+    advanceBlackjackTurn(match);
+  } else {
+    throw new Error(`Unsupported blackjack action: ${action}`);
+  }
+
+  schedulePersist({ matchId: match.matchId });
+}
+
+function settleBlackjackMatch(activeMatch: ActiveMatch) {
+  if (activeMatch.settled) return;
+
+  const bj = activeMatch.blackjackGameState;
+  if (!bj) return;
+
+  const champion = bj.players.find((p) => p.userId === bj.winnerUserId) || bj.players[0];
+  const grossPot = activeMatch.stake * activeMatch.players.length;
+  const seasonFund = round2(grossPot * 0.02);
+  const burnFund = round2(grossPot * 0.02);
+  const netPrizePool = round2(grossPot - seasonFund - burnFund);
+
+  bj.winningPayout = netPrizePool;
+
+  bj.players.forEach((player) => {
+    if (player.userId.startsWith('bot_') || player.userId.startsWith('waiting_for_player_')) return;
+    const user = getUser(player.userId);
+    const isWinner = player.userId === champion?.userId;
+    const grossPayout = isWinner ? netPrizePool : 0;
+    const referralSettlement = activeMatch.mode === 'pvp' && grossPayout > 0
+      ? applyReferralMatchBonus(user, grossPayout, activeMatch.matchId)
+      : { inviterBonus: 0, netPayout: grossPayout };
+
+    const matchPayoutLedgerId = `match-payout:${activeMatch.matchId}:${user.userId}`;
+    const payoutAlreadyCredited = user.transactions.some((entry) => entry.id === matchPayoutLedgerId);
+
+    if (!payoutAlreadyCredited) {
+      user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
+      if (referralSettlement.netPayout > 0) {
+        user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+        createLedgerEntry(user, {
+          id: matchPayoutLedgerId,
+          event: `${activeMatch.mode === 'pvp' ? 'PVP Blackjack' : 'Private Blackjack'} Payout`,
+          value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+          type: 'match_payout',
+          amount: referralSettlement.netPayout,
+        });
+      }
+
+      if (activeMatch.mode === 'pvp') {
+        updateQuestProgress(user.userId, 'play_online', 1);
+      } else {
+        updateQuestProgress(user.userId, 'play_private', 1);
+      }
+      if (isWinner) {
+        updateQuestProgress(user.userId, 'win_any', 1);
+      }
+    }
+    maybeActivateReferral(user, activeMatch.matchId);
+    claimCompletedQuests(user);
+    schedulePersist({ userId: user.userId });
+  });
+
+  activeMatch.settled = true;
+  activeMatch.players.forEach((player) => {
+    activeMatchByUser.delete(player.userId);
+  });
+
+  activeMatch.payoutResult = {
+    grossPot,
+    seasonFund,
+    burnFund,
+    netPrizePool,
+    winnerUserId: champion?.userId,
+  };
+
+  schedulePersist({ matchId: activeMatch.matchId });
+  flushTelegramNotifications().catch(() => undefined);
+
+  // Clean up private room if any
+  const associatedRoom = Array.from(privateRooms.values()).find((r) => r.matchId === activeMatch.matchId);
+  if (associatedRoom) {
+    const roomCode = associatedRoom.roomCode;
+    const subscribers = privateRoomSubscribers.get(roomCode);
+    subscribers?.forEach((response) => {
+      sendSse(response, 'private-room-completed', {
+        roomCode,
+        reason: 'The blackjack match has concluded.',
+      });
+      response.end();
+    });
+    privateRoomSubscribers.delete(roomCode);
+    privateRooms.delete(roomCode);
+    schedulePersist({ deleteRoomCode: roomCode });
+  }
+
+  scheduleMatchCleanup(activeMatch.matchId);
+}
+
+function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
+  const bj = match.blackjackGameState;
+  if (!bj) return null;
+
+  const userIndex = bj.players.findIndex((p) => p.userId === userId);
+  const isSpectator = userIndex === -1;
+
+  // Mask dealer hole card during player turns
+  const isPlayerTurnStage = bj.stage === 'player_turn';
+  const dealerCards = bj.dealer.cards.map((card, idx) => {
+    if (idx === 1 && isPlayerTurnStage) {
+      return {
+        id: 'dealer_hole_card',
+        suit: 'spades' as const,
+        rank: 0,
+        value: 0,
+        hidden: true,
+      };
+    }
+    return card;
+  });
+
+  const visibleDealerScore = isPlayerTurnStage ? (bj.dealer.cards[0]?.value || 0) : bj.dealer.score;
+
+  const mappedDealer = {
+    id: 'dealer',
+    name: 'Dealer (House)',
+    avatar: bj.dealer.avatarId,
+    chips: bj.dealer.chips,
+    bet: bj.dealer.bet,
+    cards: dealerCards,
+    score: visibleDealerScore,
+    isSoft: isPlayerTurnStage ? false : bj.dealer.isSoft,
+    isBusted: isPlayerTurnStage ? false : bj.dealer.isBusted,
+    hasBlackjack: isPlayerTurnStage ? false : bj.dealer.hasBlackjack,
+    status: isPlayerTurnStage ? ('playing' as const) : bj.dealer.status,
+    wins: bj.dealer.wins,
+  };
+
+  const mappedPlayers = bj.players.map((p, idx) => {
+    const isMe = !isSpectator && p.userId === userId;
+    const localId = isMe ? 'player' : `opponent_${idx}`;
+    return {
+      id: localId,
+      userId: p.userId,
+      name: p.username,
+      avatar: p.avatarId,
+      chips: p.chips,
+      bet: p.bet,
+      cards: p.cards,
+      score: p.score,
+      isSoft: p.isSoft,
+      isBusted: p.isBusted,
+      hasBlackjack: p.hasBlackjack,
+      status: p.status,
+      wins: p.wins,
+      isAi: p.isAi,
+      isConnected: p.isConnected !== false,
+      disconnectedAt: p.disconnectedAt || null,
+    };
+  });
+
+  const champion = bj.players.find((p) => p.wins >= bj.targetWins);
+  const mappedChampion = champion ? {
+    id: !isSpectator && champion.userId === userId ? 'player' : 'opponent',
+    name: champion.username,
+    avatar: champion.avatarId,
+    chips: champion.chips,
+    bet: champion.bet,
+    cards: champion.cards,
+    score: champion.score,
+    isSoft: champion.isSoft,
+    isBusted: champion.isBusted,
+    hasBlackjack: champion.hasBlackjack,
+    status: champion.status,
+    wins: champion.wins,
+    isAi: champion.isAi,
+  } : null;
+
+  const turnTimeLeft = Math.max(0, Math.ceil((15_000 - (Date.now() - (bj.turnStartedAt || Date.now()))) / 1000));
+
+  const blackjackGameState = {
+    stage: bj.stage,
+    pot: bj.pot,
+    stake: match.stake,
+    mode: match.mode,
+    currentPlayerIndex: bj.currentPlayerIndex,
+    players: mappedPlayers,
+    dealer: mappedDealer,
+    targetWins: bj.targetWins,
+    winner: champion ? champion.username : bj.winnerUserId ? 'Winner' : null,
+    matchChampion: mappedChampion,
+    roundWinnerUserId: bj.roundWinnerUserId || null,
+    roundWinnerName: bj.roundWinnerName || null,
+    nextRoundStartsAt: bj.nextRoundStartsAt || null,
+    winningHandDesc: bj.winningHandDesc,
+    winningPayout: bj.winningPayout,
+    logs: bj.logs.slice(0, 20),
+    turnTimeLeft,
+    turnStartedAt: bj.turnStartedAt,
+    matchId: match.matchId,
+    roomCode: (match as any).roomCode,
+    waitingForPlayers: !match.playStartedAt,
+    connectionDeadlineAt: match.connectionDeadlineAt || null,
+  };
+
+  return {
+    matchId: match.matchId,
+    mode: match.mode,
+    stake: match.stake,
+    gameType: 'blackjack',
+    isSpectator,
+    blackjackGameState,
+    gameState: blackjackGameState as any,
+  };
+}
+
 function buildPerspectiveState(match: ActiveMatch, userId: string) {
+  if (match.gameType === 'blackjack' || match.blackjackGameState) {
+    return buildBlackjackPerspectiveState(match, userId);
+  }
+
   const userIndex = match.gameState.players.findIndex((player) => player.userId === userId);
   const isSpectator = userIndex === -1;
   const perspectiveIndex = isSpectator ? 0 : userIndex;
@@ -3154,8 +3812,12 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
     gameState: createInitialMatchState(players),
+    blackjackGameState: gameType === 'blackjack' ? createInitialBlackjackMatchState(players, stake) : undefined,
   };
   activeMatch.gameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
+  if (activeMatch.blackjackGameState) {
+    activeMatch.blackjackGameState.turnStartedAt = waitsForPlayers ? undefined : createdAt;
+  }
   activeMatches.set(matchId, activeMatch);
   players.forEach((queuedPlayer) => {
     if (queuedPlayer.userId.startsWith('waiting_for_player_')) return;
@@ -3230,12 +3892,20 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
     if (!player.isAi && !player.userId.startsWith('bot_')) {
       const user = users.get(player.userId);
       if (user) {
-        if (player.stake > 0 && player.costsCommitted === 'held') {
+        if (player.stake > 0 && (player.costsCommitted === 'held' || player.costsCommitted === true)) {
           user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
           user.availableTickets = round2(user.availableTickets + player.stake);
+          createLedgerEntry(user, {
+            id: `match-cancel-refund:${match.matchId}:${user.userId}`,
+            event: 'Cancelled Match Refund',
+            value: `+${player.stake.toFixed(2)} TKT`,
+            type: 'stake_release',
+            amount: player.stake,
+          });
         }
         user.matchmakingFailureAt = Date.now();
         user.matchmakingFailureReason = 'timeout';
+        schedulePersist({ userId: user.userId });
       }
     }
   });
@@ -3264,6 +3934,9 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
       });
       match.playStartedAt = now;
       match.gameState.turnStartedAt = now;
+      if (match.blackjackGameState) {
+        match.blackjackGameState.turnStartedAt = now;
+      }
       match.gameState.logs = [
         createServerLog('🎮 Tournament match started. Non-connected players are in shadow mode (skipping turns until reconnected).', 'info'),
         ...match.gameState.logs,
@@ -3288,6 +3961,16 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
           }
         }
       });
+      if (match.blackjackGameState) {
+        match.blackjackGameState.players.forEach((p) => {
+          if (!p.hasConnected && !p.isAi) {
+            p.isAi = true;
+            p.isConnected = true;
+            p.hasConnected = true;
+            p.username = `Bot ${p.username}`;
+          }
+        });
+      }
       match.gameState.logs = [
         createServerLog('🔌 Absent player replaced by AI bot. Free match starting.', 'info'),
         ...match.gameState.logs,
@@ -3304,6 +3987,9 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   }
   match.playStartedAt = now;
   match.gameState.turnStartedAt = now;
+  if (match.blackjackGameState) {
+    match.blackjackGameState.turnStartedAt = now;
+  }
   match.gameState.logs = [createServerLog('All available players are ready. Match started.', 'info'), ...match.gameState.logs].slice(0, 50);
   schedulePersist({ matchId: match.matchId });
   broadcastMatch(match.matchId);
@@ -3312,6 +3998,16 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
 
 function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   ensureMatchLifecycle(match);
+  if (match.blackjackGameState) {
+    const bjPlayer = match.blackjackGameState.players.find((entry) => entry.userId === userId);
+    if (bjPlayer) {
+      bjPlayer.isAi = false;
+      bjPlayer.isConnected = true;
+      bjPlayer.hasConnected = true;
+      bjPlayer.lastSeenAt = Date.now();
+      bjPlayer.disconnectedAt = null;
+    }
+  }
   const player = match.gameState.players.find((entry) => entry.userId === userId);
   if (!player) return;
   const wasAi = player.isAi;
@@ -3328,6 +4024,7 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   broadcastMatch(match.matchId);
   maybeStartPublicMatch(match);
 }
+
 
 function runServerAiTurn(match: ActiveMatch, playerIndex: number) {
   try {
@@ -3557,7 +4254,28 @@ function runMatchmakingTick() {
 
         i += groupSlice.length;
       } else {
-        // Strict PVP with real human players only (NO BOTS)
+        const waitingPlayer = players[i];
+        if (waitingPlayer && waitingPlayer.stake === 0 && Date.now() - waitingPlayer.joinedAt >= 15_000) {
+          const gameType = waitingPlayer.gameType || 'uno';
+          const botCount = gameType === 'blackjack' ? 2 : 1;
+          const bots: QueuePlayer[] = [];
+          for (let b = 0; b < botCount; b++) {
+            const bot = createBotQueuePlayer(0, waitingPlayer.mode, b + 1);
+            bot.gameType = gameType;
+            bots.push(bot);
+          }
+          const groupSlice = [waitingPlayer, ...bots];
+          const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          activateMatch(matchId, waitingPlayer.mode, groupSlice, 0, gameType);
+          matchmakingQueue = matchmakingQueue.filter(p => p.userId !== waitingPlayer.userId);
+          schedulePersist();
+          const timer = matchmakerCleanupTimers.get(waitingPlayer.userId);
+          if (timer) {
+            clearTimeout(timer);
+            matchmakerCleanupTimers.delete(waitingPlayer.userId);
+          }
+          broadcastQueue(waitingPlayer.userId);
+        }
         break;
       }
     }
@@ -4452,15 +5170,13 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
   if (existingIdx >= 0) {
     // Unregister and refund tickets if ticket-based entry
     if (currentTournament.entryTicketCost > 0) {
-      user.availableTickets += currentTournament.entryTicketCost;
-      user.transactions.unshift({
+      user.availableTickets = round2(user.availableTickets + currentTournament.entryTicketCost);
+      createLedgerEntry(user, {
         id: `tx-tourn-refund-${Date.now()}`,
-        userId,
         event: 'Tournament Fee Refund',
-        value: `+${currentTournament.entryTicketCost} TKT`,
+        value: `+${currentTournament.entryTicketCost.toFixed(2)} TKT`,
         amount: currentTournament.entryTicketCost,
-        createdAt: Date.now(),
-        type: 'reward',
+        type: 'stake_release',
       });
     }
     currentTournament.participants.splice(existingIdx, 1);
@@ -4476,14 +5192,12 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
     if (user.availableTickets < currentTournament.entryTicketCost) {
       return res.status(400).json({ error: `Insufficient tickets. Entry requires ${currentTournament.entryTicketCost} TKT.` });
     }
-    user.availableTickets -= currentTournament.entryTicketCost;
-    user.transactions.unshift({
+    user.availableTickets = round2(user.availableTickets - currentTournament.entryTicketCost);
+    createLedgerEntry(user, {
       id: `tx-tourn-fee-${Date.now()}`,
-      userId,
       event: 'Tournament Entry Fee',
-      value: `-${currentTournament.entryTicketCost} TKT`,
+      value: `-${currentTournament.entryTicketCost.toFixed(2)} TKT`,
       amount: -currentTournament.entryTicketCost,
-      createdAt: Date.now(),
       type: 'stake_hold',
     });
   }
@@ -5766,6 +6480,18 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
         match.gameState.players[gsPlayerIdx].avatarId = avatarId;
       }
 
+      if (match.blackjackGameState) {
+        const bjPlayerIdx = match.blackjackGameState.players.findIndex(p => p.userId === placeholderUserId);
+        if (bjPlayerIdx !== -1) {
+          match.blackjackGameState.players[bjPlayerIdx].userId = userId;
+          match.blackjackGameState.players[bjPlayerIdx].username = username;
+          match.blackjackGameState.players[bjPlayerIdx].avatarId = avatarId;
+          match.blackjackGameState.players[bjPlayerIdx].isAi = false;
+          match.blackjackGameState.players[bjPlayerIdx].isConnected = true;
+          match.blackjackGameState.players[bjPlayerIdx].hasConnected = true;
+        }
+      }
+
       activeMatchByUser.set(userId, match.matchId);
 
       const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
@@ -5775,6 +6501,9 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
         match.costsCommitted = true;
         match.playStartedAt = startedAt;
         match.gameState.turnStartedAt = startedAt;
+        if (match.blackjackGameState) {
+          match.blackjackGameState.turnStartedAt = startedAt;
+        }
       }
     }
   }
@@ -6272,7 +7001,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
 app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
   const { matchId, action, cardId, chosenColor } = req.body as {
     matchId: string;
-    action: 'play' | 'draw' | 'pass';
+    action: 'play' | 'draw' | 'pass' | 'blackjack_hit' | 'blackjack_stand' | 'blackjack_double' | 'blackjack_next_hand' | 'hit' | 'stand' | 'double' | 'next_hand';
     cardId?: string;
     chosenColor?: CardColor;
   };
@@ -6284,7 +7013,9 @@ app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) =>
   }
 
   try {
-    if (action === 'play') {
+    if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand') {
+      applyBlackjackAction(activeMatch, userId, action);
+    } else if (action === 'play') {
       if (!cardId) {
         return res.status(400).json({ error: 'Missing cardId for play action.' });
       }
@@ -6608,6 +7339,55 @@ setInterval(() => {
   for (const [matchId, match] of activeMatches.entries()) {
     if (match.settled) {
       match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      continue;
+    }
+
+    if (match.gameType === 'blackjack' && match.blackjackGameState) {
+      const bj = match.blackjackGameState;
+      if (bj.stage === 'match_ended') {
+        match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+        settleBlackjackMatch(match);
+        continue;
+      }
+      if (match.mode === 'pvp' && !match.playStartedAt) {
+        maybeStartPublicMatch(match, now);
+        continue;
+      }
+      if (!match.playStartedAt) {
+        continue;
+      }
+
+      // Check auto-next-hand for round_ended
+      if (bj.stage === 'round_ended') {
+        if (bj.nextRoundStartsAt && now >= bj.nextRoundStartsAt) {
+          startNextBlackjackRound(match);
+          broadcastMatch(matchId);
+          schedulePersist({ matchId });
+        }
+        continue;
+      }
+
+      // Turn timeout for active player
+      if (bj.stage === 'player_turn') {
+        const currPlayer = bj.players[bj.currentPlayerIndex];
+        if (currPlayer) {
+          if (!bj.turnStartedAt) {
+            bj.turnStartedAt = now;
+          }
+          const elapsedSec = Math.floor((now - bj.turnStartedAt) / 1000);
+          const isBot = Boolean(currPlayer.isAi || currPlayer.userId.startsWith('bot_'));
+          const limit = isBot ? 1 : 15;
+          if (elapsedSec >= limit) {
+            if (currPlayer.score < 12) {
+              applyBlackjackAction(match, currPlayer.userId, 'hit');
+            } else {
+              applyBlackjackAction(match, currPlayer.userId, 'stand');
+            }
+            broadcastMatch(matchId);
+            schedulePersist({ matchId });
+          }
+        }
+      }
       continue;
     }
 

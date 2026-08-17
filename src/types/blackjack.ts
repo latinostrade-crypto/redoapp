@@ -13,6 +13,7 @@ export interface BlackjackCard {
   suit: BlackjackSuit;
   rank: BlackjackRank;
   value: number; // 2-10, Face cards=10, Ace=11 or 1
+  hidden?: boolean;
 }
 
 export type BlackjackHandStatus = 'playing' | 'stood' | 'busted' | 'blackjack';
@@ -35,6 +36,8 @@ export interface BlackjackPlayer {
 
 export type BlackjackStage = 'idle' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
 
+export type BlackjackActionType = 'hit' | 'stand' | 'double' | 'next_hand';
+
 export interface BlackjackGameState {
   stage: BlackjackStage;
   pot: number;
@@ -45,13 +48,20 @@ export interface BlackjackGameState {
   dealer: BlackjackPlayer;
   targetWins: number;
   winner: string | null;
+  roundWinnerUserId?: string | null;
+  roundWinnerName?: string | null;
+  nextRoundStartsAt?: number | null;
   matchChampion?: BlackjackPlayer | null;
   winningHandDesc?: string;
   winningPayout?: number;
-  logs: { id: string; timestamp: string; message: string }[];
+  logs: { id: string; timestamp: string; message: string; type?: string }[];
   isDealing?: boolean;
   turnTimeLeft?: number;
   turnDeadlineAt?: number | null;
+  turnStartedAt?: number;
   matchId?: string;
   roomCode?: string;
+  waitingForPlayers?: boolean;
+  connectionDeadlineAt?: number | null;
 }
+

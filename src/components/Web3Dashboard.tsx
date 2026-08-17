@@ -525,7 +525,7 @@ interface Web3DashboardProps {
   playerXp: number;
   onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
   onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
-  onStartBlackjackGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
+  onStartBlackjackGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
   onOpenRules?: () => void;
@@ -1122,7 +1122,7 @@ export function Web3Dashboard({
         if (targetGame === 'poker' && onStartPokerGame) {
           onStartPokerGame(result.mode || 'pvp', matchedStake);
         } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
-          onStartBlackjackGame(result.mode || 'pvp', matchedStake);
+          onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
         } else {
           onStartGame(result.mode || 'pvp', matchedStake);
         }
@@ -1422,7 +1422,7 @@ export function Web3Dashboard({
       if (targetGame === 'poker' && onStartPokerGame) {
         onStartPokerGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
       } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
-        onStartBlackjackGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode);
+        onStartBlackjackGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode, result.matchId || undefined);
       } else {
         onStartGame('private', privateRoomStake);
       }
@@ -2019,6 +2019,7 @@ export function Web3Dashboard({
       if (recoveredActiveMatchRef.current === match.matchId) return;
       recoveredActiveMatchRef.current = match.matchId;
       console.log('Server reported active match. Auto-recovering...', match);
+      const matchGameType = (match as any).gameType || 'uno';
       if (match.mode === 'pvp') {
         // Leave the React effect before forcing the route-changing commit.
         // flushSync is intentionally used only from the queued callback.
@@ -2028,6 +2029,7 @@ export function Web3Dashboard({
             matchId: match.matchId,
             mode: match.mode,
             stake: match.stake,
+            gameType: matchGameType,
             players: match.players,
             gameState: match.gameState,
           }, match.stake);
@@ -2037,16 +2039,23 @@ export function Web3Dashboard({
           matchId: match.matchId,
           mode: match.mode,
           stake: match.stake,
+          gameType: matchGameType,
           roomCode: (match as any).roomCode || null,
           currentUserId,
           players: match.players,
           initialGameState: match.gameState || null,
           createdAt: Date.now(),
         }));
-        onStartGame(match.mode, match.stake);
+        if (matchGameType === 'blackjack' && onStartBlackjackGame) {
+          onStartBlackjackGame(match.mode, match.stake, (match as any).roomCode || undefined, match.matchId);
+        } else if (matchGameType === 'poker' && onStartPokerGame) {
+          onStartPokerGame(match.mode, match.stake, (match as any).roomCode || undefined);
+        } else {
+          onStartGame(match.mode, match.stake);
+        }
       }
     }
-  }, [activeProfile?.activeMatch, currentUserId, onStartGame, openPublicMatch]);
+  }, [activeProfile?.activeMatch, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, openPublicMatch]);
 
   // Reloading Telegram must not lose a queue or a match that the server still
   // owns. Recover it before the user can submit another join request.

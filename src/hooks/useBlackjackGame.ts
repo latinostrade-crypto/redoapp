@@ -15,6 +15,7 @@ import {
   evaluateBlackjackHand,
 } from '../utils/blackjackEvaluator';
 import { sound } from '../utils/sound';
+import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 
 const STARTING_CHIPS = 100;
 const DEFAULT_BET = 10;
@@ -66,13 +67,42 @@ export function useBlackjackGame(options?: {
   const isDealerDrawingRef = useRef<boolean>(false);
   const isProcessingAiTurnRef = useRef<boolean>(false);
 
+  // Online Multiplayer state tracking
+  const remoteMatchIdRef = useRef<string | null>(null);
+  const remoteUserIdRef = useRef<string | null>(null);
+  const remoteMatchStreamRef = useRef<EventSource | null>(null);
+  const remoteSessionActiveRef = useRef<boolean>(false);
+  const settledRef = useRef<boolean>(false);
+
   const clearDealingTimeouts = () => {
     dealingTimeoutsRef.current.forEach((t) => clearTimeout(t));
     dealingTimeoutsRef.current = [];
   };
 
   /**
-   * Advance to the next player's turn or start Dealer turn if all finished
+   * Sync authoritative state from backend in online mode
+   */
+  const syncRemoteMatchState = useCallback(async () => {
+    if (!remoteMatchIdRef.current || !remoteSessionActiveRef.current) return;
+    try {
+      const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+        `/api/matches/state/${encodeURIComponent(remoteMatchIdRef.current)}`,
+        { retryOnNetworkError: true, networkAttempts: 2 }
+      );
+      const state = result.blackjackGameState || result.gameState;
+      if (state) {
+        setGameState(state);
+        if (typeof state.turnTimeLeft === 'number') {
+          setTurnTimeLeft(state.turnTimeLeft);
+        }
+      }
+    } catch {
+      // Ignored in background polling
+    }
+  }, []);
+
+  /**
+   * Advance to the next player's turn or start Dealer turn if all finished (Offline Mode)
    */
   const advanceToNextTurn = useCallback((currentPlayers: BlackjackPlayer[], nextIndex: number) => {
     if (nextIndex < currentPlayers.length) {
@@ -96,7 +126,7 @@ export function useBlackjackGame(options?: {
   }, []);
 
   /**
-   * Dealer hit sequence when all players finish their turns
+   * Dealer hit sequence when all players finish their turns (Offline Mode)
    */
   const runDealerDrawSequence = useCallback(
     (currentPlayers: BlackjackPlayer[]) => {
@@ -138,6 +168,9 @@ export function useBlackjackGame(options?: {
             if (p.isBusted) {
               wonRound = false;
             } else if (dealerEval.isBusted) {
+              wonRound = true;
+              finalChips += p.bet * 2;
+            } else if (p.hasBlackjack && !dealerEval.hasBlackjack) {
               wonRound = true;
               finalChips += p.bet * 2;
             } else if (p.score > dealerEval.score) {
@@ -213,7 +246,7 @@ export function useBlackjackGame(options?: {
   );
 
   /**
-   * Execute sequential initial deal to all table players and dealer
+   * Execute sequential initial deal to all table players and dealer (Offline Mode)
    */
   const dealNewRoundCards = useCallback(
     (currentPlayers: BlackjackPlayer[], initialDealer: BlackjackPlayer, mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
@@ -302,6 +335,41 @@ export function useBlackjackGame(options?: {
       matchId?: string
     ) => {
       sound.playShuffle();
+      settledRef.current = false;
+
+      // Check if matchId is stored in localStorage
+      let resolvedMatchId = matchId;
+      if (!resolvedMatchId && typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem('redoapp_active_match');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.matchId) {
+              resolvedMatchId = parsed.matchId;
+            }
+          }
+        } catch {}
+      }
+
+      if (mode === 'pvp' || mode === 'private') {
+        remoteSessionActiveRef.current = true;
+        remoteMatchIdRef.current = resolvedMatchId || null;
+        const myStoredId = typeof window !== 'undefined'
+          ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
+          : '';
+        remoteUserIdRef.current = myStoredId;
+
+        // Fetch first initial state
+        if (resolvedMatchId) {
+          syncRemoteMatchState();
+        }
+        return;
+      }
+
+      // Offline Practice Mode against Bots
+      remoteSessionActiveRef.current = false;
+      remoteMatchIdRef.current = null;
+
       const deck = createShuffledBlackjackDeck();
       deckRef.current = deck;
 
@@ -323,85 +391,23 @@ export function useBlackjackGame(options?: {
         isAi: false,
       };
 
-      const allPlayers: BlackjackPlayer[] = [humanPlayer];
+      const bots: BlackjackPlayer[] = DEFAULT_BOTS.slice(0, 2).map((bot, idx) => ({
+        id: `ai_${idx + 1}`,
+        name: bot.name,
+        avatar: bot.avatar,
+        chips: STARTING_CHIPS,
+        bet: betAmount,
+        cards: [],
+        score: 0,
+        isSoft: false,
+        isBusted: false,
+        hasBlackjack: false,
+        status: 'playing',
+        wins: 0,
+        isAi: true,
+      }));
 
-      if (mode === 'offline') {
-        const bots: BlackjackPlayer[] = DEFAULT_BOTS.slice(0, 2).map((bot, idx) => ({
-          id: `ai_${idx + 1}`,
-          name: bot.name,
-          avatar: bot.avatar,
-          chips: STARTING_CHIPS,
-          bet: betAmount,
-          cards: [],
-          score: 0,
-          isSoft: false,
-          isBusted: false,
-          hasBlackjack: false,
-          status: 'playing',
-          wins: 0,
-          isAi: true,
-        }));
-        allPlayers.push(...bots);
-      } else {
-        let activePlayersList: Array<{ userId: string; username: string; avatarId: string }> = [];
-        try {
-          const raw = localStorage.getItem('redoapp_active_match');
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed.players) && parsed.players.length > 0) {
-              activePlayersList = parsed.players;
-            }
-          }
-        } catch {}
-
-        if (activePlayersList.length > 1) {
-          allPlayers.length = 0;
-          const myStoredId = typeof window !== 'undefined'
-            ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
-            : '';
-          activePlayersList.forEach((p, idx) => {
-            const isMe = (myStoredId && p.userId === myStoredId) || p.username === userName;
-            allPlayers.push({
-              id: isMe ? 'player' : `opponent_${idx}`,
-              name: p.username || `Player ${idx + 1}`,
-              avatar: (p.avatarId as AvatarId) || (isMe ? userAvatar : 'fox'),
-              chips: STARTING_CHIPS,
-              bet: betAmount,
-              cards: [],
-              score: 0,
-              isSoft: false,
-              isBusted: false,
-              hasBlackjack: false,
-              status: 'playing',
-              wins: 0,
-              isAi: false,
-            });
-          });
-          if (!allPlayers.some((p) => p.id === 'player') && allPlayers.length > 0) {
-            allPlayers[0].id = 'player';
-            allPlayers[0].name = userName || allPlayers[0].name;
-            allPlayers[0].avatar = userAvatar;
-          }
-        } else {
-          const opponentName = userName.startsWith('PC') ? 'Phone_Player' : 'Opponent';
-          const opponentAvatar: AvatarId = userAvatar === 'rabbit' ? 'fox' : 'rabbit';
-          allPlayers.push({
-            id: 'opponent',
-            name: opponentName,
-            avatar: opponentAvatar,
-            chips: STARTING_CHIPS,
-            bet: betAmount,
-            cards: [],
-            score: 0,
-            isSoft: false,
-            isBusted: false,
-            hasBlackjack: false,
-            status: 'playing',
-            wins: 0,
-            isAi: false,
-          });
-        }
-      }
+      const allPlayers: BlackjackPlayer[] = [humanPlayer, ...bots];
 
       const dealer: BlackjackPlayer = {
         id: 'dealer',
@@ -420,14 +426,37 @@ export function useBlackjackGame(options?: {
 
       dealNewRoundCards(allPlayers, dealer, mode, stake, roomCode, matchId);
     },
-    [dealNewRoundCards]
+    [dealNewRoundCards, syncRemoteMatchState]
   );
 
   /**
-   * Action: HIT (Draw 1 Card for current active player)
+   * Action: HIT (Draw 1 Card)
    */
-  const playerHit = useCallback(() => {
+  const playerHit = useCallback(async () => {
     sound.playPop();
+
+    if (remoteSessionActiveRef.current && remoteMatchIdRef.current) {
+      try {
+        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchIdRef.current,
+              action: 'hit',
+            }),
+          }
+        );
+        const state = result.blackjackGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Blackjack hit action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
     if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing) return;
@@ -461,13 +490,36 @@ export function useBlackjackGame(options?: {
       }));
       setTurnTimeLeft(TURN_DURATION_SEC);
     }
-  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage]);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, syncRemoteMatchState]);
 
   /**
-   * Action: STAND (Finish turn for current active player)
+   * Action: STAND (Finish turn)
    */
-  const playerStand = useCallback(() => {
+  const playerStand = useCallback(async () => {
     sound.playPop();
+
+    if (remoteSessionActiveRef.current && remoteMatchIdRef.current) {
+      try {
+        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchIdRef.current,
+              action: 'stand',
+            }),
+          }
+        );
+        const state = result.blackjackGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Blackjack stand action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
     if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing) return;
@@ -480,13 +532,36 @@ export function useBlackjackGame(options?: {
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
     advanceToNextTurn(nextPlayers, currIdx + 1);
-  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage]);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, syncRemoteMatchState]);
 
   /**
-   * Action: DOUBLE DOWN (Double bet, draw 1 card, then stand)
+   * Action: DOUBLE DOWN (Double bet, draw 1 card, stand)
    */
-  const playerDoubleDown = useCallback(() => {
+  const playerDoubleDown = useCallback(async () => {
     sound.playPop();
+
+    if (remoteSessionActiveRef.current && remoteMatchIdRef.current) {
+      try {
+        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchIdRef.current,
+              action: 'double',
+            }),
+          }
+        );
+        const state = result.blackjackGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Blackjack double action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
     if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.cards.length !== 2) return;
@@ -515,19 +590,118 @@ export function useBlackjackGame(options?: {
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
     advanceToNextTurn(nextPlayers, currIdx + 1);
-  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage]);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, syncRemoteMatchState]);
 
   /**
    * Start next round keeping wins counter intact
    */
-  const nextHand = useCallback(() => {
+  const nextHand = useCallback(async () => {
     sound.playShuffle();
-    dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId);
-  }, [dealNewRoundCards, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake]);
 
-  // AI Turn Handling
+    if (remoteSessionActiveRef.current && remoteMatchIdRef.current) {
+      try {
+        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
+          '/api/matches/action',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              matchId: remoteMatchIdRef.current,
+              action: 'next_hand',
+            }),
+          }
+        );
+        const state = result.blackjackGameState || result.gameState;
+        if (state) setGameState(state);
+      } catch (err) {
+        console.error('Blackjack next_hand action error', err);
+        syncRemoteMatchState();
+      }
+      return;
+    }
+
+    // Offline mode
+    dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId);
+  }, [dealNewRoundCards, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake, syncRemoteMatchState]);
+
+  // SSE Stream Listener for Online Multiplayer
   useEffect(() => {
-    if (gameState.stage !== 'player_turn' || gameState.isDealing) return;
+    if (!remoteSessionActiveRef.current || !remoteMatchIdRef.current) {
+      return;
+    }
+
+    remoteMatchStreamRef.current?.close();
+    const stream = new EventSource(buildAuthenticatedUrl(`/api/matches/stream/${encodeURIComponent(remoteMatchIdRef.current)}`));
+    remoteMatchStreamRef.current = stream;
+
+    stream.addEventListener('match-state', (event) => {
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        const bjState: BlackjackGameState = payload.blackjackGameState || payload.gameState;
+        if (bjState) {
+          setGameState(bjState);
+          if (typeof bjState.turnTimeLeft === 'number') {
+            setTurnTimeLeft(bjState.turnTimeLeft);
+          }
+
+          if (bjState.stage === 'match_ended' && !settledRef.current) {
+            settledRef.current = true;
+            const humanPlayer = bjState.players.find((p) => p.id === 'player');
+            const isHumanWinner = bjState.matchChampion && humanPlayer && bjState.matchChampion.name === humanPlayer.name;
+            if (isHumanWinner) {
+              sound.playVictory();
+              options?.onSettlement?.(bjState.winningPayout || 0, true, false);
+            } else {
+              options?.onSettlement?.(0, false, false);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('SSE match-state parse error', err);
+      }
+    });
+
+    stream.addEventListener('match-cancelled', () => {
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
+      remoteMatchIdRef.current = null;
+      remoteSessionActiveRef.current = false;
+      setGameState((prev) => ({
+        ...prev,
+        stage: 'idle',
+        players: [],
+        winner: null,
+        logs: [],
+      }));
+    });
+
+    stream.onerror = () => {
+      syncRemoteMatchState();
+    };
+
+    return () => {
+      stream.close();
+      if (remoteMatchStreamRef.current === stream) {
+        remoteMatchStreamRef.current = null;
+      }
+    };
+  }, [options, syncRemoteMatchState]);
+
+  // Fallback Polling during Online Match Setup / Play
+  useEffect(() => {
+    if (!remoteSessionActiveRef.current || !remoteMatchIdRef.current || gameState.stage === 'match_ended') {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      syncRemoteMatchState();
+    }, gameState.waitingForPlayers ? 1500 : 4000);
+
+    return () => window.clearInterval(interval);
+  }, [gameState.stage, gameState.waitingForPlayers, syncRemoteMatchState]);
+
+  // AI Turn Handling in Offline Mode
+  useEffect(() => {
+    if (remoteSessionActiveRef.current || gameState.stage !== 'player_turn' || gameState.isDealing) return;
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
     if (!currPlayer || !currPlayer.isAi || isProcessingAiTurnRef.current) return;
@@ -545,14 +719,16 @@ export function useBlackjackGame(options?: {
     return () => clearTimeout(timer);
   }, [gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, playerHit, playerStand]);
 
-  // Turn Countdown Timer
+  // Turn Countdown Timer (Offline and Local Tick)
   useEffect(() => {
     if (gameState.stage !== 'player_turn' || gameState.isDealing) return;
 
     const timer = setInterval(() => {
       setTurnTimeLeft((prev) => {
         if (prev <= 1) {
-          playerStand();
+          if (!remoteSessionActiveRef.current) {
+            playerStand();
+          }
           return TURN_DURATION_SEC;
         }
         return prev - 1;
