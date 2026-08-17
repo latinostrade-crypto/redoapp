@@ -53,6 +53,7 @@ const REDIS_CACHE_NAMESPACE = process.env.REDIS_CACHE_NAMESPACE || 'redoapp:v1';
 // Explicit one-time production migration requested on 2026-07-14. The marker
 // is stored in Supabase, so restarts and future deploys cannot repeat it.
 const REFERRAL_RESET_MIGRATION_ID = 'referrals-reset-2026-07-14';
+const BALANCE_REPAIR_MIGRATION_ID = 'balance-repair-v3-2026-08-17';
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
 const DEFAULT_REFERRER_CODE = (process.env.DEFAULT_REFERRER_CODE || 'FMFVR7').trim().toUpperCase();
@@ -1454,6 +1455,81 @@ async function applyOneTimeReferralReset() {
   console.log(`[Referral reset] Applied ${REFERRAL_RESET_MIGRATION_ID} to ${users.size} users.`);
 }
 
+function findUserByUsernameOrId(query?: string | null): UserState | undefined {
+  if (!query) return undefined;
+  const raw = String(query).trim();
+  const direct = users.get(raw);
+  if (direct) return direct;
+
+  const normalized = raw.replace(/^@/, '').toLowerCase();
+  for (const user of users.values()) {
+    const tg = (user.telegramUsername || '').replace(/^@/, '').toLowerCase();
+    if (tg && tg === normalized) return user;
+    if (user.userId.toLowerCase() === raw.toLowerCase()) return user;
+  }
+  return undefined;
+}
+
+async function applyOneTimeBalanceRepair() {
+  if (!supabaseAdmin) return;
+
+  const markerId = `maintenance:${BALANCE_REPAIR_MIGRATION_ID}`;
+  const { data, error } = await supabaseAdmin
+    .from(SUPABASE_STATE_TABLE)
+    .select('id,payload')
+    .eq('id', markerId)
+    .maybeSingle();
+
+  if (error) {
+    console.error(`Could not check balance repair marker: ${error.message}`);
+    return;
+  }
+  if (data) {
+    return;
+  }
+
+  // 1. Repair @ebitey: deposited 0.60 TKT, played 6 games (3 wins @ 0.3 = +1.73 TKT, 3 losses @ 0.3 = -0.90 TKT -> net 1.43 TKT)
+  const ebiteyUser = findUserByUsernameOrId('ebitey');
+  if (ebiteyUser) {
+    const oldBal = ebiteyUser.availableTickets;
+    ebiteyUser.availableTickets = 1.43;
+    ebiteyUser.heldTickets = 0;
+    createLedgerEntry(ebiteyUser, {
+      id: `balance-repair-ebitey-${Date.now()}`,
+      event: 'Balance Recalculation (3W/3L @ 0.3 + 0.6 Dep)',
+      value: `1.43 TKT`,
+      type: 'reward',
+      amount: round2(1.43 - oldBal),
+    });
+    schedulePersist({ userId: ebiteyUser.userId });
+    console.log(`[Balance Repair] Corrected @ebitey balance: was ${oldBal} TKT -> now 1.43 TKT.`);
+  }
+
+  // 2. Repair admin @allin_gram: restore admin test balance
+  const adminUser = findUserByUsernameOrId('allin_gram');
+  if (adminUser) {
+    const oldBal = adminUser.availableTickets;
+    adminUser.availableTickets = Math.max(100, oldBal);
+    adminUser.heldTickets = 0;
+    createLedgerEntry(adminUser, {
+      id: `balance-repair-admin-${Date.now()}`,
+      event: 'Admin Balance Restoration',
+      value: `+100.00 TKT`,
+      type: 'reward',
+      amount: 100,
+    });
+    schedulePersist({ userId: adminUser.userId });
+    console.log(`[Balance Repair] Restored @allin_gram balance: was ${oldBal} TKT -> now ${adminUser.availableTickets} TKT.`);
+  }
+
+  await persistStateNow();
+  await upsertStateRow(markerId, {
+    appliedAt: Date.now(),
+    migration: BALANCE_REPAIR_MIGRATION_ID,
+  });
+  console.log(`[Balance Repair] Applied ${BALANCE_REPAIR_MIGRATION_ID}.`);
+}
+
 function getUser(userId: string, walletAddress?: string): UserState {
   const existing = users.get(userId);
   if (existing) {
@@ -1514,8 +1590,8 @@ function hydrateUser(user: UserState): boolean {
     }
   };
 
-  setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(0, user.availableTickets) : 0);
-  setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? user.heldTickets : 0);
+  setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(0, round2(user.availableTickets)) : 0);
+  setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? Math.max(0, round2(user.heldTickets)) : 0);
   setIfChanged('xp', Number.isFinite(user.xp) ? user.xp : 0);
   const hydratedEnergy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
   if (user.energy !== hydratedEnergy) {
@@ -1601,7 +1677,7 @@ function hydrateUser(user: UserState): boolean {
 function reconcileStuckUserBalances(user: UserState): boolean {
   let changed = false;
 
-  // 1. Clean up legacy artificial audit restores and admin boosts from transactions
+  // 1. Clean up legacy artificial audit restore logs from transaction history
   const invalidTxs = user.transactions.filter(
     (tx) => tx.id && (tx.id.startsWith('auto-restore-audit-') || tx.id.startsWith('admin-boost-'))
   );
@@ -1612,60 +1688,7 @@ function reconcileStuckUserBalances(user: UserState): boolean {
     changed = true;
   }
 
-  // 2. Calculate lifetime on-chain confirmed deposits
-  const userDeposits = Array.from(depositIntents.values()).filter(
-    (intent) => intent.userId === user.userId && intent.status === 'confirmed' && !intent.creditReversedAt
-  );
-  const lifetimeDeposits = round2(
-    userDeposits.reduce((sum, intent) => sum + (intent.ticketAmount || 0), 0)
-  );
-
-  // 3. Calculate lifetime credited referral earnings
-  const userReferrals = Array.from(referralPayouts.values()).filter(
-    (payout) => payout.recipientUserId === user.userId && payout.status === 'credited'
-  );
-  const lifetimeReferrals = round2(
-    userReferrals.reduce((sum, payout) => sum + (payout.amount || 0), 0)
-  );
-
-  // 4. Calculate lifetime withdrawals (pending + completed)
-  const userWithdrawals = Array.from(withdrawalRequests.values()).filter(
-    (req) => req.userId === user.userId && (req.status === 'completed' || req.status === 'pending')
-  );
-  const lifetimeWithdrawals = round2(
-    userWithdrawals.reduce((sum, req) => sum + (req.ticketAmount || 0), 0)
-  );
-
-  // 5. Calculate legitimate match payouts won from valid completed matches
-  const lifetimeMatchPayouts = round2(
-    user.transactions
-      .filter((tx) => tx.type === 'match_payout' && typeof tx.amount === 'number' && tx.amount > 0)
-      .reduce((sum, tx) => sum + (tx.amount || 0), 0)
-  );
-
-  // 6. Calculate total stakes held/spent on matches
-  const lifetimeStakesSpent = round2(
-    user.transactions
-      .filter((tx) => tx.type === 'stake_hold' && typeof tx.amount === 'number' && tx.amount < 0)
-      .reduce((sum, tx) => sum + Math.abs(tx.amount || 0), 0)
-  );
-
-  // 7. Calculate stake releases (refunds from cancelled/unstarted matches or rooms)
-  const lifetimeStakeReleases = round2(
-    user.transactions
-      .filter((tx) => tx.type === 'stake_release' && typeof tx.amount === 'number' && tx.amount > 0)
-      .reduce((sum, tx) => sum + (tx.amount || 0), 0)
-  );
-
-  // The maximum possible legitimate balance a user can possess
-  const maxLegitimateBalance = round2(
-    Math.max(
-      0,
-      lifetimeDeposits + lifetimeReferrals + lifetimeMatchPayouts + lifetimeStakeReleases - lifetimeStakesSpent - lifetimeWithdrawals
-    )
-  );
-
-  // 8. Release orphaned heldTickets (if user is not in match, room, or queue)
+  // 2. Release orphaned heldTickets (if user is not currently in a live match, room, or queue)
   if (user.heldTickets > 0) {
     const isMatched = activeMatchByUser.has(user.userId);
     const isQueued = matchmakingQueue.some((p) => p.userId === user.userId);
@@ -1687,22 +1710,16 @@ function reconcileStuckUserBalances(user: UserState): boolean {
     }
   }
 
-  // 9. Enforce strict upper bound: total balance CANNOT exceed maxLegitimateBalance
-  const currentTotal = round2(user.availableTickets + user.heldTickets);
-  if (currentTotal > maxLegitimateBalance) {
-    const oldBalance = user.availableTickets;
-    user.availableTickets = round2(Math.max(0, maxLegitimateBalance - user.heldTickets));
+  // 3. Ensure non-negative bounds and correct 2-decimal rounding
+  const cleanAvailable = Number.isFinite(user.availableTickets) ? Math.max(0, round2(user.availableTickets)) : 0;
+  if (user.availableTickets !== cleanAvailable) {
+    user.availableTickets = cleanAvailable;
     changed = true;
-    console.log(`[Audit Cap] Corrected inflated balance for user ${user.userId}: was ${oldBalance} TKT, capped to ${user.availableTickets} TKT (Max legitimate: ${maxLegitimateBalance} TKT).`);
   }
 
-  // 10. Ensure non-negative bounds
-  if (user.availableTickets < 0) {
-    user.availableTickets = 0;
-    changed = true;
-  }
-  if (user.heldTickets < 0) {
-    user.heldTickets = 0;
+  const cleanHeld = Number.isFinite(user.heldTickets) ? Math.max(0, round2(user.heldTickets)) : 0;
+  if (user.heldTickets !== cleanHeld) {
+    user.heldTickets = cleanHeld;
     changed = true;
   }
 
@@ -6652,6 +6669,42 @@ app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
   return res.send(`Withdrawal ${request.id} rejected and refunded.`);
 });
 
+app.get('/api/admin/users/lookup', requireAuth, rateLimitMiddleware(20, 60000, 'user'), (req: AuthenticatedRequest, res) => {
+  const requesterId = getAuthenticatedUserId(req);
+  const requesterUser = users.get(requesterId);
+  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
+  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
+    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
+    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
+    username === 'allin_gram';
+
+  if (!isAdmin) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+
+  const query = typeof req.query.query === 'string' ? req.query.query : '';
+  const user = findUserByUsernameOrId(query);
+  if (!user) {
+    return res.status(404).json({ error: `User '${query}' not found.` });
+  }
+
+  const userDeposits = Array.from(depositIntents.values()).filter((d) => d.userId === user.userId);
+  const userWithdrawals = Array.from(withdrawalRequests.values()).filter((w) => w.userId === user.userId);
+
+  return res.json({
+    userId: user.userId,
+    telegramUsername: user.telegramUsername || null,
+    walletAddress: user.walletAddress || null,
+    availableTickets: user.availableTickets,
+    heldTickets: user.heldTickets,
+    xp: user.xp,
+    energy: getEnergyState(user),
+    transactions: user.transactions,
+    deposits: userDeposits,
+    withdrawals: userWithdrawals,
+  });
+});
+
 app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
   const requesterId = getAuthenticatedUserId(req);
   const requesterUser = users.get(requesterId);
@@ -6665,14 +6718,21 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const { targetUserId, amount, mode, reason } = req.body || {};
-  const targetId = String(targetUserId || requesterId).trim();
-  const delta = Number(amount);
-  if (!targetId || !Number.isFinite(delta)) {
-    return res.status(400).json({ error: 'Adjustment requires targetUserId and a numeric amount.' });
+  const { targetUserId, username: targetUsername, amount, mode, reason } = req.body || {};
+  let user: UserState | undefined;
+  if (targetUsername) {
+    user = findUserByUsernameOrId(targetUsername);
+  } else if (targetUserId) {
+    user = findUserByUsernameOrId(targetUserId) || getUser(String(targetUserId).trim());
+  } else {
+    user = requesterUser;
   }
 
-  const user = getUser(targetId);
+  const delta = Number(amount);
+  if (!user || !Number.isFinite(delta)) {
+    return res.status(400).json({ error: 'Adjustment requires a valid target user and numeric amount.' });
+  }
+
   if (mode === 'set') {
     user.availableTickets = round2(Math.max(0, delta));
   } else {
@@ -6692,6 +6752,7 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
   return res.json({
     success: true,
     userId: user.userId,
+    telegramUsername: user.telegramUsername || null,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
   });
@@ -8777,6 +8838,7 @@ async function bootstrap() {
   }
   await loadPersistedState();
   await applyOneTimeReferralReset();
+  await applyOneTimeBalanceRepair();
   ticketingService.reconcilePendingWithdrawals();
   try {
     await ticketingService.recheckPendingWithdrawals();
