@@ -7783,18 +7783,44 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
     const pInState = match.gameState.players.find((p) => p.userId === userId);
     if (pInState) {
       pInState.isAi = true;
-      pInState.isConnected = true;
-      pInState.disconnectedAt = null;
+      pInState.isConnected = false;
+      pInState.disconnectedAt = Date.now();
       match.gameState.logs = [
         createServerLog(`🔌 ${pInState.username} left the match and was replaced by a bot.`, 'info'),
         ...match.gameState.logs,
       ].slice(0, 50);
     }
-    const allBots = match.gameState.players.every((p) => p.isAi);
-    if (allBots) {
+    const pInBj = match.blackjackGameState?.players.find((p) => p.userId === userId);
+    if (pInBj) {
+      pInBj.isAi = true;
+      pInBj.isConnected = false;
+      pInBj.disconnectedAt = Date.now();
+      match.blackjackGameState!.logs = [
+        createServerLog(`🔌 ${pInBj.username} left the table (AI bot replacing).`, 'info'),
+        ...match.blackjackGameState!.logs,
+      ].slice(0, 50);
+    }
+    const pInPoker = match.pokerGameState?.players.find((p) => p.userId === userId);
+    if (pInPoker) {
+      pInPoker.isAi = true;
+      pInPoker.isConnected = false;
+      pInPoker.disconnectedAt = Date.now();
+    }
+    const allBjBots = match.blackjackGameState ? match.blackjackGameState.players.every((p) => p.isAi) : false;
+    const allUnoBots = match.gameState.players.every((p) => p.isAi);
+    const allPokerBots = match.pokerGameState ? match.pokerGameState.players.every((p) => p.isAi) : false;
+    if (allUnoBots || allBjBots || allPokerBots) {
       match.gameState.phase = 'game_over';
+      if (match.blackjackGameState) match.blackjackGameState.stage = 'match_ended';
+      if (match.pokerGameState) match.pokerGameState.stage = 'match_ended';
       match.players.forEach((p) => activeMatchByUser.delete(p.userId));
-      settleMatchHelper(match);
+      if (match.blackjackGameState) {
+        settleBlackjackMatch(match);
+      } else if (match.pokerGameState) {
+        settlePokerMatch(match);
+      } else {
+        settleMatchHelper(match);
+      }
     } else {
       schedulePersist({ matchId: match.matchId });
       broadcastMatch(match.matchId);

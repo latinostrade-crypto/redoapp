@@ -846,6 +846,27 @@ export function useBlackjackGame(options?: {
     return () => clearInterval(timer);
   }, [gameState.stage, gameState.isDealing, playerStand, remoteMatchId]);
 
+  const resetSession = useCallback(() => {
+    remoteMatchStreamRef.current?.close();
+    remoteMatchStreamRef.current = null;
+    clearDealingTimeouts();
+    setRemoteMatchId(null);
+    setGameState({
+      players: [],
+      dealer: { cards: [], score: 0, isSoft: false, isBusted: false, hasBlackjack: false },
+      pot: 0,
+      stage: 'player_turn',
+      currentPlayerIndex: 0,
+      turnTimeLeft: TURN_DURATION_SEC,
+      isDealing: false,
+      logs: [],
+      mode: 'offline',
+      stake: 0,
+      currentHand: 1,
+      maxHands: 5,
+    });
+  }, []);
+
   return {
     gameState,
     turnTimeLeft,
@@ -857,5 +878,6 @@ export function useBlackjackGame(options?: {
     playerStand,
     playerDoubleDown,
     nextHand,
+    resetSession,
   };
 }

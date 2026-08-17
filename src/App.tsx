@@ -100,6 +100,7 @@ export default function App() {
     playerStand: handleBlackjackStand,
     playerDoubleDown: handleBlackjackDoubleDown,
     nextHand: handleNextBlackjackHand,
+    resetSession: resetBlackjackSession,
   } = useBlackjackGame({
     onSettlement: (payout, won, push) => {
       if ((won || push) && payout > 0) {
@@ -185,12 +186,20 @@ export default function App() {
   );
 
   const handleReturnFromBlackjack = useCallback(() => {
+    const currentMatchId = blackjackState.matchId;
     setActiveGameType('uno');
+    resetBlackjackSession();
     returnToLobby();
     try {
       localStorage.removeItem('redoapp_active_match');
     } catch {}
-  }, [returnToLobby]);
+    if (currentMatchId) {
+      apiRequest('/api/matches/leave-unstarted', {
+        method: 'POST',
+        body: JSON.stringify({ matchId: currentMatchId }),
+      }).catch(() => {});
+    }
+  }, [blackjackState.matchId, resetBlackjackSession, returnToLobby]);
   const shouldPromptWalletAfterFirstFreeGame =
     gameState.phase === 'game_over' &&
     gameMode === 'offline' &&
