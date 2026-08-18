@@ -7440,50 +7440,14 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     room.hostUserId === userId && room.status === 'waiting'
   );
   if (existingWaitingRoom) {
-    if (
-      existingWaitingRoom.gameType === gameType &&
-      existingWaitingRoom.stake === stakeAmount &&
-      existingWaitingRoom.targetPlayers === targetPlayersCount
-    ) {
-      if (normalizedRequestedCode && existingWaitingRoom.roomCode !== normalizedRequestedCode) {
-        const collision = privateRooms.get(normalizedRequestedCode);
-        if (collision && collision.hostUserId !== userId) {
-          return res.status(409).json({ error: 'Requested room code is already in use.' });
-        }
-        const oldRoomCode = existingWaitingRoom.roomCode;
-        privateRooms.delete(oldRoomCode);
-        existingWaitingRoom.roomCode = normalizedRequestedCode;
-        privateRooms.set(normalizedRequestedCode, existingWaitingRoom);
-        schedulePersist({ roomCode: normalizedRequestedCode, deleteRoomCode: oldRoomCode });
-      }
-
-      const existingUser = getUser(userId, walletAddress);
-      return sendPrivateRoomCreateSuccess(req, res, {
-        success: true,
-        roomCode: existingWaitingRoom.roomCode,
-        telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.roomCode}`),
-        stake: existingWaitingRoom.stake,
-        targetPlayers: existingWaitingRoom.targetPlayers,
-        gameType: existingWaitingRoom.gameType || gameType,
-        status: existingWaitingRoom.status,
-        matchId: existingWaitingRoom.matchId || null,
-        playersCount: existingWaitingRoom.players.length,
-        availableTickets: existingUser.availableTickets,
-        heldTickets: existingUser.heldTickets,
-        energy: getEnergyState(existingUser),
-        recovered: true,
-      });
-    } else {
-      // Room settings or gameType changed: cancel and clean up previous unstarted room
-      const oldCode = existingWaitingRoom.roomCode;
-      const oldMatchId = existingWaitingRoom.matchId;
-      privateRooms.delete(oldCode);
-      if (oldMatchId) {
-        activeMatches.delete(oldMatchId);
-        activeMatchByUser.delete(userId);
-      }
-      schedulePersist({ deleteRoomCode: oldCode, deleteMatchId: oldMatchId || undefined });
+    const oldCode = existingWaitingRoom.roomCode;
+    const oldMatchId = existingWaitingRoom.matchId;
+    privateRooms.delete(oldCode);
+    if (oldMatchId) {
+      activeMatches.delete(oldMatchId);
+      activeMatchByUser.delete(userId);
     }
+    schedulePersist({ deleteRoomCode: oldCode, deleteMatchId: oldMatchId || undefined });
   }
   if (normalizedRequestId) {
     const existingRoom = Array.from(privateRooms.values()).find((room) =>

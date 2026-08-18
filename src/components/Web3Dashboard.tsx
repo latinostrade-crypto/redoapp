@@ -1945,6 +1945,10 @@ export function Web3Dashboard({
       connectWallet();
       return;
     }
+    try {
+      localStorage.removeItem('redoapp_active_match');
+      sessionStorage.removeItem('redoapp_user_left_match');
+    } catch {}
     sound.playShuffle();
     wakeBackend();
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
