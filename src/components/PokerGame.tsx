@@ -158,7 +158,7 @@ export function PokerGame({
     !gameState.isDealing &&
     gameState.players[gameState.currentPlayerIndex]?.id === 'player';
   const callNeeded = humanPlayer ? Math.max(0, gameState.currentBet - humanPlayer.currentBet) : 0;
-  const canCallOrCheck = isHumanTurn && !humanPlayer?.folded && !humanPlayer?.isAllIn;
+  const canCallOrCheck = Boolean(isHumanTurn && humanPlayer && !humanPlayer.folded && !humanPlayer.isAllIn);
 
   // Live hand rank evaluation for human player
   const humanHandEval = React.useMemo(() => {
@@ -270,6 +270,14 @@ export function PokerGame({
 
         {/* DYNAMIC OPPONENTS RENDERING */}
         {(() => {
+          if (!humanPlayer) {
+            return (
+              <div className="absolute top-12 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 px-3 py-1 rounded text-[8px] text-amber-300 font-mono">
+                <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
+                <span>Connecting table seats...</span>
+              </div>
+            );
+          }
           const opponents = gameState.players.filter((p) => p.id !== humanPlayer.id);
           const renderOpponentView = (opp: typeof gameState.players[0], posClass: string, reverse = false) => {
             const isTurn = gameState.players[gameState.currentPlayerIndex]?.id === opp.id && gameState.stage !== 'ended';
@@ -278,12 +286,12 @@ export function PokerGame({
               <div key={opp.id} className={`absolute ${posClass} flex flex-col items-center z-30`}>
                 <div className={`flex items-center gap-1 ${reverse ? 'flex-row-reverse' : ''}`}>
                   <div className="flex -space-x-4 shrink-0">
-                    {opp.holeCards.map((c, cIdx) => (
+                    {(opp.holeCards || []).map((c, cIdx) => (
                       <PokerCardView
-                        key={c.id || cIdx}
+                        key={c?.id || cIdx}
                         card={c}
                         hidden={gameState.stage !== 'ended'}
-                        isWinning={gameState.winningCardIds?.includes(c.id)}
+                        isWinning={c && gameState.winningCardIds?.includes(c.id)}
                       />
                     ))}
                   </div>
@@ -298,22 +306,22 @@ export function PokerGame({
                       </span>
                     )}
                     <Avatar
-                      avatarId={opp.avatar}
+                      avatarId={opp.avatar || 'rabbit'}
                       emotion={opp.folded ? 'worried' : isTurn ? 'thinking' : 'happy'}
                       size="xs"
                     />
                     <span className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight mt-0.5">
-                      {opp.name}
+                      {opp.name || 'Player'}
                     </span>
                     <div className="flex items-center gap-0.5 text-[6.5px] font-bold text-[#ffcc00] leading-tight">
                       <ChipStackIcon className="w-2.5 h-2.5" />
-                      <span>{opp.chips}</span>
+                      <span>{opp.chips ?? 0}</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="flex items-center gap-1 mt-0.5">
-                  {opp.currentBet > 0 && <ChipStack amount={opp.currentBet} />}
+                  {(opp.currentBet || 0) > 0 && <ChipStack amount={opp.currentBet} />}
                   {opp.lastAction && (
                     <div className="px-1.5 py-0.2 bg-black border border-[#00ff66] text-[#00ff66] text-[7px] font-black rounded uppercase shadow-sm leading-none">
                       {opp.lastAction}
@@ -445,12 +453,12 @@ export function PokerGame({
             <div className="flex items-end gap-1.5">
               {/* Hole Cards (Prominent & Large) */}
               <div className="flex -space-x-3 shrink-0">
-                {humanPlayer.holeCards.map((c, cIdx) => (
+                {(humanPlayer.holeCards || []).map((c, cIdx) => (
                   <PokerCardView
-                    key={c.id || cIdx}
+                    key={c?.id || cIdx}
                     card={c}
                     isLarge
-                    isWinning={gameState.winningCardIds?.includes(c.id)}
+                    isWinning={c && gameState.winningCardIds?.includes(c.id)}
                   />
                 ))}
               </div>
@@ -467,16 +475,16 @@ export function PokerGame({
                   </span>
                 )}
                 <Avatar
-                  avatarId={humanPlayer.avatar}
+                  avatarId={humanPlayer.avatar || 'rabbit'}
                   emotion={humanPlayer.folded ? 'worried' : isHumanTurn ? 'thinking' : 'happy'}
                   size="xs"
                 />
                 <span className="text-[7px] font-black text-white truncate max-w-[44px] leading-tight mt-0.5">
-                  {humanPlayer.name}
+                  {humanPlayer.name || 'Player'}
                 </span>
                 <div className="flex items-center gap-0.5 text-[6.5px] font-bold text-[#ffcc00] leading-tight">
                   <ChipStackIcon className="w-2.5 h-2.5" />
-                  <span>{humanPlayer.chips}</span>
+                  <span>{humanPlayer.chips ?? 0}</span>
                 </div>
               </div>
             </div>

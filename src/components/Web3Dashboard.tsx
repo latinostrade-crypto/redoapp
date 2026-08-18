@@ -485,21 +485,35 @@ function formatEnergyValue(amount: number) {
   return `⚡ ${amount}`;
 }
 
-function getTelegramStartParam() {
-  const params = new URLSearchParams(window.location.search);
-  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
-  const hashParams = new URLSearchParams(hash);
-  const telegramWebApp = (window as any).Telegram?.WebApp;
-  return (
-    params.get('tgWebAppStartParam') ||
-    params.get('startapp') ||
-    params.get('startApp') ||
-    hashParams.get('tgWebAppStartParam') ||
-    hashParams.get('startapp') ||
-    hashParams.get('startApp') ||
-    telegramWebApp?.initDataUnsafe?.start_param ||
-    ''
-  );
+function getTelegramStartParam(): string {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+    const hashParams = new URLSearchParams(hash);
+    const telegramWebApp = (window as any).Telegram?.WebApp;
+    let raw = (
+      params.get('tgWebAppStartParam') ||
+      params.get('startapp') ||
+      params.get('startApp') ||
+      hashParams.get('tgWebAppStartParam') ||
+      hashParams.get('startapp') ||
+      hashParams.get('startApp') ||
+      params.get('room') ||
+      hashParams.get('room') ||
+      telegramWebApp?.initDataUnsafe?.start_param ||
+      ''
+    );
+
+    if (!raw && (params.get('tgWebAppData') || hashParams.get('tgWebAppData'))) {
+      const dataStr = params.get('tgWebAppData') || hashParams.get('tgWebAppData') || '';
+      const innerParams = new URLSearchParams(dataStr);
+      raw = innerParams.get('start_param') || innerParams.get('tgWebAppStartParam') || innerParams.get('startapp') || '';
+    }
+
+    return decodeURIComponent(raw).trim();
+  } catch {
+    return '';
+  }
 }
 
 function getReferralStartParam() {
@@ -617,7 +631,15 @@ export function Web3Dashboard({
   if (!initialLaunchRoomCodeRef.current) {
     const startApp = getTelegramStartParam();
     const roomFromSearch = new URLSearchParams(window.location.search).get('room');
-    initialLaunchRoomCodeRef.current = (roomFromSearch || (startApp?.startsWith('room_') ? startApp.replace('room_', '') : '')).toUpperCase();
+    let code = roomFromSearch || '';
+    if (!code && startApp) {
+      if (startApp.startsWith('room_')) {
+        code = startApp.slice(5);
+      } else if (/^[A-Z0-9]{6,10}$/i.test(startApp) && !startApp.startsWith('ref_') && !startApp.startsWith('tourn')) {
+        code = startApp;
+      }
+    }
+    initialLaunchRoomCodeRef.current = code.trim().toUpperCase();
   }
 
   const initialLaunchTournamentMatchIdRef = useRef('');
@@ -1485,6 +1507,7 @@ export function Web3Dashboard({
   }, [privateRoomCode, privateJoinCode, currentUserId, applyPrivateRoomState]);
 
   const renderPrivateWaitingRoomLobby = (gameTitle: string) => {
+    const resolvedCode = privateRoomCode || privateJoinCode;
     const isCurrentPlayerHost = Boolean(
       currentUserId && (
         (privateRoomHostUserId && privateRoomHostUserId === currentUserId) ||
@@ -1498,7 +1521,7 @@ export function Web3Dashboard({
         <div className="flex justify-between items-center border-b border-slate-800 pb-2">
           <div className="flex items-center gap-1.5">
             <span className="px-2 py-0.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase rounded-sm border border-black">
-              ROOM #{privateRoomCode || 'PENDING'}
+              ROOM #{resolvedCode || 'PENDING'}
             </span>
             {isCurrentPlayerHost && (
               <span className="px-1.5 py-0.5 bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/40 font-mono text-[7.5px] font-bold uppercase rounded-sm">
@@ -1534,7 +1557,7 @@ export function Web3Dashboard({
           ) : (
             <div className="flex items-center gap-1.5 font-bold">
               <span>⏳</span>
-              <span>Connected to Room #{privateRoomCode}! Waiting for Host to start the match...</span>
+              <span>Connected to Room #{resolvedCode}! Waiting for Host to start the match...</span>
             </div>
           )}
         </div>
@@ -1545,8 +1568,8 @@ export function Web3Dashboard({
             type="button"
             onClick={() => {
               sound.playPop();
-              const roomLink = generatedLink || buildPrivateRoomSharePayload(privateRoomCode).telegramLink;
-              const text = encodeURIComponent(`Join my private ${gameTitle} room: ${privateRoomCode}! 🃏💥`);
+              const roomLink = generatedLink || (resolvedCode ? buildPrivateRoomSharePayload(resolvedCode).telegramLink : '');
+              const text = encodeURIComponent(`Join my private ${gameTitle} room: ${resolvedCode}! 🃏💥`);
               const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
               const tg = (window as any).Telegram?.WebApp;
               if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
@@ -1561,8 +1584,10 @@ export function Web3Dashboard({
             type="button"
             onClick={async () => {
               sound.playPop();
-              await copyTextSafely(privateRoomCode);
-              alert(`Room code ${privateRoomCode} copied!`);
+              if (resolvedCode) {
+                await copyTextSafely(resolvedCode);
+                alert(`Room code ${resolvedCode} copied!`);
+              }
             }}
             className="px-3 py-2 bg-[#00d2ff] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black shadow-[1px_1px_0_#000] cursor-pointer"
           >
@@ -5514,7 +5539,7 @@ export function Web3Dashboard({
                         </div>
                       )}
 
-                      {!generatedLink ? (
+                      {!generatedLink && privateRoomStatus !== 'waiting' ? (
                         <button
                           type="button"
                           onClick={createPrivateRoom}
