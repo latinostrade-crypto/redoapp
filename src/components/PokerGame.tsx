@@ -690,7 +690,7 @@ export function PokerGame({
       </AnimatePresence>
 
       {/* 5. PLAYER TURN ACTION CONTROLS */}
-      {gameState.stage !== 'idle' && gameState.stage !== 'ended' && !showRaisePanel && (
+      {gameState.stage !== 'idle' && gameState.stage !== 'ended' && gameState.stage !== 'match_ended' && !gameState.isMatchOver && !showRaisePanel && (
         <div className="bg-slate-950 border border-black p-2 rounded-lg z-20 flex flex-col gap-1.5">
           <div className="flex justify-between items-center text-[8.5px] font-bold">
             <span className={isHumanTurn ? 'text-[#00ff66] font-black' : 'text-slate-400'}>
@@ -749,6 +749,46 @@ export function PokerGame({
               <ArrowUpRight className="w-3 h-3 text-[#ffcc00]" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 6. MATCH CHAMPION / ROUND END CONTROLS */}
+      {(gameState.stage === 'match_ended' || gameState.isMatchOver) && (
+        <div className="bg-slate-950/95 border-2 border-[#ffcc00] p-3 rounded-lg z-20 flex flex-col gap-2 shadow-2xl">
+          <div className="text-center">
+            <span className="text-[10px] font-black text-[#ffcc00] uppercase tracking-wider block">
+              🏆 {gameState.matchWinnerName ? `${gameState.matchWinnerName.toUpperCase()} WON THE MATCH!` : 'POKER MATCH CONCLUDED'}
+            </span>
+            {gameState.winningHandDesc && (
+              <span className="text-[8px] text-slate-300 font-mono block mt-0.5">
+                {gameState.winningHandDesc}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onReturnToLobby}
+            className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black font-black text-[10px] uppercase rounded pixel-btn-interactive shadow cursor-pointer active:translate-y-0.5"
+          >
+            RETURN TO LOBBY ➔
+          </button>
+        </div>
+      )}
+
+      {gameState.stage === 'ended' && !gameState.isMatchOver && (
+        <div className="bg-slate-950/90 border border-emerald-500/50 p-2 rounded-lg z-20 flex flex-col gap-1.5 shadow">
+          <div className="text-center text-[8.5px] font-bold text-emerald-300">
+            <span>{gameState.winningHandDesc || 'Round completed! Dealing next hand...'}</span>
+          </div>
+          {gameState.mode === 'offline' && onNextHand && (
+            <button
+              type="button"
+              onClick={onNextHand}
+              className="w-full py-2 bg-[#ffcc00] text-black border border-black font-black text-[9px] uppercase rounded pixel-btn-interactive cursor-pointer"
+            >
+              NEXT HAND ➔
+            </button>
+          )}
         </div>
       )}
     </div>

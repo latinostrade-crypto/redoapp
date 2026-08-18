@@ -4055,8 +4055,12 @@ function advancePokerStage(match: ActiveMatch) {
     nextIdx = (nextIdx + 1) % pk.players.length;
     count++;
   }
-  pk.currentPlayerIndex = nextIdx;
-  pk.turnStartedAt = Date.now();
+  if (count >= pk.players.length) {
+    advancePokerStage(match);
+  } else {
+    pk.currentPlayerIndex = nextIdx;
+    pk.turnStartedAt = Date.now();
+  }
 }
 
 function advancePokerTurn(match: ActiveMatch) {
@@ -4077,11 +4081,12 @@ function advancePokerTurn(match: ActiveMatch) {
     return;
   }
 
+  const nonAllIn = active.filter((p) => !p.isAllIn);
   const allActedAndMatched = active.every(
     (p) => p.isAllIn || (p.hasActedThisStage && p.currentBet === pk.currentBet)
   );
 
-  if (allActedAndMatched) {
+  if (nonAllIn.length === 0 || allActedAndMatched || (nonAllIn.length === 1 && nonAllIn[0].hasActedThisStage && nonAllIn[0].currentBet >= pk.currentBet)) {
     advancePokerStage(match);
   } else {
     let nextIdx = (pk.currentPlayerIndex + 1) % pk.players.length;
@@ -4090,8 +4095,12 @@ function advancePokerTurn(match: ActiveMatch) {
       nextIdx = (nextIdx + 1) % pk.players.length;
       count++;
     }
-    pk.currentPlayerIndex = nextIdx;
-    pk.turnStartedAt = Date.now();
+    if (count >= pk.players.length) {
+      advancePokerStage(match);
+    } else {
+      pk.currentPlayerIndex = nextIdx;
+      pk.turnStartedAt = Date.now();
+    }
   }
 }
 
@@ -7587,7 +7596,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     const cur = failure && Date.now() > failure.lockedUntil ? { count: 0, lockedUntil: 0 } : (failure || { count: 0, lockedUntil: 0 });
     cur.count++;
     if (cur.count >= 5) {
-      cur.lockedUntil = Date.now() + 900000; // 15 minutes lockout
+      cur.lockedUntil = Date.now() + 10000; // 10 seconds lockout
     }
     joinFailuresMap.set(lockoutKey, cur);
     return res.status(404).json({ error: 'Private room not found.' });
@@ -7970,12 +7979,12 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
 app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
   const room = privateRooms.get(String(req.params.roomCode).toUpperCase());
   if (!room) {
-    return res.status(404).json({ error: 'Private room not found.' });
+    return res.status(200).json({ status: 'completed', message: 'Private room has concluded.' });
   }
   if (room.matchId) {
     const match = activeMatches.get(room.matchId);
-    if (match && (match.settled || match.gameState.phase === 'game_over')) {
-      return res.status(404).json({ error: 'Private room has finished.' });
+    if (match && (match.settled || match.gameState?.phase === 'game_over' || match.pokerGameState?.stage === 'match_ended' || match.blackjackGameState?.stage === 'match_ended')) {
+      return res.status(200).json({ status: 'completed', roomCode: room.roomCode, message: 'Private room has finished.' });
     }
   }
 

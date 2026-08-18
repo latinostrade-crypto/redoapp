@@ -48,12 +48,31 @@ function getSurfaceFromEnvironment(): AppSurface {
   const params = new URLSearchParams(window.location.search);
   if (params.get('story') === '1') return 'story';
   if (params.get('play') === '1') return 'game';
+  if (params.get('room')) return 'game';
+
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
+  const hashParams = new URLSearchParams(hash);
+  const startParam = (
+    params.get('tgWebAppStartParam') ||
+    params.get('startapp') ||
+    params.get('startApp') ||
+    hashParams.get('tgWebAppStartParam') ||
+    hashParams.get('startapp') ||
+    hashParams.get('startApp') ||
+    params.get('room') ||
+    hashParams.get('room')
+  );
+
+  if (startParam?.startsWith('room_') || startParam?.startsWith('ref_') || params.get('room') || hashParams.get('room')) {
+    return 'game';
+  }
 
   const telegram = (window as any).Telegram?.WebApp;
   const isTelegramLaunch = Boolean(
     telegram?.initData ||
       telegram?.initDataUnsafe?.user ||
-      telegram?.initDataUnsafe?.start_param,
+      telegram?.initDataUnsafe?.start_param ||
+      startParam
   );
   if (isTelegramLaunch) return 'game';
 

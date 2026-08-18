@@ -1643,7 +1643,7 @@ export function Web3Dashboard({
   const joinPrivateRoomByCode = useCallback((roomCodeInput?: string) => {
     const roomCodeToUse = (roomCodeInput || privateJoinCode || privateRoomCode).trim().toUpperCase();
     if (!roomCodeToUse) {
-      alert('Enter or generate a room code first.');
+      setPrivateRoomError('Enter or generate a room code first.');
       return Promise.resolve(false);
     }
     if (!authReady) {
@@ -1664,21 +1664,23 @@ export function Web3Dashboard({
         gameType: pvpGameTab,
       }),
     }).then((result) => {
+      initialLaunchRoomCodeRef.current = '';
       applyPrivateRoomJoin(result, roomCodeToUse);
       return true;
     }).catch((error) => {
+      initialLaunchRoomCodeRef.current = '';
       const message = error instanceof Error ? error.message : 'Failed to join private room.';
       setPrivateRoomError(message);
-      alert(message);
       return false;
     });
   }, [authReady, currentUserId, userName, selectedAvatar, rawAddress, pvpGameTab, privateJoinCode, privateRoomCode, applyPrivateRoomState]);
 
   const autoJoinConsumedRef = useRef(false);
   useEffect(() => {
-    const code = initialLaunchRoomCodeRef.current;
+    const code = initialLaunchRoomCodeRef.current?.trim().toUpperCase();
     if (code && authReady && !autoJoinConsumedRef.current) {
       autoJoinConsumedRef.current = true;
+      initialLaunchRoomCodeRef.current = '';
       setCurrentTab('pvp');
       setPvpSubMode('private');
       setPrivateJoinCode(code);
@@ -1943,7 +1945,6 @@ export function Web3Dashboard({
       const message = error instanceof Error ? error.message : 'Failed to create private room.';
       setPrivateRoomCreateState('error');
       setPrivateRoomError(message);
-      alert(message);
     };
 
     apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
@@ -1953,23 +1954,14 @@ export function Web3Dashboard({
       body: JSON.stringify(createPayload),
     }).then((result) => {
       finishCreate(result);
-    }).catch(() => undefined);
-
-    window.setTimeout(() => {
-      if (createSettled) return;
-      setPrivateRoomError(`Recovering room ${requestedRoomCode} from backend status...`);
+    }).catch((err) => {
+      // Try fast recovery if create timed out or had network blip
       recoverPrivateRoomByCode(requestedRoomCode)
         .then(finishCreate)
-        .catch(() => undefined);
-    }, 1200);
-
-    window.setTimeout(() => {
-      if (createSettled) return;
-      setPrivateRoomError(`Trying no-preflight bridge for room ${requestedRoomCode}...`);
-      createPrivateRoomViaBridge(createPayload)
-        .then(finishCreate)
-        .catch(failCreate);
-    }, 9000);
+        .catch(() => {
+          failCreate(err);
+        });
+    });
   };
 
   const cancelWaitingPrivateRoom = async () => {
@@ -3284,21 +3276,6 @@ export function Web3Dashboard({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [matchmakingState]);
-
-  useEffect(() => {
-    const incomingRoomCode = initialLaunchRoomCodeRef.current.trim().toUpperCase();
-    if (launchRoomConsumedRef.current || !incomingRoomCode || privateRoomStatus !== 'idle' || !authReady) return;
-    launchRoomConsumedRef.current = true;
-    setCurrentTab('pvp');
-    setPvpSubMode('private');
-    setPrivateJoinCode(incomingRoomCode);
-    setPrivateRoomError('');
-    joinPrivateRoomByCode(incomingRoomCode).then((joined) => {
-      if (!joined) {
-        setPrivateRoomError(`Failed to auto-join private room ${incomingRoomCode}.`);
-      }
-    }).catch(() => undefined);
-  }, [privateRoomStatus, currentUserId, authReady]);
 
   useEffect(() => {
     const targetMatchId = initialLaunchTournamentMatchIdRef.current;
