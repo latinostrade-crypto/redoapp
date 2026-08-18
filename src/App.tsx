@@ -192,6 +192,9 @@ export default function App() {
     returnToLobby();
     try {
       localStorage.removeItem('redoapp_active_match');
+      if (currentMatchId) {
+        sessionStorage.setItem('redoapp_user_left_match', currentMatchId);
+      }
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     if (currentMatchId) {
@@ -217,6 +220,9 @@ export default function App() {
     returnToLobby();
     try {
       localStorage.removeItem('redoapp_active_match');
+      if (currentMatchId) {
+        sessionStorage.setItem('redoapp_user_left_match', currentMatchId);
+      }
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     if (currentMatchId) {
@@ -303,8 +309,15 @@ export default function App() {
     } catch (error) {
       console.warn('leaveUnstartedMatch notice:', error);
     } finally {
+      try {
+        localStorage.removeItem('redoapp_active_match');
+        if (activeMatch.matchId) {
+          sessionStorage.setItem('redoapp_user_left_match', activeMatch.matchId);
+        }
+      } catch {}
       localStorage.removeItem('redoapp_profile_cache');
       localStorage.removeItem('redoapp_full_profile_cache');
+      window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
       setIsLeavingUnstartedMatch(false);
       returnToLobby();
     }

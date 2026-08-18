@@ -2245,6 +2245,14 @@ export function Web3Dashboard({
   useEffect(() => {
     if (activeProfile?.activeMatch) {
       const match = activeProfile.activeMatch;
+      let leftMatchId = '';
+      try { leftMatchId = sessionStorage.getItem('redoapp_user_left_match') || ''; } catch {}
+      if (leftMatchId && leftMatchId === match.matchId) {
+        try { localStorage.removeItem('redoapp_active_match'); } catch {}
+        recoveredActiveMatchRef.current = match.matchId;
+        return;
+      }
+
       const isEndedOrInvalid =
         (match as any).settled ||
         (match as any).status === 'cancelled' ||
@@ -2266,7 +2274,12 @@ export function Web3Dashboard({
         return;
       }
       const hasPlaceholders = match.players?.some((p) => p.userId?.startsWith('waiting_for_player_'));
-      if (hasPlaceholders) {
+      const isUnstartedPrivate = match.mode === 'private' && (
+        !(match as any).playStartedAt ||
+        (match as any).pokerGameState?.waitingForPlayers ||
+        (match as any).blackjackGameState?.waitingForPlayers
+      );
+      if (hasPlaceholders || isUnstartedPrivate) {
         // Unstarted waiting room: do not auto-launch into game table
         return;
       }

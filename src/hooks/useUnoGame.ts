@@ -245,6 +245,7 @@ export function useUnoGame() {
   const [remoteSessionActive, setRemoteSessionActive] = useState(false);
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
   const remoteMatchStreamLastEventAtRef = useRef(0);
+  const syncRetryCountRef = useRef(0);
 
   useEffect(() => {
     localStorage.setItem('uno_golden_tickets', goldenTickets.toString());
@@ -416,16 +417,21 @@ export function useUnoGame() {
       } else {
         setRemoteSessionActive(true);
       }
+      syncRetryCountRef.current = 0;
       return true;
     } catch (error) {
+      syncRetryCountRef.current += 1;
       const errorMsg = error instanceof Error ? error.message : '';
       const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('403') || errorMsg.includes('not part') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished') || errorMsg.includes('ended') || errorMsg.includes('cancelled');
-      if (isNotFoundOrSettled) {
+      const isMaxRetriesExceeded = syncRetryCountRef.current > 5;
+
+      if (isNotFoundOrSettled || isMaxRetriesExceeded) {
+        syncRetryCountRef.current = 0;
         if (isSpectatorSession) {
           setIsSpectator(false);
           isSpectatorRef.current = false;
         }
-        localStorage.removeItem('redoapp_active_match');
+        try { localStorage.removeItem('redoapp_active_match'); } catch {}
         remoteMatchIdRef.current = null;
         remoteUserIdRef.current = null;
         setRemoteSessionActive(false);
@@ -1489,6 +1495,19 @@ const getNextActiveClientPlayerIndex = (players: Player[], currentIndex: number,
     if (activeMatchRaw) {
       try {
         const activeMatch = JSON.parse(activeMatchRaw);
+        if (activeMatch.gameType && activeMatch.gameType !== 'uno') {
+          return;
+        }
+        if (activeMatch.createdAt && Date.now() - Number(activeMatch.createdAt) > 3 * 60 * 1000) {
+          try { localStorage.removeItem('redoapp_active_match'); } catch {}
+          return;
+        }
+        let leftMatchId = '';
+        try { leftMatchId = sessionStorage.getItem('redoapp_user_left_match') || ''; } catch {}
+        if (leftMatchId && leftMatchId === activeMatch.matchId) {
+          try { localStorage.removeItem('redoapp_active_match'); } catch {}
+          return;
+        }
         if (activeMatch.matchId) {
           if (activeMatch.isSpectator) {
             setIsSpectator(true);
