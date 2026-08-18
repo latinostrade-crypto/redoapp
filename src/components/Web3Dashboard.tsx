@@ -5743,18 +5743,41 @@ export function Web3Dashboard({
 
                   {/* Create Room Button or Active Waiting Room Lobby */}
                   {!generatedLink && privateRoomStatus !== 'waiting' ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPrivateRoomStake(selectedStake);
-                        setPrivateRoomTargetPlayers(4);
-                        createPrivateRoom(selectedStake, 4);
-                      }}
-                      disabled={!authReady || privateRoomCreateState === 'creating'}
-                      className="w-full py-2.5 bg-[#ffcc00] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
-                    >
-                      {privateRoomCreateState === 'creating' ? 'Creating Room...' : 'CREATE PRIVATE POKER ROOM'}
-                    </button>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-[8px] text-slate-300">
+                        <span>TABLE SIZE:</span>
+                        <div className="flex gap-1">
+                          {([2, 3, 4] as const).map((cnt) => (
+                            <button
+                              key={cnt}
+                              type="button"
+                              onClick={() => {
+                                sound.playPop();
+                                setPrivateRoomTargetPlayers(cnt);
+                              }}
+                              className={`px-2 py-0.5 border text-[8px] font-bold ${
+                                privateRoomTargetPlayers === cnt
+                                  ? 'bg-[#ffcc00] text-black border-black font-black'
+                                  : 'bg-black text-slate-400 border-slate-800'
+                              }`}
+                            >
+                              {cnt}P
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPrivateRoomStake(selectedStake);
+                          createPrivateRoom(selectedStake, privateRoomTargetPlayers);
+                        }}
+                        disabled={!authReady || privateRoomCreateState === 'creating'}
+                        className="w-full py-2.5 bg-[#ffcc00] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
+                      >
+                        {privateRoomCreateState === 'creating' ? 'Creating Room...' : `CREATE PRIVATE POKER ROOM (${privateRoomTargetPlayers} SEATS)`}
+                      </button>
+                    </div>
                   ) : (
                     renderPrivateWaitingRoomLobby('Poker')
                   )}

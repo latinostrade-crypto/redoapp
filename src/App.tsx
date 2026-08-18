@@ -170,12 +170,19 @@ export default function App() {
   );
 
   const handleReturnFromPoker = useCallback(() => {
+    const currentMatchId = pokerState.matchId;
     setActiveGameType('uno');
     returnToLobby();
     try {
       localStorage.removeItem('redoapp_active_match');
     } catch {}
-  }, [returnToLobby]);
+    if (currentMatchId) {
+      apiRequest('/api/matches/leave-unstarted', {
+        method: 'POST',
+        body: JSON.stringify({ matchId: currentMatchId }),
+      }).catch(() => {});
+    }
+  }, [pokerState.matchId, returnToLobby]);
 
   const handleStartBlackjackGame = useCallback(
     (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
