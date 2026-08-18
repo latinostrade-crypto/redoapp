@@ -4936,6 +4936,10 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
             amount: player.stake,
           });
         }
+        const energyCost = match.stake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
+        if (player.costsCommitted === true && energyCost > 0) {
+          rewardEnergy(user, energyCost, 'Cancelled Match Energy Refund', `match-cancel-energy-refund:${match.matchId}:${user.userId}`);
+        }
         user.matchmakingFailureAt = Date.now();
         user.matchmakingFailureReason = 'timeout';
         schedulePersist({ userId: user.userId });
@@ -4953,13 +4957,10 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const timeoutMs = 15_000;
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
   
-  // While within the 15-second lobby, wait if table has fewer than 4 players so others can join
-  if (match.players.length < 4 && !deadlineReached) {
-    return false;
-  }
-
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
-  const allConnected = connectedPlayers.length === match.gameState.players.length;
+  const allConnected = connectedPlayers.length === match.gameState.players.length && connectedPlayers.length >= MIN_MATCH_PLAYERS;
+  
+  // If not all matched players are connected and deadline not reached yet, continue waiting in lobby
   if (!allConnected && !deadlineReached) return false;
   
   if (deadlineReached && !allConnected) {
@@ -7084,6 +7085,37 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       unoDeclared: false,
       emotion: 'happy',
     });
+
+    if (openActiveMatch.pokerGameState) {
+      if (openActiveMatch.pokerGameState.deck.length < 5) {
+        openActiveMatch.pokerGameState.deck = generateServerPokerDeck();
+      }
+      const c1 = openActiveMatch.pokerGameState.deck.pop()!;
+      const c2 = openActiveMatch.pokerGameState.deck.pop()!;
+      const STARTING_CHIPS = 100;
+      openActiveMatch.pokerGameState.players.push({
+        userId,
+        username,
+        avatarId,
+        isAi: false,
+        isConnected: true,
+        hasConnected: true,
+        lastSeenAt: Date.now(),
+        disconnectedAt: null,
+        chips: STARTING_CHIPS,
+        currentBet: 0,
+        totalMatchInvested: 0,
+        holeCards: [c1, c2],
+        folded: false,
+        isAllIn: false,
+        hasActedThisStage: false,
+        eliminated: false,
+      });
+      openActiveMatch.pokerGameState.logs = [
+        createServerLog(`👋 ${username} joined the Poker table! (${openActiveMatch.players.length}/4)`, 'info'),
+        ...openActiveMatch.pokerGameState.logs,
+      ].slice(0, 50);
+    }
 
     if (openActiveMatch.blackjackGameState) {
       if (openActiveMatch.blackjackGameState.shoe.length < 5) {

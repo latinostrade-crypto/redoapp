@@ -3171,7 +3171,7 @@ export function Web3Dashboard({
           matchmakingStateRef.current === 'joining'
           || matchmakingStateRef.current === 'success'
           || openingPublicMatchRef.current !== ''
-          || Date.now() - publicJoinStartedAtRef.current < 4000
+          || Date.now() - publicJoinStartedAtRef.current < 12_000
         ) return;
         const activeMatchRaw = localStorage.getItem('redoapp_active_match');
         if (activeMatchRaw) {
