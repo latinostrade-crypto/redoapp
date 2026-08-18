@@ -1421,7 +1421,16 @@ export function Web3Dashboard({
     };
   }, [resetPrivateRoomState]);
 
-  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; stake?: number; roomCode?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
+  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready' | 'completed' | 'cancelled'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; stake?: number; roomCode?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
+    if (result.status === 'completed' || result.status === 'cancelled') {
+      try {
+        localStorage.removeItem('redoapp_active_match');
+      } catch {}
+      resetPrivateRoomState();
+      setPrivateRoomError(result.status === 'cancelled' ? 'The waiting room was cancelled by the host.' : 'The private room has concluded.');
+      return;
+    }
+
     const count = result.playersCount || result.players?.length || 1;
     setPrivateRoomPlayersCount(count);
     if (result.hostUserId) {
@@ -1467,7 +1476,7 @@ export function Web3Dashboard({
       setPrivateRoomStatus('waiting');
       setPrivateRoomCreateState('waiting');
     }
-  }, [privateRoomStake, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, privateRoomCode, pvpGameTab]);
+  }, [privateRoomStake, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, privateRoomCode, pvpGameTab, resetPrivateRoomState]);
 
   const applyPrivateRoomJoin = (result: PrivateRoomResponse, roomCodeToUse: string) => {
     setShowRoomDisclaimer(false);

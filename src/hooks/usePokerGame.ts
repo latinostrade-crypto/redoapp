@@ -29,6 +29,7 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
 
 export function usePokerGame(options?: {
   onSettlement?: (payout: number, won: boolean) => void;
+  onMatchCancelled?: () => void;
 }) {
   const [remoteMatchId, setRemoteMatchId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -114,10 +115,17 @@ export function usePokerGame(options?: {
           setTurnTimeLeft(state.turnTimeLeft);
         }
       }
-    } catch {
-      // Ignored in background polling
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (msg.includes('404') || msg.includes('not found') || msg.includes('concluded') || msg.includes('cancelled')) {
+        try { localStorage.removeItem('redoapp_active_match'); } catch {}
+        setRemoteMatchId(null);
+        if (options?.onMatchCancelled) {
+          options.onMatchCancelled();
+        }
+      }
     }
-  }, [remoteMatchId]);
+  }, [remoteMatchId, options]);
 
   /**
    * Start a new Texas Hold'em Poker Session
@@ -834,7 +842,7 @@ export function usePokerGame(options?: {
 
     stream.addEventListener('match-cancelled', () => {
       stream.close();
-      localStorage.removeItem('redoapp_active_match');
+      try { localStorage.removeItem('redoapp_active_match'); } catch {}
       setRemoteMatchId(null);
       setGameState((prev) => ({
         ...prev,
@@ -843,6 +851,9 @@ export function usePokerGame(options?: {
         winnerIds: [],
         logs: [],
       }));
+      if (options?.onMatchCancelled) {
+        options.onMatchCancelled();
+      }
     });
 
     stream.onerror = () => {

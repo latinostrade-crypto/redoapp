@@ -419,7 +419,7 @@ export function useUnoGame() {
       return true;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '';
-      const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished') || errorMsg.includes('ended');
+      const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('403') || errorMsg.includes('not part') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished') || errorMsg.includes('ended') || errorMsg.includes('cancelled');
       if (isNotFoundOrSettled) {
         if (isSpectatorSession) {
           setIsSpectator(false);

@@ -30,6 +30,7 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
 
 export function useBlackjackGame(options?: {
   onSettlement?: (payout: number, won: boolean, push: boolean) => void;
+  onMatchCancelled?: () => void;
 }) {
   const [selectedBet, setSelectedBet] = useState<number>(DEFAULT_BET);
   const [remoteMatchId, setRemoteMatchId] = useState<string | null>(() => {
@@ -113,10 +114,17 @@ export function useBlackjackGame(options?: {
           setTurnTimeLeft(state.turnTimeLeft);
         }
       }
-    } catch {
-      // Ignored in background polling
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (msg.includes('404') || msg.includes('not found') || msg.includes('concluded') || msg.includes('cancelled')) {
+        try { localStorage.removeItem('redoapp_active_match'); } catch {}
+        setRemoteMatchId(null);
+        if (options?.onMatchCancelled) {
+          options.onMatchCancelled();
+        }
+      }
     }
-  }, [remoteMatchId]);
+  }, [remoteMatchId, options]);
 
   /**
    * Advance to the next player's turn or start Dealer turn if all finished (Offline Mode)
@@ -784,7 +792,7 @@ export function useBlackjackGame(options?: {
 
     stream.addEventListener('match-cancelled', () => {
       stream.close();
-      localStorage.removeItem('redoapp_active_match');
+      try { localStorage.removeItem('redoapp_active_match'); } catch {}
       setRemoteMatchId(null);
       setGameState((prev) => ({
         ...prev,
@@ -793,6 +801,9 @@ export function useBlackjackGame(options?: {
         winner: null,
         logs: [],
       }));
+      if (options?.onMatchCancelled) {
+        options.onMatchCancelled();
+      }
     });
 
     stream.onerror = () => {

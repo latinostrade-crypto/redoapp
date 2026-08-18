@@ -88,6 +88,10 @@ export default function App() {
         setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
       }
     },
+    onMatchCancelled: () => {
+      setActiveGameType('uno');
+      returnToLobby();
+    },
   });
 
   const {
@@ -107,6 +111,11 @@ export default function App() {
         if (won) sound.playVictory();
         setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
       }
+    },
+    onMatchCancelled: () => {
+      setActiveGameType('uno');
+      resetBlackjackSession();
+      returnToLobby();
     },
   });
 
