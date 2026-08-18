@@ -1934,7 +1934,6 @@ export function Web3Dashboard({
     return run();
   };
   const createPrivateRoom = (overrideStake?: PrivateStakeOption, overrideTargetPlayers?: 2 | 3 | 4) => {
-    if (privateRoomCreateState === 'creating') return;
     if (!authReady) {
       setPrivateRoomError('Session is still syncing with the backend. Try again in a moment.');
       return;
@@ -1945,14 +1944,34 @@ export function Web3Dashboard({
       connectWallet();
       return;
     }
+    if (effectiveStake > 0 && goldenTickets < effectiveStake) {
+      const message = `You need at least ${effectiveStake} tickets to create a room with this stake.`;
+      setPrivateRoomError(message);
+      alert(message);
+      return;
+    }
     try {
       localStorage.removeItem('redoapp_active_match');
       sessionStorage.removeItem('redoapp_user_left_match');
     } catch {}
     sound.playShuffle();
     wakeBackend();
+
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
     const requestedRoomCode = generatePrivateRoomCode();
+    const fallbackPayload = buildPrivateRoomSharePayload(requestedRoomCode);
+
+    // Apply waiting state IMMEDIATELY so the room lobby & share buttons display without any network lag
+    setPrivateRoomCode(requestedRoomCode);
+    setPrivateJoinCode(requestedRoomCode);
+    setPrivateRoomTargetPlayers(effectiveTargetPlayers as 2 | 3 | 4);
+    setPrivateRoomPlayersCount(1);
+    setPrivateRoomHostUserId(currentUserId);
+    setPrivateRoomStatus('waiting');
+    setPrivateRoomCreateState('waiting');
+    setGeneratedLink(fallbackPayload.telegramLink);
+    setPrivateRoomError('');
+
     const createPayload = {
       userId: currentUserId,
       username: userName,
@@ -1964,59 +1983,26 @@ export function Web3Dashboard({
       createRequestId,
       requestedRoomCode,
     };
-    const applyCreatedRoom = (result: PrivateRoomResponse) => {
-      if (typeof result.availableTickets === 'number') {
-        setGoldenTickets(result.availableTickets);
-      }
-      if (typeof result.heldTickets === 'number') {
-        setHeldTickets(result.heldTickets);
-      }
-      setPrivateRoomCode(result.roomCode);
-      setPrivateJoinCode(result.roomCode);
-      setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
-      setPrivateRoomPlayersCount(result.playersCount || 1);
-      if (result.status === 'started') {
-        applyPrivateRoomState(result);
-      } else {
-        setPrivateRoomStatus('waiting');
-        setPrivateRoomCreateState('waiting');
-      }
-      setPrivateRoomError('');
-      const fallbackPayload = buildPrivateRoomSharePayload(result.roomCode);
-      setGeneratedLink(result.telegramLink || fallbackPayload.telegramLink);
-    };
-    setPrivateRoomCreateState('creating');
-    setPrivateRoomCode(requestedRoomCode);
-    setPrivateJoinCode(requestedRoomCode);
-    setPrivateRoomError(`Creating room ${requestedRoomCode}: request sent to backend...`);
-    let createSettled = false;
-    const finishCreate = (result: PrivateRoomResponse) => {
-      if (createSettled) return;
-      createSettled = true;
-      applyCreatedRoom(result);
-    };
-    const failCreate = (error: unknown) => {
-      if (createSettled) return;
-      createSettled = true;
-      const message = error instanceof Error ? error.message : 'Failed to create private room.';
-      setPrivateRoomCreateState('error');
-      setPrivateRoomError(message);
-    };
 
     apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
       method: 'POST',
-      retryOnNetworkError: true,
-      timeoutMs: 12000,
+      retryOnNetworkError: false,
+      timeoutMs: 10000,
       body: JSON.stringify(createPayload),
     }).then((result) => {
-      finishCreate(result);
+      if (typeof result.availableTickets === 'number') setGoldenTickets(result.availableTickets);
+      if (typeof result.heldTickets === 'number') setHeldTickets(result.heldTickets);
+      if (result.roomCode) {
+        setPrivateRoomCode(result.roomCode);
+        setPrivateJoinCode(result.roomCode);
+        const link = result.telegramLink || buildPrivateRoomSharePayload(result.roomCode).telegramLink;
+        setGeneratedLink(link);
+      }
+      if (result.status === 'started') {
+        applyPrivateRoomState(result);
+      }
     }).catch((err) => {
-      // Try fast recovery if create timed out or had network blip
-      recoverPrivateRoomByCode(requestedRoomCode)
-        .then(finishCreate)
-        .catch(() => {
-          failCreate(err);
-        });
+      console.warn('Room creation background register notice:', err);
     });
   };
 
