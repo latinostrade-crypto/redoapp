@@ -151,6 +151,19 @@ export function usePokerGame(options?: {
 
       if (mode === 'pvp' || mode === 'private') {
         setRemoteMatchId(resolvedMatchId || null);
+        if (resolvedMatchId) {
+          try {
+            localStorage.setItem('redoapp_active_match', JSON.stringify({
+              matchId: resolvedMatchId,
+              mode,
+              gameType: 'poker',
+              stake,
+              roomCode,
+              currentUserId: 'player',
+              createdAt: Date.now(),
+            }));
+          } catch {}
+        }
         setGameState((prev) => ({
           ...prev,
           mode,

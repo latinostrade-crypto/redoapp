@@ -1399,7 +1399,7 @@ export function Web3Dashboard({
     };
   }, [resetPrivateRoomState]);
 
-  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
+  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; stake?: number; roomCode?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
     const count = result.playersCount || result.players?.length || 1;
     setPrivateRoomPlayersCount(count);
     if (result.hostUserId) {
@@ -1418,23 +1418,28 @@ export function Web3Dashboard({
       setPvpGameTab(result.gameType);
     }
     if (result.status === 'started' && result.matchId) {
-      localStorage.setItem('redoapp_active_match', JSON.stringify({
-        matchId: result.matchId,
-        mode: 'private',
-        stake: privateRoomStake,
-        roomCode: privateRoomCode || (result as any).roomCode,
-        currentUserId,
-        players: result.players || [],
-        createdAt: Date.now(),
-      }));
+      const resolvedStake = result.stake !== undefined ? Number(result.stake) : privateRoomStake;
+      const resolvedRoomCode = privateRoomCode || result.roomCode;
+      try {
+        localStorage.setItem('redoapp_active_match', JSON.stringify({
+          matchId: result.matchId,
+          mode: 'private',
+          stake: resolvedStake,
+          gameType: targetGame,
+          roomCode: resolvedRoomCode || null,
+          currentUserId,
+          players: result.players || [],
+          createdAt: Date.now(),
+        }));
+      } catch {}
       setPrivateRoomStatus('ready');
       setPrivateRoomCreateState('idle');
       if (targetGame === 'poker' && onStartPokerGame) {
-        onStartPokerGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode, result.matchId || undefined);
+        onStartPokerGame('private', resolvedStake, resolvedRoomCode || undefined, result.matchId || undefined);
       } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
-        onStartBlackjackGame('private', privateRoomStake, privateRoomCode || (result as any).roomCode, result.matchId || undefined);
+        onStartBlackjackGame('private', resolvedStake, resolvedRoomCode || undefined, result.matchId || undefined);
       } else {
-        onStartGame('private', privateRoomStake);
+        onStartGame('private', resolvedStake);
       }
     } else {
       setPrivateRoomStatus('waiting');
@@ -3392,8 +3397,16 @@ export function Web3Dashboard({
       requestRoomStatus();
     }, 10_000);
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        requestRoomStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
     return () => {
       window.clearInterval(pollTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       stream.close();
       if (privateRoomStreamRef.current === stream) {
         privateRoomStreamRef.current = null;

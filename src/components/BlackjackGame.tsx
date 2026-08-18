@@ -319,7 +319,7 @@ export function BlackjackGame({
                   }`}
                 >
                   <Timer className={`w-3 h-3 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
-                  <span>{activePlayer.id === 'player' ? 'YOUR TURN' : `${activePlayer.name.toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
+                  <span>{activePlayer?.id === 'player' ? 'YOUR TURN' : `${(activePlayer?.name || 'PLAYER').toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
                 </motion.div>
               )}
 
@@ -339,86 +339,93 @@ export function BlackjackGame({
 
         {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS (UP TO 4) */}
         <div className="w-full flex items-end justify-around gap-1 z-30 pb-1">
-          {gameState.players.map((p, idx) => {
-            const isTurn = gameState.stage === 'player_turn' && gameState.currentPlayerIndex === idx;
-            const isMe = p.id === 'player';
-            const isEliminated = p.eliminated || p.chips <= 0;
-            return (
-              <div
-                key={p.id || idx}
-                className={`relative flex flex-col items-center p-1 rounded-lg transition-all ${
-                  isEliminated
-                    ? 'bg-black/40 border border-slate-800 opacity-60'
-                    : isTurn
-                    ? 'bg-black/90 border-2 border-[#00ff66] shadow-[0_0_15px_#00ff66]'
-                    : isMe
-                    ? 'bg-black/70 border border-[#ffcc00]/60'
-                    : 'bg-black/60 border border-slate-700'
-                }`}
-                style={{ maxWidth: `${100 / Math.max(1, gameState.players.length)}%` }}
-              >
-                {/* CHIPS BADGE */}
-                <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
-                  💰 {p.chips} CHIPS
-                </div>
+          {gameState.players.length === 0 ? (
+            <div className="w-full py-4 text-center text-[9px] font-black text-amber-300 animate-pulse">
+              CONNECTING SEATS TO CASINO TABLE...
+            </div>
+          ) : (
+            gameState.players.map((p, idx) => {
+              const isTurn = gameState.stage === 'player_turn' && gameState.currentPlayerIndex === idx;
+              const isMe = p.id === 'player';
+              const isEliminated = p.eliminated || (typeof p.chips === 'number' && p.chips <= 0);
+              const playerCards = Array.isArray(p.cards) ? p.cards : [];
+              return (
+                <div
+                  key={p.id || idx}
+                  className={`relative flex flex-col items-center p-1 rounded-lg transition-all ${
+                    isEliminated
+                      ? 'bg-black/40 border border-slate-800 opacity-60'
+                      : isTurn
+                      ? 'bg-black/90 border-2 border-[#00ff66] shadow-[0_0_15px_#00ff66]'
+                      : isMe
+                      ? 'bg-black/70 border border-[#ffcc00]/60'
+                      : 'bg-black/60 border border-slate-700'
+                  }`}
+                  style={{ maxWidth: `${100 / Math.max(1, gameState.players.length)}%` }}
+                >
+                  {/* CHIPS BADGE */}
+                  <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
+                    💰 {p.chips ?? 0} CHIPS
+                  </div>
 
-                {/* Floating Profit Notification on Round End */}
-                {typeof p.lastProfit === 'number' && (gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, y: -16, scale: 1.1 }}
-                    transition={{ duration: 0.5 }}
-                    className={`absolute -top-6 px-1.5 py-0.2 rounded font-black text-[8px] z-40 border shadow-lg ${
-                      p.lastProfit > 0
-                        ? 'bg-emerald-950 border-emerald-400 text-[#00ff66]'
-                        : p.lastProfit === 0
-                        ? 'bg-slate-900 border-slate-400 text-slate-200'
-                        : 'bg-red-950 border-red-500 text-red-300'
-                    }`}
-                  >
-                    {p.lastProfit > 0 ? `+${p.lastProfit} 💰` : p.lastProfit === 0 ? 'PUSH' : `${p.lastProfit} 💰`}
-                  </motion.div>
-                )}
-
-                {/* Cards */}
-                <div className="flex -space-x-3 mb-1 shrink-0 min-h-[50px] items-center justify-center">
-                  {isEliminated ? (
-                    <div className="text-[8px] font-black text-red-400 flex items-center gap-0.5 bg-black/80 px-1.5 py-1 rounded border border-red-900">
-                      <Skull className="w-3 h-3" />
-                      <span>BUSTED OUT</span>
-                    </div>
-                  ) : (
-                    p.cards.map((c, cIdx) => (
-                      <BlackjackCardView key={c.id || cIdx} card={c} />
-                    ))
+                  {/* Floating Profit Notification on Round End */}
+                  {typeof p.lastProfit === 'number' && (gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, y: -16, scale: 1.1 }}
+                      transition={{ duration: 0.5 }}
+                      className={`absolute -top-7 px-1.5 py-0.5 rounded text-[8px] font-black shadow-lg border z-40 ${
+                        p.lastProfit > 0
+                          ? 'bg-emerald-950 border-emerald-400 text-emerald-300 shadow-[0_0_10px_#00ff66]'
+                          : p.lastProfit < 0
+                          ? 'bg-rose-950 border-rose-500 text-rose-300'
+                          : 'bg-slate-900 border-slate-500 text-slate-300'
+                      }`}
+                    >
+                      {p.lastProfit > 0 ? `+${p.lastProfit} 💰` : p.lastProfit < 0 ? `${p.lastProfit} 💸` : 'PUSH 🤝'}
+                    </motion.div>
                   )}
-                </div>
 
-                {/* Avatar + Info */}
-                <div className="flex flex-col items-center">
-                  <Avatar id={p.avatar} emotion={isEliminated ? 'worried' : p.isBusted ? 'worried' : p.hasBlackjack ? 'happy' : isTurn ? 'thinking' : 'happy'} size={24} />
-                  <span className="text-[7px] font-black text-white truncate max-w-[48px] leading-tight mt-0.5">
-                    {p.name} {isMe ? '(YOU)' : ''}
-                  </span>
-                  <div className="text-[7px] font-black leading-tight">
+                  {/* Cards */}
+                  <div className="flex -space-x-3 mb-1 shrink-0 min-h-[50px] items-center justify-center">
                     {isEliminated ? (
-                      <span className="text-slate-500">OUT</span>
-                    ) : p.isBusted ? (
-                      <span className="text-red-400 bg-red-950/80 px-1 py-0.2 rounded border border-red-500/40">
-                        💥 BUST ({p.score})
-                      </span>
-                    ) : p.hasBlackjack ? (
-                      <span className="text-[#ffcc00] bg-amber-950/80 px-1 py-0.2 rounded border border-amber-400/60 shadow-[0_0_8px_rgba(255,204,0,0.5)] animate-pulse">
-                        🔥 21 (+15)
-                      </span>
+                      <div className="text-[8px] font-black text-red-400 flex items-center gap-0.5 bg-black/80 px-1.5 py-1 rounded border border-red-900">
+                        <Skull className="w-3 h-3" />
+                        <span>BUSTED OUT</span>
+                      </div>
                     ) : (
-                      <span className="text-[#00ff66]">SCORE: {p.score} (BET: {p.bet})</span>
+                      playerCards.map((c, cIdx) => (
+                        <BlackjackCardView key={c.id || cIdx} card={c} />
+                      ))
                     )}
                   </div>
+
+                  {/* Avatar + Info */}
+                  <div className="flex flex-col items-center">
+                    <Avatar id={p.avatar || 'rabbit'} emotion={isEliminated ? 'worried' : p.isBusted ? 'worried' : p.hasBlackjack ? 'happy' : isTurn ? 'thinking' : 'happy'} size={24} />
+                    <span className="text-[7px] font-black text-white truncate max-w-[48px] leading-tight mt-0.5">
+                      {p.name || 'Player'} {isMe ? '(YOU)' : ''}
+                    </span>
+                    <div className="text-[7px] font-black leading-tight">
+                      {isEliminated ? (
+                        <span className="text-slate-500">OUT</span>
+                      ) : p.isBusted ? (
+                        <span className="text-red-400 bg-red-950/80 px-1 py-0.2 rounded border border-red-500/40">
+                          💥 BUST ({p.score ?? 0})
+                        </span>
+                      ) : p.hasBlackjack ? (
+                        <span className="text-[#ffcc00] bg-amber-950/80 px-1 py-0.2 rounded border border-amber-400/60 shadow-[0_0_8px_rgba(255,204,0,0.5)] animate-pulse">
+                          🔥 21 (+15)
+                        </span>
+                      ) : (
+                        <span className="text-[#00ff66]">SCORE: {p.score ?? 0} (BET: {p.bet ?? 0})</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 

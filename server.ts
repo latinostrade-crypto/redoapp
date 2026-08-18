@@ -7743,9 +7743,11 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
       activeMatchByUser.set(userId, match.matchId);
 
       const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
-      if (!anyLeft && room.status !== 'started') {
+      if ((!anyLeft || room.players.length >= room.targetPlayers) && room.status !== 'started') {
         startPrivateRoomMatchHelper(room, match);
       }
+    } else if (room.players.length >= room.targetPlayers && room.status !== 'started') {
+      startPrivateRoomMatchHelper(room, match);
     }
   }
 
