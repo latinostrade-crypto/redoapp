@@ -7481,10 +7481,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   }
 
   let roomCode = normalizedRequestedCode;
-  if (roomCode && privateRooms.has(roomCode)) {
-    return res.status(409).json({ error: 'Requested room code is already in use.' });
-  }
-  if (!roomCode) {
+  if (!roomCode || privateRooms.has(roomCode)) {
     do {
       roomCode = Math.random().toString(36).slice(2, 8).toUpperCase();
     } while (privateRooms.has(roomCode));
