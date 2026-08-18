@@ -66,6 +66,10 @@ export default function App() {
       const activeMatchRaw = localStorage.getItem('redoapp_active_match');
       if (activeMatchRaw) {
         const parsed = JSON.parse(activeMatchRaw);
+        if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 5 * 60 * 1000) {
+          localStorage.removeItem('redoapp_active_match');
+          return 'uno';
+        }
         if (parsed.gameType === 'blackjack' || parsed.gameType === 'poker') {
           return parsed.gameType;
         }
@@ -89,6 +93,8 @@ export default function App() {
       }
     },
     onMatchCancelled: () => {
+      try { localStorage.removeItem('redoapp_active_match'); } catch {}
+      window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
       setActiveGameType('uno');
       returnToLobby();
     },
@@ -113,6 +119,8 @@ export default function App() {
       }
     },
     onMatchCancelled: () => {
+      try { localStorage.removeItem('redoapp_active_match'); } catch {}
+      window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
       setActiveGameType('uno');
       resetBlackjackSession();
       returnToLobby();
@@ -185,6 +193,7 @@ export default function App() {
     try {
       localStorage.removeItem('redoapp_active_match');
     } catch {}
+    window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     if (currentMatchId) {
       apiRequest('/api/matches/leave-unstarted', {
         method: 'POST',
@@ -209,6 +218,7 @@ export default function App() {
     try {
       localStorage.removeItem('redoapp_active_match');
     } catch {}
+    window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     if (currentMatchId) {
       apiRequest('/api/matches/leave-unstarted', {
         method: 'POST',

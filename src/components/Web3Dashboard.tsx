@@ -1413,7 +1413,13 @@ export function Web3Dashboard({
 
   useEffect(() => {
     const handleMatchEnded = () => {
+      try {
+        localStorage.removeItem('redoapp_active_match');
+      } catch {}
+      recoveredActiveMatchRef.current = '';
       resetPrivateRoomState();
+      setProfile((prev) => prev ? { ...prev, activeMatch: null } : prev);
+      setFullProfile((prev) => prev ? { ...prev, activeMatch: null } : prev);
     };
     window.addEventListener('redoapp:match-ended', handleMatchEnded);
     return () => {
@@ -2239,8 +2245,24 @@ export function Web3Dashboard({
   useEffect(() => {
     if (activeProfile?.activeMatch) {
       const match = activeProfile.activeMatch;
-      if (match.gameState?.phase === 'game_over' || (match as any).settled) {
-        localStorage.removeItem('redoapp_active_match');
+      const isEndedOrInvalid =
+        (match as any).settled ||
+        (match as any).status === 'cancelled' ||
+        (match as any).status === 'completed' ||
+        (match as any).status === 'finished' ||
+        match.gameState?.phase === 'game_over' ||
+        (match as any).pokerGameState?.stage === 'idle' ||
+        (match as any).pokerGameState?.stage === 'match_ended' ||
+        (match as any).blackjackGameState?.stage === 'idle' ||
+        (match as any).blackjackGameState?.stage === 'match_ended';
+
+      if (isEndedOrInvalid) {
+        try {
+          localStorage.removeItem('redoapp_active_match');
+        } catch {}
+        recoveredActiveMatchRef.current = match.matchId;
+        setProfile((prev) => prev ? { ...prev, activeMatch: null } : prev);
+        setFullProfile((prev) => prev ? { ...prev, activeMatch: null } : prev);
         return;
       }
       const hasPlaceholders = match.players?.some((p) => p.userId?.startsWith('waiting_for_player_'));
