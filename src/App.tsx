@@ -418,7 +418,7 @@ export default function App() {
       if (!(window as any).redoappIsAppStarting) return;
       (window as any).redoappIsAppStarting = false;
       window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
-    }, 15_000);
+    }, 3500);
     return () => window.clearTimeout(safetyTimeout);
   }, []);
 

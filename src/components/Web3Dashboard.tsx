@@ -1697,8 +1697,15 @@ export function Web3Dashboard({
       initialLaunchRoomCodeRef.current = '';
       applyPrivateRoomJoin(result, roomCodeToUse);
       return true;
-    }).catch((error) => {
+    }).catch(async (error) => {
       initialLaunchRoomCodeRef.current = '';
+      try {
+        const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(roomCodeToUse), { timeoutMs: 4000 });
+        if (statusRes && (statusRes.status === 'started' || statusRes.status === 'waiting' || (statusRes.players && statusRes.players.some((p) => p.userId === currentUserId)))) {
+          applyPrivateRoomJoin(statusRes, roomCodeToUse);
+          return true;
+        }
+      } catch {}
       const message = error instanceof Error ? error.message : 'Failed to join private room.';
       setPrivateRoomError(message);
       return false;

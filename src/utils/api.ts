@@ -317,13 +317,10 @@ if (typeof window !== 'undefined') {
     const { id, path, stage } = detail;
 
     // Public matchmaking has its own persistent queue card with status,
-    // player count and a timer.  Treating its network request as an app-wide
-    // load hid that card behind a blank LOADING screen for up to several
-    // minutes when a Render instance was waking up.
-    const pathsWeCareAbout = [
-      '/api/private-rooms/create',
-      '/api/private-rooms/join',
-    ];
+    // Public matchmaking and private rooms have their own persistent queue cards,
+    // timers, and interactive status buttons. Treating them as an app-wide
+    // load hid the entire UI behind a blank loading screen when instances were slow.
+    const pathsWeCareAbout: string[] = [];
 
     const isInitialUserSync = path === '/api/users/sync' && ((window as any).redoappIsAppStarting ?? true);
     const isMatchStateSync = path.startsWith('/api/matches/state/') && ((window as any).redoappIsAppStarting ?? true);
