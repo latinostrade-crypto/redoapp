@@ -378,14 +378,25 @@ export function useUnoGame() {
       }
 
       const isSpectatorMode = isSpectatorSession || (result as any).isSpectator || (result.gameState as any)?.isSpectator;
-      if (!isCompleteRemoteTableState(result.gameState, isSpectatorMode)) {
+      const rawPlayers = Array.isArray(result.gameState?.players) ? result.gameState.players : [];
+      const hasLocalPlayer = rawPlayers.some((pl) => pl.id === 'player');
+      const normalizedGameState: GameState = {
+        ...result.gameState,
+        players: rawPlayers.map((p, idx) => {
+          if (!isSpectatorMode && !hasLocalPlayer && idx === 0) {
+            return { ...p, id: 'player' as const };
+          }
+          return p;
+        }),
+      };
+      if (!isCompleteRemoteTableState(normalizedGameState, isSpectatorMode)) {
         throw new Error('Match table is not ready yet.');
       }
       if (isSpectatorMode) {
         setIsSpectator(true);
         isSpectatorRef.current = true;
       }
-      setGameState(result.gameState);
+      setGameState(normalizedGameState);
       if (result.gameState.phase === 'game_over') {
         const winsRequired = (result.gameState as any).winsRequired || 1;
         const playerWins = (result.gameState as any).playerWins || {};
@@ -413,7 +424,7 @@ export function useUnoGame() {
       syncRetryCountRef.current += 1;
       const errorMsg = error instanceof Error ? error.message : '';
       const isNotFoundOrSettled = errorMsg.includes('[404') || errorMsg.includes('403') || errorMsg.includes('not part') || errorMsg.includes('Match not found') || errorMsg.includes('Match is already finished') || errorMsg.includes('ended') || errorMsg.includes('cancelled');
-      const isMaxRetriesExceeded = syncRetryCountRef.current > 5;
+      const isMaxRetriesExceeded = syncRetryCountRef.current > 12;
 
       if (isNotFoundOrSettled || isMaxRetriesExceeded) {
         syncRetryCountRef.current = 0;

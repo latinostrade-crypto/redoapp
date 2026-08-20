@@ -4596,6 +4596,12 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
   };
 }
 
+function isSameUser(id1?: string | null, id2?: string | null): boolean {
+  if (!id1 || !id2) return false;
+  if (id1 === id2) return true;
+  return id1.replace(/^tg:/, '') === id2.replace(/^tg:/, '');
+}
+
 function buildPerspectiveState(match: ActiveMatch, userId: string) {
   if (match.gameType === 'poker' || match.pokerGameState) {
     return buildPokerPerspectiveState(match, userId);
@@ -4604,7 +4610,7 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
     return buildBlackjackPerspectiveState(match, userId);
   }
 
-  const userIndex = match.gameState.players.findIndex((player) => player.userId === userId);
+  const userIndex = match.gameState.players.findIndex((player) => isSameUser(player.userId, userId));
   const isSpectator = userIndex === -1;
   const perspectiveIndex = isSpectator ? 0 : userIndex;
 
@@ -5182,7 +5188,15 @@ function buildPayoutByRank(playerCount: number, netPrizePool: number): Record<nu
 }
 
 function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null {
-  const activeMatchId = activeMatchByUser.get(userId);
+  let activeMatchId = activeMatchByUser.get(userId);
+  if (!activeMatchId) {
+    for (const [uid, mId] of activeMatchByUser.entries()) {
+      if (isSameUser(uid, userId)) {
+        activeMatchId = mId;
+        break;
+      }
+    }
+  }
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     const isGameOver = activeMatch && (
@@ -5207,12 +5221,15 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
       };
     } else {
       activeMatchByUser.delete(userId);
+      for (const uid of Array.from(activeMatchByUser.keys())) {
+        if (isSameUser(uid, userId)) activeMatchByUser.delete(uid);
+      }
     }
   }
 
-  const player = matchmakingQueue.find((entry) => entry.userId === userId);
+  const player = matchmakingQueue.find((entry) => isSameUser(entry.userId, userId));
   if (!player) {
-    const user = users.get(userId);
+    const user = users.get(userId) || (Array.from(users.entries()).find(([uId]) => isSameUser(uId, userId))?.[1]);
     if (user?.matchmakingFailureReason === 'timeout' && user.matchmakingFailureAt) {
       return {
         status: 'expired',
