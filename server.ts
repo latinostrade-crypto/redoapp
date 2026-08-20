@@ -4967,9 +4967,22 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
   const allConnected = connectedPlayers.length === match.gameState.players.length && connectedPlayers.length >= MIN_MATCH_PLAYERS;
-  
+
+  // Bug #2 fix: Start immediately when MIN_MATCH_PLAYERS humans have connected,
+  // even if the match was created for more slots. This prevents indefinite lobby
+  // waits when only 2 of 4 slots are filled and both players are already ready.
+  const connectedHumanCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
+  const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS &&
+    !isTournament &&
+    match.stake === 0 &&
+    !deadlineReached &&
+    // Only fast-start if ALL connected humans are actually ready (hasConnected)
+    // and at least 10s have passed to give late joiners a chance
+    (now - match.createdAt) >= 10_000;
+
   // If not all matched players are connected and deadline not reached yet, continue waiting in lobby
-  if (!allConnected && !deadlineReached) return false;
+  // unless we have enough humans connected for a fast start
+  if (!allConnected && !deadlineReached && !enoughHumansConnected) return false;
   
   if (deadlineReached && !allConnected) {
     if (isTournament) {
@@ -6199,6 +6212,14 @@ function processTournamentTick() {
 
 setInterval(processTournamentTick, 5000);
 
+// Bug #1 fix: continuously tick matchmaking so players pair even if one joined
+// after the other's join-triggered tick already ran.
+setInterval(() => {
+  if (matchmakingQueue.length > 0) {
+    runMatchmakingTick();
+  }
+}, 2000);
+
 function buildTournamentLeaderboard() {
   const winCounts = new Map<string, { userId: string; username: string; avatarId: string; winsCount: number; lastWinAt: number }>();
 
@@ -7017,7 +7038,10 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   );
   const isDifferentGame = existingActiveMatch && (existingActiveMatch.gameType || 'uno') !== gameType;
   const isStaleMatch = existingActiveMatch && (Date.now() - (existingActiveMatch.playStartedAt || existingActiveMatch.createdAt || Date.now()) > 600_000);
-  const isUnstartedAbandoned = existingActiveMatch && !existingActiveMatch.playStartedAt && (Date.now() - existingActiveMatch.createdAt > 30_000);
+  // Bug #6 fix: 90s instead of 30s — Render cold starts + Telegram WebView
+  // reconnects can take up to 40s; 30s was too aggressive and caused players
+  // who briefly lost connection to lose their match slot.
+  const isUnstartedAbandoned = existingActiveMatch && !existingActiveMatch.playStartedAt && (Date.now() - existingActiveMatch.createdAt > 90_000);
 
   if (existingActiveMatch && !isGameOver && !isStaleMatch && !isDifferentGame && !isUnstartedAbandoned && !forceFresh) {
     markMatchPlayerConnected(existingActiveMatch, userId);
@@ -7076,14 +7100,18 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   user.matchmakingFailureAt = null;
   user.matchmakingFailureReason = null;
 
-  // Dynamic table fill: If a public match is already active/waiting with open seats (< 4 players)
+  // Dynamic table fill: If a public match is already active/waiting with open seats (< MAX players)
+  // Bug #5 fix: only join truly unstarted matches (playStartedAt === null) to avoid
+  // mid-game intrusions. The old condition also admitted already-started bot matches
+  // within 20s which caused state corruption. Now we accept any unstarted pvp match
+  // that still has open player slots.
   const openActiveMatch = Array.from(activeMatches.values()).find(
     (m) => m.mode === 'pvp' &&
       (m.gameType || 'uno') === gameType &&
       m.stake === stakeAmount &&
       !m.settled &&
-      (!m.playStartedAt || (Date.now() - m.createdAt < 20_000 && m.players.some((p) => p.isAi || p.userId.startsWith('bot_')))) &&
-      m.players.length < 4 &&
+      !m.playStartedAt &&
+      m.players.length < MAX_MATCH_PLAYERS &&
       !m.players.some((p) => p.userId === userId)
   );
 

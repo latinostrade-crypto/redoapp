@@ -1486,7 +1486,10 @@ export function Web3Dashboard({
     };
   }, [resetPrivateRoomState]);
 
-  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready' | 'completed' | 'cancelled'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; stake?: number; roomCode?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }) => {
+  // Bug #4 fix: accept overrideRoomCode as explicit parameter to avoid stale closure.
+  // React state updates (setPrivateRoomCode) are async, so at the time this callback
+  // runs, privateRoomCode may still be '' even though we just called setPrivateRoomCode.
+  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready' | 'completed' | 'cancelled'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; stake?: number; roomCode?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }, overrideRoomCode?: string) => {
     if (result.status === 'completed' || result.status === 'cancelled') {
       try {
         localStorage.removeItem('redoapp_active_match');
@@ -1515,7 +1518,9 @@ export function Web3Dashboard({
     }
     if (result.status === 'started' && result.matchId) {
       const resolvedStake = result.stake !== undefined ? Number(result.stake) : privateRoomStake;
-      const resolvedRoomCode = privateRoomCode || result.roomCode;
+      // Bug #4 fix: use overrideRoomCode first (passed explicitly by caller to avoid
+      // stale closure), then fall back to state and then server response.
+      const resolvedRoomCode = overrideRoomCode || privateRoomCode || result.roomCode;
       try {
         localStorage.setItem('redoapp_active_match', JSON.stringify({
           matchId: result.matchId,
@@ -1555,7 +1560,10 @@ export function Web3Dashboard({
     }
     setCurrentTab('pvp');
     setPvpSubMode('private');
-    applyPrivateRoomState(result);
+    // Bug #4 fix: pass the resolved roomCode explicitly so applyPrivateRoomState
+    // doesn't rely on the stale privateRoomCode closure value (which is still ''
+    // at the time this synchronous call executes after setPrivateRoomCode above).
+    applyPrivateRoomState(result, result.roomCode || roomCodeToUse);
   };
 
   const handleStartPrivateRoomMatch = useCallback(async () => {
@@ -1571,7 +1579,8 @@ export function Web3Dashboard({
         }),
       });
       if (res.status === 'started' && res.matchId) {
-        applyPrivateRoomState(res as any);
+        // Bug #4 fix: pass code explicitly to avoid stale closure in applyPrivateRoomState
+        applyPrivateRoomState(res as any, code);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to start match.';
@@ -1807,27 +1816,67 @@ export function Web3Dashboard({
     }
   }, []);
 
+  // Bug #3 fix: auto-join from invite link.
+  // Key fixes:
+  // 1. Use launchRoomConsumedRef (already exists) instead of autoJoinConsumedRef
+  //    to share the consumed flag with the early status-check effect above.
+  // 2. Remove joinPrivateRoomByCode from deps — it changes every render due to its
+  //    own closure deps; re-running the effect when it changes causes double-joins.
+  // 3. Read the launch code from the stable ref, not from state.
   const autoJoinConsumedRef = useRef(false);
   useEffect(() => {
+    if (!authReady || autoJoinConsumedRef.current) return;
+
     const startApp = getTelegramStartParam();
     const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
     const roomFromSearch = searchParams?.get('room') || searchParams?.get('join_room') || '';
+    // Re-parse to get the code; don't rely on initialLaunchRoomCodeRef which may
+    // have been cleared by an earlier attempt.
     const parsed = parseRoomStartParam(startApp, roomFromSearch);
-    const code = (initialLaunchRoomCodeRef.current || parsed.code || privateJoinCode)?.trim().toUpperCase();
+    const code = (initialLaunchRoomParsedRef.current.code || parsed.code)?.trim().toUpperCase();
 
-    if (code && authReady && !autoJoinConsumedRef.current) {
-      autoJoinConsumedRef.current = true;
-      initialLaunchRoomCodeRef.current = '';
-      if (parsed.gameType) {
-        setPvpGameTab(parsed.gameType);
-      }
-      setCurrentTab('pvp');
-      setPvpSubMode('private');
-      setPrivateJoinCode(code);
-      setPrivateRoomCode(code);
-      joinPrivateRoomByCode(code);
+    if (!code) return;
+
+    autoJoinConsumedRef.current = true;
+    initialLaunchRoomCodeRef.current = '';
+
+    if (parsed.gameType || initialLaunchRoomParsedRef.current.gameType) {
+      setPvpGameTab(parsed.gameType || initialLaunchRoomParsedRef.current.gameType!);
     }
-  }, [authReady, joinPrivateRoomByCode, privateJoinCode]);
+    setCurrentTab('pvp');
+    setPvpSubMode('private');
+    setPrivateJoinCode(code);
+    setPrivateRoomCode(code);
+
+    // Call the raw API directly instead of going through joinPrivateRoomByCode
+    // so we don't capture a stale version of that callback.
+    setPrivateRoomError('');
+    apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
+      method: 'POST',
+      retryOnNetworkError: true,
+      body: JSON.stringify({
+        roomCode: code,
+        userId: currentUserId,
+        username: userName,
+        avatarId: selectedAvatar,
+        walletAddress: rawAddress || null,
+        gameType: parsed.gameType || initialLaunchRoomParsedRef.current.gameType || 'uno',
+      }),
+    }).then((result) => {
+      applyPrivateRoomJoin(result, code);
+    }).catch(async (error) => {
+      try {
+        const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(code), { timeoutMs: 4000 });
+        if (statusRes && (statusRes.status === 'started' || statusRes.status === 'waiting' || statusRes.players?.some((p) => p.userId === currentUserId))) {
+          applyPrivateRoomJoin(statusRes, code);
+          return;
+        }
+      } catch {}
+      const message = error instanceof Error ? error.message : 'Failed to join private room.';
+      setPrivateRoomError(message);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady]); // intentionally omit joinPrivateRoomByCode — see comment above
 
   const createPrivateRoomViaBridge = (payload: {
     userId: string;
