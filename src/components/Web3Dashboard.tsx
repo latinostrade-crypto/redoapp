@@ -1222,20 +1222,15 @@ export function Web3Dashboard({
       openingPublicMatchRef.current = result.matchId;
       publicJoinAttemptRef.current += 1;
       publicQueueDeadlineAtRef.current = 0;
-      // Network callbacks in iOS/iMe WebViews can remain batched until a
-      // visibility change. Commit the route-changing game state immediately.
-      flushSync(() => {
-        setQueueLength(result.players?.length || 1);
-        setMatchmakingState('success');
-        const targetGame = result.gameType || pvpGameTab;
-        if (targetGame === 'poker' && onStartPokerGame) {
-          onStartPokerGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
-        } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
-          onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
-        } else {
-          onStartGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
-        }
-      });
+      setQueueLength(result.players?.length || 1);
+      setMatchmakingState('success');
+      if (targetGame === 'poker' && onStartPokerGame) {
+        onStartPokerGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
+      } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
+        onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
+      } else {
+        onStartGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
+      }
       return true;
     } catch (error) {
       openingPublicMatchRef.current = '';

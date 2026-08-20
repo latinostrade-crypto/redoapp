@@ -4837,7 +4837,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     stake,
     players,
     createdAt,
-    connectionDeadlineAt: (mode === 'pvp' || waitsForPrivatePlayers) ? createdAt + 15_000 : undefined,
+    connectionDeadlineAt: (mode === 'pvp' || waitsForPrivatePlayers) ? createdAt + 60_000 : undefined,
     playStartedAt: waitsForPlayers ? null : createdAt,
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
@@ -4859,6 +4859,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     user.matchmakingFailureAt = null;
     user.matchmakingFailureReason = null;
     activeMatchByUser.set(queuedPlayer.userId, matchId);
+    markMatchPlayerConnected(activeMatch, queuedPlayer.userId);
     schedulePersist({ userId: queuedPlayer.userId });
   });
   schedulePersist({ matchId });
@@ -4955,7 +4956,7 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   ensureMatchLifecycle(match);
   if (match.mode !== 'pvp' || match.playStartedAt) return true;
   const isTournament = match.matchId.startsWith('tourn-');
-  const timeoutMs = 15_000;
+  const timeoutMs = 60_000;
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
   
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
