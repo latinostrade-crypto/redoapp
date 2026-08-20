@@ -4971,14 +4971,9 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
   const allConnected = connectedPlayers.length === match.gameState.players.length && connectedPlayers.length >= MIN_MATCH_PLAYERS;
 
-  // Bug #2 fix: Start immediately when MIN_MATCH_PLAYERS humans have connected,
-  // even if the match was created for more slots. This prevents indefinite lobby
-  // waits when only 2 of 4 slots are filled and both players are already ready.
+  // Start immediately when MIN_MATCH_PLAYERS humans have connected or all players are connected
   const connectedHumanCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
-  const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS &&
-    !isTournament &&
-    !deadlineReached &&
-    (now - match.createdAt) >= 2_000;
+  const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS && !isTournament;
 
   // If not all matched players are connected and deadline not reached yet, continue waiting in lobby
   // unless we have enough humans connected for a fast start
@@ -7677,7 +7672,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
   joinFailuresMap.delete(lockoutKey);
   const match = room.matchId ? activeMatches.get(room.matchId) : null;
 
-  if (room.players.some((player) => player.userId === userId)) {
+  if (room.players.some((player) => isSameUser(player.userId, userId)) || (match && match.players.some((player) => isSameUser(player.userId, userId)))) {
     const user = getUser(userId, walletAddress);
     activeMatchByUser.set(userId, match ? match.matchId : (room.matchId || ''));
     if (match) {

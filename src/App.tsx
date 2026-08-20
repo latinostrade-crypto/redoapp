@@ -966,7 +966,9 @@ export default function App() {
                         if (activeMatch.roomCode) {
                           const tgBotUsername = 'redo_appbot';
                           const appShortName = 'app';
-                          const link = `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${tgBotUsername}/${appShortName}?startapp=room_${activeMatch.roomCode}`)}&text=${encodeURIComponent('Join my REDOapp match! Let’s play! 🎴')}`;
+                          const gameType = activeMatch.gameType || activeGameType || 'uno';
+                          const startParam = `room_${gameType}_${activeMatch.roomCode}`;
+                          const link = `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${tgBotUsername}/${appShortName}?startapp=${startParam}`)}&text=${encodeURIComponent('Join my REDOapp match! Let’s play! 🎴')}`;
                           const tg = (window as any).Telegram?.WebApp;
                           if (tg?.openTelegramLink) {
                             tg.openTelegramLink(link);

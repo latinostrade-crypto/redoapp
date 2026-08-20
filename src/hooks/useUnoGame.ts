@@ -24,141 +24,8 @@ import {
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
-import { apiRequest, buildAuthenticatedUrl, getSessionToken, isLocal, buildAuthHeaders } from '../utils/api';
-import { createPublicMatch, createPrivateMatch, joinMatch, clearMatch } from '../utils/matchmaking';
-
-function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: GameState }> {
-  return new Promise((resolve, reject) => {
-    const requestId = `match-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const url = new URL(buildAuthenticatedUrl(`/api/matches/state-beacon/${encodeURIComponent(matchId)}`));
-    url.searchParams.set('responseMode', 'iframe');
-    url.searchParams.set('bridgeRequestId', requestId);
-    url.searchParams.set('parentOrigin', window.location.origin);
-    const expectedOrigin = url.origin;
-    const iframe = document.createElement('iframe');
-    let timeoutId = 0;
-
-    const cleanup = () => {
-      window.clearTimeout(timeoutId);
-      window.removeEventListener('message', onMessage);
-      iframe.remove();
-    };
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
-      const data = event.data as { source?: string; requestId?: string; payload?: { gameState?: GameState } } | null;
-      if (data?.source !== 'redoapp-match-state-bridge' || data.requestId !== requestId || !data.payload?.gameState) return;
-      cleanup();
-      resolve(data.payload as { gameState: GameState });
-    };
-
-    timeoutId = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('Match state bridge timed out.'));
-    }, 12_000);
-    iframe.setAttribute('aria-hidden', 'true');
-    // iOS WKWebView may defer navigation for display:none frames until the
-    // next visibility/layout event. Keep the bridge rendered offscreen so the
-    // first authoritative table state arrives without a manual page reload.
-    iframe.tabIndex = -1;
-    iframe.style.position = 'fixed';
-    iframe.style.width = '1px';
-    iframe.style.height = '1px';
-    iframe.style.left = '-10000px';
-    iframe.style.top = '0';
-    iframe.style.opacity = '0';
-    iframe.style.pointerEvents = 'none';
-    iframe.style.border = '0';
-    iframe.src = url.toString();
-    iframe.addEventListener('error', () => {
-      cleanup();
-      reject(new Error('Match state bridge failed to load.'));
-    }, { once: true });
-    window.addEventListener('message', onMessage);
-    document.body.appendChild(iframe);
-  });
-}
-
-function fetchRemoteMatchStateViaSameOriginBridge(matchId: string): Promise<{ gameState: GameState }> {
-  return new Promise((resolve, reject) => {
-    const requestId = `same-origin-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const url = new URL(buildAuthenticatedUrl(`/api/matches/state-beacon/${encodeURIComponent(matchId)}`));
-    url.searchParams.set('responseMode', 'iframe');
-    url.searchParams.set('bridgeRequestId', requestId);
-    url.searchParams.set('parentOrigin', window.location.origin);
-    url.searchParams.set('requestId', requestId);
-    const iframe = document.createElement('iframe');
-    iframe.setAttribute('aria-hidden', 'true');
-    iframe.tabIndex = -1;
-    iframe.style.position = 'fixed';
-    iframe.style.width = '1px';
-    iframe.style.height = '1px';
-    iframe.style.left = '-10000px';
-    iframe.style.top = '0';
-    iframe.style.opacity = '0';
-    iframe.style.pointerEvents = 'none';
-    iframe.style.border = '0';
-    const cleanup = () => {
-      window.clearTimeout(timeoutId);
-      window.removeEventListener('message', onMessage);
-      iframe.remove();
-    };
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== url.origin || event.source !== iframe.contentWindow) return;
-      const data = event.data as { source?: string; requestId?: string; payload?: { gameState?: GameState } } | null;
-      if (data?.source !== 'redoapp-match-state-bridge' || data.requestId !== requestId || !data.payload?.gameState) return;
-      cleanup();
-      resolve(data.payload as { gameState: GameState });
-    };
-    const timeoutId = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('Same-origin match state bridge timed out.'));
-    }, 8_000);
-    iframe.src = url.toString();
-    iframe.addEventListener('error', () => {
-      cleanup();
-      reject(new Error('Same-origin match state bridge failed to load.'));
-    }, { once: true });
-    window.addEventListener('message', onMessage);
-    document.body.appendChild(iframe);
-  });
-}
-
-async function fetchRemoteMatchStateViaSameOriginJson(
-  matchId: string,
-  timeoutMs = 6_000,
-): Promise<{ gameState: GameState }> {
-  const params = new URLSearchParams({
-    requestId: `same-origin-json-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-  });
-
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const url = buildAuthenticatedUrl(`/api/matches/state-beacon/${encodeURIComponent(matchId)}`, params);
-    const response = await fetch(
-      url,
-      {
-        method: 'GET',
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/json',
-          ...buildAuthHeaders(),
-        },
-        signal: controller.signal,
-      },
-    );
-    const payload = await response.json() as { gameState?: GameState; error?: string };
-    if (!response.ok) {
-      throw new Error(`${payload.error || 'Match state request failed.'} [${response.status} match-state]`);
-    }
-    if (!payload.gameState) {
-      throw new Error('Match state response is incomplete.');
-    }
-    return payload as { gameState: GameState };
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
+import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
+import { clearMatch } from '../utils/matchmaking';
 
 function isCompleteRemoteTableState(gameState: GameState, isSpectator = false) {
   return gameState.phase === 'game_over'
@@ -330,33 +197,10 @@ export function useUnoGame() {
     remoteUserIdRef.current = userIdForFetch || 'spectator';
 
     try {
-      let result: { gameState?: GameState; settled?: boolean; status?: string };
-      if (isSpectatorSession) {
-        result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
-          `/api/matches/state/${encodeURIComponent(matchIdToFetch)}`,
-          { timeoutMs: 8_000 },
-        );
-      } else {
-        const isLocalHost = isLocal;
-        try {
-          result = isLocalHost
-            ? await fetchRemoteMatchStateViaBridge(matchIdToFetch)
-            : await fetchRemoteMatchStateViaSameOriginJson(matchIdToFetch);
-        } catch {
-          try {
-            result = await fetchRemoteMatchStateViaSameOriginBridge(matchIdToFetch);
-          } catch {
-            try {
-              result = await fetchRemoteMatchStateViaBridge(matchIdToFetch);
-            } catch {
-              result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
-                `/api/matches/state/${encodeURIComponent(matchIdToFetch)}`,
-                { timeoutMs: 8_000 },
-              );
-            }
-          }
-        }
-      }
+      const result = await apiRequest<{ gameState?: GameState; settled?: boolean; status?: string }>(
+        `/api/matches/state/${encodeURIComponent(matchIdToFetch)}`,
+        { timeoutMs: 8_000, retryOnNetworkError: true }
+      );
 
       if (result.settled || result.status === 'finished') {
         if (isSpectatorSession) {
@@ -753,7 +597,6 @@ export function useUnoGame() {
 
     if (mode === 'pvp' || mode === 'private') {
       try {
-        let initialRemoteState: GameState | null = null;
         // Determine effective user ID
         const effectiveUserId =
           typeof window !== 'undefined'
@@ -763,28 +606,22 @@ export function useUnoGame() {
             : 'player';
         remoteUserIdRef.current = effectiveUserId;
 
-        let matchInfo: { matchId: string } | undefined;
-        // Attempt to join an existing match if matchId is resolved
         if (resolvedMatchId) {
-          const joinRes = await joinMatch(resolvedMatchId, effectiveUserId);
-          if (joinRes.success) {
-            initialRemoteState = joinRes.state as GameState;
-            matchInfo = { matchId: resolvedMatchId };
-          }
-        }
-        // If no existing match, create a new one
-        if (!matchInfo) {
-          if (mode === 'pvp') {
-            const publicMatch = await createPublicMatch('uno', stakeAmount);
-            matchInfo = { matchId: publicMatch.matchId };
-          } else {
-            // Private match, ensure a room code exists
-            const code = roomCode ?? `room-${Math.random().toString(36).slice(2, 8)}`;
-            const privateMatch = await createPrivateMatch('uno', stakeAmount, code);
-            matchInfo = { matchId: privateMatch.matchId };
-            roomCode = code; // update variable for later persistence
-          }
-          resolvedMatchId = matchInfo.matchId;
+          remoteMatchIdRef.current = resolvedMatchId;
+          try {
+            const raw = localStorage.getItem('redoapp_active_match');
+            const existing = raw ? JSON.parse(raw) : null;
+            localStorage.setItem('redoapp_active_match', JSON.stringify({
+              ...(existing || {}),
+              matchId: resolvedMatchId,
+              mode,
+              gameType: 'uno',
+              stake: stakeAmount,
+              roomCode,
+              currentUserId: effectiveUserId,
+              createdAt: existing?.createdAt || Date.now(),
+            }));
+          } catch {}
         }
 
         setRemoteSessionActive(true);
@@ -800,7 +637,7 @@ export function useUnoGame() {
           realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
           privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
         }));
-        setGameState(initialRemoteState || {
+        setGameState({
           deck: [],
           discardPile: [],
           players: [],
@@ -816,6 +653,7 @@ export function useUnoGame() {
           dealerId: 'ai1',
           consecutiveDraws: 0,
           accusablePlayers: [],
+          waitingForPlayers: true,
         });
         syncRemoteMatchState();
         speechBubbleTimeoutRefs.current = {};
@@ -823,7 +661,7 @@ export function useUnoGame() {
         aiTurnHandledRef.current = null;
         return;
       } catch (error) {
-        console.error(error);
+        console.error('Error starting remote UNO game:', error);
       }
     }
 
