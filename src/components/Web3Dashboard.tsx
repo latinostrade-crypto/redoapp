@@ -3825,40 +3825,55 @@ export function Web3Dashboard({
 
 
       {/* Active Match Reconnection Banner */}
-      {activeProfile?.activeMatch && !activeProfile.activeMatch.settled && (
-        <div className="w-full bg-[#181828] border-2 border-[#00ff66] p-2.5 rounded-none flex items-center justify-between gap-2 shadow-[0_0_12px_rgba(0,255,102,0.25)] animate-pulse">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-lg shrink-0">🎮</span>
-            <div className="min-w-0">
-              <div className="text-[10px] font-black uppercase text-[#00ff66] font-mono truncate">
-                MATCH IN PROGRESS ({((activeProfile.activeMatch as any).gameType || 'uno').toUpperCase()})
-              </div>
-              <div className="text-[8px] text-slate-300 font-mono truncate">
-                Stake: {activeProfile.activeMatch.stake} TKT • Tap to rejoin table!
+      {(() => {
+        let matchToRejoin = activeProfile?.activeMatch;
+        if (!matchToRejoin) {
+          try {
+            const raw = localStorage.getItem('redoapp_active_match');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed.matchId && Date.now() - Number(parsed.createdAt || 0) < 300_000) {
+                matchToRejoin = parsed;
+              }
+            }
+          } catch {}
+        }
+        if (!matchToRejoin || (matchToRejoin as any).settled) return null;
+
+        return (
+          <div className="w-full bg-[#181828] border-2 border-[#00ff66] p-2.5 rounded-none flex items-center justify-between gap-2 shadow-[0_0_12px_rgba(0,255,102,0.25)] animate-pulse">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-lg shrink-0">🎮</span>
+              <div className="min-w-0">
+                <div className="text-[10px] font-black uppercase text-[#00ff66] font-mono truncate">
+                  MATCH IN PROGRESS ({((matchToRejoin as any).gameType || 'uno').toUpperCase()})
+                </div>
+                <div className="text-[8px] text-slate-300 font-mono truncate">
+                  Stake: {matchToRejoin.stake} TKT • Tap to rejoin table!
+                </div>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                sound.playShuffle();
+                openPublicMatch({
+                  status: 'ready',
+                  matchId: matchToRejoin!.matchId,
+                  mode: matchToRejoin!.mode,
+                  stake: matchToRejoin!.stake,
+                  gameType: (matchToRejoin as any).gameType || 'uno',
+                  players: matchToRejoin!.players,
+                  gameState: (matchToRejoin as any).gameState,
+                }, matchToRejoin!.stake);
+              }}
+              className="shrink-0 px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer"
+            >
+              RECONNECT ➔
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              sound.playShuffle();
-              const match = activeProfile.activeMatch!;
-              openPublicMatch({
-                status: 'ready',
-                matchId: match.matchId,
-                mode: match.mode,
-                stake: match.stake,
-                gameType: (match as any).gameType || 'uno',
-                players: match.players,
-                gameState: match.gameState,
-              }, match.stake);
-            }}
-            className="shrink-0 px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer"
-          >
-            RECONNECT ➔
-          </button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
@@ -5365,11 +5380,17 @@ export function Web3Dashboard({
                       </div>
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                          {matchmakingState === 'joining' ? 'CONNECTING TO QUEUE' : 'QUEUE ACTIVE'}
+                          {matchmakingState === 'joining'
+                            ? 'CONNECTING TO QUEUE'
+                            : queueLength >= 2
+                            ? '✨ OPPONENT FOUND! PREPARING TABLE...'
+                            : 'QUEUE ACTIVE'}
                         </h3>
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                           {matchmakingState === 'joining'
                             ? `You are ready. Players: ${queueLength}/${MIN_MATCH_PLAYERS} minimum. Connecting securely to the match server…`
+                            : queueLength >= 2
+                            ? `Opponent found! Connecting table and starting match in up to 15s...`
                             : selectedStake === 0
                               ? `Searching for free players (${queueLength}/${MAX_MATCH_PLAYERS}). Table starts when another player joins or auto-fills in 20s.`
                               : `Searching for real players (${queueLength}/${MAX_MATCH_PLAYERS}). Ticket games are strict PVP.`}
@@ -5866,10 +5887,16 @@ export function Web3Dashboard({
                     </div>
                     <div className="space-y-0.5">
                       <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
-                        {matchmakingState === 'joining' ? 'CONNECTING TO POKER QUEUE' : 'POKER QUEUE ACTIVE'}
+                        {matchmakingState === 'joining'
+                          ? 'CONNECTING TO POKER QUEUE'
+                          : queueLength >= 2
+                          ? '✨ OPPONENT FOUND! PREPARING POKER TABLE...'
+                          : 'POKER QUEUE ACTIVE'}
                       </h3>
                       <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                        Searching for real opponents ({queueLength}/4). Ticket games are strict PVP with NO bots.
+                        {queueLength >= 2
+                          ? `Opponent found! Connecting table and starting poker match in up to 15s...`
+                          : `Searching for real opponents (${queueLength}/4). Ticket games are strict PVP with NO bots.`}
                       </p>
                     </div>
                     <button
@@ -6109,10 +6136,16 @@ export function Web3Dashboard({
                     </div>
                     <div className="space-y-0.5">
                       <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                        {matchmakingState === 'joining' ? 'CONNECTING TO BLACKJACK QUEUE' : 'BLACKJACK QUEUE ACTIVE'}
+                        {matchmakingState === 'joining'
+                          ? 'CONNECTING TO BLACKJACK QUEUE'
+                          : queueLength >= 2
+                          ? '✨ OPPONENT FOUND! PREPARING BLACKJACK TABLE...'
+                          : 'BLACKJACK QUEUE ACTIVE'}
                       </h3>
                       <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                        Searching for real opponents ({queueLength}/4). 100 Chips bankroll, 5 hands elimination match.
+                        {queueLength >= 2
+                          ? `Opponent found! Connecting table and starting blackjack match in up to 15s...`
+                          : `Searching for real opponents (${queueLength}/4). 100 Chips bankroll, 5 hands elimination match.`}
                       </p>
                     </div>
                     <button

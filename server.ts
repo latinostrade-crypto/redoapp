@@ -4865,6 +4865,8 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     user.matchmakingFailureAt = null;
     user.matchmakingFailureReason = null;
     activeMatchByUser.set(queuedPlayer.userId, matchId);
+    if (user.userId) activeMatchByUser.set(user.userId, matchId);
+    if (user.telegramId) activeMatchByUser.set(`tg_${user.telegramId}`, matchId);
     markMatchPlayerConnected(activeMatch, queuedPlayer.userId);
     schedulePersist({ userId: queuedPlayer.userId });
   });
@@ -5203,6 +5205,15 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     for (const [uid, mId] of activeMatchByUser.entries()) {
       if (isSameUser(uid, userId)) {
         activeMatchId = mId;
+        break;
+      }
+    }
+  }
+  if (!activeMatchId) {
+    for (const match of activeMatches.values()) {
+      if (!match.settled && match.players.some((p) => isSameUser(p.userId, userId))) {
+        activeMatchId = match.matchId;
+        activeMatchByUser.set(userId, match.matchId);
         break;
       }
     }

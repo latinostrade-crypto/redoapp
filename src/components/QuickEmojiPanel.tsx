@@ -40,41 +40,25 @@ export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, c
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.85, y: 12 }}
+            initial={{ opacity: 0, scale: 0.85, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.85, y: 12 }}
-            transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-            className="absolute bottom-12 left-0 mb-1 bg-[#0c1017]/95 backdrop-blur-xl border-2 border-[#00d2ff] rounded-2xl p-2 shadow-[0_8px_32px_rgba(0,0,0,0.9)] font-mono select-none w-64 z-50"
+            exit={{ opacity: 0, scale: 0.85, y: 10 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+            className="absolute bottom-12 left-0 mb-1 bg-[#090d14]/95 backdrop-blur-xl border border-slate-800 rounded-2xl p-2 shadow-[0_8px_25px_rgba(0,0,0,0.85)] font-mono select-none w-56 z-50"
           >
-            <div className="flex justify-between items-center px-1 mb-1.5 border-b border-slate-800 pb-1">
-              <span className="text-[9px] font-black text-[#00d2ff] uppercase tracking-wider">
-                :: STICKERS ::
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsOpen(false)}
-                className="text-slate-400 hover:text-white p-0.5"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-4 gap-1.5">
               {EMOJI_LIST.map((emoji) => (
                 <button
                   key={emoji.id}
                   type="button"
                   onClick={() => handleSelect(emoji)}
-                  className="group relative flex flex-col items-center justify-center p-1 bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 hover:border-[#00d2ff] rounded-xl active:scale-90 transition-all shadow-md cursor-pointer aspect-square"
+                  className="flex items-center justify-center p-1 bg-transparent hover:bg-slate-800/60 rounded-xl active:scale-90 transition-transform cursor-pointer aspect-square"
                   title={emoji.label}
                 >
                   <LottieSticker
                     path={emoji.file}
-                    className="w-10 h-10 group-hover:scale-110 transition-transform duration-150"
+                    className="w-10 h-10 hover:scale-110 transition-transform duration-150"
                   />
-                  <span className="text-[7.5px] font-black text-slate-400 group-hover:text-[#00d2ff] uppercase leading-none mt-0.5 truncate max-w-full">
-                    {emoji.label}
-                  </span>
                 </button>
               ))}
             </div>
@@ -117,11 +101,11 @@ export const EmojiDisplayBadge: React.FC<{ emoji: EmojiItem | string; className?
 
   return (
     <motion.div
-      initial={{ scale: 0, y: 15, rotate: -8 }}
-      animate={{ scale: [1, 1.2, 1], y: [-5, -18, -25], rotate: [0, 4, 0] }}
+      initial={{ scale: 0, y: 10, opacity: 0 }}
+      animate={{ scale: [1, 1.2, 1], y: [-5, -18, -25], opacity: 1 }}
       exit={{ scale: 0, opacity: 0, y: -35 }}
       transition={{ duration: 2.8, ease: 'easeOut' }}
-      className={`absolute -top-14 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center p-1.5 rounded-2xl bg-black/90 border-2 border-[#00d2ff] shadow-[0_0_16px_rgba(0,210,255,0.7)] pointer-events-none ${className}`}
+      className={`absolute -top-14 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center pointer-events-none select-none drop-shadow-[0_4px_12px_rgba(0,0,0,0.6)] ${className}`}
     >
       <LottieSticker path={item.file} className="w-14 h-14" />
     </motion.div>
