@@ -7333,7 +7333,7 @@ app.get('/api/matchmaker/status-beacon', requireAuth, handleMatchmakerStatus);
 // iOS/iMe WebViews. Unlike SSE through a Static Site rewrite, this request
 // completes normally as soon as the authoritative matchId exists, so neither
 // CDN streaming behaviour nor throttled client polling can hide the table.
-app.get('/api/matchmaker/wait-beacon', requireAuth, rateLimitMiddleware(12, 60_000, 'user'), (req: AuthenticatedRequest, res) => {
+app.get('/api/matchmaker/wait-beacon', requireAuth, rateLimitMiddleware(120, 60_000, 'user'), (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
   const requestedWaitMs = Number(req.query.waitMs);
   const waitMs = Number.isFinite(requestedWaitMs)
