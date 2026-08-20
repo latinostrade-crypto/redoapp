@@ -24,7 +24,7 @@ import {
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
-import { apiRequest, buildAuthenticatedUrl, getSessionToken, isLocal } from '../utils/api';
+import { apiRequest, buildAuthenticatedUrl, getSessionToken, isLocal, buildAuthHeaders } from '../utils/api';
 
 function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: GameState }> {
   return new Promise((resolve, reject) => {
@@ -139,7 +139,10 @@ async function fetchRemoteMatchStateViaSameOriginJson(
       {
         method: 'GET',
         cache: 'no-store',
-        headers: { Accept: 'application/json' },
+        headers: {
+          Accept: 'application/json',
+          ...buildAuthHeaders(),
+        },
         signal: controller.signal,
       },
     );
@@ -1513,7 +1516,7 @@ const getNextActiveClientPlayerIndex = (players: Player[], currentIndex: number,
         if (activeMatch.gameType && activeMatch.gameType !== 'uno') {
           return;
         }
-        if (activeMatch.createdAt && Date.now() - Number(activeMatch.createdAt) > 3 * 60 * 1000) {
+        if (activeMatch.createdAt && Date.now() - Number(activeMatch.createdAt) > 15 * 60 * 1000) {
           try { localStorage.removeItem('redoapp_active_match'); } catch {}
           return;
         }
@@ -1524,10 +1527,11 @@ const getNextActiveClientPlayerIndex = (players: Player[], currentIndex: number,
           return;
         }
         if (activeMatch.matchId) {
+          remoteMatchIdRef.current = activeMatch.matchId;
+          remoteUserIdRef.current = activeMatch.currentUserId || (activeMatch.isSpectator ? 'spectator' : 'player');
           if (activeMatch.isSpectator) {
             setIsSpectator(true);
             isSpectatorRef.current = true;
-            remoteUserIdRef.current = 'spectator';
           }
           setGameMode(activeMatch.mode || 'pvp');
           setActiveStake(activeMatch.stake || 0);
