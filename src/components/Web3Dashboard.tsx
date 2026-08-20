@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, buildAuthHeaders, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -118,13 +118,7 @@ function buildTelegramMiniAppSchemeLink(startParam: string) {
 }
 
 function buildMatchmakerDeliveryUrl(endpoint: 'status' | 'status-beacon' | 'stream' | 'wait-beacon', params?: URLSearchParams) {
-  const base = `${API_BASE_URL}/api/matchmaker/${endpoint}`;
-  const query = new URLSearchParams(params);
-  const sessionToken = getSessionToken();
-  const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
-  if (telegramInitData) query.set('telegramInitData', telegramInitData);
-  if (sessionToken) query.set('sessionToken', sessionToken);
-  return query.size ? `${base}?${query.toString()}` : base;
+  return buildAuthenticatedUrl(`/api/matchmaker/${endpoint}`, params);
 }
 
 async function getPublicQueueStatusViaSameOrigin(): Promise<PublicQueueStatus> {
@@ -135,7 +129,10 @@ async function getPublicQueueStatusViaSameOrigin(): Promise<PublicQueueStatus> {
     const response = await fetch(buildMatchmakerDeliveryUrl('status', params), {
       method: 'GET',
       cache: 'no-store',
-      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        ...buildAuthHeaders(),
+      },
       signal: controller.signal,
     });
     const rawBody = await response.text();
