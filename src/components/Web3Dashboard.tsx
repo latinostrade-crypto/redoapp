@@ -435,10 +435,32 @@ function createDepositIntentViaBridge(payload: { walletAddress: string; ticketAm
   });
 }
 
-function buildPrivateRoomSharePayload(roomCode: string) {
+function parseRoomStartParam(rawParam?: string, searchParam?: string): { code: string; gameType?: 'uno' | 'poker' | 'blackjack' } {
+  let raw = (searchParam || rawParam || '').trim();
+  if (!raw) return { code: '' };
+  if (raw.toLowerCase().startsWith('room_')) {
+    raw = raw.slice(5);
+  }
+  let gameType: 'uno' | 'poker' | 'blackjack' | undefined;
+  if (raw.toLowerCase().startsWith('poker_')) {
+    gameType = 'poker';
+    raw = raw.slice(6);
+  } else if (raw.toLowerCase().startsWith('blackjack_')) {
+    gameType = 'blackjack';
+    raw = raw.slice(10);
+  } else if (raw.toLowerCase().startsWith('uno_')) {
+    gameType = 'uno';
+    raw = raw.slice(4);
+  }
+  const code = raw.trim().toUpperCase();
+  return { code, gameType };
+}
+
+function buildPrivateRoomSharePayload(roomCode: string, gameType: 'uno' | 'poker' | 'blackjack' = 'uno') {
+  const startParam = `room_${gameType}_${roomCode}`;
   return {
-    telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
-    telegramSchemeLink: buildTelegramMiniAppSchemeLink(`room_${roomCode}`),
+    telegramLink: buildTelegramMiniAppLink(startParam),
+    telegramSchemeLink: buildTelegramMiniAppSchemeLink(startParam),
   };
 }
 
@@ -627,20 +649,13 @@ export function Web3Dashboard({
   resetStats,
   onSpectateMatch,
 }: Web3DashboardProps) {
-  const initialLaunchRoomCodeRef = useRef('');
-  if (!initialLaunchRoomCodeRef.current) {
+  const initialLaunchRoomParsedRef = useRef<{ code: string; gameType?: 'uno' | 'poker' | 'blackjack' }>({ code: '' });
+  if (!initialLaunchRoomParsedRef.current.code) {
     const startApp = getTelegramStartParam();
-    const roomFromSearch = new URLSearchParams(window.location.search).get('room');
-    let code = roomFromSearch || '';
-    if (!code && startApp) {
-      if (startApp.startsWith('room_')) {
-        code = startApp.slice(5);
-      } else if (/^[A-Z0-9]{6,10}$/i.test(startApp) && !startApp.startsWith('ref_') && !startApp.startsWith('tourn')) {
-        code = startApp;
-      }
-    }
-    initialLaunchRoomCodeRef.current = code.trim().toUpperCase();
+    const roomFromSearch = new URLSearchParams(window.location.search).get('room') || undefined;
+    initialLaunchRoomParsedRef.current = parseRoomStartParam(startApp, roomFromSearch);
   }
+  const initialLaunchRoomCodeRef = useRef(initialLaunchRoomParsedRef.current.code);
 
   const initialLaunchTournamentMatchIdRef = useRef('');
   if (!initialLaunchTournamentMatchIdRef.current) {
@@ -669,6 +684,9 @@ export function Web3Dashboard({
   const launchTournamentMatchConsumedRef = useRef(false);
 
   const [currentTab, setCurrentTab] = useState<DashboardTab>(() => {
+    if (initialLaunchRoomParsedRef.current.code) {
+      return 'pvp';
+    }
     const startApp = getTelegramStartParam();
     if (
       initialLaunchTournamentMatchIdRef.current ||
@@ -682,8 +700,12 @@ export function Web3Dashboard({
     const savedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
     return savedTab === 'events' || savedTab === 'pvp' || savedTab === 'rewards' ? savedTab : 'profile';
   });
-  const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>('public');
-  const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>('uno');
+  const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>(() => {
+    return initialLaunchRoomParsedRef.current.code ? 'private' : 'public';
+  });
+  const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>(() => {
+    return initialLaunchRoomParsedRef.current.gameType || 'uno';
+  });
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
 
   useEffect(() => {
@@ -1583,7 +1605,8 @@ export function Web3Dashboard({
             type="button"
             onClick={() => {
               sound.playPop();
-              const roomLink = generatedLink || (resolvedCode ? buildPrivateRoomSharePayload(resolvedCode).telegramLink : '');
+              const gameType = (gameTitle.toLowerCase() === 'poker' ? 'poker' : gameTitle.toLowerCase() === 'blackjack' ? 'blackjack' : 'uno') as 'uno' | 'poker' | 'blackjack';
+              const roomLink = generatedLink || (resolvedCode ? buildPrivateRoomSharePayload(resolvedCode, gameType).telegramLink : '');
               const text = encodeURIComponent(`Join my private ${gameTitle} room: ${resolvedCode}! 🃏💥`);
               const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(roomLink)}&text=${text}`;
               const tg = (window as any).Telegram?.WebApp;
@@ -1726,6 +1749,26 @@ export function Web3Dashboard({
       return false;
     });
   }, [authReady, currentUserId, userName, selectedAvatar, rawAddress, pvpGameTab, privateJoinCode, privateRoomCode, applyPrivateRoomState]);
+
+  useEffect(() => {
+    const parsed = initialLaunchRoomParsedRef.current;
+    if (parsed.code) {
+      if (parsed.gameType) {
+        setPvpGameTab(parsed.gameType);
+        setCurrentTab('pvp');
+        setPvpSubMode('private');
+      }
+      apiRequest<PrivateRoomResponse>(`/api/private-rooms/status/${encodeURIComponent(parsed.code)}`, { timeoutMs: 4000 })
+        .then((res) => {
+          if (res?.gameType) {
+            setPvpGameTab(res.gameType);
+            setCurrentTab('pvp');
+            setPvpSubMode('private');
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
 
   const autoJoinConsumedRef = useRef(false);
   useEffect(() => {
@@ -1959,7 +2002,7 @@ export function Web3Dashboard({
 
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
     const requestedRoomCode = generatePrivateRoomCode();
-    const fallbackPayload = buildPrivateRoomSharePayload(requestedRoomCode);
+    const fallbackPayload = buildPrivateRoomSharePayload(requestedRoomCode, pvpGameTab);
 
     // Apply waiting state IMMEDIATELY so the room lobby & share buttons display without any network lag
     setPrivateRoomCode(requestedRoomCode);
@@ -1995,7 +2038,7 @@ export function Web3Dashboard({
       if (result.roomCode) {
         setPrivateRoomCode(result.roomCode);
         setPrivateJoinCode(result.roomCode);
-        const link = result.telegramLink || buildPrivateRoomSharePayload(result.roomCode).telegramLink;
+        const link = result.telegramLink || buildPrivateRoomSharePayload(result.roomCode, pvpGameTab).telegramLink;
         setGeneratedLink(link);
       }
       if (result.status === 'started') {

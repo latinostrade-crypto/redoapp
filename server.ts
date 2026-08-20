@@ -5074,21 +5074,28 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
       bjPlayer.disconnectedAt = null;
     }
   }
-  const player = match.gameState.players.find((entry) => entry.userId === userId);
-  if (!player) return;
-  const wasAi = player.isAi;
-  player.isAi = false;
-  player.isConnected = true;
-  player.hasConnected = true;
-  player.lastSeenAt = Date.now();
-  player.disconnectedAt = null;
-  activeMatchByUser.set(userId, match.matchId);
-  if (wasAi) {
-    match.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected and took back control.`, 'info'), ...match.gameState.logs].slice(0, 50);
+  const qPlayer = match.players.find((entry) => entry.userId === userId);
+  if (qPlayer) {
+    qPlayer.isAi = false;
   }
+  const player = match.gameState.players.find((entry) => entry.userId === userId);
+  if (player) {
+    const wasAi = player.isAi;
+    player.isAi = false;
+    player.isConnected = true;
+    player.hasConnected = true;
+    player.lastSeenAt = Date.now();
+    player.disconnectedAt = null;
+    if (wasAi) {
+      match.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected and took back control.`, 'info'), ...match.gameState.logs].slice(0, 50);
+    }
+  }
+  activeMatchByUser.set(userId, match.matchId);
   schedulePersist({ matchId: match.matchId });
-  broadcastMatch(match.matchId);
-  maybeStartPublicMatch(match);
+  const started = maybeStartPublicMatch(match);
+  if (!started) {
+    broadcastMatch(match.matchId);
+  }
 }
 
 
@@ -5388,9 +5395,20 @@ function subscribeToChannel(store: Map<string, Set<Response>>, key: string, resp
   });
 }
 
+function normalizePrivateRoomCode(raw: string | undefined): string {
+  if (!raw) return '';
+  let code = String(raw).trim().toUpperCase();
+  if (code.startsWith('ROOM_')) code = code.slice(5);
+  if (code.startsWith('POKER_')) code = code.slice(6);
+  if (code.startsWith('BLACKJACK_')) code = code.slice(10);
+  if (code.startsWith('UNO_')) code = code.slice(4);
+  return code;
+}
+
 function buildPrivateRoomPayload(room: PrivateRoom) {
   return {
     roomCode: room.roomCode,
+    telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
     stake: room.stake,
     targetPlayers: room.targetPlayers,
     status: room.status,
@@ -7584,7 +7602,8 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     return res.status(403).json({ error: 'Too many failed attempts. Try again later.' });
   }
 
-  const room = privateRooms.get(String(roomCode).toUpperCase());
+  const normalizedCode = normalizePrivateRoomCode(roomCode) || String(roomCode || '').toUpperCase();
+  const room = privateRooms.get(normalizedCode) || privateRooms.get(String(roomCode).toUpperCase());
   if (!room) {
     const cur = failure && Date.now() > failure.lockedUntil ? { count: 0, lockedUntil: 0 } : (failure || { count: 0, lockedUntil: 0 });
     cur.count++;
@@ -7609,13 +7628,14 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     return res.json({
       success: true,
       roomCode: room.roomCode,
-      telegramLink: buildTelegramMiniAppLink(`room_${room.roomCode}`),
+      telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
       targetPlayers: room.targetPlayers,
       playersCount: room.players.length,
       gameType: room.gameType || 'uno',
       status: room.status,
       matchId: room.matchId || null,
       players: room.players,
+      hostUserId: room.hostUserId,
       availableTickets: user.availableTickets,
       heldTickets: user.heldTickets,
       energy: getEnergyState(user),
@@ -7726,7 +7746,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
   return res.json({
     success: true,
     roomCode: room.roomCode,
-    telegramLink: buildTelegramMiniAppLink(`room_${room.roomCode}`),
+    telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
     targetPlayers: room.targetPlayers,
     playersCount: room.players.length,
     gameType: room.gameType || 'uno',
@@ -7747,7 +7767,8 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
     return res.status(400).json({ error: 'Missing private room user id.' });
   }
 
-  const room = privateRooms.get(String(roomCode || '').toUpperCase());
+  const normalizedCode = normalizePrivateRoomCode(roomCode) || String(roomCode || '').toUpperCase();
+  const room = privateRooms.get(normalizedCode) || privateRooms.get(String(roomCode || '').toUpperCase());
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
   }
@@ -7790,13 +7811,13 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
   const userId = getAuthenticatedUserId(req);
   const requestedMatchId = typeof req.body?.matchId === 'string' ? req.body.matchId : '';
   const requestedRoomCode = typeof req.body?.roomCode === 'string'
-    ? req.body.roomCode.trim().toUpperCase()
+    ? normalizePrivateRoomCode(req.body.roomCode)
     : '';
   const mappedMatchId = activeMatchByUser.get(userId) || '';
   const matchId = requestedMatchId || mappedMatchId;
   const match = matchId ? activeMatches.get(matchId) : null;
   const room = requestedRoomCode
-    ? privateRooms.get(requestedRoomCode)
+    ? (privateRooms.get(requestedRoomCode) || privateRooms.get(String(req.body.roomCode).toUpperCase()))
     : Array.from(privateRooms.values()).find((candidate) => candidate.matchId === matchId);
 
   if (!match && !room) {
@@ -7972,7 +7993,8 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
 });
 
 app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
-  const room = privateRooms.get(String(req.params.roomCode).toUpperCase());
+  const normalizedCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
+  const room = privateRooms.get(normalizedCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
   if (!room) {
     return res.status(200).json({ status: 'completed', message: 'Private room has concluded.' });
   }
@@ -7985,6 +8007,7 @@ app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
 
   return res.json({
     roomCode: room.roomCode,
+    telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
     stake: room.stake,
     targetPlayers: room.targetPlayers,
     status: room.status,
@@ -7999,8 +8022,8 @@ app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
 });
 
 app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
-  const roomCode = String(req.params.roomCode).toUpperCase();
-  const room = privateRooms.get(roomCode);
+  const roomCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
+  const room = privateRooms.get(roomCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
   if (!room) {
     return res.status(404).json({ error: 'Private room not found.' });
   }
@@ -8190,7 +8213,8 @@ function handleMatchState(req: AuthenticatedRequest, res: Response) {
     }
     return res.status(404).json({ error: 'Match not found.' });
   }
-  if (activeMatch.gameState.players.some((p) => p.userId === userId)) {
+  const isUserInMatch = activeMatch.players.some((p) => p.userId === userId) || activeMatch.gameState.players.some((p) => p.userId === userId) || Boolean(activeMatch.pokerGameState?.players.some((p) => p.userId === userId)) || Boolean(activeMatch.blackjackGameState?.players.some((p) => p.userId === userId));
+  if (isUserInMatch) {
     markMatchPlayerConnected(activeMatch, userId);
   }
   const state = buildPerspectiveState(activeMatch, userId);
@@ -8226,13 +8250,6 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     }
     return res.status(404).json({ error: 'Match not found.' });
   }
-  if (activeMatch.gameState.players.some((p) => p.userId === userId)) {
-    markMatchPlayerConnected(activeMatch, userId);
-  }
-  const state = buildPerspectiveState(activeMatch, userId);
-  if (!state) {
-    return res.status(403).json({ error: 'User is not part of this match.' });
-  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -8240,22 +8257,18 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   res.flushHeaders?.();
   res.locals.userId = userId;
 
-  // Mark player as connected immediately
-  const player = activeMatch.gameState.players.find(p => p.userId === userId);
-  if (player) {
-    const previouslyDisconnected = player.isConnected === false;
-    player.isConnected = true;
-    player.hasConnected = true;
-    player.lastSeenAt = Date.now();
-    player.disconnectedAt = null;
-    if (previouslyDisconnected) {
-      activeMatch.gameState.logs = [createServerLog(`🔌 ${player.username} reconnected.`, 'info'), ...activeMatch.gameState.logs].slice(0, 50);
-      schedulePersist({ matchId });
-      setTimeout(() => broadcastMatch(matchId), 100);
-    }
+  subscribeToChannel(matchSubscribers, matchId, res);
+
+  const isUserInMatch = activeMatch.players.some((p) => p.userId === userId) || activeMatch.gameState.players.some((p) => p.userId === userId) || Boolean(activeMatch.pokerGameState?.players.some((p) => p.userId === userId)) || Boolean(activeMatch.blackjackGameState?.players.some((p) => p.userId === userId));
+  if (isUserInMatch) {
+    markMatchPlayerConnected(activeMatch, userId);
   }
 
-  subscribeToChannel(matchSubscribers, matchId, res);
+  const state = buildPerspectiveState(activeMatch, userId);
+  if (!state) {
+    return res.status(403).json({ error: 'User is not part of this match.' });
+  }
+
   sendSse(res, 'match-state', state);
 
   res.on('close', () => {

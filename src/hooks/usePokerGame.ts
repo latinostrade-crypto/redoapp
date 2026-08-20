@@ -110,7 +110,11 @@ export function usePokerGame(options?: {
       );
       const state = result.pokerGameState || result.gameState;
       if (state) {
-        setGameState(state);
+        setGameState((prev) => ({
+          ...prev,
+          ...state,
+          waitingForPlayers: state.waitingForPlayers !== undefined ? state.waitingForPlayers : false,
+        }));
         if (typeof state.turnTimeLeft === 'number') {
           setTurnTimeLeft(state.turnTimeLeft);
         }
@@ -813,7 +817,11 @@ export function usePokerGame(options?: {
         const payload = JSON.parse((event as MessageEvent).data);
         const pkState: PokerGameState = payload.pokerGameState || payload.gameState;
         if (pkState) {
-          setGameState(pkState);
+          setGameState((prev) => ({
+            ...prev,
+            ...pkState,
+            waitingForPlayers: pkState.waitingForPlayers !== undefined ? pkState.waitingForPlayers : false,
+          }));
           if (typeof pkState.turnTimeLeft === 'number') {
             setTurnTimeLeft(pkState.turnTimeLeft);
           }
