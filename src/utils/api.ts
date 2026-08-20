@@ -106,16 +106,25 @@ export function buildAuthHeaders(init?: HeadersInit) {
   };
 }
 
-export function buildAuthenticatedUrl(path: string) {
+export function buildAuthenticatedUrl(path: string, extraParams?: URLSearchParams | Record<string, string>) {
   const token = getSessionToken();
   const telegramInitData = getTelegramInitData();
   const storedUserId = typeof window !== 'undefined'
     ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
     : '';
   const params = new URLSearchParams();
-  if (telegramInitData) params.set('telegramInitData', telegramInitData);
-  if (token) params.set('sessionToken', token);
-  if (storedUserId) params.set('userId', storedUserId);
+  if (extraParams) {
+    if (extraParams instanceof URLSearchParams) {
+      extraParams.forEach((val, key) => params.set(key, val));
+    } else {
+      Object.entries(extraParams).forEach(([key, val]) => {
+        if (val !== undefined && val !== null) params.set(key, String(val));
+      });
+    }
+  }
+  if (telegramInitData && !params.has('telegramInitData')) params.set('telegramInitData', telegramInitData);
+  if (token && !params.has('sessionToken')) params.set('sessionToken', token);
+  if (storedUserId && !params.has('userId')) params.set('userId', storedUserId);
   const isAbsolute = path.startsWith('http://') || path.startsWith('https://');
   const isSameOriginRewrite = path.startsWith('/match-api/');
   const targetUrl = isAbsolute || isSameOriginRewrite

@@ -1543,7 +1543,7 @@ export function Web3Dashboard({
       } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
         onStartBlackjackGame('private', resolvedStake, resolvedRoomCode || undefined, result.matchId || undefined);
       } else {
-        onStartGame('private', resolvedStake);
+        onStartGame('private', resolvedStake, resolvedRoomCode || undefined, result.matchId || undefined);
       }
     } else {
       setPrivateRoomStatus('waiting');
@@ -1817,17 +1817,25 @@ export function Web3Dashboard({
 
   const autoJoinConsumedRef = useRef(false);
   useEffect(() => {
-    const code = initialLaunchRoomCodeRef.current?.trim().toUpperCase();
+    const startApp = getTelegramStartParam();
+    const searchParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const roomFromSearch = searchParams?.get('room') || searchParams?.get('join_room') || '';
+    const parsed = parseRoomStartParam(startApp, roomFromSearch);
+    const code = (initialLaunchRoomCodeRef.current || parsed.code || privateJoinCode)?.trim().toUpperCase();
+
     if (code && authReady && !autoJoinConsumedRef.current) {
       autoJoinConsumedRef.current = true;
       initialLaunchRoomCodeRef.current = '';
+      if (parsed.gameType) {
+        setPvpGameTab(parsed.gameType);
+      }
       setCurrentTab('pvp');
       setPvpSubMode('private');
       setPrivateJoinCode(code);
       setPrivateRoomCode(code);
       joinPrivateRoomByCode(code);
     }
-  }, [authReady, joinPrivateRoomByCode]);
+  }, [authReady, joinPrivateRoomByCode, privateJoinCode]);
 
   const createPrivateRoomViaBridge = (payload: {
     userId: string;

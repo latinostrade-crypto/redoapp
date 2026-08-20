@@ -80,16 +80,11 @@ function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: G
 function fetchRemoteMatchStateViaSameOriginBridge(matchId: string): Promise<{ gameState: GameState }> {
   return new Promise((resolve, reject) => {
     const requestId = `same-origin-state-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    const params = new URLSearchParams({
-      responseMode: 'iframe',
-      bridgeRequestId: requestId,
-      parentOrigin: window.location.origin,
-      requestId,
-    });
-    const sessionToken = getSessionToken();
-    const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
-    if (sessionToken) params.set('sessionToken', sessionToken);
-    else if (telegramInitData) params.set('telegramInitData', telegramInitData);
+    const url = new URL(buildAuthenticatedUrl(`/api/matches/state-beacon/${encodeURIComponent(matchId)}`));
+    url.searchParams.set('responseMode', 'iframe');
+    url.searchParams.set('bridgeRequestId', requestId);
+    url.searchParams.set('parentOrigin', window.location.origin);
+    url.searchParams.set('requestId', requestId);
     const iframe = document.createElement('iframe');
     iframe.setAttribute('aria-hidden', 'true');
     iframe.tabIndex = -1;
@@ -107,7 +102,7 @@ function fetchRemoteMatchStateViaSameOriginBridge(matchId: string): Promise<{ ga
       iframe.remove();
     };
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || event.source !== iframe.contentWindow) return;
+      if (event.origin !== url.origin || event.source !== iframe.contentWindow) return;
       const data = event.data as { source?: string; requestId?: string; payload?: { gameState?: GameState } } | null;
       if (data?.source !== 'redoapp-match-state-bridge' || data.requestId !== requestId || !data.payload?.gameState) return;
       cleanup();
@@ -117,7 +112,7 @@ function fetchRemoteMatchStateViaSameOriginBridge(matchId: string): Promise<{ ga
       cleanup();
       reject(new Error('Same-origin match state bridge timed out.'));
     }, 8_000);
-    iframe.src = `/match-api/match-state/${encodeURIComponent(matchId)}?${params.toString()}`;
+    iframe.src = url.toString();
     iframe.addEventListener('error', () => {
       cleanup();
       reject(new Error('Same-origin match state bridge failed to load.'));
@@ -134,24 +129,16 @@ async function fetchRemoteMatchStateViaSameOriginJson(
   const params = new URLSearchParams({
     requestId: `same-origin-json-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
   });
-  const sessionToken = getSessionToken();
-  const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
-  if (sessionToken) params.set('sessionToken', sessionToken);
-  else if (telegramInitData) params.set('telegramInitData', telegramInitData);
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    // This endpoint is rewritten by the static frontend to the backend. It is
-    // deliberately same-origin and header-free: iOS/iMe can suspend the
-    // credentialed cross-origin request and hidden iframe navigation, while a
-    // finite same-origin JSON response completes normally.
+    const url = buildAuthenticatedUrl(`/api/matches/state-beacon/${encodeURIComponent(matchId)}`, params);
     const response = await fetch(
-      `/match-api/match-state/${encodeURIComponent(matchId)}?${params.toString()}`,
+      url,
       {
         method: 'GET',
         cache: 'no-store',
-        credentials: 'same-origin',
         headers: { Accept: 'application/json' },
         signal: controller.signal,
       },

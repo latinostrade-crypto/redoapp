@@ -6988,16 +6988,19 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   // Remove a previous timed-out queue before considering this new request.
   // This keeps stale persisted entries from being revived by a late player.
   expireTimedOutMatchmakingPlayers();
+  const forceFresh = Boolean(input.forceFresh);
   const activeMatchId = activeMatchByUser.get(userId);
   const existingActiveMatch = activeMatchId ? activeMatches.get(activeMatchId) : null;
-  const isGameOver = existingActiveMatch && (
-    existingActiveMatch.settled ||
-    (existingActiveMatch.gameType === 'poker' ? existingActiveMatch.pokerGameState?.stage === 'match_ended' :
-     existingActiveMatch.gameType === 'blackjack' ? existingActiveMatch.blackjackGameState?.stage === 'match_ended' :
-     existingActiveMatch.gameState.phase === 'game_over')
+  const isGameOver = !existingActiveMatch || existingActiveMatch.settled || (
+    existingActiveMatch.gameType === 'poker' ? existingActiveMatch.pokerGameState?.stage === 'match_ended' :
+    existingActiveMatch.gameType === 'blackjack' ? existingActiveMatch.blackjackGameState?.stage === 'match_ended' :
+    existingActiveMatch.gameState.phase === 'game_over'
   );
+  const isDifferentGame = existingActiveMatch && (existingActiveMatch.gameType || 'uno') !== gameType;
   const isStaleMatch = existingActiveMatch && (Date.now() - (existingActiveMatch.playStartedAt || existingActiveMatch.createdAt || Date.now()) > 600_000);
-  if (existingActiveMatch && !isGameOver && !isStaleMatch) {
+  const isUnstartedAbandoned = existingActiveMatch && !existingActiveMatch.playStartedAt && (Date.now() - existingActiveMatch.createdAt > 30_000);
+
+  if (existingActiveMatch && !isGameOver && !isStaleMatch && !isDifferentGame && !isUnstartedAbandoned && !forceFresh) {
     markMatchPlayerConnected(existingActiveMatch, userId);
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
@@ -7007,11 +7010,11 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       matchmaker: tryActivateQueuedMatch(userId),
       replayed: true,
     });
-  } else if (activeMatchId && (isGameOver || isStaleMatch)) {
+  } else if (activeMatchId && (isGameOver || isStaleMatch || isDifferentGame || isUnstartedAbandoned || forceFresh)) {
     activeMatchByUser.delete(userId);
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
-  if (existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode && (existingQueuedPlayer.gameType || 'uno') === gameType) {
+  if (!forceFresh && existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode && (existingQueuedPlayer.gameType || 'uno') === gameType) {
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
