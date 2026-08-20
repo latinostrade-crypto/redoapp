@@ -5375,6 +5375,7 @@ function sendSse(response: Response, event: string, payload: unknown, dedupe = t
   lastSsePayloadByResponse.set(response, eventPayloads);
   response.write(`event: ${event}\n`);
   response.write(`data: ${serializedPayload}\n\n`);
+  (response as any).flush?.();
   realtimeTraffic.framesSent += 1;
   realtimeTraffic.payloadBytesSent += Buffer.byteLength(serializedPayload);
   if (event === 'heartbeat') realtimeTraffic.heartbeatsSent += 1;

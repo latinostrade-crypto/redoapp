@@ -179,7 +179,10 @@ function waitForPublicMatchViaBridge(): Promise<PublicQueueStatus> {
         payload?: PublicQueueStatus;
         error?: string;
       };
-      if (data?.source !== 'redoapp-matchmaker-status-bridge' || data.requestId !== bridgeRequestId) return;
+      if (
+        (data?.source !== 'redoapp-matchmaker-status-bridge' && data?.source !== 'redoapp-matchmaker-watch-bridge')
+        || data.requestId !== bridgeRequestId
+      ) return;
       cleanup();
       if (data.payload) resolve(data.payload);
       else reject(new Error(data.error || 'Public match wait bridge failed.'));
