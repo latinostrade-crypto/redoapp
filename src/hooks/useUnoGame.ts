@@ -25,6 +25,7 @@ import {
 import { sound } from '../utils/sound';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 import { apiRequest, buildAuthenticatedUrl, getSessionToken, isLocal, buildAuthHeaders } from '../utils/api';
+import { createPublicMatch, createPrivateMatch, joinMatch, clearMatch } from '../utils/matchmaking';
 
 function fetchRemoteMatchStateViaBridge(matchId: string): Promise<{ gameState: GameState }> {
   return new Promise((resolve, reject) => {
@@ -719,7 +720,7 @@ export function useUnoGame() {
   }, []);
 
   // Initialize Game Setup
-  const startGame = useCallback((
+  const startGame = useCallback(async (
     selectedAvatar: 'bear' | 'rabbit' | 'fox' | 'panda' | 'cat' | 'koala' = 'bear',
     userName: string = 'Cute Cadet',
     mode: 'offline' | 'pvp' | 'private' = 'offline',
@@ -751,75 +752,79 @@ export function useUnoGame() {
     }
 
     if (mode === 'pvp' || mode === 'private') {
-      let initialRemoteState: GameState | null = null;
       try {
-        const raw = localStorage.getItem('redoapp_active_match');
-        let existingActiveMatch: any = null;
-        if (raw) {
-          existingActiveMatch = JSON.parse(raw);
-        }
-        const effectiveMatchId = resolvedMatchId || existingActiveMatch?.matchId;
-        if (effectiveMatchId) {
-          remoteMatchIdRef.current = effectiveMatchId;
-          const effectiveUserId = existingActiveMatch?.currentUserId || (typeof window !== 'undefined' ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || 'player') : 'player');
-          remoteUserIdRef.current = effectiveUserId;
-          const initialStateIsFresh = Date.now() - Number(existingActiveMatch?.createdAt || 0) < 30_000;
-          if (
-            initialStateIsFresh
-            && existingActiveMatch?.initialGameState
-            && isCompleteRemoteTableState(existingActiveMatch.initialGameState)
-          ) {
-            initialRemoteState = existingActiveMatch.initialGameState as GameState;
+        let initialRemoteState: GameState | null = null;
+        // Determine effective user ID
+        const effectiveUserId =
+          typeof window !== 'undefined'
+            ? (localStorage.getItem('redoapp_current_user_id') ||
+                localStorage.getItem('redoapp_guest_user_id') ||
+                'player')
+            : 'player';
+        remoteUserIdRef.current = effectiveUserId;
+
+        let matchInfo: { matchId: string } | undefined;
+        // Attempt to join an existing match if matchId is resolved
+        if (resolvedMatchId) {
+          const joinRes = await joinMatch(resolvedMatchId, effectiveUserId);
+          if (joinRes.success) {
+            initialRemoteState = joinRes.state as GameState;
+            matchInfo = { matchId: resolvedMatchId };
           }
-          localStorage.setItem('redoapp_active_match', JSON.stringify({
-            ...(existingActiveMatch || {}),
-            matchId: effectiveMatchId,
-            mode,
-            gameType: 'uno',
-            stake: stakeAmount,
-            roomCode: roomCode || existingActiveMatch?.roomCode,
-            currentUserId: effectiveUserId,
-            initialGameState: initialRemoteState || existingActiveMatch?.initialGameState || null,
-            createdAt: existingActiveMatch?.createdAt || Date.now(),
-          }));
         }
+        // If no existing match, create a new one
+        if (!matchInfo) {
+          if (mode === 'pvp') {
+            const publicMatch = await createPublicMatch('uno', stakeAmount);
+            matchInfo = { matchId: publicMatch.matchId };
+          } else {
+            // Private match, ensure a room code exists
+            const code = roomCode ?? `room-${Math.random().toString(36).slice(2, 8)}`;
+            const privateMatch = await createPrivateMatch('uno', stakeAmount, code);
+            matchInfo = { matchId: privateMatch.matchId };
+            roomCode = code; // update variable for later persistence
+          }
+          resolvedMatchId = matchInfo.matchId;
+        }
+
         setRemoteSessionActive(true);
-      } catch (e) {
-        console.error(e);
+
+        setCardsPlayedThisRound(0);
+        setCardsDrawnThisRound(0);
+        setLeaderboard([]);
+        setWildSelectOpen(false);
+        setPendingWildCard(null);
+        saveStats((prev) => ({
+          ...prev,
+          gamesPlayed: prev.gamesPlayed + 1,
+          realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
+          privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
+        }));
+        setGameState(initialRemoteState || {
+          deck: [],
+          discardPile: [],
+          players: [],
+          currentPlayerIndex: 0,
+          direction: 1,
+          activeColor: 'red',
+          activeValue: '0',
+          phase: 'playing',
+          winnerId: null,
+          logs: [createLog('Connecting to live stake table...', 'info')],
+          drawCountAccumulator: 0,
+          unoShoutCooldown: {},
+          dealerId: 'ai1',
+          consecutiveDraws: 0,
+          accusablePlayers: [],
+        });
+        syncRemoteMatchState();
+        speechBubbleTimeoutRefs.current = {};
+        if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
+        aiTurnHandledRef.current = null;
+        return;
+      } catch (error) {
+        console.error(error);
       }
-      setCardsPlayedThisRound(0);
-      setCardsDrawnThisRound(0);
-      setLeaderboard([]);
-      setWildSelectOpen(false);
-      setPendingWildCard(null);
-      saveStats((prev) => ({
-        ...prev,
-        gamesPlayed: prev.gamesPlayed + 1,
-        realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
-        privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
-      }));
-      setGameState(initialRemoteState || {
-        deck: [],
-        discardPile: [],
-        players: [],
-        currentPlayerIndex: 0,
-        direction: 1,
-        activeColor: 'red',
-        activeValue: '0',
-        phase: 'playing',
-        winnerId: null,
-        logs: [createLog('Connecting to live stake table...', 'info')],
-        drawCountAccumulator: 0,
-        unoShoutCooldown: {},
-        dealerId: 'ai1',
-        consecutiveDraws: 0,
-        accusablePlayers: [],
-      });
-      syncRemoteMatchState();
-      speechBubbleTimeoutRefs.current = {};
-      if (aiTurnTimeoutRef.current) clearTimeout(aiTurnTimeoutRef.current);
-      aiTurnHandledRef.current = null;
-      return;
     }
 
     if (mode === 'offline') {
