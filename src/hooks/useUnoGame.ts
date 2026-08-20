@@ -722,11 +722,26 @@ export function useUnoGame() {
     selectedAvatar: 'bear' | 'rabbit' | 'fox' | 'panda' | 'cat' | 'koala' = 'bear',
     userName: string = 'Cute Cadet',
     mode: 'offline' | 'pvp' | 'private' = 'offline',
-    stakeAmount: number = 0
+    stakeAmount: number = 0,
+    roomCode?: string,
+    matchId?: string
   ) => {
     sound.playShuffle();
     setGameMode(mode);
     setActiveStake(stakeAmount);
+
+    let resolvedMatchId = matchId;
+    if (!resolvedMatchId && typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('redoapp_active_match');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if ((!parsed.gameType || parsed.gameType === 'uno') && parsed.matchId) {
+            resolvedMatchId = parsed.matchId;
+          }
+        }
+      } catch {}
+    }
 
     if (mode !== 'pvp' && mode !== 'private') {
       setRemoteSessionActive(false);
@@ -734,22 +749,37 @@ export function useUnoGame() {
       remoteUserIdRef.current = null;
     }
 
-    if ((mode === 'pvp' || mode === 'private') && localStorage.getItem('redoapp_active_match')) {
+    if (mode === 'pvp' || mode === 'private') {
       let initialRemoteState: GameState | null = null;
+      if (resolvedMatchId) {
+        remoteMatchIdRef.current = resolvedMatchId;
+        remoteUserIdRef.current = 'player';
+        try {
+          localStorage.setItem('redoapp_active_match', JSON.stringify({
+            matchId: resolvedMatchId,
+            mode,
+            gameType: 'uno',
+            stake: stakeAmount,
+            roomCode,
+            currentUserId: 'player',
+            createdAt: Date.now(),
+          }));
+        } catch {}
+      }
       try {
-        const activeMatch = JSON.parse(localStorage.getItem('redoapp_active_match')!);
-        if (activeMatch.gameType && activeMatch.gameType !== 'uno') {
-          return;
-        }
-        remoteMatchIdRef.current = activeMatch.matchId;
-        remoteUserIdRef.current = activeMatch.currentUserId;
-        const initialStateIsFresh = Date.now() - Number(activeMatch.createdAt || 0) < 30_000;
-        if (
-          initialStateIsFresh
-          && activeMatch.initialGameState
-          && isCompleteRemoteTableState(activeMatch.initialGameState)
-        ) {
-          initialRemoteState = activeMatch.initialGameState as GameState;
+        const raw = localStorage.getItem('redoapp_active_match');
+        if (raw) {
+          const activeMatch = JSON.parse(raw);
+          if (activeMatch.matchId) remoteMatchIdRef.current = activeMatch.matchId;
+          if (activeMatch.currentUserId) remoteUserIdRef.current = activeMatch.currentUserId;
+          const initialStateIsFresh = Date.now() - Number(activeMatch.createdAt || 0) < 30_000;
+          if (
+            initialStateIsFresh
+            && activeMatch.initialGameState
+            && isCompleteRemoteTableState(activeMatch.initialGameState)
+          ) {
+            initialRemoteState = activeMatch.initialGameState as GameState;
+          }
         }
         setRemoteSessionActive(true);
       } catch (e) {
@@ -902,9 +932,7 @@ export function useUnoGame() {
     saveStats((prev) => ({
       ...prev,
       gamesPlayed: prev.gamesPlayed + 1,
-      practiceGamesPlayed: prev.practiceGamesPlayed + (mode === 'offline' ? 1 : 0),
-      realPvpGamesPlayed: prev.realPvpGamesPlayed + (mode === 'pvp' ? 1 : 0),
-      privateGamesPlayed: prev.privateGamesPlayed + (mode === 'private' ? 1 : 0),
+      practiceGamesPlayed: prev.practiceGamesPlayed + 1,
     }));
 
     // Reset clean bubbles

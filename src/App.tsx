@@ -66,7 +66,7 @@ export default function App() {
       const activeMatchRaw = localStorage.getItem('redoapp_active_match');
       if (activeMatchRaw) {
         const parsed = JSON.parse(activeMatchRaw);
-        if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 5 * 60 * 1000) {
+        if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
           localStorage.removeItem('redoapp_active_match');
           return 'uno';
         }
@@ -253,9 +253,13 @@ export default function App() {
     sound.playPop();
   };
 
-  const handleStartGame = useCallback((mode: 'offline' | 'pvp' | 'private', stake: number) => {
-    startGame(selectedAvatar, userName, mode, stake);
-  }, [selectedAvatar, startGame, userName]);
+  const handleStartGame = useCallback(
+    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
+      setActiveGameType('uno');
+      startGame(selectedAvatar, userName, mode, stake, roomCode, matchId);
+    },
+    [selectedAvatar, startGame, userName]
+  );
 
   const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
   const isWaitingForPlayers = gameMode === 'pvp' && !!gameState.waitingForPlayers;

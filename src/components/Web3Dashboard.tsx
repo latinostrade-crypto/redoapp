@@ -118,10 +118,7 @@ function buildTelegramMiniAppSchemeLink(startParam: string) {
 }
 
 function buildMatchmakerDeliveryUrl(endpoint: 'status' | 'status-beacon' | 'stream' | 'wait-beacon', params?: URLSearchParams) {
-  const isLocalHost = isLocal;
-  const base = isLocalHost
-    ? `${API_BASE_URL}/api/matchmaker/${endpoint}`
-    : `/match-api/${endpoint}`;
+  const base = `${API_BASE_URL}/api/matchmaker/${endpoint}`;
   const query = new URLSearchParams(params);
   const sessionToken = getSessionToken();
   const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
@@ -559,7 +556,7 @@ interface Web3DashboardProps {
   xpNeeded: number;
   xpProgressPercentage: number;
   playerXp: number;
-  onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string) => void;
+  onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onStartBlackjackGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onNameChange?: (name: string) => void;
@@ -1172,7 +1169,7 @@ export function Web3Dashboard({
         } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
           onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
         } else {
-          onStartGame(result.mode || 'pvp', matchedStake);
+          onStartGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
         }
       });
       return true;
@@ -2351,7 +2348,7 @@ export function Web3Dashboard({
         } else if (matchGameType === 'poker' && onStartPokerGame) {
           onStartPokerGame(match.mode, match.stake, (match as any).roomCode || undefined, match.matchId);
         } else {
-          onStartGame(match.mode, match.stake);
+          onStartGame(match.mode, match.stake, (match as any).roomCode || undefined, match.matchId);
         }
       }
     }
@@ -3319,9 +3316,6 @@ export function Web3Dashboard({
       if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 12_000) return;
       if (statusRequestInFlight) return;
       statusRequestInFlight = true;
-      // Use one finite same-origin recovery request. Parallel script, iframe,
-      // direct-fetch and watch transports multiplied every queue check without
-      // adding new server truth.
       getPublicQueueStatusViaSameOrigin()
         .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
           timeoutMs: 8_000,
@@ -3678,6 +3672,42 @@ export function Web3Dashboard({
       )}
 
 
+
+      {/* Active Match Reconnection Banner */}
+      {activeProfile?.activeMatch && !activeProfile.activeMatch.settled && (
+        <div className="w-full bg-[#181828] border-2 border-[#00ff66] p-2.5 rounded-none flex items-center justify-between gap-2 shadow-[0_0_12px_rgba(0,255,102,0.25)] animate-pulse">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg shrink-0">🎮</span>
+            <div className="min-w-0">
+              <div className="text-[10px] font-black uppercase text-[#00ff66] font-mono truncate">
+                MATCH IN PROGRESS ({((activeProfile.activeMatch as any).gameType || 'uno').toUpperCase()})
+              </div>
+              <div className="text-[8px] text-slate-300 font-mono truncate">
+                Stake: {activeProfile.activeMatch.stake} TKT • Tap to rejoin table!
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              sound.playShuffle();
+              const match = activeProfile.activeMatch!;
+              openPublicMatch({
+                status: 'ready',
+                matchId: match.matchId,
+                mode: match.mode,
+                stake: match.stake,
+                gameType: (match as any).gameType || 'uno',
+                players: match.players,
+                gameState: match.gameState,
+              }, match.stake);
+            }}
+            className="shrink-0 px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer"
+          >
+            RECONNECT ➔
+          </button>
+        </div>
+      )}
 
       {/* 4. Tab Content */}
       <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
