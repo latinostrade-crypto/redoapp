@@ -1105,7 +1105,7 @@ export function Web3Dashboard({
   const [depositRecoveryAttempt, setDepositRecoveryAttempt] = useState(0);
 
   const [privateRoomStake, setPrivateRoomStake] = useState<PrivateStakeOption>(0);
-  const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(4);
+  const [privateRoomTargetPlayers, setPrivateRoomTargetPlayers] = useState<2 | 3 | 4>(2);
   const [generatedLink, setGeneratedLink] = useState('');
   const [showRoomDisclaimer, setShowRoomDisclaimer] = useState(false);
   const [privateRoomCode, setPrivateRoomCode] = useState('');
@@ -2101,6 +2101,8 @@ export function Web3Dashboard({
     const fallbackPayload = buildPrivateRoomSharePayload(requestedRoomCode, pvpGameTab);
 
     // Apply waiting state IMMEDIATELY so the room lobby & share buttons display without any network lag
+    setCurrentTab('pvp');
+    setPvpSubMode('private');
     setPrivateRoomCode(requestedRoomCode);
     setPrivateJoinCode(requestedRoomCode);
     setPrivateRoomTargetPlayers(effectiveTargetPlayers as 2 | 3 | 4);
@@ -3832,13 +3834,22 @@ export function Web3Dashboard({
             const raw = localStorage.getItem('redoapp_active_match');
             if (raw) {
               const parsed = JSON.parse(raw);
-              if (parsed.matchId && Date.now() - Number(parsed.createdAt || 0) < 300_000) {
+              if (parsed.matchId && Date.now() - Number(parsed.createdAt || 0) < 180_000) {
                 matchToRejoin = parsed;
               }
             }
           } catch {}
         }
         if (!matchToRejoin || (matchToRejoin as any).settled) return null;
+
+        const handleDismissStaleMatch = (e: React.MouseEvent) => {
+          e.stopPropagation();
+          try {
+            localStorage.removeItem('redoapp_active_match');
+          } catch {}
+          setProfile((p) => (p ? { ...p, activeMatch: null } : p));
+          setFullProfile((p) => (p ? { ...p, activeMatch: null } : p));
+        };
 
         return (
           <div className="w-full bg-[#181828] border-2 border-[#00ff66] p-2.5 rounded-none flex items-center justify-between gap-2 shadow-[0_0_12px_rgba(0,255,102,0.25)] animate-pulse">
@@ -3853,24 +3864,34 @@ export function Web3Dashboard({
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                sound.playShuffle();
-                openPublicMatch({
-                  status: 'ready',
-                  matchId: matchToRejoin!.matchId,
-                  mode: matchToRejoin!.mode,
-                  stake: matchToRejoin!.stake,
-                  gameType: (matchToRejoin as any).gameType || 'uno',
-                  players: matchToRejoin!.players,
-                  gameState: (matchToRejoin as any).gameState,
-                }, matchToRejoin!.stake);
-              }}
-              className="shrink-0 px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer"
-            >
-              RECONNECT ➔
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  sound.playShuffle();
+                  openPublicMatch({
+                    status: 'ready',
+                    matchId: matchToRejoin!.matchId,
+                    mode: matchToRejoin!.mode,
+                    stake: matchToRejoin!.stake,
+                    gameType: (matchToRejoin as any).gameType || 'uno',
+                    players: matchToRejoin!.players,
+                    gameState: (matchToRejoin as any).gameState,
+                  }, matchToRejoin!.stake);
+                }}
+                className="px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer"
+              >
+                RECONNECT ➔
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissStaleMatch}
+                title="Dismiss match"
+                className="px-2 py-1.5 bg-red-900/60 hover:bg-red-800 text-white font-mono text-[9px] font-bold border border-black cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         );
       })()}

@@ -1835,7 +1835,8 @@ function buildBootstrapProfileResponse(user: UserState) {
        match.gameType === 'blackjack' ? match.blackjackGameState?.stage === 'match_ended' :
        match.gameState.phase === 'game_over')
     );
-    if (match && !isGameOver) {
+    const isStale = match && (Date.now() - (match.playStartedAt || match.createdAt || 0) > 10 * 60 * 1000);
+    if (match && !isGameOver && !isStale) {
       markMatchPlayerConnected(match, user.userId);
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
       const perspective = buildPerspectiveState(match, user.userId);
@@ -7493,7 +7494,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   if (!Number.isFinite(stakeAmount) || stakeAmount < 0) {
     return res.status(400).json({ error: 'Private room stake must be 0 or greater.' });
   }
-  const targetPlayersCount = Number(targetPlayers || MAX_MATCH_PLAYERS);
+  const targetPlayersCount = Number(targetPlayers || 2);
   if (!Number.isFinite(targetPlayersCount) || targetPlayersCount < MIN_MATCH_PLAYERS || targetPlayersCount > MAX_MATCH_PLAYERS) {
     return res.status(400).json({ error: `targetPlayers must be between ${MIN_MATCH_PLAYERS} and ${MAX_MATCH_PLAYERS}.` });
   }
