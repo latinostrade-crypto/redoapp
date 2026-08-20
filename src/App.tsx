@@ -148,7 +148,7 @@ export default function App() {
 
   const handleSendEmoji = useCallback((emoji: EmojiItem) => {
     setActiveEmoji({ emoji, key: Date.now() });
-    triggerBubble('player', `${emoji.symbol} ${emoji.label}`);
+    triggerBubble('player', emoji.label);
     setTimeout(() => setActiveEmoji(null), 3500);
   }, [triggerBubble]);
 
@@ -1274,9 +1274,12 @@ export default function App() {
 
             {/* ACTION TRIGGERS IN HAND */}
             <div className="w-full flex items-center justify-between gap-2 px-1 pt-0.5 font-mono text-[9px] min-[370px]:text-[10px]">
-              <div className="flex items-center gap-1.5 text-white bg-black px-2 py-1.5 border border-black">
-                <Star className="w-3 h-3 text-[#ffcc00] fill-[#ffcc00]" />
-                <span>LEVEL {playerLevel}</span>
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 text-white bg-black px-2 py-1.5 border border-black">
+                  <Star className="w-3 h-3 text-[#ffcc00] fill-[#ffcc00]" />
+                  <span>LEVEL {playerLevel}</span>
+                </div>
+                <QuickEmojiPanel onSendEmoji={handleSendEmoji} />
               </div>
               
               <div className="text-white bg-black px-2 py-1.5 border border-black">
@@ -1598,9 +1601,6 @@ export default function App() {
       )}
         </>
       )}
-
-      {/* QUICK EMOJI DISPATCH PANEL ON GAME TABLES */}
-      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="fixed bottom-3 left-3 z-40" />
 
       {/* INJECT RULES MODAL DIALOG */}
       <RuleModal isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />

@@ -630,7 +630,7 @@ export function BlackjackGame({
           </div>
         </div>
       )}
-      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="fixed bottom-3 left-3 z-40" />
+      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="absolute bottom-2 left-2 z-40" />
     </div>
   );
 }
