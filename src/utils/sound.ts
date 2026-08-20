@@ -7,9 +7,17 @@
 class SoundSynth {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
+  private idleTimer: number | null = null;
 
   constructor() {
     // Only initialized on first user interaction to comply with browser autoplay policies
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden' && this.ctx && this.ctx.state === 'running') {
+          this.ctx.suspend().catch(() => {});
+        }
+      });
+    }
   }
 
   private init() {
@@ -20,8 +28,16 @@ class SoundSynth {
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
+    if (this.idleTimer) {
+      window.clearTimeout(this.idleTimer);
+    }
+    this.idleTimer = window.setTimeout(() => {
+      if (this.ctx && this.ctx.state === 'running') {
+        this.ctx.suspend().catch(() => {});
+      }
+    }, 4000);
   }
 
   toggleMute() {

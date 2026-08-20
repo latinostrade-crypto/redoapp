@@ -648,9 +648,9 @@ export function createParticleDustRenderer({
     connection?.saveData ||
       (typeof navigator.hardwareConcurrency === 'number' && navigator.hardwareConcurrency <= 4),
   );
-  const density = lowPower ? 0.62 : 1;
-  const imageTargetCount = Math.round((isMobile ? 14000 : 22000) * density);
-  const interfaceTargetCount = Math.round((isMobile ? 4500 : 6500) * density);
+  const density = lowPower ? 0.55 : 1;
+  const imageTargetCount = Math.round((isMobile ? 2200 : 16000) * density);
+  const interfaceTargetCount = Math.round((isMobile ? 650 : 4500) * density);
   let width = 1;
   let height = 1;
   let pixelRatio = 1;
@@ -673,7 +673,7 @@ export function createParticleDustRenderer({
   const resize = () => {
     const nextWidth = Math.max(1, Math.round(canvas.clientWidth));
     const nextHeight = Math.max(1, Math.round(canvas.clientHeight));
-    const nextRatio = Math.min(window.devicePixelRatio || 1, isMobile ? 1.2 : 1.5);
+    const nextRatio = Math.min(window.devicePixelRatio || 1, isMobile ? 1.0 : 1.5);
     if (nextWidth === width && nextHeight === height && nextRatio === pixelRatio) return;
     width = nextWidth;
     height = nextHeight;
@@ -755,12 +755,17 @@ export function createParticleDustRenderer({
     lastTime = time;
     lastWindows = windows;
     if (!context) return;
-    clear();
     const active = windows.find(
       (window) => time >= window.start && time <= window.start + window.duration,
     );
-    if (!active) return;
+    if (!active) {
+      if (canvas.dataset.activeParticles !== '0') {
+        clear();
+      }
+      return;
+    }
 
+    clear();
     const progress = clamp01((time - active.start) / active.duration);
     let drawn = 0;
     const outgoing = getCompositeField(
@@ -773,6 +778,7 @@ export function createParticleDustRenderer({
       active.incomingVisualTime,
       active.incomingVisualKind ?? 'all',
     );
+    const allowTrails = !lowPower && !isMobile;
     const mode = active.mode ?? 'morph';
     if (mode === 'scatter' && outgoing) {
       drawn = drawFloorHandoffField(
@@ -780,7 +786,7 @@ export function createParticleDustRenderer({
         outgoing,
         progress,
         'scatter',
-        !lowPower,
+        allowTrails,
         seed + Math.round(active.start * 10000),
       );
     } else if (mode === 'gather' && incoming) {
@@ -789,7 +795,7 @@ export function createParticleDustRenderer({
         incoming,
         progress,
         'gather',
-        !lowPower,
+        allowTrails,
         seed + Math.round(active.start * 10000),
       );
     } else if (outgoing && incoming) {
@@ -798,7 +804,7 @@ export function createParticleDustRenderer({
         outgoing,
         incoming,
         progress,
-        !lowPower,
+        allowTrails,
         seed + Math.round(active.start * 10000),
       );
     } else {
@@ -808,7 +814,7 @@ export function createParticleDustRenderer({
           outgoing,
           clamp01(progress / 0.72),
           'scatter',
-          !lowPower,
+          allowTrails,
         );
       }
       if (incoming && progress >= 0.28) {
@@ -817,7 +823,7 @@ export function createParticleDustRenderer({
           incoming,
           clamp01((progress - 0.28) / 0.72),
           'gather',
-          !lowPower,
+          allowTrails,
         );
       }
     }

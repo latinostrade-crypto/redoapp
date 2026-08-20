@@ -330,7 +330,9 @@ export function ComicScene({
         timeline.eventCallback('onUpdate', () => {
           dustRenderer?.render(timeline.time(), dustWindows);
         });
-        dustRenderer?.render(0, dustWindows);
+        if (sceneIndex === 0) {
+          dustRenderer?.render(0, dustWindows);
+        }
 
         return () => {
           timeline.eventCallback('onUpdate', null);

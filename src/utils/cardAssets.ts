@@ -103,10 +103,29 @@ function loadAndDecodeImage(url: string) {
 export function preloadRequiredGameImages() {
   if (preloadPromise) return preloadPromise;
   preloadPromise = (async () => {
+    // 1. Immediately preload critical lobby assets first
+    const criticalUrls = ['/banner.png', '/text(logo).jpg', '/card-thumbs/back.jpeg'];
+    await Promise.allSettled(
+      criticalUrls
+        .filter((url) => !retainedImages.has(url))
+        .map((url) => loadAndDecodeImage(url))
+    );
+
+    // 2. Throttle remaining card faces with concurrency limit of 2 in background
     const pending = REQUIRED_GAME_IMAGE_URLS.filter((url) => !retainedImages.has(url));
-    // Images improve the first round but must never prevent the Mini App from
-    // opening. A missing asset is handled by UnoCard's existing fallback.
-    await Promise.allSettled(pending.map((url) => loadAndDecodeImage(url)));
+    const CONCURRENCY = 2;
+    for (let i = 0; i < pending.length; i += CONCURRENCY) {
+      const chunk = pending.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(chunk.map((url) => loadAndDecodeImage(url)));
+      // Yield to browser main thread
+      await new Promise((resolve) => {
+        if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+          (window as any).requestIdleCallback(resolve, { timeout: 100 });
+        } else {
+          setTimeout(resolve, 30);
+        }
+      });
+    }
   })();
   return preloadPromise;
 }

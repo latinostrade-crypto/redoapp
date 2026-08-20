@@ -623,6 +623,84 @@ type ReferralPageResponse = {
   nextCursor: string | null;
 };
 
+const EnergyCountdown = React.memo(function EnergyCountdown({ nextEnergyAt }: { nextEnergyAt?: number | null }) {
+  const [seconds, setSeconds] = useState(() => (nextEnergyAt ? Math.max(0, Math.ceil((nextEnergyAt - Date.now()) / 1000)) : 0));
+
+  useEffect(() => {
+    if (!nextEnergyAt) return;
+    const update = () => {
+      if (document.visibilityState === 'hidden') return;
+      setSeconds(Math.max(0, Math.ceil((nextEnergyAt - Date.now()) / 1000)));
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [nextEnergyAt]);
+
+  if (!nextEnergyAt) return <>Power full</>;
+  return <>Next +1 {Math.floor(seconds / 60)}m {seconds % 60}s</>;
+});
+
+const TournamentCountdown = React.memo(function TournamentCountdown({
+  startAt,
+  onExpire,
+}: {
+  startAt?: number;
+  onExpire?: () => void;
+}) {
+  const [countdown, setCountdown] = useState(() => {
+    if (!startAt) return '';
+    const diff = startAt - Date.now();
+    if (diff <= 0) return '00:00:00';
+    const hrs = Math.floor(diff / (1000 * 60 * 60));
+    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const secs = Math.floor((diff % (1000 * 60)) / 1000);
+    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  });
+
+  useEffect(() => {
+    if (!startAt) return;
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
+      const diff = startAt - Date.now();
+      if (diff <= 0) {
+        setCountdown('00:00:00');
+        onExpire?.();
+        return;
+      }
+      const hrs = Math.floor(diff / (1000 * 60 * 60));
+      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const secs = Math.floor((diff % (1000 * 60)) / 1000);
+      setCountdown(
+        `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+      );
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [startAt, onExpire]);
+
+  return <>{countdown}</>;
+});
+
+const MatchmakingCountdown = React.memo(function MatchmakingCountdown({
+  deadlineAt,
+}: {
+  deadlineAt: number;
+}) {
+  const [seconds, setSeconds] = useState(() => Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
+
+  useEffect(() => {
+    const update = () => {
+      if (document.visibilityState === 'hidden') return;
+      setSeconds(Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
+    };
+    update();
+    const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [deadlineAt]);
+
+  return <>{seconds}S</>;
+});
+
 export function Web3Dashboard({
   userName,
   selectedAvatar,
@@ -783,7 +861,6 @@ export function Web3Dashboard({
   const [bootstrapError, setBootstrapError] = useState('');
   const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [apiTrace, setApiTrace] = useState<ApiTraceDetail | null>(null);
-  const [apiTraceNow, setApiTraceNow] = useState(() => Date.now());
   const [tgPhotoFailed, setTgPhotoFailed] = useState(false);
 
   const [isConnecting, setIsConnecting] = useState(false);
@@ -881,7 +958,6 @@ export function Web3Dashboard({
   const [tournamentLeaderboard, setTournamentLeaderboard] = useState<import('../types').TournamentLeaderboardEntry[]>([]);
   const [showAllLeaderboardModal, setShowAllLeaderboardModal] = useState(false);
   const [tournRegistering, setTournRegistering] = useState(false);
-  const [tournCountdown, setTournCountdown] = useState('');
 
   const fetchTournamentData = useCallback(async () => {
     try {
@@ -902,28 +978,13 @@ export function Web3Dashboard({
 
   useEffect(() => {
     fetchTournamentData();
-    const timer = setInterval(fetchTournamentData, 10000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchTournamentData();
+      }
+    }, 30000);
     return () => clearInterval(timer);
   }, [fetchTournamentData]);
-
-  useEffect(() => {
-    if (!tournamentData || tournamentData.status !== 'upcoming') return;
-    const interval = setInterval(() => {
-      const diff = tournamentData.startAt - Date.now();
-      if (diff <= 0) {
-        setTournCountdown('00:00:00');
-        fetchTournamentData();
-        return;
-      }
-      const hrs = Math.floor(diff / (1000 * 60 * 60));
-      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const secs = Math.floor((diff % (1000 * 60)) / 1000);
-      setTournCountdown(
-        `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
-      );
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [tournamentData, fetchTournamentData]);
 
   const registerForTournament = async () => {
     if (!tournamentData || tournRegistering) return;
@@ -1035,7 +1096,6 @@ export function Web3Dashboard({
 
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
-  const [matchmakingTimer, setMatchmakingTimer] = useState(MATCHMAKING_TIMEOUT_SEC);
   const [queueLength, setQueueLength] = useState(1);
   const [publicQueueError, setPublicQueueError] = useState('');
   const [buyingTickets, setBuyingTickets] = useState(false);
@@ -1207,7 +1267,6 @@ export function Web3Dashboard({
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
   const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
   const [showAccountRefresh, setShowAccountRefresh] = useState(() => Boolean(localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY)));
-  const [energyNow, setEnergyNow] = useState(() => Date.now());
   const effectiveXp = Math.max(activeProfile?.xp ?? 0, playerXp ?? 0);
   const displayXpNeeded = 400;
   const displayLevel = Math.floor(effectiveXp / displayXpNeeded) + 1;
@@ -1229,7 +1288,6 @@ export function Web3Dashboard({
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus' && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
-  const energyCountdownSeconds = energy.nextEnergyAt ? Math.max(0, Math.ceil((energy.nextEnergyAt - energyNow) / 1000)) : 0;
   const tgProfileName = activeProfile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = activeProfile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const isLocalNetwork = isLocal;
@@ -1269,7 +1327,7 @@ export function Web3Dashboard({
       withdrawalRefreshInFlightRef.current = false;
     }
   }, []);
-  const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((apiTraceNow - apiTrace.startedAt) / 1000)) : 0;
+  const apiTraceElapsedSec = apiTrace ? Math.max(0, Math.floor((Date.now() - apiTrace.startedAt) / 1000)) : 0;
   const apiTraceHost = (() => {
     try {
       return new URL(API_BASE_URL).host;
@@ -1302,20 +1360,12 @@ export function Web3Dashboard({
     const handleApiTrace = (event: Event) => {
       const detail = (event as CustomEvent<ApiTraceDetail>).detail;
       setApiTrace(detail);
-      setApiTraceNow(Date.now());
     };
     window.addEventListener('redoapp:api-trace', handleApiTrace as EventListener);
     return () => {
       window.removeEventListener('redoapp:api-trace', handleApiTrace as EventListener);
     };
   }, []);
-
-  useEffect(() => {
-    if (!apiTrace || apiTrace.stage !== 'start') return;
-    setApiTraceNow(Date.now());
-    const timer = window.setInterval(() => setApiTraceNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [apiTrace]);
 
   useEffect(() => {
     if (!localStorage.getItem(FIRST_FREE_GAME_WALLET_PROMPT_KEY)) return;
@@ -1376,15 +1426,6 @@ export function Web3Dashboard({
       window.removeEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
     };
   }, []);
-
-  useEffect(() => {
-    if (!energy.nextEnergyAt) return;
-    setEnergyNow(Date.now());
-    const timer = window.setInterval(() => {
-      setEnergyNow(Date.now());
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [energy.nextEnergyAt]);
 
   const readPendingDeposit = (): PendingDepositState | null => {
     try {
@@ -2137,7 +2178,6 @@ export function Web3Dashboard({
     wakeBackend();
     setPublicQueueError('');
     setQueueLength(1);
-    setMatchmakingTimer(MATCHMAKING_TIMEOUT_SEC);
     publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
     const joinAttempt = publicJoinAttemptRef.current + 1;
     publicJoinAttemptRef.current = joinAttempt;
@@ -2169,7 +2209,6 @@ export function Web3Dashboard({
         updateProfileEnergy(result.energy);
       }
       setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
-      setMatchmakingTimer(result.matchmaker?.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
       if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
         openPublicMatch(result.matchmaker, selectedStake);
         return;
@@ -2373,7 +2412,6 @@ export function Web3Dashboard({
           setPvpSubMode('public');
           setSelectedStake(recoveredStake);
           setQueueLength(result.queueLength || 1);
-          setMatchmakingTimer(result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC);
           setMatchmakingState('searching');
           return;
         }
@@ -3263,7 +3301,6 @@ export function Web3Dashboard({
         setQueueLength(result.queueLength || 1);
         const countdownSec = typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC;
         publicQueueDeadlineAtRef.current = Date.now() + countdownSec * 1000;
-        setMatchmakingTimer(countdownSec);
         setMatchmakingState('searching');
       }
       if (result.status === 'ready' && result.matchId) {
@@ -3316,7 +3353,7 @@ export function Web3Dashboard({
     });
 
     const requestQueueStatus = (force = false) => {
-      if (disposed) return;
+      if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
       if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 12_000) return;
       if (statusRequestInFlight) return;
       statusRequestInFlight = true;
@@ -3339,11 +3376,13 @@ export function Web3Dashboard({
       waitForPublicMatchViaBridge()
         .then((result) => {
           handleQueueStatus(result);
-          if (!disposed && result.status === 'searching') runWaitBridge();
+          if (!disposed && result.status === 'searching') {
+            window.setTimeout(runWaitBridge, 2000);
+          }
         })
         .catch(() => {
           if (!disposed) {
-            window.setTimeout(runWaitBridge, 500);
+            window.setTimeout(runWaitBridge, 2500);
           }
         });
     };
@@ -3376,18 +3415,6 @@ export function Web3Dashboard({
       }
     };
   }, [publicMatchmakingActive, currentUserId, openPublicMatch, selectedStake]);
-
-  useEffect(() => {
-    if (matchmakingState !== 'joining' && matchmakingState !== 'searching') return;
-    if (!publicQueueDeadlineAtRef.current) {
-      publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
-    }
-    const timer = window.setInterval(() => {
-      const remaining = Math.max(0, Math.ceil((publicQueueDeadlineAtRef.current - Date.now()) / 1000));
-      setMatchmakingTimer(remaining);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [matchmakingState]);
 
   useEffect(() => {
     const targetMatchId = initialLaunchTournamentMatchIdRef.current;
@@ -3800,7 +3827,7 @@ export function Web3Dashboard({
                         </div>
                       </div>
                       <div className="text-[6.5px] text-slate-550 text-left">
-                        {energy.nextEnergyAt ? `Next +1 ${Math.floor(energyCountdownSeconds / 60)}m ${energyCountdownSeconds % 60}s` : 'Power full'}
+                        <EnergyCountdown nextEnergyAt={energy.nextEnergyAt} />
                       </div>
                     </div>
                   )}
@@ -4621,7 +4648,7 @@ export function Web3Dashboard({
                       <div className="bg-slate-950 p-3 border border-black text-center space-y-1">
                         <span className="text-[7.5px] text-slate-400 uppercase font-mono">Starts in:</span>
                         <div className="text-sm font-black text-[#00ff66] tracking-widest font-mono">
-                          {tournCountdown}
+                          <TournamentCountdown startAt={tournamentData.startAt} onExpire={fetchTournamentData} />
                         </div>
                       </div>
                     )}
@@ -5213,7 +5240,7 @@ export function Web3Dashboard({
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                       <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
                         <span className="text-[10px] font-black text-[#00d2ff]">
-                          {`${matchmakingTimer}S`}
+                          <MatchmakingCountdown deadlineAt={publicQueueDeadlineAtRef.current || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
                         </span>
                       </div>
                       <div className="space-y-0.5">
@@ -5729,7 +5756,7 @@ export function Web3Dashboard({
                   <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                     <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
                       <span className="text-[10px] font-black text-[#ffcc00]">
-                        {`${matchmakingTimer}S`}
+                        <MatchmakingCountdown deadlineAt={publicQueueDeadlineAtRef.current || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
                       </span>
                     </div>
                     <div className="space-y-0.5">
@@ -5743,9 +5770,9 @@ export function Web3Dashboard({
                     <button
                       type="button"
                       onClick={handleLeavePublicQueue}
-                      className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive cursor-pointer"
+                      className="px-4 py-2 bg-[#ff4b4b] text-black font-black text-[9px] uppercase border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000]"
                     >
-                      Cancel Queue
+                      CANCEL SEARCH
                     </button>
                   </div>
                 ) : (
@@ -5972,7 +5999,7 @@ export function Web3Dashboard({
                   <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
                     <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
                       <span className="text-[10px] font-black text-[#00ff66]">
-                        {`${matchmakingTimer}S`}
+                        <MatchmakingCountdown deadlineAt={publicQueueDeadlineAtRef.current || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
                       </span>
                     </div>
                     <div className="space-y-0.5">
