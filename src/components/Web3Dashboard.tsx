@@ -2140,6 +2140,12 @@ export function Web3Dashboard({
   const handleLeavePublicQueue = useCallback(() => {
     sound.playPop();
     publicJoinAttemptRef.current += 1;
+    queueStreamRef.current?.close();
+    queueStreamRef.current = null;
+    openingPublicMatchRef.current = '';
+    publicQueueDeadlineAtRef.current = 0;
+    setMatchmakingState('idle');
+    setPublicQueueError('');
     apiRequest('/api/matchmaker/leave', {
       method: 'POST',
       body: JSON.stringify({ userId: currentUserId }),
@@ -2148,10 +2154,7 @@ export function Web3Dashboard({
     }).then((balance) => {
       setGoldenTickets(balance.availableTickets);
       setHeldTickets(balance.heldTickets);
-    }).finally(() => {
-      setMatchmakingState('idle');
-      setPublicQueueError('');
-    });
+    }).catch(() => undefined);
   }, [currentUserId]);
 
   const handleStartMatchmakingQueue = useCallback(() => {
@@ -2202,6 +2205,14 @@ export function Web3Dashboard({
       forceFresh: true,
     };
     let joinSettled = false;
+
+    // Safety fallback: if request takes > 2.5s, transition to searching so UI never stays stuck in joining
+    const safetyTimer = window.setTimeout(() => {
+      if (!joinSettled && publicJoinAttemptRef.current === joinAttempt) {
+        setMatchmakingState((prev) => (prev === 'joining' ? 'searching' : prev));
+      }
+    }, 2500);
+
     apiRequest<PublicMatchmakerResponse>('/api/matchmaker/join', {
       method: 'POST',
       retryOnNetworkError: true,
@@ -2209,6 +2220,7 @@ export function Web3Dashboard({
       timeoutMs: 45000,
       body: JSON.stringify(joinPayload),
     }).then((result) => {
+      window.clearTimeout(safetyTimer);
       if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
       joinSettled = true;
       setGoldenTickets(result.availableTickets);
@@ -2223,6 +2235,7 @@ export function Web3Dashboard({
       }
       setMatchmakingState('searching');
     }).catch(async (error) => {
+      window.clearTimeout(safetyTimer);
       if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
       try {
         const recovered = await getPublicQueueStatusViaSameOrigin()
@@ -5265,22 +5278,7 @@ export function Web3Dashboard({
                       </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          sound.playPop();
-                          publicJoinAttemptRef.current += 1;
-                          apiRequest('/api/matchmaker/leave', {
-                            method: 'POST',
-                            body: JSON.stringify({ userId: currentUserId }),
-                          }).then(() => {
-                            return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
-                          }).then((balance) => {
-                            setGoldenTickets(balance.availableTickets);
-                            setHeldTickets(balance.heldTickets);
-                          }).finally(() => {
-                            setMatchmakingState('idle');
-                            setPublicQueueError('');
-                          });
-                        }}
+                        onClick={handleLeavePublicQueue}
                         className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive"
                       >
                         Cancel Queue

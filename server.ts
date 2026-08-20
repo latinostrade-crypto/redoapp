@@ -7232,11 +7232,11 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   });
 }
 
-app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handleMatchmakerJoin);
+app.post('/api/matchmaker/join', requireAuth, rateLimitMiddleware(60, 60000, 'user'), handleMatchmakerJoin);
 // Telegram WebViews can leave a cross-origin JSON POST pending indefinitely.
 // This idempotent iframe route avoids the preflight and reports the canonical
 // queue state to the parent window, just like private-room creation does.
-app.get('/api/matchmaker/join-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handleMatchmakerJoin);
+app.get('/api/matchmaker/join-beacon', requireAuth, rateLimitMiddleware(60, 60000, 'user'), handleMatchmakerJoin);
 
 app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
