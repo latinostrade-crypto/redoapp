@@ -113,8 +113,8 @@ export function buildAuthenticatedUrl(path: string) {
     ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
     : '';
   const params = new URLSearchParams();
+  if (telegramInitData) params.set('telegramInitData', telegramInitData);
   if (token) params.set('sessionToken', token);
-  else if (telegramInitData) params.set('telegramInitData', telegramInitData);
   if (storedUserId) params.set('userId', storedUserId);
   const isAbsolute = path.startsWith('http://') || path.startsWith('https://');
   const isSameOriginRewrite = path.startsWith('/match-api/');

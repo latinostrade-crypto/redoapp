@@ -122,8 +122,8 @@ function buildMatchmakerDeliveryUrl(endpoint: 'status' | 'status-beacon' | 'stre
   const query = new URLSearchParams(params);
   const sessionToken = getSessionToken();
   const telegramInitData = (window as any).Telegram?.WebApp?.initData || '';
+  if (telegramInitData) query.set('telegramInitData', telegramInitData);
   if (sessionToken) query.set('sessionToken', sessionToken);
-  else if (telegramInitData) query.set('telegramInitData', telegramInitData);
   return query.size ? `${base}?${query.toString()}` : base;
 }
 
@@ -1107,11 +1107,15 @@ export function Web3Dashboard({
   const withdrawalRefreshInFlightRef = useRef(false);
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = React.useMemo(() => {
-    let id = localStorage.getItem('redoapp_guest_user_id');
+    let id = sessionStorage.getItem('redoapp_tab_guest_id');
+    if (!id) {
+      id = localStorage.getItem('redoapp_guest_user_id');
+    }
     if (!id) {
       id = `guest_${Math.random().toString(36).slice(2, 10)}`;
       localStorage.setItem('redoapp_guest_user_id', id);
     }
+    sessionStorage.setItem('redoapp_tab_guest_id', id);
     return id;
   }, []);
   // Wallet connection is account metadata, never application identity.
@@ -1119,7 +1123,7 @@ export function Web3Dashboard({
   // the Telegram profile and the currently selected dashboard tab.
   const bootstrapUserId = telegramInitData
     ? (storedUserId || fallbackGuestUserId)
-    : (storedUserId.startsWith('guest:') || storedUserId.startsWith('guest_') ? storedUserId : fallbackGuestUserId);
+    : (sessionStorage.getItem('redoapp_tab_guest_id') || storedUserId || fallbackGuestUserId);
   const activeProfile = fullProfile ?? profile;
   const publicMatchmakingActive = matchmakingState === 'joining' || matchmakingState === 'searching';
 
