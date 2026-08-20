@@ -5337,7 +5337,7 @@ function runMatchmakingTick() {
         i += groupSlice.length;
       } else {
         const waitingPlayer = players[i];
-        if (waitingPlayer && waitingPlayer.stake === 0 && Date.now() - waitingPlayer.joinedAt >= 15_000) {
+        if (waitingPlayer && waitingPlayer.stake === 0 && Date.now() - waitingPlayer.joinedAt >= 65_000) {
           const gameType = waitingPlayer.gameType || 'uno';
           const botCount = gameType === 'blackjack' ? 2 : 1;
           const bots: QueuePlayer[] = [];
@@ -7064,7 +7064,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       (m.gameType || 'uno') === gameType &&
       m.stake === stakeAmount &&
       !m.settled &&
-      !m.playStartedAt &&
+      (!m.playStartedAt || (Date.now() - m.createdAt < 20_000 && m.players.some((p) => p.isAi || p.userId.startsWith('bot_')))) &&
       m.players.length < 4 &&
       !m.players.some((p) => p.userId === userId)
   );
