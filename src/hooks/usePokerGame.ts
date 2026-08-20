@@ -165,14 +165,18 @@ export function usePokerGame(options?: {
         setRemoteMatchId(resolvedMatchId || null);
         if (resolvedMatchId) {
           try {
+            const raw = localStorage.getItem('redoapp_active_match');
+            const existing = raw ? JSON.parse(raw) : null;
+            const effectiveUserId = existing?.currentUserId || (typeof window !== 'undefined' ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || 'player') : 'player');
             localStorage.setItem('redoapp_active_match', JSON.stringify({
+              ...(existing || {}),
               matchId: resolvedMatchId,
               mode,
               gameType: 'poker',
               stake,
               roomCode,
-              currentUserId: 'player',
-              createdAt: Date.now(),
+              currentUserId: effectiveUserId,
+              createdAt: existing?.createdAt || Date.now(),
             }));
           } catch {}
         }
