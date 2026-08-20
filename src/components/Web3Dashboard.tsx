@@ -1840,6 +1840,8 @@ export function Web3Dashboard({
     autoJoinConsumedRef.current = true;
     initialLaunchRoomCodeRef.current = '';
 
+    const effectiveUserId = localStorage.getItem('redoapp_current_user_id') || currentUserId;
+
     if (parsed.gameType || initialLaunchRoomParsedRef.current.gameType) {
       setPvpGameTab(parsed.gameType || initialLaunchRoomParsedRef.current.gameType!);
     }
@@ -1856,7 +1858,7 @@ export function Web3Dashboard({
       retryOnNetworkError: true,
       body: JSON.stringify({
         roomCode: code,
-        userId: currentUserId,
+        userId: effectiveUserId,
         username: userName,
         avatarId: selectedAvatar,
         walletAddress: rawAddress || null,
@@ -1867,7 +1869,7 @@ export function Web3Dashboard({
     }).catch(async (error) => {
       try {
         const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(code), { timeoutMs: 4000 });
-        if (statusRes && (statusRes.status === 'started' || statusRes.status === 'waiting' || statusRes.players?.some((p) => p.userId === currentUserId))) {
+        if (statusRes && (statusRes.status === 'started' || statusRes.status === 'waiting' || statusRes.players?.some((p) => p.userId === effectiveUserId))) {
           applyPrivateRoomJoin(statusRes, code);
           return;
         }
@@ -1876,7 +1878,7 @@ export function Web3Dashboard({
       setPrivateRoomError(message);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady]); // intentionally omit joinPrivateRoomByCode — see comment above
+  }, [authReady, currentUserId]); // intentionally omit joinPrivateRoomByCode — see comment above
 
   const createPrivateRoomViaBridge = (payload: {
     userId: string;
@@ -2611,6 +2613,59 @@ export function Web3Dashboard({
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [privateRoomStatus, privateRoomCode, fetchFullProfile, applyPrivateRoomState]);
+
+  // Realtime SSE stream & fallback polling for Private Room guests & host while waiting
+  useEffect(() => {
+    if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
+    let disposed = false;
+    let lastRoomEventAt = 0;
+    privateRoomStreamRef.current?.close();
+
+    const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
+    privateRoomStreamRef.current = stream;
+
+    const handleRoomPayload = (result: any) => {
+      if (disposed || !result) return;
+      lastRoomEventAt = Date.now();
+      applyPrivateRoomState(result);
+    };
+
+    stream.addEventListener('private-room', (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        handleRoomPayload(data);
+      } catch {}
+    });
+
+    stream.addEventListener('heartbeat', () => {
+      lastRoomEventAt = Date.now();
+    });
+
+    stream.addEventListener('private-room-cancelled', () => {
+      if (disposed) return;
+      resetPrivateRoomState();
+      setPrivateRoomError('The waiting room was cancelled by the host.');
+    });
+
+    const pollStatus = () => {
+      if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+      if (Date.now() - lastRoomEventAt < 20_000) return;
+      apiRequest<PrivateRoomResponse>(`/api/private-rooms/status/${encodeURIComponent(privateRoomCode)}`, { timeoutMs: 5000 })
+        .then(handleRoomPayload)
+        .catch(() => undefined);
+    };
+
+    const interval = window.setInterval(pollStatus, 3000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      stream.close();
+      if (privateRoomStreamRef.current === stream) {
+        privateRoomStreamRef.current = null;
+      }
+    };
+  }, [privateRoomStatus, privateRoomCode, applyPrivateRoomState, resetPrivateRoomState]);
 
   useEffect(() => {
     localStorage.setItem('redoapp_current_user_id', currentUserId);

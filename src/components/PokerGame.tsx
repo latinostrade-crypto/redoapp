@@ -10,6 +10,7 @@ import { sound } from '../utils/sound';
 import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, Minus, Loader2 } from 'lucide-react';
 import { Avatar } from './Avatars';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
+import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 
 interface PokerGameProps {
   gameState: PokerGameState;
@@ -150,6 +151,12 @@ export function PokerGame({
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
+  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+
+  const handleSendEmoji = (emoji: EmojiItem) => {
+    setActiveEmoji({ emoji, key: Date.now() });
+    setTimeout(() => setActiveEmoji(null), 3500);
+  };
 
   const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
   const isHumanTurn =
@@ -469,6 +476,9 @@ export function PokerGame({
                   isHumanTurn ? 'border-[#00ff66] shadow-[0_0_12px_#00ff66]' : 'border-black'
                 } ${humanPlayer.folded || humanPlayer.eliminated ? 'opacity-40 grayscale' : ''}`}
               >
+                <AnimatePresence>
+                  {activeEmoji && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
+                </AnimatePresence>
                 {gameState.players[gameState.dealerIndex]?.id === humanPlayer.id && (
                   <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3.5 h-3.5 rounded-full text-[7px] font-black flex items-center justify-center border border-black shadow z-10">
                     D
@@ -799,6 +809,7 @@ export function PokerGame({
           )}
         </div>
       )}
+      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="fixed bottom-3 left-3 z-40" />
     </div>
   );
 }

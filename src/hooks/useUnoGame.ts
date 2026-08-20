@@ -1721,5 +1721,6 @@ const getNextActiveClientPlayerIndex = (players: Player[], currentIndex: number,
     isSpectator,
     spectateMatch,
     stopSpectating,
+    triggerBubble,
   };
 }

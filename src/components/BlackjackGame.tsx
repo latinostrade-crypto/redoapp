@@ -26,6 +26,7 @@ import {
 } from '../types/blackjack';
 import { Avatar } from './Avatars';
 import { sound } from '../utils/sound';
+import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
@@ -134,6 +135,13 @@ export function BlackjackGame({
 
   const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
   const maxAvailableBet = humanPlayer?.chips ? humanPlayer.chips + (humanPlayer.bet || 0) : 100;
+
+  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+
+  const handleSendEmoji = (emoji: EmojiItem) => {
+    setActiveEmoji({ emoji, key: Date.now() });
+    setTimeout(() => setActiveEmoji(null), 3500);
+  };
 
   const handleBetChange = (newAmount: number) => {
     const clamped = Math.max(5, Math.min(maxAvailableBet, newAmount));
@@ -369,6 +377,9 @@ export function BlackjackGame({
                   </div>
 
                   {/* Floating Profit Notification on Round End */}
+                  <AnimatePresence>
+                    {p.id === 'player' && activeEmoji && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
+                  </AnimatePresence>
                   {typeof p.lastProfit === 'number' && (gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
                     <motion.div
                       initial={{ opacity: 0, y: 0, scale: 0.8 }}
@@ -619,6 +630,7 @@ export function BlackjackGame({
           </div>
         </div>
       )}
+      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="fixed bottom-3 left-3 z-40" />
     </div>
   );
 }

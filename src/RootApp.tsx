@@ -52,7 +52,7 @@ function getSurfaceFromEnvironment(): AppSurface {
 
   const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash;
   const hashParams = new URLSearchParams(hash);
-  const startParam = (
+  let startParam = (
     params.get('tgWebAppStartParam') ||
     params.get('startapp') ||
     params.get('startApp') ||
@@ -60,8 +60,18 @@ function getSurfaceFromEnvironment(): AppSurface {
     hashParams.get('startapp') ||
     hashParams.get('startApp') ||
     params.get('room') ||
-    hashParams.get('room')
+    hashParams.get('room') ||
+    (window as any).Telegram?.WebApp?.initDataUnsafe?.start_param ||
+    ''
   );
+
+  if (!startParam && (params.get('tgWebAppData') || hashParams.get('tgWebAppData'))) {
+    try {
+      const dataStr = params.get('tgWebAppData') || hashParams.get('tgWebAppData') || '';
+      const innerParams = new URLSearchParams(dataStr);
+      startParam = innerParams.get('start_param') || innerParams.get('tgWebAppStartParam') || innerParams.get('startapp') || '';
+    } catch {}
+  }
 
   if (startParam?.startsWith('room_') || startParam?.startsWith('ref_') || params.get('room') || hashParams.get('room')) {
     return 'game';

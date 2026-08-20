@@ -14,6 +14,7 @@ import { Web3Dashboard } from './components/Web3Dashboard';
 import { PokerGame } from './components/PokerGame';
 import { BlackjackGame } from './components/BlackjackGame';
 import { LoadingScreen } from './components/LoadingScreen';
+import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './components/QuickEmojiPanel';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiRequest, ApiTraceDetail } from './utils/api';
 import {
@@ -59,6 +60,7 @@ export default function App() {
     isSpectator,
     spectateMatch,
     stopSpectating,
+    triggerBubble,
   } = useUnoGame();
 
   const [activeGameType, setActiveGameType] = useState<'uno' | 'poker' | 'blackjack'>(() => {
@@ -142,6 +144,13 @@ export default function App() {
 
   const [rulesOpen, setRulesOpen] = useState(false);
   const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5);
+  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+
+  const handleSendEmoji = useCallback((emoji: EmojiItem) => {
+    setActiveEmoji({ emoji, key: Date.now() });
+    triggerBubble('player', `${emoji.symbol} ${emoji.label}`);
+    setTimeout(() => setActiveEmoji(null), 3500);
+  }, [triggerBubble]);
 
   useEffect(() => {
     if (gameState.phase === 'round_over') {
@@ -1211,7 +1220,10 @@ export default function App() {
           </section>
 
           {/* BOTTOM ZONE: HUMAN PLAYER ZONE */}
-          <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2">
+          <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2 relative">
+            <AnimatePresence>
+              {activeEmoji && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
+            </AnimatePresence>
             
             {/* NO-SCROLL DYNAMIC OVERLAPPING CARDS ZONE */}
             <div className="cards-hand-container w-full overflow-x-auto py-2 px-1 flex flex-row items-center justify-start min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative bg-black/40 border border-black">
@@ -1586,6 +1598,9 @@ export default function App() {
       )}
         </>
       )}
+
+      {/* QUICK EMOJI DISPATCH PANEL ON GAME TABLES */}
+      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="fixed bottom-3 left-3 z-40" />
 
       {/* INJECT RULES MODAL DIALOG */}
       <RuleModal isOpen={rulesOpen} onClose={() => setRulesOpen(false)} />

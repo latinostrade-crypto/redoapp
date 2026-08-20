@@ -4843,7 +4843,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     stake,
     players,
     createdAt,
-    connectionDeadlineAt: (mode === 'pvp' || waitsForPrivatePlayers) ? createdAt + 60_000 : undefined,
+    connectionDeadlineAt: mode === 'pvp' ? createdAt + 15_000 : (waitsForPrivatePlayers ? createdAt + 60_000 : undefined),
     playStartedAt: waitsForPlayers ? null : createdAt,
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
@@ -4974,11 +4974,8 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const connectedHumanCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
   const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS &&
     !isTournament &&
-    match.stake === 0 &&
     !deadlineReached &&
-    // Only fast-start if ALL connected humans are actually ready (hasConnected)
-    // and at least 10s have passed to give late joiners a chance
-    (now - match.createdAt) >= 10_000;
+    (now - match.createdAt) >= 2_000;
 
   // If not all matched players are connected and deadline not reached yet, continue waiting in lobby
   // unless we have enough humans connected for a fast start
