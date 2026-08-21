@@ -8350,7 +8350,10 @@ function handleMatchState(req: AuthenticatedRequest, res: Response) {
     }
     return res.status(404).json({ error: 'Match not found.' });
   }
-  const isUserInMatch = activeMatch.players.some((p) => p.userId === userId) || activeMatch.gameState.players.some((p) => p.userId === userId) || Boolean(activeMatch.pokerGameState?.players.some((p) => p.userId === userId)) || Boolean(activeMatch.blackjackGameState?.players.some((p) => p.userId === userId));
+  const isUserInMatch = activeMatch.players.some((p) => isSameUser(p.userId, userId))
+    || activeMatch.gameState.players.some((p) => isSameUser(p.userId, userId))
+    || Boolean(activeMatch.pokerGameState?.players.some((p) => isSameUser(p.userId, userId)))
+    || Boolean(activeMatch.blackjackGameState?.players.some((p) => isSameUser(p.userId, userId)));
   if (isUserInMatch) {
     markMatchPlayerConnected(activeMatch, userId);
   }
@@ -8486,8 +8489,8 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
   const user = getUser(userId);
   user.matchmakingFailureAt = null;
   user.matchmakingFailureReason = null;
-  const player = matchmakingQueue.find(p => p.userId === userId);
-  matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
+  const player = matchmakingQueue.find(p => isSameUser(p.userId, userId));
+  matchmakingQueue = matchmakingQueue.filter(p => !isSameUser(p.userId, userId));
   if (player) {
     if (player.stake > 0 && player.costsCommitted === 'held') {
       user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
