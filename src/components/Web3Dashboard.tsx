@@ -2258,6 +2258,8 @@ export function Web3Dashboard({
     wakeBackend();
     setPublicQueueError('');
     setQueueLength(1);
+    openingPublicMatchRef.current = '';
+    try { localStorage.removeItem('redoapp_active_match'); } catch {}
     publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
     const joinAttempt = publicJoinAttemptRef.current + 1;
     publicJoinAttemptRef.current = joinAttempt;

@@ -4624,7 +4624,8 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
 function isSameUser(id1?: string | null, id2?: string | null): boolean {
   if (!id1 || !id2) return false;
   if (id1 === id2) return true;
-  return id1.replace(/^tg:/, '') === id2.replace(/^tg:/, '');
+  const normalize = (id: string) => id.replace(/^tg[:_]/, '').trim();
+  return normalize(id1) === normalize(id2);
 }
 
 function buildPerspectiveState(match: ActiveMatch, userId: string) {
@@ -7199,7 +7200,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       !m.settled &&
       !m.playStartedAt &&
       m.players.length < MAX_MATCH_PLAYERS &&
-      !m.players.some((p) => p.userId === userId)
+      !m.players.some((p) => isSameUser(p.userId, userId))
   );
 
   if (openActiveMatch) {
