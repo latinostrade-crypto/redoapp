@@ -73,6 +73,10 @@ export function isTransientApiError(error: unknown) {
 }
 
 export function getSessionToken() {
+  if (typeof window !== 'undefined') {
+    const tabToken = sessionStorage.getItem('redoapp_tab_session_token');
+    if (tabToken) return tabToken;
+  }
   return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';
 }
 
@@ -82,8 +86,14 @@ export function getTelegramInitData() {
 
 export function setSessionToken(token: string | null | undefined) {
   if (!token) {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('redoapp_tab_session_token');
+    }
     localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
     return;
+  }
+  if (typeof window !== 'undefined') {
+    sessionStorage.setItem('redoapp_tab_session_token', token);
   }
   localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, token);
 }
@@ -92,7 +102,7 @@ export function buildAuthHeaders(init?: HeadersInit) {
   const token = getSessionToken();
   const telegramInitData = getTelegramInitData();
   const storedUserId = typeof window !== 'undefined'
-    ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
+    ? (sessionStorage.getItem('redoapp_tab_guest_id') || localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
     : '';
   return {
     ...(init || {}),
@@ -110,7 +120,7 @@ export function buildAuthenticatedUrl(path: string, extraParams?: URLSearchParam
   const token = getSessionToken();
   const telegramInitData = getTelegramInitData();
   const storedUserId = typeof window !== 'undefined'
-    ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
+    ? (sessionStorage.getItem('redoapp_tab_guest_id') || localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
     : '';
   const params = new URLSearchParams();
   if (extraParams) {
@@ -149,7 +159,7 @@ function refreshApiSession(signal?: AbortSignal) {
 
   sessionRefreshPromise = (async () => {
     const telegramInitData = getTelegramInitData();
-    const storedUserId = localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '';
+    const storedUserId = (typeof window !== 'undefined' ? sessionStorage.getItem('redoapp_tab_guest_id') : '') || localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '';
     const fallbackGuestUserId = storedUserId || 'guest:guest';
     const currentSessionToken = getSessionToken();
     const response = await fetch(`${API_BASE_URL}/api/users/sync`, {

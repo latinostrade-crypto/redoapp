@@ -178,11 +178,11 @@ export default function App() {
     if (tgUser) {
       return tgUser.username || `${tgUser.first_name} ${tgUser.last_name || ''}`.trim() || 'guest';
     }
-    let storedName = localStorage.getItem('redoapp_guest_name');
+    let storedName = sessionStorage.getItem('redoapp_tab_guest_name');
     if (!storedName) {
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
       storedName = isMobile ? `Phone_${Math.floor(1000 + Math.random() * 9000)}` : `PC_${Math.floor(1000 + Math.random() * 9000)}`;
-      localStorage.setItem('redoapp_guest_name', storedName);
+      sessionStorage.setItem('redoapp_tab_guest_name', storedName);
     }
     return storedName;
   });

@@ -1194,13 +1194,9 @@ export function Web3Dashboard({
   const fallbackGuestUserId = React.useMemo(() => {
     let id = sessionStorage.getItem('redoapp_tab_guest_id');
     if (!id) {
-      id = localStorage.getItem('redoapp_guest_user_id');
+      id = `guest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      sessionStorage.setItem('redoapp_tab_guest_id', id);
     }
-    if (!id) {
-      id = `guest_${Math.random().toString(36).slice(2, 10)}`;
-      localStorage.setItem('redoapp_guest_user_id', id);
-    }
-    sessionStorage.setItem('redoapp_tab_guest_id', id);
     return id;
   }, []);
   // Wallet connection is account metadata, never application identity.
@@ -1208,7 +1204,7 @@ export function Web3Dashboard({
   // the Telegram profile and the currently selected dashboard tab.
   const bootstrapUserId = telegramInitData
     ? (storedUserId || fallbackGuestUserId)
-    : (sessionStorage.getItem('redoapp_tab_guest_id') || storedUserId || fallbackGuestUserId);
+    : (sessionStorage.getItem('redoapp_tab_guest_id') || fallbackGuestUserId);
   const activeProfile = fullProfile ?? profile;
   const publicMatchmakingActive = matchmakingState === 'joining' || matchmakingState === 'searching';
 
@@ -1313,7 +1309,7 @@ export function Web3Dashboard({
   const isLocalNetwork = isLocal;
   const privateStakeRequiresWallet = !isLocalNetwork && privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
-  const authReady = bootstrapState === 'ready' || isLocalNetwork;
+  const authReady = bootstrapState === 'ready';
   const refreshPendingWithdrawal = useCallback(async () => {
     if (withdrawalRefreshInFlightRef.current) return null;
     withdrawalRefreshInFlightRef.current = true;
@@ -2764,7 +2760,11 @@ export function Web3Dashboard({
     }).then(async (synced) => {
       if (cancelled) return;
       setSessionToken(synced.sessionToken);
-      localStorage.setItem('redoapp_current_user_id', synced.userId);
+      if (telegramInitData) {
+        localStorage.setItem('redoapp_current_user_id', synced.userId);
+      } else {
+        sessionStorage.setItem('redoapp_tab_guest_id', synced.userId);
+      }
       setProfile((prev) => normalizeProfile({ ...prev, ...synced }));
       setFullProfile((prev) => {
         if (!prev?.userId || prev.userId !== synced.userId) {
@@ -3473,7 +3473,7 @@ export function Web3Dashboard({
       }
     });
     stream.addEventListener('heartbeat', () => {
-      lastQueueStatusAt = Date.now();
+      // SSE connection alive ping; do not suppress status polling
     });
 
     const requestQueueStatus = (force = false) => {

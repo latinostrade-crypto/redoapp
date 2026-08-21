@@ -5376,8 +5376,7 @@ function runMatchmakingTick() {
 
         activateMatch(matchId, mode, groupSlice, stake, gameType);
 
-        const matchUserIds = new Set(groupSlice.map(p => p.userId));
-        matchmakingQueue = matchmakingQueue.filter(p => !matchUserIds.has(p.userId));
+        matchmakingQueue = matchmakingQueue.filter(q => !groupSlice.some(p => isSameUser(p.userId, q.userId)));
 
         schedulePersist();
 
@@ -5576,10 +5575,11 @@ function buildQueuePayload(userId: string) {
 }
 
 function broadcastQueue(userId: string) {
-  const payload = buildQueuePayload(userId);
   for (const [subUserId, subscribers] of queueSubscribers.entries()) {
     if (isSameUser(subUserId, userId)) {
-      subscribers.forEach((response) => sendSse(response, 'queue-status', payload));
+      const payload = buildQueuePayload(subUserId);
+      const isReady = (payload as any)?.status === 'ready';
+      subscribers.forEach((response) => sendSse(response, 'queue-status', payload, !isReady));
     }
   }
 }
@@ -7140,7 +7140,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   } else if (activeMatchId && (isGameOver || isStaleMatch || isDifferentGame || isUnstartedAbandoned || forceFresh)) {
     activeMatchByUser.delete(userId);
   }
-  const existingQueuedPlayer = matchmakingQueue.find((player) => player.userId === userId);
+  const existingQueuedPlayer = matchmakingQueue.find((player) => isSameUser(player.userId, userId));
   if (!forceFresh && existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode && (existingQueuedPlayer.gameType || 'uno') === gameType) {
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
@@ -7174,13 +7174,13 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     matchmakerCleanupTimers.delete(userId);
   }
 
-  const oldQueuedPlayer = matchmakingQueue.find(p => p.userId === userId);
+  const oldQueuedPlayer = matchmakingQueue.find(p => isSameUser(p.userId, userId));
   if (oldQueuedPlayer && oldQueuedPlayer.stake > 0 && oldQueuedPlayer.costsCommitted === 'held') {
     user.heldTickets = round2(Math.max(0, user.heldTickets - oldQueuedPlayer.stake));
     user.availableTickets = round2(user.availableTickets + oldQueuedPlayer.stake);
   }
 
-  matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
+  matchmakingQueue = matchmakingQueue.filter(p => !isSameUser(p.userId, userId));
   user.matchmakingFailureAt = null;
   user.matchmakingFailureReason = null;
 
