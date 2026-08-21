@@ -3478,12 +3478,12 @@ export function Web3Dashboard({
 
     const requestQueueStatus = (force = false) => {
       if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
-      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 1_500) return;
+      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 1_000) return;
       if (statusRequestInFlight) return;
       statusRequestInFlight = true;
       getPublicQueueStatusViaSameOrigin()
         .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
-          timeoutMs: 5_000,
+          timeoutMs: 4_000,
           retryOnNetworkError: false,
           networkAttempts: 1,
         }))

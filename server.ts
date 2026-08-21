@@ -4888,10 +4888,13 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     if (queuedPlayer.userId.startsWith('waiting_for_player_')) return;
     const user = getUser(queuedPlayer.userId);
     user.matchmakingFailureAt = null;
-    user.matchmakingFailureReason = null;
     activeMatchByUser.set(queuedPlayer.userId, matchId);
     if (user.userId) activeMatchByUser.set(user.userId, matchId);
-    if (user.telegramId) activeMatchByUser.set(`tg_${user.telegramId}`, matchId);
+    if (user.telegramId) {
+      activeMatchByUser.set(`tg_${user.telegramId}`, matchId);
+      activeMatchByUser.set(`tg:${user.telegramId}`, matchId);
+      activeMatchByUser.set(String(user.telegramId), matchId);
+    }
     markMatchPlayerConnected(activeMatch, queuedPlayer.userId);
     schedulePersist({ userId: queuedPlayer.userId });
   });
@@ -7385,22 +7388,34 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
   sendSse(res, 'queue-status', buildQueuePayload(userId));
 
   res.on('close', () => {
-    const activeSubs = queueSubscribers.get(userId);
-    if (!activeSubs || activeSubs.size === 0) {
+    let hasActiveSubs = false;
+    for (const [subUid, subs] of queueSubscribers.entries()) {
+      if (isSameUser(subUid, userId) && subs.size > 0) {
+        hasActiveSubs = true;
+        break;
+      }
+    }
+    if (!hasActiveSubs) {
       if (!matchmakerCleanupTimers.has(userId)) {
         const timer = setTimeout(() => {
           matchmakerCleanupTimers.delete(userId);
-          const stillNoSubs = !queueSubscribers.get(userId) || queueSubscribers.get(userId)!.size === 0;
-          const player = matchmakingQueue.find(p => p.userId === userId);
+          let stillNoSubs = true;
+          for (const [subUid, subs] of queueSubscribers.entries()) {
+            if (isSameUser(subUid, userId) && subs.size > 0) {
+              stillNoSubs = false;
+              break;
+            }
+          }
+          const player = matchmakingQueue.find(p => isSameUser(p.userId, userId));
           if (stillNoSubs && player) {
             if (player.stake > 0 && player.costsCommitted === 'held') {
-              const u = users.get(userId);
+              const u = users.get(userId) || (Array.from(users.entries()).find(([uId]) => isSameUser(uId, userId))?.[1]);
               if (u) {
                 u.heldTickets = round2(Math.max(0, u.heldTickets - player.stake));
                 u.availableTickets = round2(u.availableTickets + player.stake);
               }
             }
-            matchmakingQueue = matchmakingQueue.filter(p => p.userId !== userId);
+            matchmakingQueue = matchmakingQueue.filter(p => !isSameUser(p.userId, userId));
             schedulePersist();
             matchmakingQueue
               .filter(p => p.stake === player.stake && p.mode === player.mode)
@@ -7423,35 +7438,8 @@ function handleMatchmakerStatus(req: AuthenticatedRequest, res: Response) {
     matchmakerCleanupTimers.delete(userId);
   }
 
-  const activeMatchId = activeMatchByUser.get(userId);
-  if (activeMatchId) {
-    const activeMatch = activeMatches.get(activeMatchId);
-    const isGameOver = activeMatch && (
-      activeMatch.settled ||
-      (activeMatch.gameType === 'poker' ? activeMatch.pokerGameState?.stage === 'match_ended' :
-       activeMatch.gameType === 'blackjack' ? activeMatch.blackjackGameState?.stage === 'match_ended' :
-       activeMatch.gameState.phase === 'game_over')
-    );
-    if (activeMatch && !isGameOver) {
-      markMatchPlayerConnected(activeMatch, userId);
-      const perspective = buildPerspectiveState(activeMatch, userId);
-      return sendMatchmakerStatusSuccess(req, res, {
-        status: 'ready',
-        matchId: activeMatch.matchId,
-        gameType: activeMatch.gameType || 'uno',
-        players: activeMatch.players,
-        stake: activeMatch.stake,
-        mode: activeMatch.mode,
-        gameState: (perspective as any)?.gameState,
-        blackjackGameState: (perspective as any)?.blackjackGameState,
-        pokerGameState: (perspective as any)?.pokerGameState,
-      });
-    } else {
-      activeMatchByUser.delete(userId);
-    }
-  }
-
-  return sendMatchmakerStatusSuccess(req, res, tryActivateQueuedMatch(userId) || { status: 'idle' });
+  const payload = tryActivateQueuedMatch(userId) || { status: 'idle' };
+  return sendMatchmakerStatusSuccess(req, res, payload);
 }
 
 app.get('/api/matchmaker/status', requireAuth, handleMatchmakerStatus);
