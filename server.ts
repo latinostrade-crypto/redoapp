@@ -1845,6 +1845,8 @@ function buildBootstrapProfileResponse(user: UserState) {
         gameType: match.gameType || 'uno',
         mode: match.mode,
         stake: match.stake,
+        status: match.settled ? 'finished' : (match.playStartedAt ? 'started' : 'waiting'),
+        playStartedAt: match.playStartedAt || null,
         roomCode: associatedRoom ? associatedRoom.roomCode : null,
         gameState: (perspective as any)?.gameState,
         blackjackGameState: (perspective as any)?.blackjackGameState,
@@ -7828,7 +7830,7 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
     return res.status(404).json({ error: 'Private room not found.' });
   }
 
-  if (room.hostUserId !== userId) {
+  if (!isSameUser(room.hostUserId, userId)) {
     return res.status(403).json({ error: 'Only the room creator can start the match.' });
   }
 

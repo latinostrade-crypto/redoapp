@@ -2417,7 +2417,8 @@ export function Web3Dashboard({
       }
       const hasPlaceholders = match.players?.some((p) => p.userId?.startsWith('waiting_for_player_'));
       const isUnstartedPrivate = match.mode === 'private' && (
-        !(match as any).playStartedAt ||
+        (match as any).status === 'waiting' ||
+        (match.players && match.players.length < 2) ||
         (match as any).pokerGameState?.waitingForPlayers ||
         (match as any).blackjackGameState?.waitingForPlayers
       );
@@ -2620,7 +2621,6 @@ export function Web3Dashboard({
   useEffect(() => {
     if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
     let disposed = false;
-    let lastRoomEventAt = 0;
     privateRoomStreamRef.current?.close();
 
     const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
@@ -2628,11 +2628,12 @@ export function Web3Dashboard({
 
     const handleRoomPayload = (result: any) => {
       if (disposed || !result) return;
-      lastRoomEventAt = Date.now();
       applyPrivateRoomState(result);
     };
 
+    let lastRoomEventAt = 0;
     stream.addEventListener('private-room', (event) => {
+      lastRoomEventAt = Date.now();
       try {
         const data = JSON.parse((event as MessageEvent).data);
         handleRoomPayload(data);
@@ -2645,23 +2646,52 @@ export function Web3Dashboard({
 
     stream.addEventListener('private-room-cancelled', () => {
       if (disposed) return;
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
       resetPrivateRoomState();
       setPrivateRoomError('The waiting room was cancelled by the host.');
     });
 
+    stream.addEventListener('private-room-completed', () => {
+      if (disposed) return;
+      stream.close();
+      localStorage.removeItem('redoapp_active_match');
+      resetPrivateRoomState();
+    });
+
+    let statusInFlight = false;
     const pollStatus = () => {
-      if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
-      if (Date.now() - lastRoomEventAt < 20_000) return;
-      apiRequest<PrivateRoomResponse>(`/api/private-rooms/status/${encodeURIComponent(privateRoomCode)}`, { timeoutMs: 5000 })
+      if (disposed || statusInFlight) return;
+      if (lastRoomEventAt && Date.now() - lastRoomEventAt < 20_000) return;
+      statusInFlight = true;
+      apiRequest<PrivateRoomResponse>(`/api/private-rooms/status/${encodeURIComponent(privateRoomCode)}`, { timeoutMs: 4000 })
         .then(handleRoomPayload)
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          statusInFlight = false;
+        });
     };
 
-    const interval = window.setInterval(pollStatus, 3000);
+    stream.onerror = () => {
+      lastRoomEventAt = 0;
+      pollStatus();
+    };
+
+    // Active heartbeat polling every 2 seconds to guarantee instant host transition
+    // even if mobile browser pauses background SSE stream during invite sharing
+    const interval = window.setInterval(pollStatus, 2000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        pollStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
       disposed = true;
       window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       stream.close();
       if (privateRoomStreamRef.current === stream) {
         privateRoomStreamRef.current = null;
@@ -3603,72 +3633,7 @@ export function Web3Dashboard({
     }, matchToOpen.stake);
   }, [authReady, tournamentData, activeProfile?.activeMatch, openPublicMatch]);
 
-  useEffect(() => {
-    if (privateRoomStatus !== 'waiting' || !privateRoomCode) return;
-    privateRoomStreamRef.current?.close();
-    const stream = new EventSource(buildAuthenticatedUrl(`/api/private-rooms/stream/${encodeURIComponent(privateRoomCode)}`));
-    privateRoomStreamRef.current = stream;
-    let lastRoomEventAt = 0;
-    let roomStatusRequestInFlight = false;
-    const requestRoomStatus = () => {
-      if (roomStatusRequestInFlight) return;
-      roomStatusRequestInFlight = true;
-      apiRequest<{ status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }>('/api/private-rooms/status/' + encodeURIComponent(privateRoomCode), { timeoutMs: 5000 })
-        .then(applyPrivateRoomState)
-        .catch(() => undefined)
-        .finally(() => {
-          roomStatusRequestInFlight = false;
-        });
-    };
 
-    stream.addEventListener('private-room', (event) => {
-      lastRoomEventAt = Date.now();
-      const result = JSON.parse((event as MessageEvent).data) as { status: 'waiting' | 'started'; playersCount: number; targetPlayers?: number; matchId?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> };
-      applyPrivateRoomState(result);
-    });
-    stream.addEventListener('heartbeat', () => {
-      lastRoomEventAt = Date.now();
-    });
-
-    stream.addEventListener('private-room-cancelled', () => {
-      stream.close();
-      localStorage.removeItem('redoapp_active_match');
-      resetPrivateRoomState();
-      setPrivateRoomError('The waiting room was cancelled.');
-    });
-
-    stream.addEventListener('private-room-completed', () => {
-      stream.close();
-      localStorage.removeItem('redoapp_active_match');
-      resetPrivateRoomState();
-    });
-
-    stream.onerror = () => {
-      lastRoomEventAt = 0;
-      requestRoomStatus();
-    };
-
-    const pollTimer = window.setInterval(() => {
-      if (lastRoomEventAt && Date.now() - lastRoomEventAt < 20_000) return;
-      requestRoomStatus();
-    }, 10_000);
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        requestRoomStatus();
-      }
-    };
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    return () => {
-      window.clearInterval(pollTimer);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      stream.close();
-      if (privateRoomStreamRef.current === stream) {
-        privateRoomStreamRef.current = null;
-      }
-    };
-  }, [currentUserId, onStartGame, privateRoomCode, privateRoomStake, privateRoomStatus, applyPrivateRoomState]);
 
   useEffect(() => {
     return () => {
