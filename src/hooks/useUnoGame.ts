@@ -626,6 +626,7 @@ export function useUnoGame() {
         }
 
         setRemoteSessionActive(true);
+        setGameMode(mode);
 
         setCardsPlayedThisRound(0);
         setCardsDrawnThisRound(0);
