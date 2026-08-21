@@ -1244,6 +1244,16 @@ export function Web3Dashboard({
       publicQueueDeadlineAtRef.current = 0;
       setQueueLength(result.players?.length || 1);
       setMatchmakingState('success');
+      try {
+        window.dispatchEvent(new CustomEvent('redoapp:open-match', {
+          detail: {
+            matchId: result.matchId,
+            gameType: targetGame,
+            mode: result.mode || 'pvp',
+            stake: matchedStake,
+          }
+        }));
+      } catch {}
       if (targetGame === 'poker' && onStartPokerGame) {
         onStartPokerGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
       } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
@@ -3515,6 +3525,9 @@ export function Web3Dashboard({
 
     stream.onerror = () => requestQueueStatus(true);
     requestQueueStatus();
+    const activeSearchPollTimer = window.setInterval(() => {
+      requestQueueStatus(true);
+    }, 2000);
     const pollTimer = window.setInterval(() => {
       requestQueueStatus();
     }, 12_000);
@@ -3530,6 +3543,7 @@ export function Web3Dashboard({
     return () => {
       disposed = true;
       waitBridgeDisposed = true;
+      window.clearInterval(activeSearchPollTimer);
       window.clearInterval(pollTimer);
       telegramWebApp?.offEvent?.('activated', handleResume);
       window.removeEventListener('pageshow', handleResume);

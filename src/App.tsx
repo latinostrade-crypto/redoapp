@@ -272,6 +272,46 @@ export default function App() {
     [selectedAvatar, startGame, userName]
   );
 
+  useEffect(() => {
+    const handleOpenMatchEvent = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail?.matchId) return;
+      const targetGame = detail.gameType || 'uno';
+      if (targetGame === 'poker') {
+        handleStartPokerGame(detail.mode || 'pvp', detail.stake || 0, undefined, detail.matchId);
+      } else if (targetGame === 'blackjack') {
+        handleStartBlackjackGame(detail.mode || 'pvp', detail.stake || 0, undefined, detail.matchId);
+      } else {
+        handleStartGame(detail.mode || 'pvp', detail.stake || 0, undefined, detail.matchId);
+      }
+    };
+    window.addEventListener('redoapp:open-match', handleOpenMatchEvent);
+    return () => window.removeEventListener('redoapp:open-match', handleOpenMatchEvent);
+  }, [handleStartGame, handleStartPokerGame, handleStartBlackjackGame]);
+
+  useEffect(() => {
+    if (gameState.phase !== 'setup' && activeGameType === 'uno') return;
+    const checkActiveMatch = () => {
+      try {
+        const raw = localStorage.getItem('redoapp_active_match');
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed?.matchId && parsed?.createdAt && Date.now() - Number(parsed.createdAt) < 60_000) {
+          const targetGame = parsed.gameType || 'uno';
+          if (targetGame === 'poker') {
+            handleStartPokerGame(parsed.mode || 'pvp', parsed.stake || 0, parsed.roomCode, parsed.matchId);
+          } else if (targetGame === 'blackjack') {
+            handleStartBlackjackGame(parsed.mode || 'pvp', parsed.stake || 0, parsed.roomCode, parsed.matchId);
+          } else if (gameState.phase === 'setup') {
+            handleStartGame(parsed.mode || 'pvp', parsed.stake || 0, parsed.roomCode, parsed.matchId);
+          }
+        }
+      } catch {}
+    };
+    const interval = window.setInterval(checkActiveMatch, 1000);
+    return () => window.clearInterval(interval);
+  }, [gameState.phase, activeGameType, handleStartGame, handleStartPokerGame, handleStartBlackjackGame]);
+
   const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
   const isWaitingForPlayers = gameMode === 'pvp' && !!gameState.waitingForPlayers;
   const isHumanTurn = !isWaitingForPlayers && currentActivePlayer?.id === 'player';
