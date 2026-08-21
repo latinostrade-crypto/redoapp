@@ -600,7 +600,8 @@ export function useUnoGame() {
         // Determine effective user ID
         const effectiveUserId =
           typeof window !== 'undefined'
-            ? (localStorage.getItem('redoapp_current_user_id') ||
+            ? (sessionStorage.getItem('redoapp_tab_guest_id') ||
+                localStorage.getItem('redoapp_current_user_id') ||
                 localStorage.getItem('redoapp_guest_user_id') ||
                 'player')
             : 'player';

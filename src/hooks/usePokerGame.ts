@@ -167,7 +167,7 @@ export function usePokerGame(options?: {
           try {
             const raw = localStorage.getItem('redoapp_active_match');
             const existing = raw ? JSON.parse(raw) : null;
-            const effectiveUserId = existing?.currentUserId || (typeof window !== 'undefined' ? (localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || 'player') : 'player');
+            const effectiveUserId = existing?.currentUserId || (typeof window !== 'undefined' ? (sessionStorage.getItem('redoapp_tab_guest_id') || localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || 'player') : 'player');
             localStorage.setItem('redoapp_active_match', JSON.stringify({
               ...(existing || {}),
               matchId: resolvedMatchId,
