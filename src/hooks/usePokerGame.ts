@@ -990,8 +990,57 @@ export function usePokerGame(options?: {
     return () => clearInterval(timer);
   }, [remoteMatchId, gameState.stage, gameState.isDealing, gameState.currentPlayerIndex, gameState.currentBet, gameState.players, playerCallOrCheck, playerFold]);
 
+  // Auto-restore active poker match on mount
   useEffect(() => {
-    return () => clearDealingTimeouts();
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('redoapp_active_match') : null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.gameType === 'poker' && parsed.matchId) {
+          if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
+            localStorage.removeItem('redoapp_active_match');
+            return;
+          }
+          let leftMatchId = '';
+          try { leftMatchId = sessionStorage.getItem('redoapp_user_left_match') || ''; } catch {}
+          if (leftMatchId && leftMatchId === parsed.matchId) {
+            localStorage.removeItem('redoapp_active_match');
+            return;
+          }
+          setRemoteMatchId(parsed.matchId);
+          syncRemoteMatchState(parsed.matchId);
+        }
+      } catch {}
+    }
+  }, [syncRemoteMatchState]);
+
+  const resetPokerSession = useCallback(() => {
+    remoteMatchStreamRef.current?.close();
+    remoteMatchStreamRef.current = null;
+    clearDealingTimeouts();
+    setRemoteMatchId(null);
+    setGameState({
+      stage: 'idle',
+      pot: 0,
+      currentBet: 0,
+      minRaise: BIG_BLIND,
+      communityCards: [],
+      players: [],
+      dealerIndex: 0,
+      smallBlindIndex: 1,
+      bigBlindIndex: 2,
+      currentPlayerIndex: 0,
+      smallBlindAmount: SMALL_BLIND,
+      bigBlindAmount: BIG_BLIND,
+      winnerIds: [],
+      winningCardIds: [],
+      logs: [],
+      stake: 0,
+      mode: 'offline',
+      isDealing: false,
+      waitingForPlayers: false,
+      matchId: undefined,
+    });
   }, []);
 
   return {
@@ -1002,5 +1051,6 @@ export function usePokerGame(options?: {
     playerFold,
     playerCallOrCheck,
     playerRaise,
+    resetPokerSession,
   };
 }

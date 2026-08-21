@@ -1010,6 +1010,7 @@ export function Web3Dashboard({
   const [adminTicketCost, setAdminTicketCost] = useState('0');
   const [adminRules, setAdminRules] = useState('');
   const [adminWinsRequired, setAdminWinsRequired] = useState<number>(1);
+  const [adminGameType, setAdminGameType] = useState<'uno' | 'poker' | 'blackjack'>('uno');
   const [adminSubmitting, setAdminSubmitting] = useState(false);
 
   const handleAdminCreateTournament = async () => {
@@ -1017,15 +1018,27 @@ export function Web3Dashboard({
     sound.playPop();
     setAdminSubmitting(true);
     try {
+      const defaultTitle = adminGameType === 'poker'
+        ? 'TEXAS HOLD\'EM POKER CHAMPIONSHIP'
+        : adminGameType === 'blackjack'
+        ? 'BLACKJACK GRAND PRIX'
+        : 'WEEKLY SMASH CHAMPIONSHIP';
+      const defaultRules = adminGameType === 'poker'
+        ? '10s turn timer. Texas Hold\'em tables. Last player standing advances.'
+        : adminGameType === 'blackjack'
+        ? '10s turn timer. Blackjack tables. Highest score/chips advances.'
+        : (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.');
+
       const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView }>('/api/admin/tournaments/create', {
         method: 'POST',
         body: JSON.stringify({
-          title: adminTitle.trim() || 'WEEKLY SMASH CHAMPIONSHIP',
+          title: adminTitle.trim() || defaultTitle,
+          gameType: adminGameType,
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
           winsRequired: adminWinsRequired,
-          rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.'),
+          rules: adminRules.trim() || defaultRules,
           maxPlayers: 32,
         }),
       });
@@ -1045,16 +1058,28 @@ export function Web3Dashboard({
     sound.playPop();
     setAdminSubmitting(true);
     try {
+      const defaultSimTitle = adminGameType === 'poker'
+        ? `REDO POKER CHAMPIONSHIP (${playerCount} PLAYERS)`
+        : adminGameType === 'blackjack'
+        ? `REDO BLACKJACK GRAND PRIX (${playerCount} PLAYERS)`
+        : `REDO CHAMPIONSHIP (${playerCount} PLAYERS)`;
+      const defaultRules = adminGameType === 'poker'
+        ? '10s turn timer. Texas Hold\'em tables. Last player standing advances.'
+        : adminGameType === 'blackjack'
+        ? '10s turn timer. Blackjack tables. Highest score/chips advances.'
+        : (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.');
+
       const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
         method: 'POST',
         body: JSON.stringify({
-          title: adminTitle.trim() || `REDO CHAMPIONSHIP (${playerCount} PLAYERS)`,
+          title: adminTitle.trim() || defaultSimTitle,
+          gameType: adminGameType,
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
           winsRequired: adminWinsRequired,
           playerCount,
-          rules: adminRules.trim() || (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.'),
+          rules: adminRules.trim() || defaultRules,
         }),
       });
       if (res?.tournament) {
@@ -1208,7 +1233,7 @@ export function Web3Dashboard({
       ?? fallbackStake
     );
     try {
-      const targetGame = result.gameType || pvpGameTab;
+      const targetGame = result.gameType || (result.matchId.startsWith('tourn-') ? (tournamentData?.gameType || 'uno') : undefined) || pvpGameTab;
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
         mode: result.mode || 'pvp',
@@ -2392,6 +2417,12 @@ export function Web3Dashboard({
       if (leftMatchId && leftMatchId === match.matchId) {
         try { localStorage.removeItem('redoapp_active_match'); } catch {}
         recoveredActiveMatchRef.current = match.matchId;
+        setProfile((prev) => prev ? { ...prev, activeMatch: null } : prev);
+        setFullProfile((prev) => prev ? { ...prev, activeMatch: null } : prev);
+        apiRequest('/api/matches/leave-unstarted', {
+          method: 'POST',
+          body: JSON.stringify({ matchId: match.matchId }),
+        }).catch(() => {});
         return;
       }
 
@@ -3166,65 +3197,6 @@ export function Web3Dashboard({
       setNftCheckMessage(error instanceof Error ? error.message : 'NFT verification failed.');
     }
   };
-
-  const checkAndEnforceStickerOwnership = useCallback(async (targetGame?: 'poker' | 'blackjack'): Promise<boolean> => {
-    const effectiveAddress = rawAddress || localStorage.getItem('redoapp_ton_wallet_address') || '';
-    const stored = readNftEventVerifications();
-
-    if (effectiveAddress && stored[effectiveAddress]) {
-      return true;
-    }
-
-    if (Object.values(stored).some(Boolean)) {
-      return true;
-    }
-
-    if (!effectiveAddress && !walletConnected) {
-      sound.playPop();
-      alert('⚠️ Для доступа к Покеру и Блэкджеку необходимо подключить TON кошелек со стикером Ayanami Plush. Перейдите во вкладку Events для проверки.');
-      setCurrentTab('events');
-      setEventsSubTab('stickers');
-      setShowConnectModal(true);
-      return false;
-    }
-
-    const addressToCheck = effectiveAddress || rawAddress;
-    if (!addressToCheck) return true;
-
-    try {
-      sound.playPop();
-      setNftCheckState('checking');
-      const response = await fetch(
-        `https://tonapi.io/v2/accounts/${encodeURIComponent(addressToCheck)}/nfts?collection=${encodeURIComponent(NFT_COLLECTION_ADDRESS)}&limit=1`,
-        { headers: { Accept: 'application/json' } }
-      );
-
-      if (!response.ok) {
-        throw new Error('TonAPI check unavailable.');
-      }
-
-      const payload = (await response.json()) as { nft_items?: unknown[]; items?: unknown[] };
-      const nftItems = Array.isArray(payload.nft_items) ? payload.nft_items : Array.isArray(payload.items) ? payload.items : [];
-
-      if (nftItems.length > 0) {
-        stored[addressToCheck] = true;
-        localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
-        setNftCheckState('verified');
-        setNftCheckMessage('Ayanami Plush sticker holder verified.');
-        return true;
-      }
-
-      setNftCheckState('missing');
-      setNftCheckMessage('No Ayanami Plush sticker NFT was found on this wallet.');
-      alert(`🔒 Доступ закрыт: На вашем кошельке не найден стикер Ayanami Plush! Приобретите или проверьте стикер Ayanami Plush на вкладке Events для доступа к ${targetGame === 'blackjack' ? 'Блэкджеку' : 'Покеру'}.`);
-      setCurrentTab('events');
-      setEventsSubTab('stickers');
-      return false;
-    } catch {
-      if (stored[addressToCheck]) return true;
-      return true; // Fallback to allowing play if API is rate limited or blocked by CORS
-    }
-  }, [walletConnected, rawAddress, setCurrentTab]);
 
   useEffect(() => {
     if (!walletConnected || !rawAddress) return;
@@ -4747,17 +4719,28 @@ export function Web3Dashboard({
                   <>
                     {/* Header Badge & Title */}
                     <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                      <div>
-                        <span className={`text-[7px] font-black uppercase px-2 py-0.5 border border-black ${
-                          tournamentData.status === 'in_progress'
-                            ? 'bg-[#ff4b4b] text-white animate-pulse'
-                            : tournamentData.status === 'finished'
-                            ? 'bg-[#00d2ff] text-black'
-                            : 'bg-[#ffcc00] text-black'
-                        }`}>
-                          {tournamentData.status === 'in_progress' ? 'LIVE NOW · TOURNAMENT IN PROGRESS' : tournamentData.status === 'finished' ? 'COMPLETED' : 'UPCOMING TOURNAMENT'}
-                        </span>
-                        <h2 className="text-xs font-black text-white uppercase mt-1">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-[7.5px] font-black uppercase px-2 py-0.5 border border-black ${
+                            tournamentData.gameType === 'poker'
+                              ? 'bg-[#ffcc00] text-black shadow-[1px_1px_0_#000]'
+                              : tournamentData.gameType === 'blackjack'
+                              ? 'bg-[#00ff66] text-black shadow-[1px_1px_0_#000]'
+                              : 'bg-[#00d2ff] text-black shadow-[1px_1px_0_#000]'
+                          }`}>
+                            {tournamentData.gameType === 'poker' ? '♠️ TEXAS HOLD\'EM' : tournamentData.gameType === 'blackjack' ? '🃏 BLACKJACK' : '🎮 UNO'}
+                          </span>
+                          <span className={`text-[7px] font-black uppercase px-2 py-0.5 border border-black ${
+                            tournamentData.status === 'in_progress'
+                              ? 'bg-[#ff4b4b] text-white animate-pulse'
+                              : tournamentData.status === 'finished'
+                              ? 'bg-slate-700 text-white'
+                              : 'bg-[#ffcc00] text-black'
+                          }`}>
+                            {tournamentData.status === 'in_progress' ? 'LIVE NOW · IN PROGRESS' : tournamentData.status === 'finished' ? 'COMPLETED' : 'UPCOMING'}
+                          </span>
+                        </div>
+                        <h2 className="text-xs font-black text-white uppercase">
                           {tournamentData.title}
                         </h2>
                       </div>
@@ -4833,7 +4816,6 @@ export function Web3Dashboard({
                           {tournamentData.matches.map((match) => {
                             const isMyMatch = match.playerIds.includes(currentUserId);
                             const activeMatchObj = activeProfile?.activeMatch;
-                            const isMatchReady = isMyMatch && (activeMatchObj?.matchId === match.matchId || activeMatchObj?.matchId === `tourn-${tournamentData.id}-r${match.round}-m${match.tableIndex}`);
 
                             return (
                               <div
@@ -4853,67 +4835,61 @@ export function Web3Dashboard({
                                         ? 'bg-[#00ff66] text-black border-black font-bold'
                                         : 'bg-slate-800 text-slate-300 border-slate-700'
                                     }`}>
-                                      {match.round === 2 ? '👑 FINAL TABLE' : `TABLE #${match.tableIndex}`}
+                                      TABLE #{match.tableIndex} {match.round === 2 ? '(FINAL)' : `(R${match.round})`}
                                     </span>
-                                    {isMyMatch && (
-                                      <span className="bg-[#ffcc00] text-black font-black px-1 text-[7px] uppercase tracking-wider animate-pulse">
-                                        YOUR ROOM
-                                      </span>
+                                    {match.status === 'completed' ? (
+                                      <span className="text-[#00ff66] font-bold">✓ COMPLETED</span>
+                                    ) : (
+                                      <span className="text-[#ffcc00] animate-pulse">● PLAYING</span>
                                     )}
                                   </div>
-                                  <span className="text-slate-400 uppercase font-bold">
-                                    {match.status === 'completed' ? '🏁 FINISHED' : match.status === 'in_progress' ? (match.round === 2 ? '👑 FINAL MATCH' : '⚔️ IN MATCH') : '⏳ READY'}
+                                  <span className="text-slate-400">
+                                    {match.playerIds.length} Players
                                   </span>
                                 </div>
 
-                                {match.round === 2 && match.status !== 'completed' && (
-                                  <div className="bg-[#ffcc00]/20 border border-[#ffcc00]/60 p-1 rounded text-[7.5px] text-[#ffcc00] font-mono text-center font-bold animate-pulse">
-                                    🏆 FINAL ROUND · WAITING FOR PLAYERS (90S TIMER)
-                                  </div>
-                                )}
-
-                                <div className="flex flex-col gap-1.5 bg-slate-950 p-2 border border-slate-900 rounded-sm">
-                                  {match.playerIds.map((pid, idx) => {
-                                    const isMe = pid === currentUserId;
+                                {/* Table Players List */}
+                                <div className="grid grid-cols-2 gap-1.5 font-mono text-[7.5px]">
+                                  {match.playerIds.map((pid) => {
                                     const pObj = tournamentData.participants.find((p) => p.userId === pid);
-                                    const rawName = pObj?.username || pid.replace(/^tg:/, '');
-                                    const name = rawName.startsWith('@') ? rawName : `@${rawName}`;
                                     const isWinner = match.winnerId === pid;
+                                    const isMe = pid === currentUserId;
+                                    const wins = match.playerWins?.[pid] || 0;
 
                                     return (
                                       <div
                                         key={pid}
-                                        className={`flex items-center justify-between gap-2 text-[9px] px-2 py-1.5 rounded font-mono ${
-                                          isMe
-                                            ? 'text-[#00ff66] font-bold bg-[#00ff66]/10 border border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(0,255,102,0.1)]'
-                                            : 'text-slate-200 bg-slate-900/60 border border-slate-800'
+                                        className={`p-1.5 border rounded flex items-center justify-between ${
+                                          isWinner
+                                            ? 'bg-[#00ff66]/10 border-[#00ff66] text-[#00ff66]'
+                                            : isMe
+                                            ? 'bg-slate-900 border-[#00d2ff] text-slate-100'
+                                            : 'bg-black border-slate-900 text-slate-400'
                                         }`}
                                       >
-                                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                                          <Avatar id={pObj?.avatarId || 'rabbit'} size={16} />
-                                          <span className="truncate font-bold text-white text-[9px]">
-                                            P{idx + 1}: {name} {isMe ? '(You)' : ''}
+                                        <div className="flex items-center gap-1 truncate">
+                                          <Avatar id={(pObj?.avatarId as any) || 'rabbit'} size={14} />
+                                          <span className="truncate font-bold">
+                                            {pObj?.username || pid.replace(/^tg:/, '')} {isMe ? '(You)' : ''}
                                           </span>
                                         </div>
-                                        <div className="flex items-center gap-1.5 shrink-0">
-                                          {(tournamentData.winsRequired || 1) > 1 && (
-                                            <span className="text-[7.5px] font-black text-[#ffcc00] px-1.5 py-0.5 bg-[#ffcc00]/15 border border-[#ffcc00]/40 rounded">
-                                              {match.playerWins?.[pid] || 0}/{tournamentData.winsRequired} WINS
-                                            </span>
-                                          )}
-                                          {isWinner && <span className="text-xs">👑</span>}
-                                        </div>
+                                        {isWinner ? (
+                                          <span className="font-black text-[7px] bg-[#00ff66] text-black px-1 py-0.2 rounded-xs">WIN</span>
+                                        ) : wins > 0 ? (
+                                          <span className="text-[7px] text-[#ffcc00] font-bold">{wins}W</span>
+                                        ) : null}
                                       </div>
                                     );
                                   })}
                                 </div>
 
+                                {/* Action Buttons for Table */}
                                 {isMyMatch && match.status !== 'completed' && (
                                   <button
                                     type="button"
                                     onClick={() => {
                                       sound.playPop();
-                                      const matchToOpen = activeMatchObj || {
+                                      const matchToOpen = activeProfile?.activeMatch || {
                                         matchId: match.matchId,
                                         mode: 'pvp' as const,
                                         stake: 0,
@@ -4933,6 +4909,7 @@ export function Web3Dashboard({
                                         matchId: matchToOpen.matchId,
                                         mode: matchToOpen.mode,
                                         stake: matchToOpen.stake,
+                                        gameType: tournamentData.gameType || 'uno',
                                         players: matchToOpen.players,
                                         gameState: matchToOpen.gameState,
                                       }, matchToOpen.stake);
@@ -5015,6 +4992,7 @@ export function Web3Dashboard({
                                 matchId: matchToOpen.matchId,
                                 mode: matchToOpen.mode,
                                 stake: matchToOpen.stake,
+                                gameType: tournamentData.gameType || 'uno',
                                 players: matchToOpen.players,
                                 gameState: matchToOpen.gameState,
                               }, matchToOpen.stake);
@@ -5026,16 +5004,16 @@ export function Web3Dashboard({
                         );
                       }
 
-                      if (myCompletedMatch && myCompletedMatch.winnerId !== currentUserId) {
+                      if (myCompletedMatch) {
                         return (
-                          <div className="w-full py-2.5 bg-slate-900/90 border-2 border-black text-center text-slate-400 font-mono font-bold text-[8.5px] uppercase shadow-[2px_2px_0_#000]">
-                            🏁 MATCH COMPLETED · ELIMINATED (SPECTATING FINALS)
+                          <div className="text-center py-2 text-slate-400 text-[8px] uppercase font-mono bg-black/50 border border-slate-800 rounded">
+                            {myCompletedMatch.winnerId === currentUserId ? '🏆 You won your table! Waiting for next round...' : '❌ Match completed. You were eliminated.'}
                           </div>
                         );
                       }
 
                       return (
-                        <div className="w-full py-2.5 bg-slate-950 border-2 border-slate-800 text-center text-slate-400 font-mono text-[8.5px] uppercase">
+                        <div className="text-center py-2 text-slate-400 text-[8px] uppercase font-mono bg-black/50 border border-slate-800 rounded">
                           👀 SPECTATING LIVE TOURNAMENT BRACKET
                         </div>
                       );
@@ -5056,6 +5034,64 @@ export function Web3Dashboard({
                       <span>@allin_gram</span>
                     </div>
                     <div className="space-y-2 text-[8px]">
+                      {/* Tournament Game Discipline Selector */}
+                      <div>
+                        <label className="text-[7px] text-slate-400 block mb-0.5 font-bold">TOURNAMENT DISCIPLINE (GAME TYPE)</label>
+                        <div className="grid grid-cols-3 gap-1 font-bold text-[7.5px]">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdminGameType('uno');
+                              if (!adminTitle || adminTitle.includes('CHAMPIONSHIP') || adminTitle.includes('GRAND PRIX')) {
+                                setAdminTitle('REDO UNO CHAMPIONSHIP');
+                              }
+                              setAdminRules('10s turn timer. Single elimination tables.');
+                            }}
+                            className={`py-1.5 border text-center transition-all cursor-pointer ${
+                              adminGameType === 'uno'
+                                ? 'bg-[#00d2ff] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                                : 'bg-black text-slate-400 border-slate-800'
+                            }`}
+                          >
+                            🎮 UNO
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdminGameType('poker');
+                              if (!adminTitle || adminTitle.includes('CHAMPIONSHIP') || adminTitle.includes('GRAND PRIX')) {
+                                setAdminTitle('TEXAS HOLD\'EM POKER CHAMPIONSHIP');
+                              }
+                              setAdminRules('10s turn timer. Texas Hold\'em tables. Last player standing advances.');
+                            }}
+                            className={`py-1.5 border text-center transition-all cursor-pointer ${
+                              adminGameType === 'poker'
+                                ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                                : 'bg-black text-slate-400 border-slate-800'
+                            }`}
+                          >
+                            ♠️ POKER
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdminGameType('blackjack');
+                              if (!adminTitle || adminTitle.includes('CHAMPIONSHIP') || adminTitle.includes('GRAND PRIX')) {
+                                setAdminTitle('BLACKJACK GRAND PRIX');
+                              }
+                              setAdminRules('10s turn timer. Blackjack tables. Highest score/chips advances.');
+                            }}
+                            className={`py-1.5 border text-center transition-all cursor-pointer ${
+                              adminGameType === 'blackjack'
+                                ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                                : 'bg-black text-slate-400 border-slate-800'
+                            }`}
+                          >
+                            🃏 BLACKJACK
+                          </button>
+                        </div>
+                      </div>
+
                       <input
                         type="text"
                         placeholder="Tournament Title (e.g. WEEKLY SMASH CHAMPIONSHIP)"
@@ -5242,8 +5278,19 @@ export function Web3Dashboard({
                       {pastTournaments.map((past) => (
                         <div key={past.id} className="bg-slate-950/80 border border-slate-800 p-2.5 rounded-sm space-y-1.5 font-mono">
                           <div className="flex items-center justify-between text-[8px]">
-                            <span className="font-bold text-white uppercase">{past.title}</span>
-                            <span className="text-slate-400">
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className={`text-[6.5px] font-black uppercase px-1 py-0.2 border border-black ${
+                                past.gameType === 'poker'
+                                  ? 'bg-[#ffcc00] text-black'
+                                  : past.gameType === 'blackjack'
+                                  ? 'bg-[#00ff66] text-black'
+                                  : 'bg-[#00d2ff] text-black'
+                              }`}>
+                                {past.gameType === 'poker' ? 'POKER' : past.gameType === 'blackjack' ? 'BLACKJACK' : 'UNO'}
+                              </span>
+                              <span className="font-bold text-white uppercase truncate">{past.title}</span>
+                            </div>
+                            <span className="text-slate-400 flex-shrink-0 text-[7px]">
                               {past.finishedAt ? new Date(past.finishedAt).toLocaleDateString() : 'Completed'}
                             </span>
                           </div>
@@ -5279,7 +5326,7 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="w-full space-y-3 py-2 text-left"
             >
-              {/* Consolidated Game Sub-Tab selector (UNO vs POKER vs BLACKJACK) */}
+              {/* Consolidated Game Sub-Tab selector (UNO vs POKER vs BLACKJACK) - Accessible to ALL */}
               <div className="grid grid-cols-3 border-2 border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] min-[380px]:text-[9px] font-mono font-black mb-1">
                 <button
                   type="button"
@@ -5297,12 +5344,9 @@ export function Web3Dashboard({
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
+                  onClick={() => {
                     sound.playPop();
-                    const allowed = await checkAndEnforceStickerOwnership('poker');
-                    if (allowed) {
-                      setPvpGameTab('poker');
-                    }
+                    setPvpGameTab('poker');
                   }}
                   className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
                     pvpGameTab === 'poker'
@@ -5314,12 +5358,9 @@ export function Web3Dashboard({
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
+                  onClick={() => {
                     sound.playPop();
-                    const allowed = await checkAndEnforceStickerOwnership('blackjack');
-                    if (allowed) {
-                      setPvpGameTab('blackjack');
-                    }
+                    setPvpGameTab('blackjack');
                   }}
                   className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
                     pvpGameTab === 'blackjack'
@@ -5661,142 +5702,144 @@ export function Web3Dashboard({
                       </div>
                     </div>
                   ) : (
-                    <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                      <div className="flex justify-between items-center text-[9px]">
-                        <h3 className="font-black text-slate-100 uppercase">
-                          PRIVATE ROOM
-                        </h3>
-                        <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
-                          BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
-                        </span>
-                      </div>
-
-                      {!walletConnected && (
-                        <div className={`border border-black p-2 text-[8px] leading-relaxed ${
-                          privateStakeRequiresWallet ? 'bg-[#1c1010] text-[#ffb3b3]' : 'bg-[#08131f] text-[#9ed8ff]'
-                        }`}>
-                          {privateStakeRequiresWallet
-                            ? 'Paid private rooms still require a wallet connection. Switch stake to FREE or connect your wallet.'
-                            : 'FREE private rooms are open without wallet connection. Invite friends with a room code and play at 0 TKT stake.'}
+                    generatedLink || privateRoomStatus === 'waiting' ? (
+                      renderPrivateWaitingRoomLobby('UNO')
+                    ) : (
+                      <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                        <div className="flex justify-between items-center text-[9px]">
+                          <h3 className="font-black text-slate-100 uppercase">
+                            PRIVATE ROOM
+                          </h3>
+                          <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
+                            BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                          </span>
                         </div>
-                      )}
 
-                      <div className="space-y-1">
-                        <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Select Room Stake</label>
-                        <div className="grid grid-cols-4 gap-1">
-                          {PRIVATE_STAKE_OPTIONS.map((stake) => (
-                            <button
-                              key={stake}
-                              type="button"
-                              onClick={() => {
-                                sound.playPop();
-                                setPrivateRoomStake(stake);
-                                setGeneratedLink('');
-                                setPrivateRoomCode('');
-                                setPrivateRoomStatus('idle');
-                                setPrivateRoomCreateState('idle');
-                                setPrivateRoomError('');
-                                setPrivateRoomPlayersCount(0);
-                              }}
-                              className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                                privateRoomStake === stake
-                                  ? 'bg-[#00d2ff] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                                  : 'bg-black border-black text-slate-450'
-                              }`}
-                            >
-                              <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
-                              <span className="text-[6px] block mt-0.5">{stake === 0 ? '0 stake' : 'stake'}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Players In Room</label>
-                        <div className="grid grid-cols-3 gap-1">
-                          {([2, 3, 4] as const).map((count) => (
-                            <button
-                              key={count}
-                              type="button"
-                              onClick={() => {
-                                sound.playPop();
-                                setPrivateRoomTargetPlayers(count);
-                                setGeneratedLink('');
-                                setPrivateRoomCode('');
-                                setPrivateRoomStatus('idle');
-                                setPrivateRoomCreateState('idle');
-                                setPrivateRoomError('');
-                                setPrivateRoomPlayersCount(0);
-                              }}
-                              className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                                privateRoomTargetPlayers === count
-                                  ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                                  : 'bg-black border-black text-slate-450'
-                              }`}
-                            >
-                              <span className="text-[9px] font-black">{count}</span>
-                              <span className="text-[6px] block mt-0.5">players</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="bg-black p-2 border border-black font-mono text-[8px] leading-relaxed">
-                        {privateRoomStake === 0 ? (
-                          <div className="flex justify-between text-slate-400">
-                            <span>Room reward</span>
-                            <span className="font-black text-[#00d2ff]">FREE · XP ONLY</span>
+                        {!walletConnected && (
+                          <div className={`border border-black p-2 text-[8px] leading-relaxed ${
+                            privateStakeRequiresWallet ? 'bg-[#1c1010] text-[#ffb3b3]' : 'bg-[#08131f] text-[#9ed8ff]'
+                          }`}>
+                            {privateStakeRequiresWallet
+                              ? 'Paid private rooms still require a wallet connection. Switch stake to FREE or connect your wallet.'
+                              : 'FREE private rooms are open without wallet connection. Invite friends with a room code and play at 0 TKT stake.'}
                           </div>
-                        ) : (
-                          <>
-                            <div className="flex justify-between mb-1">
-                              <span className="text-slate-400">Prize pool</span>
-                              <span className="font-black text-[#00ff66]">
-                                {calculateTicketPayouts(privateRoomStake, privateRoomTargetPlayers).netPrizePool.toFixed(2)} TKT
-                              </span>
-                            </div>
-                            <div className="text-[#ffcc00] font-bold text-right">
-                              {formatPayoutRow(privateRoomStake, privateRoomTargetPlayers)}
-                            </div>
-                          </>
                         )}
-                      </div>
 
-                      <div className="space-y-1">
-                        <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
-                        <input
-                          type="text"
-                          value={privateJoinCode}
-                          onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                          placeholder="ROOM CODE"
-                          className="w-full bg-black border border-black text-slate-200 px-2 py-2 text-[9px] font-mono tracking-widest uppercase"
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const normalizedCode = privateJoinCode.trim().toUpperCase();
-                          if (!normalizedCode) {
-                            alert('Enter a room code first.');
-                            return;
-                          }
-                          sound.playPop();
-                          setPrivateRoomCode(normalizedCode);
-                          setShowRoomDisclaimer(true);
-                        }}
-                        className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        Join By Code
-                      </button>
-
-                      {privateRoomError && (
-                        <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
-                          {cleanErrorMessage(privateRoomError, 'private-room')}
+                        <div className="space-y-1">
+                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Select Room Stake</label>
+                          <div className="grid grid-cols-4 gap-1">
+                            {PRIVATE_STAKE_OPTIONS.map((stake) => (
+                              <button
+                                key={stake}
+                                type="button"
+                                onClick={() => {
+                                  sound.playPop();
+                                  setPrivateRoomStake(stake);
+                                  setGeneratedLink('');
+                                  setPrivateRoomCode('');
+                                  setPrivateRoomStatus('idle');
+                                  setPrivateRoomCreateState('idle');
+                                  setPrivateRoomError('');
+                                  setPrivateRoomPlayersCount(0);
+                                }}
+                                className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                                  privateRoomStake === stake
+                                    ? 'bg-[#00d2ff] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                                    : 'bg-black border-black text-slate-450'
+                                }`}
+                              >
+                                <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
+                                <span className="text-[6px] block mt-0.5">{stake === 0 ? '0 stake' : 'stake'}</span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      )}
 
-                      {!generatedLink && privateRoomStatus !== 'waiting' ? (
+                        <div className="space-y-1">
+                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Players In Room</label>
+                          <div className="grid grid-cols-3 gap-1">
+                            {([2, 3, 4] as const).map((count) => (
+                              <button
+                                key={count}
+                                type="button"
+                                onClick={() => {
+                                  sound.playPop();
+                                  setPrivateRoomTargetPlayers(count);
+                                  setGeneratedLink('');
+                                  setPrivateRoomCode('');
+                                  setPrivateRoomStatus('idle');
+                                  setPrivateRoomCreateState('idle');
+                                  setPrivateRoomError('');
+                                  setPrivateRoomPlayersCount(0);
+                                }}
+                                className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                                  privateRoomTargetPlayers === count
+                                    ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                                    : 'bg-black border-black text-slate-450'
+                                }`}
+                              >
+                                <span className="text-[9px] font-black">{count}</span>
+                                <span className="text-[6px] block mt-0.5">players</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="bg-black p-2 border border-black font-mono text-[8px] leading-relaxed">
+                          {privateRoomStake === 0 ? (
+                            <div className="flex justify-between text-slate-400">
+                              <span>Room reward</span>
+                              <span className="font-black text-[#00d2ff]">FREE · XP ONLY</span>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex justify-between mb-1">
+                                <span className="text-slate-400">Prize pool</span>
+                                <span className="font-black text-[#00ff66]">
+                                  {calculateTicketPayouts(privateRoomStake, privateRoomTargetPlayers).netPrizePool.toFixed(2)} TKT
+                                </span>
+                              </div>
+                              <div className="text-[#ffcc00] font-bold text-right">
+                                {formatPayoutRow(privateRoomStake, privateRoomTargetPlayers)}
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                          <input
+                            type="text"
+                            value={privateJoinCode}
+                            onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
+                            placeholder="ROOM CODE"
+                            className="w-full bg-black border border-black text-slate-200 px-2 py-2 text-[9px] font-mono tracking-widest uppercase"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const normalizedCode = privateJoinCode.trim().toUpperCase();
+                            if (!normalizedCode) {
+                              alert('Enter a room code first.');
+                              return;
+                            }
+                            sound.playPop();
+                            setPrivateRoomCode(normalizedCode);
+                            setShowRoomDisclaimer(true);
+                          }}
+                          className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Join By Code
+                        </button>
+
+                        {privateRoomError && (
+                          <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
+                            {cleanErrorMessage(privateRoomError, 'private-room')}
+                          </div>
+                        )}
+
                         <button
                           type="button"
                           onClick={createPrivateRoom}
@@ -5809,10 +5852,8 @@ export function Web3Dashboard({
                             ? 'Creating Room...'
                             : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
-                      ) : (
-                        renderPrivateWaitingRoomLobby('UNO')
-                      )}
-                    </div>
+                      </div>
+                    )
                   )}
                 </>
               )}
@@ -5954,73 +5995,75 @@ export function Web3Dashboard({
 
               {/* Poker Private Arena */}
               {pvpSubMode === 'private' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
-                      POKER PRIVATE ROOM
-                    </h3>
-                    <span className="text-[8px] text-slate-400">
-                      STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
-                    </span>
-                  </div>
-                  <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
-                    Create a private Texas Hold'em room or join your friend's room using a room code.
-                  </p>
-
-                  <div className="grid grid-cols-3 gap-1">
-                    {PRIVATE_STAKE_OPTIONS.map((stake) => (
-                      <button
-                        key={stake}
-                        type="button"
-                        onClick={() => {
-                          sound.playPop();
-                          setSelectedStake(stake);
-                          setPrivateRoomStake(stake);
-                        }}
-                        className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                          selectedStake === stake
-                            ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                            : 'bg-black border-black text-slate-450'
-                        }`}
-                      >
-                        <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                        <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Join By Room Code */}
-                  <div className="space-y-1">
-                    <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
-                    <div className="flex gap-1">
-                      <input
-                        type="text"
-                        value={privateJoinCode}
-                        onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                        placeholder="ENTER CODE (E.G. PK8492)"
-                        className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
-                          if (!normalizedCode) {
-                            alert('Enter a room code first.');
-                            return;
-                          }
-                          sound.playPop();
-                          setPrivateRoomCode(normalizedCode);
-                          joinPrivateRoomByCode(normalizedCode);
-                        }}
-                        className="px-3 py-1.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
-                      >
-                        Join
-                      </button>
+                generatedLink || privateRoomStatus === 'waiting' ? (
+                  renderPrivateWaitingRoomLobby('Poker')
+                ) : (
+                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                    <div className="flex justify-between items-center text-[9px]">
+                      <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
+                        POKER PRIVATE ROOM
+                      </h3>
+                      <span className="text-[8px] text-slate-400">
+                        STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
+                      </span>
                     </div>
-                  </div>
+                    <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
+                      Create a private Texas Hold'em room or join your friend's room using a room code.
+                    </p>
 
-                  {/* Create Room Button or Active Waiting Room Lobby */}
-                  {!generatedLink && privateRoomStatus !== 'waiting' ? (
+                    <div className="grid grid-cols-3 gap-1">
+                      {PRIVATE_STAKE_OPTIONS.map((stake) => (
+                        <button
+                          key={stake}
+                          type="button"
+                          onClick={() => {
+                            sound.playPop();
+                            setSelectedStake(stake);
+                            setPrivateRoomStake(stake);
+                          }}
+                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                            selectedStake === stake
+                              ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                              : 'bg-black border-black text-slate-450'
+                          }`}
+                        >
+                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
+                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Join By Room Code */}
+                    <div className="space-y-1">
+                      <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={privateJoinCode}
+                          onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
+                          placeholder="ENTER CODE (E.G. PK8492)"
+                          className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
+                            if (!normalizedCode) {
+                              alert('Enter a room code first.');
+                              return;
+                            }
+                            sound.playPop();
+                            setPrivateRoomCode(normalizedCode);
+                            joinPrivateRoomByCode(normalizedCode);
+                          }}
+                          className="px-3 py-1.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                        >
+                          Join
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Create Room Button */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-[8px] text-slate-300">
                         <span>TABLE SIZE:</span>
@@ -6056,10 +6099,8 @@ export function Web3Dashboard({
                         {privateRoomCreateState === 'creating' ? 'Creating Room...' : `CREATE PRIVATE POKER ROOM (${privateRoomTargetPlayers} SEATS)`}
                       </button>
                     </div>
-                  ) : (
-                    renderPrivateWaitingRoomLobby('Poker')
-                  )}
-                </div>
+                  </div>
+                )
               )}
 
               {/* Poker Practice Mode */}
@@ -6221,73 +6262,75 @@ export function Web3Dashboard({
 
               {/* Blackjack Private Arena */}
               {pvpSubMode === 'private' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                      BLACKJACK PRIVATE ROOM
-                    </h3>
-                    <span className="text-[8px] text-slate-400">
-                      STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
-                    </span>
-                  </div>
-                  <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
-                    Create a private Blackjack room or join your friend's table using a room code.
-                  </p>
-
-                  <div className="grid grid-cols-3 gap-1">
-                    {PRIVATE_STAKE_OPTIONS.map((stake) => (
-                      <button
-                        key={stake}
-                        type="button"
-                        onClick={() => {
-                          sound.playPop();
-                          setSelectedStake(stake);
-                          setPrivateRoomStake(stake);
-                        }}
-                        className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                          selectedStake === stake
-                            ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                            : 'bg-black border-black text-slate-450'
-                        }`}
-                      >
-                        <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                        <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Join By Room Code */}
-                  <div className="space-y-1">
-                    <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
-                    <div className="flex gap-1">
-                      <input
-                        type="text"
-                        value={privateJoinCode}
-                        onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                        placeholder="ENTER CODE (E.G. BJ5192)"
-                        className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
-                          if (!normalizedCode) {
-                            alert('Enter a room code first.');
-                            return;
-                          }
-                          sound.playPop();
-                          setPrivateRoomCode(normalizedCode);
-                          joinPrivateRoomByCode(normalizedCode);
-                        }}
-                        className="px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
-                      >
-                        Join
-                      </button>
+                generatedLink || privateRoomStatus === 'waiting' ? (
+                  renderPrivateWaitingRoomLobby('Blackjack')
+                ) : (
+                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                    <div className="flex justify-between items-center text-[9px]">
+                      <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
+                        BLACKJACK PRIVATE ROOM
+                      </h3>
+                      <span className="text-[8px] text-slate-400">
+                        STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
+                      </span>
                     </div>
-                  </div>
+                    <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
+                      Create a private Blackjack room or join your friend's table using a room code.
+                    </p>
 
-                  {/* Create Room Button or Active Waiting Room Lobby */}
-                  {!generatedLink && privateRoomStatus !== 'waiting' ? (
+                    <div className="grid grid-cols-3 gap-1">
+                      {PRIVATE_STAKE_OPTIONS.map((stake) => (
+                        <button
+                          key={stake}
+                          type="button"
+                          onClick={() => {
+                            sound.playPop();
+                            setSelectedStake(stake);
+                            setPrivateRoomStake(stake);
+                          }}
+                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
+                            selectedStake === stake
+                              ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
+                              : 'bg-black border-black text-slate-450'
+                          }`}
+                        >
+                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
+                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Join By Room Code */}
+                    <div className="space-y-1">
+                      <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                      <div className="flex gap-1">
+                        <input
+                          type="text"
+                          value={privateJoinCode}
+                          onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
+                          placeholder="ENTER CODE (E.G. BJ5192)"
+                          className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
+                            if (!normalizedCode) {
+                              alert('Enter a room code first.');
+                              return;
+                            }
+                            sound.playPop();
+                            setPrivateRoomCode(normalizedCode);
+                            joinPrivateRoomByCode(normalizedCode);
+                          }}
+                          className="px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
+                        >
+                          Join
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Create Room Button */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-[8px] text-slate-300">
                         <span>TABLE SIZE:</span>
@@ -6323,10 +6366,8 @@ export function Web3Dashboard({
                         {privateRoomCreateState === 'creating' ? 'Creating Room...' : `CREATE PRIVATE BLACKJACK ROOM (${privateRoomTargetPlayers} SEATS)`}
                       </button>
                     </div>
-                  ) : (
-                    renderPrivateWaitingRoomLobby('Blackjack')
-                  )}
-                </div>
+                  </div>
+                )
               )}
 
               {/* Blackjack Practice Mode */}

@@ -3617,6 +3617,17 @@ function settleBlackjackMatch(activeMatch: ActiveMatch) {
     schedulePersist({ userId: user.userId });
   });
 
+  // Evaluate tournament match progression if part of an active tournament
+  if (currentTournament && currentTournament.status === 'in_progress') {
+    const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
+    if (tMatch) {
+      const winnerId = champion?.userId || bj.players[0]?.userId || null;
+      tMatch.status = 'completed';
+      tMatch.winnerId = winnerId;
+      evaluateTournamentProgression();
+    }
+  }
+
   activeMatch.settled = true;
   activeMatch.players.forEach((player) => {
     activeMatchByUser.delete(player.userId);
@@ -4357,6 +4368,17 @@ function settlePokerMatch(activeMatch: ActiveMatch) {
     schedulePersist({ userId: user.userId });
   });
 
+  // Evaluate tournament match progression if part of an active tournament
+  if (currentTournament && currentTournament.status === 'in_progress') {
+    const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
+    if (tMatch) {
+      const winnerId = champion?.userId || pk.players[0]?.userId || null;
+      tMatch.status = 'completed';
+      tMatch.winnerId = winnerId;
+      evaluateTournamentProgression();
+    }
+  }
+
   activeMatch.settled = true;
   activeMatch.players.forEach((player) => {
     activeMatchByUser.delete(player.userId);
@@ -4873,6 +4895,9 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     markMatchPlayerConnected(activeMatch, queuedPlayer.userId);
     schedulePersist({ userId: queuedPlayer.userId });
   });
+  if (mode === 'pvp') {
+    maybeStartPublicMatch(activeMatch);
+  }
   schedulePersist({ matchId });
   broadcastMatch(matchId);
   return activeMatch;
@@ -5207,15 +5232,6 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
       }
     }
   }
-  if (!activeMatchId) {
-    for (const match of activeMatches.values()) {
-      if (!match.settled && match.players.some((p) => isSameUser(p.userId, userId))) {
-        activeMatchId = match.matchId;
-        activeMatchByUser.set(userId, match.matchId);
-        break;
-      }
-    }
-  }
   if (activeMatchId) {
     const activeMatch = activeMatches.get(activeMatchId);
     const isGameOver = activeMatch && (
@@ -5224,7 +5240,10 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
        activeMatch.gameType === 'blackjack' ? activeMatch.blackjackGameState?.stage === 'match_ended' :
        activeMatch.gameState.phase === 'game_over')
     );
-    if (activeMatch && !isGameOver) {
+    const isPlayerActive = activeMatch && activeMatch.players.some((p) => isSameUser(p.userId, userId) && !p.isAi && !p.userId.startsWith('waiting_for_player_'));
+    const isStaleMatch = activeMatch && (Date.now() - (activeMatch.playStartedAt || activeMatch.createdAt || 0) > 10 * 60 * 1000);
+
+    if (activeMatch && !isGameOver && !isStaleMatch && isPlayerActive) {
       markMatchPlayerConnected(activeMatch, userId);
       const perspective = buildPerspectiveState(activeMatch, userId);
       return {
@@ -6105,28 +6124,40 @@ function evaluateTournamentProgression() {
       };
     });
 
+    const gameType = currentTournament!.gameType || 'uno';
     const matchState = createInitialMatchState(queuePlayers);
 
-    activeMatches.set(matchId, {
+    const activeMatch: ActiveMatch = {
       matchId,
       mode: 'pvp',
+      gameType,
       stake: 0,
-      gameState: matchState,
       players: queuePlayers,
       createdAt: Date.now(),
       settled: false,
       turnTimeoutSec: 10,
       connectionDeadlineAt: Date.now() + 30_000,
-    });
+      playStartedAt: Date.now(),
+      costsCommitted: true,
+      gameState: matchState,
+      blackjackGameState: gameType === 'blackjack' ? createInitialBlackjackMatchState(queuePlayers, 0) : undefined,
+      pokerGameState: gameType === 'poker' ? createInitialPokerMatchState(queuePlayers, 0) : undefined,
+    };
+
+    if (activeMatch.blackjackGameState) activeMatch.blackjackGameState.turnStartedAt = Date.now();
+    if (activeMatch.pokerGameState) activeMatch.pokerGameState.turnStartedAt = Date.now();
+
+    activeMatches.set(matchId, activeMatch);
 
     tablePlayers.forEach((pid) => {
       activeMatchByUser.set(pid, matchId);
       const targetChatId = resolveTelegramChatId(pid);
       if (targetChatId) {
+        const gameLabel = gameType === 'poker' ? 'Poker' : gameType === 'blackjack' ? 'Blackjack' : 'UNO';
         const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
         const text = isFinalRound
-          ? `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the TOURNAMENT FINAL! Tap below to join your table now (90s wait timer).`
-          : `🏆 <b>SEMI-FINAL ROUND ${nextRoundNumber} STARTED!</b>\nCongratulations! You advanced to Round ${nextRoundNumber}! Tap below to join your table now (90s wait timer).`;
+          ? `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the ${gameLabel.toUpperCase()} TOURNAMENT FINAL! Tap below to join your table now.`
+          : `🏆 <b>SEMI-FINAL ROUND ${nextRoundNumber} STARTED!</b>\nCongratulations! You advanced to Round ${nextRoundNumber} in ${gameLabel} Tournament! Tap below to join your table now.`;
         sendTelegramMessageSafely(targetChatId, text, tableUrl, '🎮 Enter Table ➔');
       }
     });
@@ -6151,6 +6182,8 @@ function processTournamentTick() {
     currentTournament.status = 'in_progress';
     currentTournament.currentRound = 1;
 
+    const gameType = currentTournament.gameType || 'uno';
+
     // Distribute participants into dynamic tables (2, 3, 4 players)
     const playerIds = currentTournament.participants.map((p) => p.userId);
     const tables = distributePlayersIntoTables(playerIds);
@@ -6173,30 +6206,39 @@ function processTournamentTick() {
 
       const matchState = createInitialMatchState(queuePlayers);
 
-      activeMatches.set(matchId, {
+      const activeMatch: ActiveMatch = {
         matchId,
         mode: 'pvp',
+        gameType,
         stake: 0,
-        gameState: matchState,
         players: queuePlayers,
         createdAt: Date.now(),
         settled: false,
         turnTimeoutSec: 10, // 10s TURN TIMER FOR TOURNAMENTS
         connectionDeadlineAt: Date.now() + 30_000,
-      });
+        playStartedAt: Date.now(),
+        costsCommitted: true,
+        gameState: matchState,
+        blackjackGameState: gameType === 'blackjack' ? createInitialBlackjackMatchState(queuePlayers, 0) : undefined,
+        pokerGameState: gameType === 'poker' ? createInitialPokerMatchState(queuePlayers, 0) : undefined,
+      };
 
+      if (activeMatch.blackjackGameState) activeMatch.blackjackGameState.turnStartedAt = Date.now();
+      if (activeMatch.pokerGameState) activeMatch.pokerGameState.turnStartedAt = Date.now();
 
-
+      activeMatches.set(matchId, activeMatch);
 
       tablePlayers.forEach((pid) => {
         activeMatchByUser.set(pid, matchId);
         const targetChatId = resolveTelegramChatId(pid);
         if (targetChatId) {
+          const gameLabel = gameType === 'poker' ? 'Poker Tournament' : gameType === 'blackjack' ? 'Blackjack Tournament' : 'Tournament';
           const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
           sendTelegramMessageSafely(
             targetChatId,
-            `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 10 seconds.`,
-            tableUrl
+            `🏆 <b>${gameLabel} Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 10 seconds.`,
+            tableUrl,
+            '🎮 Enter Table ➔'
           );
         }
       });
@@ -6367,11 +6409,25 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
+  const { title, description, gameType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
 
+  const normalizedGameType: 'uno' | 'poker' | 'blackjack' =
+    gameType === 'poker' || gameType === 'blackjack' ? gameType : 'uno';
   const minutes = Number(startInMinutes) || 60;
   const ticketCost = Math.max(0, Number(entryTicketCost) || 0);
   const targetWins = Number(winsRequired) === 2 ? 2 : 1;
+
+  const defaultTitle = normalizedGameType === 'poker'
+    ? 'TEXAS HOLD\'EM POKER CHAMPIONSHIP'
+    : normalizedGameType === 'blackjack'
+    ? 'BLACKJACK GRAND PRIX'
+    : 'REDO CARTOON CHAMPIONSHIP';
+
+  const defaultRules = normalizedGameType === 'poker'
+    ? '10s turn timer. Texas Hold\'em tables. Last player standing advances.'
+    : normalizedGameType === 'blackjack'
+    ? '10s turn timer. Blackjack tables. Highest score/chips advances.'
+    : '10s turn timer. Single elimination tables.';
 
   // Preserve registered participants if updating an upcoming tournament
   const existingParticipants = (currentTournament && currentTournament.status === 'upcoming')
@@ -6388,13 +6444,14 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
 
   currentTournament = {
     id: tournamentId,
-    title: title || 'REDO CARTOON CHAMPIONSHIP',
-    description: description || 'Official REDO card tournament!',
+    title: title || defaultTitle,
+    gameType: normalizedGameType,
+    description: description || `Official REDO ${normalizedGameType.toUpperCase()} card tournament!`,
     nftLink: nftLink || 'https://getgems.io',
     nftImage: nftImage || '/ayanami-plush.png',
     startAt: Date.now() + minutes * 60 * 1000,
     status: 'upcoming',
-    rules: rules || '10s turn timer. Single elimination tables.',
+    rules: rules || defaultRules,
     maxPlayers: Number(maxPlayers) || 32,
     entryTicketCost: ticketCost,
     winsRequired: targetWins,
@@ -6407,8 +6464,6 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     finishedAt: currentTournament?.finishedAt || null,
     createdAt: currentTournament?.createdAt || Date.now(),
   };
-
-
 
   schedulePersist();
   return res.json({ success: true, tournament: currentTournament });
@@ -6437,10 +6492,17 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     ? 'LIVE NOW'
     : 'Completed';
 
+  const gameBadge = tourn.gameType === 'poker'
+    ? '♠️ POKER'
+    : tourn.gameType === 'blackjack'
+    ? '🃏 BLACKJACK'
+    : '🎮 UNO';
+
   const text = [
-    `🏆 <b>REDOapp TOURNAMENT</b>`,
+    `🏆 <b>REDOapp ${gameBadge} TOURNAMENT</b>`,
     ``,
     `📌 <b>${tourn.title}</b>`,
+    `🎲 <b>Game:</b> ${gameBadge}`,
     `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
     `🎁 <b>Prize:</b> ${tourn.nftLink}`,
     `⏳ <b>Starts in:</b> ${statusLabel}`,
@@ -6485,14 +6547,25 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const { title, description, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired, playerCount } = req.body || {};
+  const { title, description, gameType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired, playerCount } = req.body || {};
+
+  const simGameType: 'uno' | 'poker' | 'blackjack' =
+    gameType === 'poker' || gameType === 'blackjack'
+      ? gameType
+      : (currentTournament?.gameType || 'uno');
+
+  const defaultSimTitle = simGameType === 'poker'
+    ? `REDO POKER CHAMPIONSHIP (${Number(playerCount) || Number(maxPlayers) || 16} PLAYERS)`
+    : simGameType === 'blackjack'
+    ? `REDO BLACKJACK GRAND PRIX (${Number(playerCount) || Number(maxPlayers) || 16} PLAYERS)`
+    : `REDO CHAMPIONSHIP (${Number(playerCount) || Number(maxPlayers) || 16} PLAYERS)`;
 
   const totalSimPlayers = Math.max(4, Math.min(64, Number(playerCount) || Number(maxPlayers) || 16));
   const simWinsRequired = Number(winsRequired) === 2 ? 2 : (currentTournament?.winsRequired || 1);
-  const simTitle = title || currentTournament?.title || `REDO CHAMPIONSHIP (${totalSimPlayers} PLAYERS)`;
+  const simTitle = title || currentTournament?.title || defaultSimTitle;
   const simNftLink = nftLink || currentTournament?.nftLink || 'https://getgems.io';
   const simNftImage = nftImage || currentTournament?.nftImage || '/ayanami-plush.png';
-  const simDescription = description || currentTournament?.description || 'Official REDO card tournament!';
+  const simDescription = description || currentTournament?.description || `Official REDO ${simGameType.toUpperCase()} tournament!`;
   const simMinutes = Number(startInMinutes) || 60;
   const simTicketCost = entryTicketCost !== undefined ? Math.max(0, Number(entryTicketCost) || 0) : (currentTournament?.entryTicketCost || 0);
   const simRules = rules || currentTournament?.rules || (simWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.');
@@ -6526,6 +6599,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
   currentTournament = {
     id: tournamentId,
     title: simTitle,
+    gameType: simGameType,
     description: simDescription,
     nftLink: simNftLink,
     nftImage: simNftImage,
@@ -6547,10 +6621,12 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
 
   const adminChatId = resolveTelegramChatId(userId);
   if (adminChatId) {
+    const gameBadge = simGameType === 'poker' ? '♠️ POKER' : simGameType === 'blackjack' ? '🃏 BLACKJACK' : '🎮 UNO';
     const simNoticeText = [
-      `🏆 <b>REDOapp TOURNAMENT SIMULATION</b>`,
+      `🏆 <b>REDOapp ${gameBadge} TOURNAMENT SIMULATION</b>`,
       ``,
       `📌 <b>${simTitle}</b>`,
+      `🎲 <b>Game:</b> ${gameBadge}`,
       `👥 <b>Participants:</b> ${totalSimPlayers} players`,
       `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${simTicketCost} TKT` : 'FREE ENTRY'}`,
       `🎁 <b>Prize:</b> ${simNftLink}`,
@@ -8002,7 +8078,7 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
       pInState.isConnected = false;
       pInState.disconnectedAt = Date.now();
       match.gameState.logs = [
-        createServerLog(`🔌 ${pInState.username} left the match and was replaced by a bot.`, 'info'),
+        createServerLog(`🔌 ${pInState.username} left the match.`, 'info'),
         ...match.gameState.logs,
       ].slice(0, 50);
     }
@@ -8012,7 +8088,7 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
       pInBj.isConnected = false;
       pInBj.disconnectedAt = Date.now();
       match.blackjackGameState!.logs = [
-        createServerLog(`🔌 ${pInBj.username} left the table (AI bot replacing).`, 'info'),
+        createServerLog(`🔌 ${pInBj.username} left the table.`, 'info'),
         ...match.blackjackGameState!.logs,
       ].slice(0, 50);
     }
@@ -8022,6 +8098,19 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
       pInPoker.isConnected = false;
       pInPoker.disconnectedAt = Date.now();
     }
+
+    const remainingHumans = match.players.filter(
+      (p) => !p.isAi && !p.userId.startsWith('bot_') && p.userId !== userId
+    );
+
+    // If no humans remain or if it is a 2-player PVP match where one player leaves early
+    const isTwoPlayerPvp = match.mode === 'pvp' && !match.matchId.startsWith('tourn-');
+    if (remainingHumans.length === 0 || (isTwoPlayerPvp && (Date.now() - match.createdAt < 60_000))) {
+      cancelUnstartedPublicMatch(match, 'Opponent left the match. Match cancelled.');
+      await persistStateNow();
+      return res.json({ success: true, cancelled: true });
+    }
+
     const allBjBots = match.blackjackGameState ? match.blackjackGameState.players.every((p) => p.isAi) : false;
     const allUnoBots = match.gameState.players.every((p) => p.isAi);
     const allPokerBots = match.pokerGameState ? match.pokerGameState.players.every((p) => p.isAi) : false;
@@ -8744,6 +8833,15 @@ setInterval(() => {
           }
         }
       }
+      // Check if all human players abandoned the poker table
+      const hasActivePokerHumans = pk.players.some((p) => !p.isAi && !p.userId.startsWith('bot_') && p.isConnected !== false);
+      const pokerAgeMs = now - match.createdAt;
+      if (!hasActivePokerHumans && pokerAgeMs > 30_000) {
+        pk.stage = 'match_ended';
+        match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+        settlePokerMatch(match);
+        continue;
+      }
       continue;
     }
 
@@ -8793,6 +8891,16 @@ setInterval(() => {
           }
         }
       }
+
+      // Check if all human players abandoned the blackjack table
+      const hasActiveBjHumans = bj.players.some((p) => !p.isAi && !p.userId.startsWith('bot_') && p.isConnected !== false);
+      const bjAgeMs = now - match.createdAt;
+      if (!hasActiveBjHumans && bjAgeMs > 30_000) {
+        bj.stage = 'match_ended';
+        match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+        settleBlackjackMatch(match);
+        continue;
+      }
       continue;
     }
 
@@ -8808,14 +8916,12 @@ setInterval(() => {
     }
 
     const matchAgeMs = now - match.createdAt;
-    if (matchAgeMs > 10 * 60 * 1000) {
-      const allBotsOrOffline = match.gameState.players.every((p) => p.isAi || p.isConnected === false);
-      if (allBotsOrOffline) {
-        match.gameState.phase = 'game_over';
-        match.players.forEach((p) => activeMatchByUser.delete(p.userId));
-        settleMatchHelper(match);
-        continue;
-      }
+    const allBotsOrOffline = match.gameState.players.every((p) => p.isAi || p.isConnected === false);
+    if ((matchAgeMs > 30_000 && allBotsOrOffline) || matchAgeMs > 10 * 60 * 1000) {
+      match.gameState.phase = 'game_over';
+      match.players.forEach((p) => activeMatchByUser.delete(p.userId));
+      settleMatchHelper(match);
+      continue;
     }
 
     const state = match.gameState;

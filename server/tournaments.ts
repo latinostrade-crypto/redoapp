@@ -20,6 +20,7 @@ export interface TournamentMatch {
 export interface TournamentData {
   id: string;
   title: string;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   description: string;
   nftLink: string;
   nftImage?: string;

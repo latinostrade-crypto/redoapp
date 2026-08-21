@@ -225,6 +225,7 @@ export interface TournamentMatchView {
 export interface TournamentView {
   id: string;
   title: string;
+  gameType?: 'uno' | 'poker' | 'blackjack';
   description: string;
   nftLink: string;
   nftImage?: string;

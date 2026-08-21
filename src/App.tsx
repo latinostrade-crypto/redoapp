@@ -87,6 +87,7 @@ export default function App() {
     playerFold,
     playerCallOrCheck,
     playerRaise,
+    resetPokerSession,
   } = usePokerGame({
     onSettlement: (payout, won) => {
       if (won && payout > 0) {
@@ -198,6 +199,7 @@ export default function App() {
   const handleReturnFromPoker = useCallback(() => {
     const currentMatchId = pokerState.matchId;
     setActiveGameType('uno');
+    resetPokerSession();
     returnToLobby();
     try {
       localStorage.removeItem('redoapp_active_match');
@@ -212,7 +214,7 @@ export default function App() {
         body: JSON.stringify({ matchId: currentMatchId }),
       }).catch(() => {});
     }
-  }, [pokerState.matchId, returnToLobby]);
+  }, [pokerState.matchId, resetPokerSession, returnToLobby]);
 
   const handleStartBlackjackGame = useCallback(
     (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {

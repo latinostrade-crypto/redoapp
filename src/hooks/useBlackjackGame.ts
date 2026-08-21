@@ -874,6 +874,30 @@ export function useBlackjackGame(options?: {
     return () => clearInterval(timer);
   }, [gameState.stage, gameState.isDealing, playerStand, remoteMatchId]);
 
+  // Auto-restore active blackjack match on mount
+  useEffect(() => {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('redoapp_active_match') : null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.gameType === 'blackjack' && parsed.matchId) {
+          if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
+            localStorage.removeItem('redoapp_active_match');
+            return;
+          }
+          let leftMatchId = '';
+          try { leftMatchId = sessionStorage.getItem('redoapp_user_left_match') || ''; } catch {}
+          if (leftMatchId && leftMatchId === parsed.matchId) {
+            localStorage.removeItem('redoapp_active_match');
+            return;
+          }
+          setRemoteMatchId(parsed.matchId);
+          syncRemoteMatchState(parsed.matchId);
+        }
+      } catch {}
+    }
+  }, [syncRemoteMatchState]);
+
   const resetSession = useCallback(() => {
     remoteMatchStreamRef.current?.close();
     remoteMatchStreamRef.current = null;
@@ -883,7 +907,7 @@ export function useBlackjackGame(options?: {
       players: [],
       dealer: { cards: [], score: 0, isSoft: false, isBusted: false, hasBlackjack: false },
       pot: 0,
-      stage: 'player_turn',
+      stage: 'idle',
       currentPlayerIndex: 0,
       turnTimeLeft: TURN_DURATION_SEC,
       isDealing: false,
@@ -892,6 +916,10 @@ export function useBlackjackGame(options?: {
       stake: 0,
       currentHand: 1,
       maxHands: 5,
+      winner: null,
+      matchChampion: null,
+      waitingForPlayers: false,
+      matchId: undefined,
     });
   }, []);
 
