@@ -3479,7 +3479,7 @@ function applyBlackjackAction(match: ActiveMatch, userId: string, action: string
     const requestedBet = typeof amount === 'number' && Number.isFinite(amount)
       ? Math.max(5, Math.min(100, Math.floor(amount)))
       : 10;
-    const p = bj.players.find((pl) => pl.userId === userId);
+    const p = bj.players.find((pl) => isSameUser(pl.userId, userId));
     if (p && !p.eliminated) {
       const oldBet = p.bet;
       const effectiveBet = Math.min(requestedBet, p.chips + oldBet);
@@ -3506,7 +3506,7 @@ function applyBlackjackAction(match: ActiveMatch, userId: string, action: string
   }
 
   const currentPlayer = bj.players[bj.currentPlayerIndex];
-  if (!currentPlayer || currentPlayer.userId !== userId) {
+  if (!currentPlayer || !isSameUser(currentPlayer.userId, userId)) {
     throw new Error('It is not your turn.');
   }
 
@@ -4214,7 +4214,7 @@ function applyPokerAction(match: ActiveMatch, userId: string, rawAction: string,
   }
 
   const currPlayer = pk.players[pk.currentPlayerIndex];
-  if (!currPlayer || currPlayer.userId !== userId) {
+  if (!currPlayer || !isSameUser(currPlayer.userId, userId)) {
     throw new Error('Not your turn.');
   }
 
@@ -4418,12 +4418,12 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
   const pk = match.pokerGameState;
   if (!pk) return null;
 
-  const userIndex = pk.players.findIndex((p) => p.userId === userId);
+  const userIndex = pk.players.findIndex((p) => isSameUser(p.userId, userId));
   const isSpectator = userIndex === -1;
   const isShowdownOrEnded = pk.stage === 'showdown' || pk.stage === 'ended' || pk.stage === 'match_ended';
 
   const mappedPlayers = pk.players.map((p, idx) => {
-    const isMe = !isSpectator && p.userId === userId;
+    const isMe = !isSpectator && isSameUser(p.userId, userId);
     const localId = isMe ? 'player' : `opponent_${idx}`;
     const holeCards = isMe || isShowdownOrEnded
       ? p.holeCards
@@ -4455,8 +4455,8 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
   });
 
   const winnerIds = pk.winnerUserIds.map((wId) => {
-    const pIdx = pk.players.findIndex((p) => p.userId === wId);
-    return !isSpectator && wId === userId ? 'player' : `opponent_${pIdx}`;
+    const pIdx = pk.players.findIndex((p) => isSameUser(p.userId, wId));
+    return !isSpectator && isSameUser(wId, userId) ? 'player' : `opponent_${pIdx}`;
   });
 
   const champion = pk.players.find((p) => p.userId === pk.matchChampionUserId);
@@ -4508,7 +4508,7 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
   const bj = match.blackjackGameState;
   if (!bj) return null;
 
-  const userIndex = bj.players.findIndex((p) => p.userId === userId);
+  const userIndex = bj.players.findIndex((p) => isSameUser(p.userId, userId));
   const isSpectator = userIndex === -1;
 
   // Mask dealer hole card during player turns
@@ -4544,7 +4544,7 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
   };
 
   const mappedPlayers = bj.players.map((p, idx) => {
-    const isMe = !isSpectator && p.userId === userId;
+    const isMe = !isSpectator && isSameUser(p.userId, userId);
     const localId = isMe ? 'player' : `opponent_${idx}`;
     return {
       id: localId,
@@ -4721,7 +4721,7 @@ function applyPlayAction(match: ActiveMatch, userId: string, cardId: string, cho
     throw new Error('Match is already finished.');
   }
   const currentPlayer = state.players[state.currentPlayerIndex];
-  if (!currentPlayer || currentPlayer.userId !== userId) {
+  if (!currentPlayer || !isSameUser(currentPlayer.userId, userId)) {
     throw new Error('It is not your turn.');
   }
   const card = currentPlayer.hand.find((entry) => entry.id === cardId);
@@ -4807,7 +4807,7 @@ function applyDrawAction(match: ActiveMatch, userId: string) {
     throw new Error('Match is already finished.');
   }
   const currentPlayer = state.players[state.currentPlayerIndex];
-  if (!currentPlayer || currentPlayer.userId !== userId) {
+  if (!currentPlayer || !isSameUser(currentPlayer.userId, userId)) {
     throw new Error('It is not your turn.');
   }
   if (state.consecutiveDraws > 0) {
@@ -4841,7 +4841,7 @@ function applyPassAction(match: ActiveMatch, userId: string) {
     throw new Error('Match is already finished.');
   }
   const currentPlayer = state.players[state.currentPlayerIndex];
-  if (!currentPlayer || currentPlayer.userId !== userId) {
+  if (!currentPlayer || !isSameUser(currentPlayer.userId, userId)) {
     throw new Error('It is not your turn.');
   }
   if (state.consecutiveDraws === 0) {
@@ -4868,7 +4868,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     stake,
     players,
     createdAt,
-    connectionDeadlineAt: mode === 'pvp' ? createdAt + 15_000 : (waitsForPrivatePlayers ? createdAt + 60_000 : undefined),
+    connectionDeadlineAt: mode === 'pvp' ? createdAt + 35_000 : (waitsForPrivatePlayers ? createdAt + 60_000 : undefined),
     playStartedAt: waitsForPlayers ? null : createdAt,
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
@@ -5098,7 +5098,7 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
 function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   ensureMatchLifecycle(match);
   if (match.pokerGameState) {
-    const pkPlayer = match.pokerGameState.players.find((entry) => entry.userId === userId);
+    const pkPlayer = match.pokerGameState.players.find((entry) => isSameUser(entry.userId, userId));
     if (pkPlayer) {
       pkPlayer.isAi = false;
       pkPlayer.isConnected = true;
@@ -5108,7 +5108,7 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
     }
   }
   if (match.blackjackGameState) {
-    const bjPlayer = match.blackjackGameState.players.find((entry) => entry.userId === userId);
+    const bjPlayer = match.blackjackGameState.players.find((entry) => isSameUser(entry.userId, userId));
     if (bjPlayer) {
       bjPlayer.isAi = false;
       bjPlayer.isConnected = true;
@@ -5117,11 +5117,11 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
       bjPlayer.disconnectedAt = null;
     }
   }
-  const qPlayer = match.players.find((entry) => entry.userId === userId);
+  const qPlayer = match.players.find((entry) => isSameUser(entry.userId, userId));
   if (qPlayer) {
     qPlayer.isAi = false;
   }
-  const player = match.gameState.players.find((entry) => entry.userId === userId);
+  const player = match.gameState.players.find((entry) => isSameUser(entry.userId, userId));
   if (player) {
     const wasAi = player.isAi;
     player.isAi = false;
@@ -5576,10 +5576,12 @@ function buildQueuePayload(userId: string) {
 }
 
 function broadcastQueue(userId: string) {
-  const subscribers = queueSubscribers.get(userId);
-  if (!subscribers) return;
   const payload = buildQueuePayload(userId);
-  subscribers.forEach((response) => sendSse(response, 'queue-status', payload));
+  for (const [subUserId, subscribers] of queueSubscribers.entries()) {
+    if (isSameUser(subUserId, userId)) {
+      subscribers.forEach((response) => sendSse(response, 'queue-status', payload));
+    }
+  }
 }
 
 function buildOperationalHealthStatus() {
@@ -8405,7 +8407,10 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
 
   subscribeToChannel(matchSubscribers, matchId, res);
 
-  const isUserInMatch = activeMatch.players.some((p) => p.userId === userId) || activeMatch.gameState.players.some((p) => p.userId === userId) || Boolean(activeMatch.pokerGameState?.players.some((p) => p.userId === userId)) || Boolean(activeMatch.blackjackGameState?.players.some((p) => p.userId === userId));
+  const isUserInMatch = activeMatch.players.some((p) => isSameUser(p.userId, userId))
+    || activeMatch.gameState.players.some((p) => isSameUser(p.userId, userId))
+    || Boolean(activeMatch.pokerGameState?.players.some((p) => isSameUser(p.userId, userId)))
+    || Boolean(activeMatch.blackjackGameState?.players.some((p) => isSameUser(p.userId, userId)));
   if (isUserInMatch) {
     markMatchPlayerConnected(activeMatch, userId);
   }
@@ -8420,13 +8425,13 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   res.on('close', () => {
     const subscribers = matchSubscribers.get(matchId);
     const isStillConnected = !!subscribers && Array.from(subscribers).some(
-      (sub) => sub.locals.userId === userId && sub !== res
+      (sub) => isSameUser(sub.locals.userId, userId) && sub !== res
     );
 
     if (!isStillConnected) {
       const match = activeMatches.get(matchId);
       if (match) {
-        const player = match.gameState.players.find(p => p.userId === userId);
+        const player = match.gameState.players.find(p => isSameUser(p.userId, userId));
         const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
         if (player && player.isConnected !== false && !hasFreshHeartbeat) {
           player.isConnected = false;
