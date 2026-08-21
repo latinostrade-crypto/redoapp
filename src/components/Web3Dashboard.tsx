@@ -1215,7 +1215,6 @@ export function Web3Dashboard({
 
   const openPublicMatch = useCallback((result: PublicQueueStatus, fallbackStake: number) => {
     if (result.status !== 'ready' || !result.matchId) return false;
-    if (openingPublicMatchRef.current === result.matchId) return true;
     if (tournamentData?.matches) {
       const matchInTourn = tournamentData.matches.find((m) => m.matchId === result.matchId);
       if (matchInTourn && matchInTourn.status === 'completed') {
@@ -2292,7 +2291,7 @@ export function Web3Dashboard({
       body: JSON.stringify(joinPayload),
     }).then((result) => {
       window.clearTimeout(safetyTimer);
-      if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+      if (joinSettled) return;
       joinSettled = true;
       setGoldenTickets(result.availableTickets);
       setHeldTickets(result.heldTickets);
@@ -2307,7 +2306,7 @@ export function Web3Dashboard({
       setMatchmakingState('searching');
     }).catch(async (error) => {
       window.clearTimeout(safetyTimer);
-      if (joinSettled || publicJoinAttemptRef.current !== joinAttempt) return;
+      if (joinSettled) return;
       try {
         const recovered = await getPublicQueueStatusViaSameOrigin()
           .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8000 }));
