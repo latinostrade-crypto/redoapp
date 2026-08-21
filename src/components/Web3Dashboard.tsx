@@ -1121,6 +1121,7 @@ export function Web3Dashboard({
 
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
+  const [readyMatchData, setReadyMatchData] = useState<PublicQueueStatus | null>(null);
   const [queueLength, setQueueLength] = useState(1);
   const [publicQueueError, setPublicQueueError] = useState('');
   const [buyingTickets, setBuyingTickets] = useState(false);
@@ -1243,6 +1244,7 @@ export function Web3Dashboard({
       publicJoinAttemptRef.current += 1;
       publicQueueDeadlineAtRef.current = 0;
       setQueueLength(result.players?.length || 1);
+      setReadyMatchData(result);
       setMatchmakingState('success');
       try {
         window.dispatchEvent(new CustomEvent('redoapp:open-match', {
@@ -6714,6 +6716,62 @@ export function Web3Dashboard({
               className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-[9px] uppercase border border-black"
             >
               Close Leaderboard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MATCH READY OVERLAY BUFFER SCREEN */}
+      {readyMatchData && matchmakingState === 'success' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md animate-fade-in font-mono">
+          <div className="w-full max-w-sm bg-[#111318] border-4 border-[#00ff66] p-5 space-y-4 shadow-[0_0_40px_rgba(0,255,102,0.4)] text-center relative overflow-hidden">
+            <div className="absolute -top-10 -right-10 w-24 h-24 bg-[#00ff66]/10 rounded-full blur-xl pointer-events-none" />
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#00ff66]/20 border border-[#00ff66] rounded-full text-[#00ff66] text-[10px] font-black tracking-widest uppercase">
+                <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                <span>MATCH FOUND!</span>
+              </div>
+              <h2 className="text-sm font-black text-white uppercase tracking-wider">
+                {readyMatchData.gameType === 'poker'
+                  ? '♠️ TEXAS HOLD\'EM TABLE'
+                  : readyMatchData.gameType === 'blackjack'
+                  ? '🃏 21 BLACKJACK ARENA'
+                  : '🎮 UNO BATTLE'}
+              </h2>
+              <p className="text-[9px] text-slate-400">
+                {readyMatchData.stake && readyMatchData.stake > 0
+                  ? `Stake: ${readyMatchData.stake} TKT | Real PVP Match`
+                  : 'Free Match | Casual PVP'}
+              </p>
+            </div>
+
+            {/* Players List */}
+            {readyMatchData.players && readyMatchData.players.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 bg-slate-950/80 p-2.5 border border-slate-800 rounded">
+                {readyMatchData.players.slice(0, 4).map((p, idx) => (
+                  <div key={p.userId || idx} className="flex items-center gap-1.5 truncate text-[9px] text-left">
+                    <Avatar id={(p.avatarId as any) || 'rabbit'} size={20} />
+                    <span className="font-bold text-slate-200 truncate">{p.username || 'Player'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="space-y-2 pt-1">
+              <div className="w-full bg-slate-900 border border-slate-700 h-2 rounded overflow-hidden">
+                <div className="bg-[#00ff66] h-full animate-[pulse_1s_infinite] w-full" />
+              </div>
+              <p className="text-[8.5px] text-[#00ff66] font-black uppercase tracking-wider animate-pulse">
+                🚀 Connecting table & launching session...
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => openPublicMatch(readyMatchData, selectedStake)}
+              className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e65c] text-black font-black text-[11px] uppercase border-2 border-black tracking-wider shadow-[3px_3px_0_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+            >
+              ENTER TABLE NOW 🎮
             </button>
           </div>
         </div>
