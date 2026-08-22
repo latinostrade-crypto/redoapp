@@ -5689,9 +5689,10 @@ app.get('/api/debug/matchmaker', (_req, res) => {
   });
 });
 
-app.get('/api/debug/users', (_req, res) => {
+app.get('/api/debug/users', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  const userList = Array.from(users.values())
+  const q = typeof req.query.q === 'string' ? req.query.q.toLowerCase().trim() : '';
+  let userList = Array.from(users.values())
     .map((u) => ({
       userId: u.userId,
       telegramId: u.telegramId,
@@ -5702,9 +5703,17 @@ app.get('/api/debug/users', (_req, res) => {
       matchmakingFailureReason: u.matchmakingFailureReason,
       recentTx: u.transactions?.slice(0, 3),
     }))
-    .reverse()
-    .slice(0, 30);
-  res.json({ totalUsers: users.size, users: userList });
+    .reverse();
+
+  if (q) {
+    userList = userList.filter((u) =>
+      (u.username && u.username.toLowerCase().includes(q))
+      || (u.name && u.name.toLowerCase().includes(q))
+      || (u.userId && u.userId.toLowerCase().includes(q))
+    );
+  }
+
+  res.json({ totalUsers: users.size, count: userList.length, users: userList });
 });
 
 function csvCell(value: unknown) {
