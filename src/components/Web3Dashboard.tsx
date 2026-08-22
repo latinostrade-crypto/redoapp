@@ -2313,6 +2313,7 @@ export function Web3Dashboard({
     // Safety fallback: if request takes > 2.5s, transition to searching so UI never stays stuck in joining
     const safetyTimer = window.setTimeout(() => {
       if (!joinSettled && publicJoinAttemptRef.current === joinAttempt) {
+        console.log('[Matchmaking UI] safetyTimer fired. Transitioning from joining to searching.');
         setMatchmakingState((prev) => (prev === 'joining' ? 'searching' : prev));
       }
     }, 2500);
@@ -2333,29 +2334,54 @@ export function Web3Dashboard({
         updateProfileEnergy(result.energy);
       }
       setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
+      
+      console.log('[Matchmaking UI] POST /join resolved.', 'Status:', result.matchmaker?.status, 'MatchId:', result.matchmaker?.matchId);
+      
       if (result.matchmaker?.status === 'ready' && result.matchmaker.matchId) {
         openPublicMatch(result.matchmaker, selectedStake);
         return;
       }
-      setMatchmakingState((prev) => (prev === 'success' ? prev : 'searching'));
+      setMatchmakingState((prev) => {
+        if (prev === 'success') {
+          console.log('[Matchmaking UI] POST /join skipped setting searching because state is already success.');
+          return prev;
+        }
+        return 'searching';
+      });
     }).catch(async (error) => {
       window.clearTimeout(safetyTimer);
       if (joinSettled) return;
+      joinSettled = true;
+      
+      console.error('[Matchmaking UI] POST /join failed:', error.message, 'Current state:', matchmakingStateRef.current);
+      
       try {
         const recovered = await getPublicQueueStatusViaSameOrigin()
           .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8000 }));
+          
+        console.log('[Matchmaking UI] Recovery fetch returned status:', recovered.status);
+        
         if (recovered.status === 'ready' && recovered.matchId) {
           openPublicMatch(recovered, selectedStake);
           return;
         }
         if (recovered.status === 'searching') {
           setQueueLength(recovered.queueLength || 1);
-          setMatchmakingState('searching');
+          setMatchmakingState((prev) => {
+            if (prev === 'success') return prev;
+            return 'searching';
+          });
           return;
         }
-      } catch {}
-      setMatchmakingState('idle');
-      setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
+      } catch (e) {
+        console.error('[Matchmaking UI] Recovery fetch completely failed.', e);
+      }
+      
+      setMatchmakingState((prev) => {
+        if (prev === 'success') return prev;
+        setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
+        return 'idle';
+      });
     });
   }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy, getPublicQueueStatusViaSameOrigin]);
 
@@ -3456,11 +3482,20 @@ export function Web3Dashboard({
     const handleQueueStatus = (result: PublicQueueStatus) => {
       if (disposed) return;
       lastQueueStatusAt = Date.now();
+      
+      console.log('[Matchmaking UI] SSE queue-status received:', result.status, 'MatchId:', result.matchId, 'Current state:', matchmakingStateRef.current);
+      
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
         const countdownSec = typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC;
         publicQueueDeadlineAtRef.current = Date.now() + countdownSec * 1000;
-        setMatchmakingState('searching');
+        setMatchmakingState((prev) => {
+          if (prev === 'success') {
+            console.log('[Matchmaking UI] SSE queue-status searching ignored because state is success.');
+            return prev;
+          }
+          return 'searching';
+        });
       }
       if (result.status === 'ready' && result.matchId) {
         openPublicMatch(result, selectedStake);
