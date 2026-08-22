@@ -55,7 +55,9 @@ const REDIS_CACHE_NAMESPACE = process.env.REDIS_CACHE_NAMESPACE || 'redoapp:v1';
 // is stored in Supabase, so restarts and future deploys cannot repeat it.
 const REFERRAL_RESET_MIGRATION_ID = 'referrals-reset-2026-07-14';
 const BALANCE_REPAIR_MIGRATION_ID = 'balance-repair-v3-2026-08-17';
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+// Tests and one-off local diagnostics can isolate persistence without changing
+// the application working directory or touching the normal runtime snapshot.
+const DATA_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'runtime-state.json');
 const DEFAULT_REFERRER_CODE = (process.env.DEFAULT_REFERRER_CODE || 'FMFVR7').trim().toUpperCase();
 const DEFAULT_MAX_ENERGY = 10;
@@ -4869,7 +4871,7 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     stake,
     players,
     createdAt,
-    connectionDeadlineAt: mode === 'pvp' ? createdAt + 35_000 : (waitsForPrivatePlayers ? createdAt + 60_000 : undefined),
+    connectionDeadlineAt: mode === 'pvp' ? createdAt + 60_000 : (waitsForPrivatePlayers ? createdAt + 60_000 : undefined),
     playStartedAt: waitsForPlayers ? null : createdAt,
     costsCommitted: players.every((player) => player.costsCommitted !== false),
     settled: false,
@@ -4896,7 +4898,10 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
       activeMatchByUser.set(`tg:${user.telegramId}`, matchId);
       activeMatchByUser.set(String(user.telegramId), matchId);
     }
-    markMatchPlayerConnected(activeMatch, queuedPlayer.userId);
+    // Creating a match is not the same thing as a player reaching its table.
+    // The first authenticated status/stream request from the table performs
+    // markMatchPlayerConnected. Marking everyone here made the connection
+    // lobby start before either client had received its match id.
     schedulePersist({ userId: queuedPlayer.userId });
   });
   if (mode === 'pvp') {
@@ -5248,7 +5253,6 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     const isStaleMatch = activeMatch && (Date.now() - (activeMatch.playStartedAt || activeMatch.createdAt || 0) > 10 * 60 * 1000);
 
     if (activeMatch && !isGameOver && !isStaleMatch && isPlayerActive) {
-      markMatchPlayerConnected(activeMatch, userId);
       const perspective = buildPerspectiveState(activeMatch, userId);
       return {
         status: 'ready',
@@ -5357,7 +5361,7 @@ function runMatchmakingTick() {
   // Sweep dead/stale matches so users are never trapped in unended games
   const now = Date.now();
   for (const [matchId, match] of activeMatches.entries()) {
-    const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 45_000);
+    const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 65_000);
     const isStaleExpired = now - (match.playStartedAt || match.createdAt || now) > 10 * 60 * 1000;
     if ((isUnstartedExpired || isStaleExpired) && !match.settled) {
       match.settled = true;
@@ -5650,7 +5654,7 @@ app.get('/api/admin/health', requireAdmin, (req, res) => {
 app.get('/api/debug/matchmaker', (_req, res) => {
   const now = Date.now();
   for (const [matchId, match] of activeMatches.entries()) {
-    const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 45_000);
+    const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 65_000);
     const isStaleExpired = now - (match.playStartedAt || match.createdAt || now) > 10 * 60 * 1000;
     if (isUnstartedExpired || isStaleExpired) {
       activeMatches.delete(matchId);
@@ -7218,7 +7222,6 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   const isUnstartedAbandoned = existingActiveMatch && !existingActiveMatch.playStartedAt && (Date.now() - existingActiveMatch.createdAt > 90_000);
 
   if (existingActiveMatch && !isGameOver && !isStaleMatch && !isDifferentGame && !isUnstartedAbandoned && !forceFresh) {
-    markMatchPlayerConnected(existingActiveMatch, userId);
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,

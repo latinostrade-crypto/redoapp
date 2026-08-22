@@ -272,23 +272,6 @@ export default function App() {
     [selectedAvatar, startGame, userName]
   );
 
-  useEffect(() => {
-    const handleOpenMatchEvent = (e: Event) => {
-      const detail = (e as CustomEvent)?.detail;
-      if (!detail?.matchId) return;
-      const targetGame = detail.gameType || 'uno';
-      if (targetGame === 'poker') {
-        handleStartPokerGame(detail.mode || 'pvp', detail.stake || 0, undefined, detail.matchId);
-      } else if (targetGame === 'blackjack') {
-        handleStartBlackjackGame(detail.mode || 'pvp', detail.stake || 0, undefined, detail.matchId);
-      } else {
-        handleStartGame(detail.mode || 'pvp', detail.stake || 0, undefined, detail.matchId);
-      }
-    };
-    window.addEventListener('redoapp:open-match', handleOpenMatchEvent);
-    return () => window.removeEventListener('redoapp:open-match', handleOpenMatchEvent);
-  }, [handleStartGame, handleStartPokerGame, handleStartBlackjackGame]);
-
   const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
   const isWaitingForPlayers = gameMode === 'pvp' && !!gameState.waitingForPlayers;
   const isHumanTurn = !isWaitingForPlayers && currentActivePlayer?.id === 'player';

@@ -1184,6 +1184,8 @@ export function Web3Dashboard({
   const launchRoomConsumedRef = useRef(false);
   const recoveredActiveMatchRef = useRef('');
   const openingPublicMatchRef = useRef('');
+  const launchedPublicMatchRef = useRef('');
+  const publicMatchLaunchTimerRef = useRef<number | null>(null);
   const publicJoinAttemptRef = useRef(0);
   const publicJoinStartedAtRef = useRef(0);
   const publicQueueDeadlineAtRef = useRef(0);
@@ -1214,7 +1216,7 @@ export function Web3Dashboard({
   }, [matchmakingState]);
   const currentUserId = activeProfile?.userId || bootstrapUserId;
 
-  const openPublicMatch = useCallback((result: PublicQueueStatus, fallbackStake: number) => {
+  const openPublicMatch = useCallback((result: PublicQueueStatus, fallbackStake: number, launchNow = false) => {
     if (result.status !== 'ready' || !result.matchId) return false;
     if (tournamentData?.matches) {
       const matchInTourn = tournamentData.matches.find((m) => m.matchId === result.matchId);
@@ -1230,6 +1232,7 @@ export function Web3Dashboard({
     );
     try {
       const targetGame = result.gameType || (result.matchId.startsWith('tourn-') ? (tournamentData?.gameType || 'uno') : undefined) || pvpGameTab;
+      const isAlreadyOpening = openingPublicMatchRef.current === result.matchId;
       localStorage.setItem('redoapp_active_match', JSON.stringify({
         matchId: result.matchId,
         mode: result.mode || 'pvp',
@@ -1241,21 +1244,14 @@ export function Web3Dashboard({
         createdAt: Date.now(),
       }));
       openingPublicMatchRef.current = result.matchId;
-      publicJoinAttemptRef.current += 1;
-      publicQueueDeadlineAtRef.current = 0;
-      setQueueLength(result.players?.length || 1);
-      setReadyMatchData(result);
-      setMatchmakingState('success');
-      try {
-        window.dispatchEvent(new CustomEvent('redoapp:open-match', {
-          detail: {
-            matchId: result.matchId,
-            gameType: targetGame,
-            mode: result.mode || 'pvp',
-            stake: matchedStake,
-          }
-        }));
-      } catch {}
+      if (!isAlreadyOpening) {
+        launchedPublicMatchRef.current = '';
+        publicJoinAttemptRef.current += 1;
+        publicQueueDeadlineAtRef.current = 0;
+        setQueueLength(result.players?.length || 1);
+        setReadyMatchData(result);
+        setMatchmakingState('success');
+      }
 
       const launchGame = () => {
         if (targetGame === 'poker' && onStartPokerGame) {
@@ -1267,7 +1263,23 @@ export function Web3Dashboard({
         }
       };
 
-      launchGame();
+      const launchOnce = () => {
+        if (launchedPublicMatchRef.current === result.matchId) return;
+        launchedPublicMatchRef.current = result.matchId;
+        if (publicMatchLaunchTimerRef.current !== null) {
+          window.clearTimeout(publicMatchLaunchTimerRef.current);
+          publicMatchLaunchTimerRef.current = null;
+        }
+        launchGame();
+      };
+
+      if (launchNow) {
+        launchOnce();
+      } else if (!isAlreadyOpening) {
+        // Render the ready screen before changing the parent game route. This
+        // gives Telegram WebViews a visible, usable manual fallback.
+        publicMatchLaunchTimerRef.current = window.setTimeout(launchOnce, 1800);
+      }
       return true;
     } catch (error) {
       openingPublicMatchRef.current = '';
@@ -1275,6 +1287,12 @@ export function Web3Dashboard({
       return false;
     }
   }, [currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, pvpGameTab, tournamentData?.matches]);
+
+  useEffect(() => () => {
+    if (publicMatchLaunchTimerRef.current !== null) {
+      window.clearTimeout(publicMatchLaunchTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (activeProfile?.lastDailyXpAt) {
@@ -2286,7 +2304,9 @@ export function Web3Dashboard({
       stake: selectedStake,
       mode: 'pvp' as const,
       gameType: pvpGameTab,
-      forceFresh: true,
+      // A repeated click/retry must replay the same server-owned match, not
+      // detach this player from a just-created connection lobby.
+      forceFresh: false,
     };
     let joinSettled = false;
 
@@ -6769,7 +6789,7 @@ export function Web3Dashboard({
 
             <button
               type="button"
-              onClick={() => openPublicMatch(readyMatchData, selectedStake)}
+              onClick={() => openPublicMatch(readyMatchData, selectedStake, true)}
               className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e65c] text-black font-black text-[11px] uppercase border-2 border-black tracking-wider shadow-[3px_3px_0_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
             >
               ENTER TABLE NOW 🎮
