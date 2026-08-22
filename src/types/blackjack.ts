@@ -34,6 +34,16 @@ export interface BlackjackPlayer {
   isAi?: boolean;
   eliminated?: boolean;
   lastProfit?: number;
+  chipBalance?: number; // Total global chip balance of the player
+}
+
+export interface BlackjackTable {
+  id: string;
+  name: string;
+  stake: number;
+  playersCount: number;
+  maxPlayers: number;
+  type: 'public' | 'free' | 'practice';
 }
 
 export type BlackjackStage = 'idle' | 'betting' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
@@ -64,7 +74,7 @@ export interface BlackjackGameState {
   turnDeadlineAt?: number | null;
   turnStartedAt?: number;
   matchId?: string;
-  roomCode?: string;
+  tableId?: string;
   waitingForPlayers?: boolean;
   connectionDeadlineAt?: number | null;
 }

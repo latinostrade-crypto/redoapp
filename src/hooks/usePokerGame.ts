@@ -25,6 +25,12 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
   { name: 'Bear Ace', avatar: 'bear' },
   { name: 'Fox River', avatar: 'fox' },
   { name: 'Panda Pot', avatar: 'panda' },
+  { name: 'Shark Fin', avatar: 'cat' },
+  { name: 'Wolf Stack', avatar: 'cat' },
+  { name: 'Eagle Eye', avatar: 'rabbit' },
+  { name: 'Lion Share', avatar: 'panda' },
+  { name: 'Tiger Bluff', avatar: 'fox' },
+  { name: 'Owl Wise', avatar: 'bear' }
 ];
 
 export function usePokerGame(options?: {
@@ -140,7 +146,7 @@ export function usePokerGame(options?: {
       userName: string,
       mode: 'offline' | 'pvp' | 'private',
       stake: number,
-      roomCode?: string,
+      tableId?: string,
       matchId?: string
     ) => {
       sound.playShuffle();
@@ -174,7 +180,7 @@ export function usePokerGame(options?: {
               mode,
               gameType: 'poker',
               stake,
-              roomCode,
+              tableId,
               currentUserId: effectiveUserId,
               createdAt: existing?.createdAt || Date.now(),
             }));
@@ -184,7 +190,7 @@ export function usePokerGame(options?: {
           ...prev,
           mode,
           matchId: resolvedMatchId,
-          roomCode,
+          tableId,
           stake,
           stage: 'preflop',
           waitingForPlayers: true,
@@ -277,7 +283,7 @@ export function usePokerGame(options?: {
         stake,
         mode,
         isDealing: true,
-        roomCode,
+        tableId,
         matchId,
         waitingForPlayers: false,
       });

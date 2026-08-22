@@ -5963,7 +5963,7 @@ export function Web3Dashboard({
             <div className="w-full space-y-3 font-mono">
               {/* Poker Sub Mode selector */}
               <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
-                {(['public', 'private', 'practice'] as const).map((sub) => (
+                {(['public', 'free', 'practice'] as const).map((sub) => (
                   <button
                     key={sub}
                     type="button"
@@ -5977,7 +5977,7 @@ export function Web3Dashboard({
                         : 'text-slate-400 border-transparent hover:text-slate-200'
                     }`}
                   >
-                    {sub === 'public' ? 'Public' : sub === 'private' ? 'Private' : 'Practice'}
+                    {sub === 'public' ? 'Public' : sub === 'free' ? 'Free' : 'Practice'}
                   </button>
                 ))}
               </div>
@@ -6072,116 +6072,40 @@ export function Web3Dashboard({
                 )
               )}
 
-              {/* Poker Private Arena */}
-              {pvpSubMode === 'private' && (
-                generatedLink || privateRoomStatus === 'waiting' ? (
-                  renderPrivateWaitingRoomLobby('Poker')
-                ) : (
-                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                    <div className="flex justify-between items-center text-[9px]">
-                      <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
-                        POKER PRIVATE ROOM
-                      </h3>
-                      <span className="text-[8px] text-slate-400">
-                        STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
-                      </span>
-                    </div>
-                    <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
-                      Create a private Texas Hold'em room or join your friend's room using a room code.
-                    </p>
-
-                    <div className="grid grid-cols-3 gap-1">
-                      {PRIVATE_STAKE_OPTIONS.map((stake) => (
-                        <button
-                          key={stake}
-                          type="button"
-                          onClick={() => {
-                            sound.playPop();
-                            setSelectedStake(stake);
-                            setPrivateRoomStake(stake);
-                          }}
-                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                            selectedStake === stake
-                              ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                              : 'bg-black border-black text-slate-450'
-                          }`}
-                        >
-                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Join By Room Code */}
-                    <div className="space-y-1">
-                      <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
-                      <div className="flex gap-1">
-                        <input
-                          type="text"
-                          value={privateJoinCode}
-                          onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                          placeholder="ENTER CODE (E.G. PK8492)"
-                          className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
-                            if (!normalizedCode) {
-                              alert('Enter a room code first.');
-                              return;
-                            }
-                            sound.playPop();
-                            setPrivateRoomCode(normalizedCode);
-                            joinPrivateRoomByCode(normalizedCode);
-                          }}
-                          className="px-3 py-1.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
-                        >
-                          Join
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Create Room Button */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-[8px] text-slate-300">
-                        <span>TABLE SIZE:</span>
-                        <div className="flex gap-1">
-                          {([2, 3, 4] as const).map((cnt) => (
-                            <button
-                              key={cnt}
-                              type="button"
-                              onClick={() => {
-                                sound.playPop();
-                                setPrivateRoomTargetPlayers(cnt);
-                              }}
-                              className={`px-2 py-0.5 border text-[8px] font-bold ${
-                                privateRoomTargetPlayers === cnt
-                                  ? 'bg-[#ffcc00] text-black border-black font-black'
-                                  : 'bg-black text-slate-400 border-slate-800'
-                              }`}
-                            >
-                              {cnt}P
-                            </button>
-                          ))}
+              
+              {/* Poker Free Tables */}
+              {pvpSubMode === 'free' && (
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <h3 className="font-black text-[#ffcc00] uppercase">POKER FREE TABLES</h3>
+                    <span className="text-[8px] text-slate-400">PRACTICE CHIPS</span>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((tableNum) => (
+                      <div key={tableNum} className="flex justify-between items-center p-2 bg-black border border-slate-800">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {tableNum}</span>
+                          <span className="text-[8px] text-slate-400">Blinds: 1/2 • 10 Seats</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] text-slate-300">5/10 Players</span>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              if (onStartPokerGame) onStartPokerGame('offline', 0, 'table-' + tableNum);
+                            }}
+                            className="px-3 py-1 bg-[#ffcc00] text-black font-black text-[9px] border border-black cursor-pointer"
+                          >
+                            SEAT
+                          </button>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPrivateRoomStake(selectedStake);
-                          createPrivateRoom(selectedStake, privateRoomTargetPlayers);
-                        }}
-                        disabled={!authReady || privateRoomCreateState === 'creating'}
-                        className="w-full py-2.5 bg-[#ffcc00] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
-                      >
-                        {privateRoomCreateState === 'creating' ? 'Creating Room...' : `CREATE PRIVATE POKER ROOM (${privateRoomTargetPlayers} SEATS)`}
-                      </button>
-                    </div>
+                    ))}
                   </div>
-                )
+                </div>
               )}
-
+              
               {/* Poker Practice Mode */}
               {pvpSubMode === 'practice' && (
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
@@ -6212,7 +6136,7 @@ export function Web3Dashboard({
             <div className="w-full space-y-3 font-mono">
               {/* Blackjack Sub Mode selector */}
               <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
-                {(['public', 'private', 'practice'] as const).map((sub) => (
+                {(['public', 'free', 'practice'] as const).map((sub) => (
                   <button
                     key={sub}
                     type="button"
@@ -6226,7 +6150,7 @@ export function Web3Dashboard({
                         : 'text-slate-400 border-transparent hover:text-slate-200'
                     }`}
                   >
-                    {sub === 'public' ? 'Public' : sub === 'private' ? 'Private' : 'Practice'}
+                    {sub === 'public' ? 'Public' : sub === 'free' ? 'Free' : 'Practice'}
                   </button>
                 ))}
               </div>
@@ -6339,116 +6263,40 @@ export function Web3Dashboard({
                 )
               )}
 
-              {/* Blackjack Private Arena */}
-              {pvpSubMode === 'private' && (
-                generatedLink || privateRoomStatus === 'waiting' ? (
-                  renderPrivateWaitingRoomLobby('Blackjack')
-                ) : (
-                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                    <div className="flex justify-between items-center text-[9px]">
-                      <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                        BLACKJACK PRIVATE ROOM
-                      </h3>
-                      <span className="text-[8px] text-slate-400">
-                        STAKE: <strong>{selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`}</strong>
-                      </span>
-                    </div>
-                    <p className="text-[8px] text-slate-400 leading-relaxed font-sans">
-                      Create a private Blackjack room or join your friend's table using a room code.
-                    </p>
-
-                    <div className="grid grid-cols-3 gap-1">
-                      {PRIVATE_STAKE_OPTIONS.map((stake) => (
-                        <button
-                          key={stake}
-                          type="button"
-                          onClick={() => {
-                            sound.playPop();
-                            setSelectedStake(stake);
-                            setPrivateRoomStake(stake);
-                          }}
-                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                            selectedStake === stake
-                              ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                              : 'bg-black border-black text-slate-450'
-                          }`}
-                        >
-                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Join By Room Code */}
-                    <div className="space-y-1">
-                      <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
-                      <div className="flex gap-1">
-                        <input
-                          type="text"
-                          value={privateJoinCode}
-                          onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                          placeholder="ENTER CODE (E.G. BJ5192)"
-                          className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono tracking-widest uppercase"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const normalizedCode = (privateJoinCode || '').trim().toUpperCase();
-                            if (!normalizedCode) {
-                              alert('Enter a room code first.');
-                              return;
-                            }
-                            sound.playPop();
-                            setPrivateRoomCode(normalizedCode);
-                            joinPrivateRoomByCode(normalizedCode);
-                          }}
-                          className="px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black cursor-pointer"
-                        >
-                          Join
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Create Room Button */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-[8px] text-slate-300">
-                        <span>TABLE SIZE:</span>
-                        <div className="flex gap-1">
-                          {([2, 3, 4] as const).map((cnt) => (
-                            <button
-                              key={cnt}
-                              type="button"
-                              onClick={() => {
-                                sound.playPop();
-                                setPrivateRoomTargetPlayers(cnt);
-                              }}
-                              className={`px-2 py-0.5 border text-[8px] font-bold ${
-                                privateRoomTargetPlayers === cnt
-                                  ? 'bg-[#00ff66] text-black border-black font-black'
-                                  : 'bg-black text-slate-400 border-slate-800'
-                              }`}
-                            >
-                              {cnt}P
-                            </button>
-                          ))}
+              
+              {/* Blackjack Free Tables */}
+              {pvpSubMode === 'free' && (
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <h3 className="font-black text-[#00ff66] uppercase">BLACKJACK FREE TABLES</h3>
+                    <span className="text-[8px] text-slate-400">PRACTICE CHIPS</span>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    {[1, 2, 3].map((tableNum) => (
+                      <div key={tableNum} className="flex justify-between items-center p-2 bg-black border border-slate-800">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-[#00ff66] font-bold">Table {tableNum}</span>
+                          <span className="text-[8px] text-slate-400">Min Bet: 10 • 10 Seats</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] text-slate-300">3/10 Players</span>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              if (onStartBlackjackGame) onStartBlackjackGame('offline', 0, 'table-' + tableNum);
+                            }}
+                            className="px-3 py-1 bg-[#00ff66] text-black font-black text-[9px] border border-black cursor-pointer"
+                          >
+                            SEAT
+                          </button>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPrivateRoomStake(selectedStake);
-                          createPrivateRoom(selectedStake, privateRoomTargetPlayers);
-                        }}
-                        disabled={!authReady || privateRoomCreateState === 'creating'}
-                        className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer disabled:opacity-50"
-                      >
-                        {privateRoomCreateState === 'creating' ? 'Creating Room...' : `CREATE PRIVATE BLACKJACK ROOM (${privateRoomTargetPlayers} SEATS)`}
-                      </button>
-                    </div>
+                    ))}
                   </div>
-                )
+                </div>
               )}
-
+              
               {/* Blackjack Practice Mode */}
               {pvpSubMode === 'practice' && (
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">

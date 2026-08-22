@@ -345,8 +345,8 @@ export function BlackjackGame({
           )}
         </div>
 
-        {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS (UP TO 4) */}
-        <div className="w-full flex items-end justify-around gap-1 z-30 pb-1">
+        {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS (UP TO 10) */}
+        <div className="w-full flex flex-wrap items-end justify-center gap-1 min-[380px]:gap-2 z-30 pb-2 max-h-[220px] overflow-y-auto no-scrollbar">
           {gameState.players.length === 0 ? (
             <div className="w-full py-4 text-center text-[9px] font-black text-amber-300 animate-pulse">
               CONNECTING SEATS TO CASINO TABLE...
@@ -369,8 +369,9 @@ export function BlackjackGame({
                       ? 'bg-black/70 border border-[#ffcc00]/60'
                       : 'bg-black/60 border border-slate-700'
                   }`}
-                  style={{ maxWidth: `${100 / Math.max(1, gameState.players.length)}%` }}
+                  style={{ maxWidth: '45%', flex: '1 0 18%' }}
                 >
+                  <div className="scale-[0.85] origin-bottom flex flex-col items-center w-full">
                   {/* CHIPS BADGE */}
                   <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
                     💰 {p.chips ?? 0} CHIPS
@@ -432,6 +433,7 @@ export function BlackjackGame({
                         <span className="text-[#00ff66]">SCORE: {p.score ?? 0} (BET: {p.bet ?? 0})</span>
                       )}
                     </div>
+                  </div>
                   </div>
                 </div>
               );

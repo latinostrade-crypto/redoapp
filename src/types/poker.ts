@@ -55,6 +55,16 @@ export interface PokerPlayer {
   eliminated?: boolean;
   isConnected?: boolean;
   disconnectedAt?: number | null;
+  chipBalance?: number; // Total global chip balance of the player
+}
+
+export interface PokerTable {
+  id: string;
+  name: string;
+  stake: number;
+  playersCount: number;
+  maxPlayers: number;
+  type: 'public' | 'free' | 'practice';
 }
 
 export type PokerStage =
@@ -103,7 +113,7 @@ export interface PokerGameState {
   mode: 'offline' | 'pvp' | 'private';
   isDealing?: boolean;
   matchId?: string;
-  roomCode?: string;
+  tableId?: string;
   waitingForPlayers?: boolean;
   connectionDeadlineAt?: number | null;
 }

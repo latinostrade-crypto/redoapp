@@ -26,6 +26,12 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
   { name: 'Koala Jack', avatar: 'koala' },
   { name: 'Panda Ace', avatar: 'panda' },
   { name: 'Fox River', avatar: 'fox' },
+  { name: 'Bear Ace', avatar: 'bear' },
+  { name: 'Shark Fin', avatar: 'cat' },
+  { name: 'Wolf Stack', avatar: 'cat' },
+  { name: 'Eagle Eye', avatar: 'rabbit' },
+  { name: 'Lion Share', avatar: 'panda' },
+  { name: 'Tiger Bluff', avatar: 'fox' }
 ];
 
 export function useBlackjackGame(options?: {
@@ -303,7 +309,7 @@ export function useBlackjackGame(options?: {
       initialDealer: BlackjackPlayer,
       mode: 'offline' | 'pvp' | 'private',
       stake: number,
-      roomCode?: string,
+      tableId?: string,
       matchId?: string,
       handNum = 1,
       betOverride?: number
@@ -392,7 +398,7 @@ export function useBlackjackGame(options?: {
         ],
         isDealing: false,
         turnTimeLeft: TURN_DURATION_SEC,
-        roomCode,
+        tableId,
         matchId,
         waitingForPlayers: false,
       });
@@ -442,7 +448,7 @@ export function useBlackjackGame(options?: {
       userName: string,
       mode: 'offline' | 'pvp' | 'private',
       stake: number,
-      roomCode?: string,
+      tableId?: string,
       matchId?: string
     ) => {
       sound.playShuffle();
@@ -474,7 +480,7 @@ export function useBlackjackGame(options?: {
               mode,
               gameType: 'blackjack',
               stake,
-              roomCode,
+              tableId,
               currentUserId: effectiveUserId,
               createdAt: existing?.createdAt || Date.now(),
             }));
@@ -484,7 +490,7 @@ export function useBlackjackGame(options?: {
           ...prev,
           mode,
           matchId: resolvedMatchId,
-          roomCode,
+          tableId,
           stake,
           currentHand: 1,
           maxHands: MAX_HANDS,
@@ -520,7 +526,7 @@ export function useBlackjackGame(options?: {
         eliminated: false,
       };
 
-      const bots: BlackjackPlayer[] = DEFAULT_BOTS.slice(0, 2).map((bot, idx) => ({
+      const bots: BlackjackPlayer[] = DEFAULT_BOTS.map((bot, idx) => ({
         id: `ai_${idx + 1}`,
         name: bot.name,
         avatar: bot.avatar,
@@ -554,7 +560,7 @@ export function useBlackjackGame(options?: {
         wins: 0,
       };
 
-      dealNewRoundCards(allPlayers, dealer, mode, stake, roomCode, matchId, 1);
+      dealNewRoundCards(allPlayers, dealer, mode, stake, tableId, matchId, 1);
     },
     [dealNewRoundCards, syncRemoteMatchState]
   );
@@ -752,9 +758,9 @@ export function useBlackjackGame(options?: {
 
       // Offline mode
       const nextHandNum = gameState.currentHand + 1;
-      dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.roomCode, gameState.matchId, nextHandNum, nextBet);
+      dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.tableId, gameState.matchId, nextHandNum, nextBet);
     },
-    [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.roomCode, gameState.stake, remoteMatchId, selectedBet, syncRemoteMatchState]
+    [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.tableId, gameState.stake, remoteMatchId, selectedBet, syncRemoteMatchState]
   );
 
   // SSE Stream Listener for Online Multiplayer

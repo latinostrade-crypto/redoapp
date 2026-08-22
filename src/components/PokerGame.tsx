@@ -292,7 +292,7 @@ export function PokerGame({
             return (
               <div key={opp.id} className={`absolute ${posClass} flex flex-col items-center z-30`}>
                 <div className={`flex items-center gap-1 ${reverse ? 'flex-row-reverse' : ''}`}>
-                  <div className="flex -space-x-4 shrink-0">
+                  <div className="flex -space-x-4 shrink-0 scale-[0.85] origin-bottom">
                     {(opp.holeCards || []).map((c, cIdx) => (
                       <PokerCardView
                         key={c?.id || cIdx}
@@ -303,12 +303,12 @@ export function PokerGame({
                     ))}
                   </div>
                   <div
-                    className={`relative p-0.5 bg-slate-950 border rounded flex flex-col items-center min-w-[44px] max-w-[48px] ${
+                    className={`relative p-0.5 bg-slate-950 border rounded flex flex-col items-center min-w-[38px] max-w-[42px] scale-[0.85] origin-top ${
                       isTurn ? 'border-[#00ff66] shadow-[0_0_10px_#00ff66]' : 'border-black'
                     } ${opp.folded || opp.eliminated ? 'opacity-40 grayscale' : ''}`}
                   >
                     {isDealer && (
-                      <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3.5 h-3.5 rounded-full text-[7px] font-black flex items-center justify-center border border-black shadow z-10">
+                      <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3 h-3 rounded-full text-[6px] font-black flex items-center justify-center border border-black shadow z-10">
                         D
                       </span>
                     )}
@@ -317,11 +317,11 @@ export function PokerGame({
                       emotion={opp.folded ? 'worried' : isTurn ? 'thinking' : 'happy'}
                       size="xs"
                     />
-                    <span className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight mt-0.5">
+                    <span className="text-[6px] font-black text-white truncate max-w-[36px] leading-tight mt-0.5">
                       {opp.name || 'Player'}
                     </span>
-                    <div className="flex items-center gap-0.5 text-[6.5px] font-bold text-[#ffcc00] leading-tight">
-                      <ChipStackIcon className="w-2.5 h-2.5" />
+                    <div className="flex items-center gap-0.5 text-[6px] font-bold text-[#ffcc00] leading-tight">
+                      <ChipStackIcon className="w-2 h-2" />
                       <span>{opp.chips ?? 0}</span>
                     </div>
                   </div>
@@ -339,27 +339,27 @@ export function PokerGame({
             );
           };
 
-          if (opponents.length === 1) {
-            return renderOpponentView(opponents[0], 'top-11 left-1/2 -translate-x-1/2');
-          }
-          if (opponents.length === 2) {
-            return (
-              <>
-                {renderOpponentView(opponents[0], 'left-1 top-[20%]')}
-                {renderOpponentView(opponents[1], 'right-1 top-[20%]', true)}
-              </>
-            );
-          }
-          if (opponents.length >= 3) {
-            return (
-              <>
-                {renderOpponentView(opponents[0], 'left-1 top-[22%]')}
-                {renderOpponentView(opponents[1], 'top-11 left-1/2 -translate-x-1/2')}
-                {renderOpponentView(opponents[2], 'right-1 top-[22%]', true)}
-              </>
-            );
-          }
-          return null;
+          const POSITIONS = [
+            'left-0.5 top-[45%]',
+            'left-0.5 top-[22%]',
+            'left-4 top-[2%]',
+            'top-1 left-[30%]',
+            'top-0.5 left-1/2 -translate-x-1/2',
+            'top-1 right-[30%]',
+            'right-4 top-[2%]',
+            'right-0.5 top-[22%]',
+            'right-0.5 top-[45%]',
+          ];
+
+          return (
+            <>
+              {opponents.map((opp, idx) => {
+                const pos = POSITIONS[idx % POSITIONS.length];
+                const isReverse = pos.includes('right-');
+                return renderOpponentView(opp, pos, isReverse);
+              })}
+            </>
+          );
         })()}
 
         {/* CENTER TABLE: 3D CARD DECK + COMMUNITY CARDS + TIMER */}
