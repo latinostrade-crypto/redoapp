@@ -6,6 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PokerCard, PokerGameState } from '../types/poker';
+import { apiRequest } from '../utils/api';
 import { sound } from '../utils/sound';
 import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, Minus, Loader2 } from 'lucide-react';
 import { Avatar } from './Avatars';
@@ -163,6 +164,30 @@ export function PokerGame({
   };
 
   const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
+  const isSpectator = !gameState.players.find((p) => p.id === 'player');
+  const [showBuyInModal, setShowBuyInModal] = useState(false);
+  const [buyInAmount, setBuyInAmount] = useState(200);
+
+  const handleTakeSeat = async () => {
+    // If it's private/pvp we don't know the mode from GameState directly, but we can try to just show modal
+    setShowBuyInModal(true);
+  };
+
+  const handleConfirmBuyIn = async () => {
+    try {
+      const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', {
+        method: 'POST',
+        body: JSON.stringify({ tableId: gameState.matchId, chips: buyInAmount })
+      });
+      if (res.success) {
+        setShowBuyInModal(false);
+        window.location.reload(); // Quick refresh to catch socket update
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const isHumanTurn =
     gameState.stage !== 'idle' &&
     gameState.stage !== 'ended' &&
@@ -464,7 +489,11 @@ export function PokerGame({
             {/* Hole Cards + Avatar Pill */}
             <div className="flex items-end gap-1.5">
               <div className="flex -space-x-3 shrink-0">
-                {humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
+                {isSpectator ? (
+                  <button onClick={handleTakeSeat} className="bg-[#00ff66] text-black border-2 border-black px-4 py-2 rounded shadow hover:bg-green-400 font-black uppercase text-[10px]">
+                    TAKE A SEAT
+                  </button>
+                ) : humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
                   humanPlayer.holeCards.map((c, cIdx) => (
                     <PokerCardView
                       key={c?.id || cIdx}

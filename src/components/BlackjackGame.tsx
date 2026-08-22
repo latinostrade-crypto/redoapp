@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { apiRequest } from '../utils/api';
 import {
   Trophy,
   RotateCcw,
@@ -134,6 +135,29 @@ export function BlackjackGame({
   };
 
   const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
+  const isSpectator = !gameState.players.find((p) => p.id === 'player');
+  const [showBuyInModal, setShowBuyInModal] = useState(false);
+  const [buyInAmount, setBuyInAmount] = useState(100);
+
+  const handleTakeSeat = async () => {
+    setShowBuyInModal(true);
+  };
+
+  const handleConfirmBuyIn = async () => {
+    try {
+      const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', {
+        method: 'POST',
+        body: JSON.stringify({ tableId: gameState.matchId, chips: buyInAmount })
+      });
+      if (res.success) {
+        setShowBuyInModal(false);
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const maxAvailableBet = humanPlayer?.chips ? humanPlayer.chips + (humanPlayer.bet || 0) : 100;
 
   const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
@@ -405,6 +429,10 @@ export function BlackjackGame({
                         <Skull className="w-3 h-3" />
                         <span>BUSTED OUT</span>
                       </div>
+                    ) : isSpectator ? (
+                      <button onClick={handleTakeSeat} className="bg-[#00ff66] text-black border-2 border-black px-4 py-2 rounded shadow hover:bg-green-400 font-black uppercase text-[10px]">
+                        TAKE A SEAT
+                      </button>
                     ) : playerCards.length === 0 ? (
                       <div className="bg-black/80 border border-[#00ff66] px-3 py-1 rounded text-[8px] text-[#00ff66] font-black uppercase tracking-widest flex items-center justify-center whitespace-nowrap min-w-[80px]">
                         Waiting for next hand...
@@ -637,6 +665,36 @@ export function BlackjackGame({
         </div>
       )}
       <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="absolute bottom-2 left-2 z-40" />
+      {/* BUY IN MODAL */}
+      <AnimatePresence>
+        {showBuyInModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 font-mono"
+          >
+            <div className="bg-[#18181c] border-2 border-[#00ff66] pixel-box-sm p-4 flex flex-col items-center gap-4 w-64 shadow-[0_0_20px_rgba(0,255,102,0.3)]">
+              <h2 className="text-[#00ff66] font-black text-xs uppercase text-center w-full border-b border-[#00ff66]/30 pb-2">Buy In</h2>
+              <div className="text-center w-full">
+                <div className="text-[8px] text-slate-500 mt-1">If this is a FREE table, you will be charged 2 Energy instead.</div>
+              </div>
+              <div className="flex flex-col gap-2 w-full">
+                <input
+                  type="number"
+                  min={50}
+                  step={50}
+                  value={buyInAmount}
+                  onChange={e => setBuyInAmount(Number(e.target.value))}
+                  className="bg-black border border-[#00ff66] text-[#00ff66] font-bold px-2 py-1.5 text-center text-[10px] w-full"
+                />
+              </div>
+              <div className="flex gap-2 w-full">
+                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">Cancel</button>
+                <button onClick={handleConfirmBuyIn} className="flex-1 px-2 py-2 bg-[#00ff66] text-black text-[9px] border border-black font-bold uppercase hover:bg-green-400">Join Table</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
