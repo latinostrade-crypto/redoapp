@@ -5403,11 +5403,6 @@ function runMatchmakingTick() {
 
         matchmakingQueue = matchmakingQueue.filter(q => !groupSlice.some(p => isSameUser(p.userId, q.userId)));
 
-        const newMatch = activeMatches.get(matchId);
-        if (newMatch && newMatch.mode === 'pvp') {
-          startPublicMatch(newMatch);
-        }
-
         schedulePersist();
 
         groupSlice.forEach(p => {
@@ -5435,12 +5430,6 @@ function runMatchmakingTick() {
           const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           activateMatch(matchId, waitingPlayer.mode, groupSlice, 0, gameType);
           matchmakingQueue = matchmakingQueue.filter(p => p.userId !== waitingPlayer.userId);
-          
-          const newMatch = activeMatches.get(matchId);
-          if (newMatch && newMatch.mode === 'pvp') {
-            startPublicMatch(newMatch);
-          }
-
           schedulePersist();
           const timer = matchmakerCleanupTimers.get(waitingPlayer.userId);
           if (timer) {
