@@ -98,6 +98,17 @@ export function setSessionToken(token: string | null | undefined) {
   localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, token);
 }
 
+export function normalizeUserIdentifier(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/^tg[:_]/, '').replace(/^guest[:_]/, '');
+}
+
+export function isSameUser(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return normalizeUserIdentifier(a) === normalizeUserIdentifier(b);
+}
+
 export function buildAuthHeaders(init?: HeadersInit) {
   const token = getSessionToken();
   const telegramInitData = getTelegramInitData();
@@ -107,11 +118,7 @@ export function buildAuthHeaders(init?: HeadersInit) {
   return {
     ...(init || {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    // The bootstrap request validates the current Telegram account and issues
-    // a session token. Prefer that token afterwards: initData can expire while
-    // an iOS Mini App stays open, and sending both made the backend reject the
-    // still-valid session because it deliberately validates initData first.
-    ...(!token && telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
+    ...(telegramInitData ? { 'x-telegram-init-data': telegramInitData } : {}),
     ...(storedUserId ? { 'x-user-id': storedUserId } : {}),
   };
 }
