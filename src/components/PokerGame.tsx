@@ -292,7 +292,7 @@ export function PokerGame({
             return (
               <div key={opp.id} className={`absolute ${posClass} flex flex-col items-center z-30`}>
                 <div className={`flex items-center gap-1 ${reverse ? 'flex-row-reverse' : ''}`}>
-                  <div className="flex -space-x-4 shrink-0 scale-[0.85] origin-bottom">
+                  <div className="flex -space-x-4 shrink-0 scale-[0.65] origin-bottom">
                     {(opp.holeCards || []).map((c, cIdx) => (
                       <PokerCardView
                         key={c?.id || cIdx}
@@ -303,7 +303,7 @@ export function PokerGame({
                     ))}
                   </div>
                   <div
-                    className={`relative p-0.5 bg-slate-950 border rounded flex flex-col items-center min-w-[38px] max-w-[42px] scale-[0.85] origin-top ${
+                    className={`relative p-0.5 bg-slate-950 border rounded flex flex-col items-center min-w-[38px] max-w-[42px] scale-[0.75] origin-top ${
                       isTurn ? 'border-[#00ff66] shadow-[0_0_10px_#00ff66]' : 'border-black'
                     } ${opp.folded || opp.eliminated ? 'opacity-40 grayscale' : ''}`}
                   >
@@ -340,15 +340,15 @@ export function PokerGame({
           };
 
           const POSITIONS = [
-            'left-0.5 top-[45%]',
-            'left-0.5 top-[22%]',
-            'left-4 top-[2%]',
-            'top-1 left-[30%]',
-            'top-0.5 left-1/2 -translate-x-1/2',
-            'top-1 right-[30%]',
-            'right-4 top-[2%]',
-            'right-0.5 top-[22%]',
-            'right-0.5 top-[45%]',
+            'left-[-4px] top-[45%]',
+            'left-[-4px] top-[18%]',
+            'left-[4px] top-[0%]',
+            'top-[-4px] left-[30%]',
+            'top-[-6px] left-1/2 -translate-x-1/2',
+            'top-[-4px] right-[30%]',
+            'right-[4px] top-[0%]',
+            'right-[-4px] top-[18%]',
+            'right-[-4px] top-[45%]',
           ];
 
           return (

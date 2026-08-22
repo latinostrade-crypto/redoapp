@@ -6003,92 +6003,57 @@ export function Web3Dashboard({
 
               {/* Poker Public Arena */}
               {pvpSubMode === 'public' && (
-                matchmakingState === 'joining' || matchmakingState === 'searching' ? (
-                  <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                    <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
-                      <span className="text-[10px] font-black text-[#ffcc00]">
-                        <MatchmakingCountdown deadlineAt={publicQueueDeadlineAtRef.current || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
-                      </span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <h3 className="font-black text-[9px] text-[#ffcc00] uppercase">
-                        {matchmakingState === 'joining'
-                          ? 'CONNECTING TO POKER QUEUE'
-                          : queueLength >= 2
-                          ? '✨ OPPONENT FOUND! PREPARING POKER TABLE...'
-                          : 'POKER QUEUE ACTIVE'}
-                      </h3>
-                      <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                        {queueLength >= 2
-                          ? `Opponent found! Connecting table and starting poker match in up to 15s...`
-                          : `Searching for real opponents (${queueLength}/4). Ticket games are strict PVP with NO bots.`}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleLeavePublicQueue}
-                      className="px-4 py-2 bg-[#ff4b4b] text-black font-black text-[9px] uppercase border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000]"
-                    >
-                      CANCEL SEARCH
-                    </button>
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <h3 className="font-black text-[#ffcc00] uppercase flex items-center gap-1">
+                      <span>♠️</span> PUBLIC POKER TABLES
+                    </h3>
+                    <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
+                      BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                    </span>
                   </div>
-                ) : (
-                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3">
-                    <div className="flex justify-between items-center text-[9px]">
-                      <h3 className="font-black text-slate-100 uppercase flex items-center gap-1">
-                        <span>♠️</span> TEXAS HOLD'EM ARENA
-                      </h3>
-                      <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
-                        {selectedStake === 0 ? (
-                          <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#ffcc00]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
-                        ) : (
-                          <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-1">
-                      {PUBLIC_STAKE_OPTIONS.map((stake) => (
-                        <button
-                          key={stake}
-                          type="button"
-                          onClick={() => {
-                            sound.playPop();
-                            setSelectedStake(stake);
-                          }}
-                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                            selectedStake === stake
-                              ? 'bg-[#ffcc00] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                              : 'bg-black border-black text-slate-450'
-                          }`}
-                        >
-                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                          <span className="text-[6px] block mt-0.5">{stake === 0 ? 'friendly' : 'stake'}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {selectedStake > 0 && (
-                      <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400">
-                        <div className="flex justify-between items-center text-slate-300">
-                          <span className="font-bold">4-Player Hold'em Pot:</span>
-                          <span className="text-[#ffcc00] font-bold">{(selectedStake * 4 * 0.96).toFixed(2)} TKT</span>
+                  
+                  <div className="space-y-2">
+                    {casinoTables.length === 0 && (
+                      <div className="text-[9px] text-slate-500 text-center py-4">No public tables available</div>
+                    )}
+                    {casinoTables.map((table) => (
+                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.id.split('-').pop()}</span>
+                          <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} TKT • {table.maxPlayers} Seats</span>
                         </div>
-                        <div className="flex justify-between items-center text-[7px] text-slate-450">
-                          <span>Winner takes 96% of total table pot (4% platform fee).</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
+                          <button 
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
+                                  method: 'POST',
+                                  body: JSON.stringify({ tableId: table.id })
+                                });
+                                if (res.success && onStartPokerGame) {
+                                  onStartPokerGame('pvp', table.minBuyIn, table.id, undefined);
+                                }
+                              } catch(e) {
+                                console.error(e);
+                              }
+                            }}
+                            disabled={table.playersCount >= table.maxPlayers}
+                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
+                              table.playersCount >= table.maxPlayers 
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
+                                : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
+                            }`}
+                          >
+                            SEAT
+                          </button>
                         </div>
                       </div>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={handleStartMatchmakingQueue}
-                      className="w-full py-2.5 bg-[#ffcc00] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer"
-                    >
-                      SEARCH POKER MATCH ({selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`})
-                    </button>
+                    ))}
                   </div>
-                )
+                </div>
               )}
 
               
@@ -6115,12 +6080,17 @@ export function Web3Dashboard({
                           <button 
                             type="button"
                             onClick={async () => {
+                              if (energy.energy < 2) {
+                                alert("Not enough energy (2 required)");
+                                return;
+                              }
                               try {
-                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
+                                const res = await apiRequest<{success: boolean; tableId: string; energy?: any}>('/api/casino/join-table', { 
                                   method: 'POST',
                                   body: JSON.stringify({ tableId: table.id })
                                 });
                                 if (res.success && onStartPokerGame) {
+                                  updateProfileEnergy({ ...energy, energy: energy.energy - 2 });
                                   onStartPokerGame('pvp', 0, table.id, undefined);
                                 }
                               } catch(e) {
@@ -6134,7 +6104,7 @@ export function Web3Dashboard({
                                 : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
                             }`}
                           >
-                            SEAT
+                            SEAT (-2⚡)
                           </button>
                         </div>
                       </div>
@@ -6194,110 +6164,57 @@ export function Web3Dashboard({
 
               {/* Blackjack Public Arena */}
               {pvpSubMode === 'public' && (
-                matchmakingState === 'joining' || matchmakingState === 'searching' ? (
-                  <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                    <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
-                      <span className="text-[10px] font-black text-[#00ff66]">
-                        <MatchmakingCountdown deadlineAt={publicQueueDeadlineAtRef.current || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
-                      </span>
-                    </div>
-                    <div className="space-y-0.5">
-                      <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
-                        {matchmakingState === 'joining'
-                          ? 'CONNECTING TO BLACKJACK QUEUE'
-                          : queueLength >= 2
-                          ? '✨ OPPONENT FOUND! PREPARING BLACKJACK TABLE...'
-                          : 'BLACKJACK QUEUE ACTIVE'}
-                      </h3>
-                      <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                        {queueLength >= 2
-                          ? `Opponent found! Connecting table and starting blackjack match in up to 15s...`
-                          : `Searching for real opponents (${queueLength}/4). 100 Chips bankroll, 5 hands elimination match.`}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleLeavePublicQueue}
-                      className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive cursor-pointer"
-                    >
-                      Cancel Queue
-                    </button>
+                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
+                  <div className="flex justify-between items-center text-[9px]">
+                    <h3 className="font-black text-[#00ff66] uppercase flex items-center gap-1">
+                      <span>🃏</span> PUBLIC BLACKJACK TABLES
+                    </h3>
+                    <span className="text-[8px] text-[#00ff66] bg-black px-1.5 py-0.5 border border-black">
+                      BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                    </span>
                   </div>
-                ) : (
-                  <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3">
-                    <div className="flex justify-between items-center text-[9px]">
-                      <h3 className="font-black text-slate-100 uppercase flex items-center gap-1">
-                        <span>🃏</span> BLACKJACK 21 ARENA (100 CHIPS TOURNAMENT)
-                      </h3>
-                      <span className="text-[8px] text-[#00ff66] bg-black px-1.5 py-0.5 border border-black">
-                        {selectedStake === 0 ? (
-                          <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#00ff66]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
-                        ) : (
-                          <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-1">
-                      {PUBLIC_STAKE_OPTIONS.map((stake) => (
-                        <button
-                          key={stake}
-                          type="button"
-                          onClick={() => {
-                            sound.playPop();
-                            setSelectedStake(stake);
-                          }}
-                          className={`p-1.5 border transition-all cursor-pointer font-mono text-center flex flex-col items-center justify-center ${
-                            selectedStake === stake
-                              ? 'bg-[#00ff66] text-black border-black font-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                              : 'bg-black border-black text-slate-450'
-                          }`}
-                        >
-                          <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake} TKT`}</span>
-                          <span className="text-[6px] block mt-0.5">{stake === 0 ? '100 chips' : '100 chips stack'}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {selectedStake > 0 ? (
-                      <div className="bg-black/90 p-2 border border-black text-[7.5px] leading-relaxed space-y-1.5 text-slate-400 rounded">
-                        <div className="flex justify-between items-center text-slate-300">
-                          <span>Buy-in Entry:</span>
-                          <span className="text-[#00ff66] font-bold">{selectedStake.toFixed(2)} TKT ➔ 100 Match Chips</span>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-300">
-                          <span>Match Format:</span>
-                          <span className="text-[#00d2ff] font-bold">5 Hands Elimination (up to 4 players)</span>
-                        </div>
-                        <div className="flex justify-between items-center text-amber-300 bg-amber-950/40 px-1.5 py-1 rounded border border-amber-500/30">
-                          <span>Champion Prize (96%):</span>
-                          <span className="text-[#ffcc00] font-black">
-                            {(selectedStake * 2 * 0.96).toFixed(2)} TKT (2P) — {(selectedStake * 4 * 0.96).toFixed(2)} TKT (4P)
-                          </span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="bg-black/90 p-2 border border-black text-[7.5px] leading-relaxed space-y-1 text-slate-400 rounded">
-                        <div className="flex justify-between items-center text-slate-300">
-                          <span>Buy-in Entry:</span>
-                          <span className="text-[#00ff66] font-bold">FREE ➔ 100 Practice Chips</span>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-300">
-                          <span>Champion Reward:</span>
-                          <span className="text-[#00d2ff] font-bold">+50 XP & Win Leaderboard Points</span>
-                        </div>
-                      </div>
+                  
+                  <div className="space-y-2">
+                    {casinoTables.length === 0 && (
+                      <div className="text-[9px] text-slate-500 text-center py-4">No public tables available</div>
                     )}
-
-                    <button
-                      type="button"
-                      onClick={handleStartMatchmakingQueue}
-                      className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] uppercase font-black pixel-btn-interactive shadow-md cursor-pointer"
-                    >
-                      SEARCH BLACKJACK MATCH ({selectedStake === 0 ? 'FREE' : `${selectedStake} TKT`})
-                    </button>
+                    {casinoTables.map((table) => (
+                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.id.split('-').pop()}</span>
+                          <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} TKT • {table.maxPlayers} Seats</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
+                          <button 
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
+                                  method: 'POST',
+                                  body: JSON.stringify({ tableId: table.id })
+                                });
+                                if (res.success && onStartBlackjackGame) {
+                                  onStartBlackjackGame('pvp', table.minBuyIn, table.id, undefined);
+                                }
+                              } catch(e) {
+                                console.error(e);
+                              }
+                            }}
+                            disabled={table.playersCount >= table.maxPlayers}
+                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
+                              table.playersCount >= table.maxPlayers 
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
+                                : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
+                            }`}
+                          >
+                            SEAT
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )
+                </div>
               )}
 
               
@@ -6324,12 +6241,17 @@ export function Web3Dashboard({
                           <button 
                             type="button"
                             onClick={async () => {
+                              if (energy.energy < 2) {
+                                alert("Not enough energy (2 required)");
+                                return;
+                              }
                               try {
                                 const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
                                   method: 'POST',
                                   body: JSON.stringify({ tableId: table.id })
                                 });
                                 if (res.success && onStartBlackjackGame) {
+                                  updateProfileEnergy({ ...energy, energy: energy.energy - 2 });
                                   onStartBlackjackGame('pvp', 0, table.id, undefined);
                                 }
                               } catch(e) {
@@ -6343,7 +6265,7 @@ export function Web3Dashboard({
                                 : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
                             }`}
                           >
-                            SEAT
+                            SEAT (-2⚡)
                           </button>
                         </div>
                       </div>

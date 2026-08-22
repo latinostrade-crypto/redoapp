@@ -15,13 +15,13 @@ export class CasinoManager {
   private tables: Map<string, CasinoTable> = new Map();
 
   constructor() {
-    this.createTable('poker', 'free', 10);
-    this.createTable('poker', 'public', 50);
-    this.createTable('blackjack', 'free', 10);
-    this.createTable('blackjack', 'public', 50);
+    this.createTable('poker', 'free', 10, 10);
+    this.createTable('poker', 'public', 50, 10);
+    this.createTable('blackjack', 'free', 10, 4);
+    this.createTable('blackjack', 'public', 50, 4);
   }
 
-  public createTable(gameType: 'poker' | 'blackjack', mode: 'public' | 'free' | 'practice', minBuyIn: number): CasinoTable {
+  public createTable(gameType: 'poker' | 'blackjack', mode: 'public' | 'free' | 'practice', minBuyIn: number, maxPlayers: number = 10): CasinoTable {
     const id = `table-${gameType}-${mode}-${Date.now()}`;
     const engine = gameType === 'poker' ? new PokerEngine(id, minBuyIn/10, minBuyIn/5) : new BlackjackEngine(id);
     
@@ -31,7 +31,7 @@ export class CasinoManager {
       mode,
       minBuyIn,
       playersCount: 0,
-      maxPlayers: 10,
+      maxPlayers,
       engine
     };
     this.tables.set(id, table);
