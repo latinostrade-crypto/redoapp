@@ -578,13 +578,23 @@ export function useUnoGame() {
     if (mode === 'pvp' || mode === 'private') {
       try {
         // Determine effective user ID
-        const effectiveUserId =
-          typeof window !== 'undefined'
-            ? (sessionStorage.getItem('redoapp_tab_guest_id') ||
-                localStorage.getItem('redoapp_current_user_id') ||
-                localStorage.getItem('redoapp_guest_user_id') ||
-                'player')
-            : 'player';
+        let effectiveUserId = 'player';
+        if (typeof window !== 'undefined') {
+          try {
+            const raw = localStorage.getItem('redoapp_active_match');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed.currentUserId) effectiveUserId = parsed.currentUserId;
+            }
+          } catch {}
+          if (effectiveUserId === 'player') {
+            effectiveUserId =
+              sessionStorage.getItem('redoapp_tab_guest_id') ||
+              localStorage.getItem('redoapp_current_user_id') ||
+              localStorage.getItem('redoapp_guest_user_id') ||
+              'player';
+          }
+        }
         remoteUserIdRef.current = effectiveUserId;
 
         if (resolvedMatchId) {

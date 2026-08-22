@@ -5357,6 +5357,23 @@ function expireTimedOutMatchmakingPlayers(now = Date.now()) {
 
 function runMatchmakingTick() {
   expireTimedOutMatchmakingPlayers();
+
+  // Sweep dead/stale matches so users are never trapped in unended games
+  const now = Date.now();
+  for (const [matchId, match] of activeMatches.entries()) {
+    const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 45_000);
+    const isStaleExpired = now - (match.playStartedAt || match.createdAt || now) > 10 * 60 * 1000;
+    if ((isUnstartedExpired || isStaleExpired) && !match.settled) {
+      match.settled = true;
+      for (const p of match.players) {
+        activeMatchByUser.delete(p.userId);
+        for (const [uid] of activeMatchByUser.entries()) {
+          if (isSameUser(uid, p.userId)) activeMatchByUser.delete(uid);
+        }
+      }
+    }
+  }
+
   if (matchmakingQueue.length === 0) return;
 
   const groups = new Map<string, QueuePlayer[]>();
