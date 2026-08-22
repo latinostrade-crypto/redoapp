@@ -5652,6 +5652,21 @@ app.get('/api/admin/health', requireAdmin, (req, res) => {
 });
 
 app.get('/api/debug/matchmaker', (_req, res) => {
+  const now = Date.now();
+  for (const [matchId, match] of activeMatches.entries()) {
+    const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 45_000);
+    const isStaleExpired = now - (match.playStartedAt || match.createdAt || now) > 10 * 60 * 1000;
+    if (isUnstartedExpired || isStaleExpired) {
+      activeMatches.delete(matchId);
+      for (const p of match.players) {
+        activeMatchByUser.delete(p.userId);
+        for (const [uid] of activeMatchByUser.entries()) {
+          if (isSameUser(uid, p.userId)) activeMatchByUser.delete(uid);
+        }
+      }
+    }
+  }
+
   res.setHeader('Cache-Control', 'no-store');
   res.json({
     queueLength: matchmakingQueue.length,
