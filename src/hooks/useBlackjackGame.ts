@@ -822,18 +822,20 @@ export function useBlackjackGame(options?: {
     };
   }, [options, remoteMatchId, syncRemoteMatchState]);
 
-  // Fallback Polling during Online Match Setup / Play
+  // Continuous Polling during Online Match Setup and Gameplay
   useEffect(() => {
     if (!remoteMatchId || gameState.stage === 'match_ended') {
       return;
     }
 
+    const isLocalTurn = gameState.currentPlayerIndex === 0;
+    const pollIntervalMs = gameState.waitingForPlayers || !isLocalTurn ? 1200 : 2000;
     const interval = window.setInterval(() => {
       syncRemoteMatchState(remoteMatchId);
-    }, gameState.waitingForPlayers ? 1500 : 4000);
+    }, pollIntervalMs);
 
     return () => window.clearInterval(interval);
-  }, [gameState.stage, gameState.waitingForPlayers, remoteMatchId, syncRemoteMatchState]);
+  }, [gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
 
   // AI Turn Handling in Offline Mode
   useEffect(() => {

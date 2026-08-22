@@ -8057,12 +8057,29 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
         return res.json({ success: true, left: true, convertedToBot: true });
       }
 
-      match.players.forEach((player) => activeMatchByUser.delete(player.userId));
-      broadcastMatchCancelled(match.matchId, 'A player left before the match started.');
-      activeMatches.delete(match.matchId);
-      schedulePersist({ deleteMatchId: match.matchId });
+      const pInState = match.gameState.players.find((p) => isSameUser(p.userId, userId));
+      if (pInState) {
+        pInState.isConnected = false;
+        pInState.disconnectedAt = Date.now();
+        match.gameState.logs = [
+          createServerLog(`🔌 ${pInState.username} disconnected (reconnecting).`, 'info'),
+          ...match.gameState.logs,
+        ].slice(0, 50);
+      }
+      const pInBj = match.blackjackGameState?.players.find((p) => isSameUser(p.userId, userId));
+      if (pInBj) {
+        pInBj.isConnected = false;
+        pInBj.disconnectedAt = Date.now();
+      }
+      const pInPk = match.pokerGameState?.players.find((p) => isSameUser(p.userId, userId));
+      if (pInPk) {
+        pInPk.isConnected = false;
+        pInPk.disconnectedAt = Date.now();
+      }
+      schedulePersist({ matchId: match.matchId });
+      broadcastMatch(match.matchId);
       await persistStateNow();
-      return res.json({ success: true, cancelled: true });
+      return res.json({ success: true, disconnected: true });
     }
 
     activeMatchByUser.delete(userId);

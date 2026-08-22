@@ -880,18 +880,20 @@ export function usePokerGame(options?: {
     };
   }, [options, remoteMatchId, syncRemoteMatchState]);
 
-  // Fallback Polling during Online Match Setup / Play
+  // Continuous Polling during Online Match Setup and Gameplay
   useEffect(() => {
     if (!remoteMatchId || gameState.stage === 'match_ended' || gameState.isMatchOver) {
       return;
     }
 
+    const isLocalTurn = gameState.currentPlayerIndex === 0;
+    const pollIntervalMs = gameState.waitingForPlayers || !isLocalTurn ? 1200 : 2000;
     const interval = window.setInterval(() => {
       syncRemoteMatchState(remoteMatchId);
-    }, gameState.waitingForPlayers ? 1500 : 4000);
+    }, pollIntervalMs);
 
     return () => window.clearInterval(interval);
-  }, [gameState.isMatchOver, gameState.stage, gameState.waitingForPlayers, remoteMatchId, syncRemoteMatchState]);
+  }, [gameState.isMatchOver, gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
 
   /**
    * Bot Action Engine (Offline Mode Only)

@@ -3491,17 +3491,16 @@ export function Web3Dashboard({
 
     const requestQueueStatus = (force = false) => {
       if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
-      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 1_000) return;
+      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 800) return;
       if (statusRequestInFlight) return;
       statusRequestInFlight = true;
       getPublicQueueStatusViaSameOrigin()
         .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
-          timeoutMs: 4_000,
-          retryOnNetworkError: false,
-          networkAttempts: 1,
+          timeoutMs: 5_000,
+          retryOnNetworkError: true,
+          networkAttempts: 2,
         }))
         .then(handleQueueStatus)
-        .catch(() => undefined)
         .finally(() => {
           statusRequestInFlight = false;
         });
@@ -3526,10 +3525,10 @@ export function Web3Dashboard({
     runWaitBridge();
 
     stream.onerror = () => requestQueueStatus(true);
-    requestQueueStatus();
+    requestQueueStatus(true);
     const activeSearchPollTimer = window.setInterval(() => {
       requestQueueStatus(true);
-    }, 2000);
+    }, 1500);
     const pollTimer = window.setInterval(() => {
       requestQueueStatus();
     }, 12_000);

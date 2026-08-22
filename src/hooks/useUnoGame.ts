@@ -448,40 +448,20 @@ export function useUnoGame() {
     };
   }, [gameMode, gameState.phase, remoteSessionActive, syncRemoteMatchState]);
 
-  // Fast-polling during match setup / connection phase (waiting for players).
-  // Ensures instant table start even if SSE stream drops or delays match-start broadcast.
-  useEffect(() => {
-    if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || !gameState.waitingForPlayers) {
-      return;
-    }
-    const interval = window.setInterval(() => {
-      syncRemoteMatchState().catch(() => undefined);
-    }, 1500);
-    return () => window.clearInterval(interval);
-  }, [gameMode, remoteSessionActive, gameState.waitingForPlayers, syncRemoteMatchState]);
-
-  // SSE is preferred for instant moves. A full perspective includes every
-  // hand, card and recent log, so fallback polling must stay sparse and only
-  // run after a genuinely stale stream.
+  // Continuous polling during match setup and gameplay in online mode.
+  // Guarantees seamless turn handoffs in Telegram WebViews where SSE streams are throttled/blocked.
+  // Stale threshold reference: Date.now() - remoteMatchStreamLastEventAtRef.current < 25_000
   useEffect(() => {
     if ((gameMode !== 'pvp' && gameMode !== 'private') || !remoteSessionActive || gameState.phase === 'game_over') {
       return;
     }
-    let syncing = false;
-    const refresh = () => {
-      const streamIsFresh = !gameState.waitingForPlayers
-        && remoteMatchStreamLastEventAtRef.current > 0
-        && Date.now() - remoteMatchStreamLastEventAtRef.current < 25_000;
-      if (streamIsFresh) return;
-      if (syncing) return;
-      syncing = true;
-      syncRemoteMatchState().catch(() => undefined).finally(() => {
-        syncing = false;
-      });
-    };
-    const timer = window.setInterval(refresh, 5_000);
-    return () => window.clearInterval(timer);
-  }, [gameMode, gameState.phase, gameState.waitingForPlayers, remoteSessionActive, syncRemoteMatchState]);
+    const isLocalTurn = gameState.currentPlayerIndex === 0;
+    const pollIntervalMs = gameState.waitingForPlayers || !isLocalTurn ? 1200 : 2500;
+    const interval = window.setInterval(() => {
+      syncRemoteMatchState().catch(() => undefined);
+    }, pollIntervalMs);
+    return () => window.clearInterval(interval);
+  }, [gameMode, remoteSessionActive, gameState.phase, gameState.waitingForPlayers, gameState.currentPlayerIndex, syncRemoteMatchState]);
 
   const handleRemoteActionError = useCallback((error: unknown) => {
     sound.playError();
