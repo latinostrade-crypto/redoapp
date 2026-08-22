@@ -781,7 +781,26 @@ export function Web3Dashboard({
   const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>(() => {
     return initialLaunchRoomParsedRef.current.gameType || 'uno';
   });
+  const [casinoTables, setCasinoTables] = useState<any[]>([]);
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
+
+  useEffect(() => {
+    if (currentTab !== 'pvp' || pvpGameTab === 'uno' || pvpSubMode === 'practice') return;
+    let active = true;
+    const fetchTables = async () => {
+      try {
+        const res = await apiRequest<{ success: boolean; tables: any[] }>(`/api/casino/tables?gameType=${pvpGameTab}&mode=${pvpSubMode}`);
+        if (active && res.success) {
+          setCasinoTables(res.tables || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch casino tables', err);
+      }
+    };
+    fetchTables();
+    const interval = setInterval(fetchTables, 5000);
+    return () => { active = false; clearInterval(interval); };
+  }, [currentTab, pvpGameTab, pvpSubMode]);
 
   useEffect(() => {
     sessionStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, currentTab);
@@ -6082,20 +6101,38 @@ export function Web3Dashboard({
                   </div>
                   
                   <div className="space-y-2">
-                    {[1, 2, 3].map((tableNum) => (
-                      <div key={tableNum} className="flex justify-between items-center p-2 bg-black border border-slate-800">
+                    {casinoTables.length === 0 && (
+                      <div className="text-[9px] text-slate-500 text-center py-4">No free tables available</div>
+                    )}
+                    {casinoTables.map((table) => (
+                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
                         <div className="flex flex-col">
-                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {tableNum}</span>
-                          <span className="text-[8px] text-slate-400">Blinds: 1/2 • 10 Seats</span>
+                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.id.split('-').pop()}</span>
+                          <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[8px] text-slate-300">5/10 Players</span>
+                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => {
-                              if (onStartPokerGame) onStartPokerGame('offline', 0, 'table-' + tableNum);
+                            onClick={async () => {
+                              try {
+                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
+                                  method: 'POST',
+                                  body: JSON.stringify({ tableId: table.id })
+                                });
+                                if (res.success && onStartPokerGame) {
+                                  onStartPokerGame('pvp', 0, table.id, undefined);
+                                }
+                              } catch(e) {
+                                console.error(e);
+                              }
                             }}
-                            className="px-3 py-1 bg-[#ffcc00] text-black font-black text-[9px] border border-black cursor-pointer"
+                            disabled={table.playersCount >= table.maxPlayers}
+                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
+                              table.playersCount >= table.maxPlayers 
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
+                                : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
+                            }`}
                           >
                             SEAT
                           </button>
@@ -6273,20 +6310,38 @@ export function Web3Dashboard({
                   </div>
                   
                   <div className="space-y-2">
-                    {[1, 2, 3].map((tableNum) => (
-                      <div key={tableNum} className="flex justify-between items-center p-2 bg-black border border-slate-800">
+                    {casinoTables.length === 0 && (
+                      <div className="text-[9px] text-slate-500 text-center py-4">No free tables available</div>
+                    )}
+                    {casinoTables.map((table) => (
+                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
                         <div className="flex flex-col">
-                          <span className="text-[10px] text-[#00ff66] font-bold">Table {tableNum}</span>
-                          <span className="text-[8px] text-slate-400">Min Bet: 10 • 10 Seats</span>
+                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.id.split('-').pop()}</span>
+                          <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[8px] text-slate-300">3/10 Players</span>
+                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => {
-                              if (onStartBlackjackGame) onStartBlackjackGame('offline', 0, 'table-' + tableNum);
+                            onClick={async () => {
+                              try {
+                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
+                                  method: 'POST',
+                                  body: JSON.stringify({ tableId: table.id })
+                                });
+                                if (res.success && onStartBlackjackGame) {
+                                  onStartBlackjackGame('pvp', 0, table.id, undefined);
+                                }
+                              } catch(e) {
+                                console.error(e);
+                              }
                             }}
-                            className="px-3 py-1 bg-[#00ff66] text-black font-black text-[9px] border border-black cursor-pointer"
+                            disabled={table.playersCount >= table.maxPlayers}
+                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
+                              table.playersCount >= table.maxPlayers 
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
+                                : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
+                            }`}
                           >
                             SEAT
                           </button>

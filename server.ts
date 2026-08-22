@@ -9172,6 +9172,57 @@ setInterval(() => {
   }
 }, 3600000); // 1 hour
 
+import { casinoManager } from './server/casinoManager';
+
+// --- Casino Endpoints ---
+
+app.get('/api/casino/tables', (req, res) => {
+  const mode = req.query.mode as 'public' | 'free' | 'practice';
+  const gameType = req.query.gameType as 'poker' | 'blackjack';
+  
+  const tables = casinoManager.getTables(gameType, mode).map(t => ({
+    id: t.id,
+    gameType: t.gameType,
+    mode: t.mode,
+    minBuyIn: t.minBuyIn,
+    playersCount: t.playersCount,
+    maxPlayers: t.maxPlayers
+  }));
+  
+  res.json({ success: true, tables });
+});
+
+app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const { tableId } = req.body;
+  if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
+
+  const table = casinoManager.getTable(tableId);
+  if (!table) return res.status(404).json({ error: 'Table not found' });
+  
+  if (table.playersCount >= table.maxPlayers) {
+    return res.status(409).json({ error: 'Table is full' });
+  }
+
+  const username = 'Player';
+  
+  try {
+    casinoManager.joinTable(tableId, userId, username, 'cat', table.minBuyIn);
+    res.json({ success: true, message: 'Joined table', tableId });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/casino/leave-table', requireAuth, (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const { tableId } = req.body;
+  if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
+
+  casinoManager.leaveTable(tableId, userId);
+  res.json({ success: true, message: 'Left table' });
+});
+
 function assertProductionBootstrapConfiguration() {
   if (process.env.NODE_ENV !== 'production') return;
   const missing = [

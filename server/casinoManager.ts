@@ -1,0 +1,71 @@
+import { PokerEngine } from './pokerEngine';
+import { BlackjackEngine } from './blackjackEngine';
+
+export interface CasinoTable {
+  id: string;
+  gameType: 'poker' | 'blackjack';
+  mode: 'public' | 'free' | 'practice';
+  minBuyIn: number;
+  playersCount: number;
+  maxPlayers: number;
+  engine: PokerEngine | BlackjackEngine;
+}
+
+export class CasinoManager {
+  private tables: Map<string, CasinoTable> = new Map();
+
+  constructor() {
+    this.createTable('poker', 'free', 10);
+    this.createTable('poker', 'public', 50);
+    this.createTable('blackjack', 'free', 10);
+    this.createTable('blackjack', 'public', 50);
+  }
+
+  public createTable(gameType: 'poker' | 'blackjack', mode: 'public' | 'free' | 'practice', minBuyIn: number): CasinoTable {
+    const id = `table-${gameType}-${mode}-${Date.now()}`;
+    const engine = gameType === 'poker' ? new PokerEngine(id, minBuyIn/10, minBuyIn/5) : new BlackjackEngine(id);
+    
+    const table: CasinoTable = {
+      id,
+      gameType,
+      mode,
+      minBuyIn,
+      playersCount: 0,
+      maxPlayers: 10,
+      engine
+    };
+    this.tables.set(id, table);
+    return table;
+  }
+
+  public getTables(gameType?: 'poker' | 'blackjack', mode?: 'public' | 'free' | 'practice'): CasinoTable[] {
+    return Array.from(this.tables.values()).filter(t => 
+      (!gameType || t.gameType === gameType) && 
+      (!mode || t.mode === mode)
+    );
+  }
+
+  public getTable(id: string): CasinoTable | undefined {
+    return this.tables.get(id);
+  }
+
+  public joinTable(tableId: string, userId: string, username: string, avatarId: string, chips: number, isAi: boolean = false) {
+    const table = this.tables.get(tableId);
+    if (!table) throw new Error("Table not found");
+    if (table.playersCount >= table.maxPlayers) throw new Error("Table is full");
+
+    table.engine.addPlayer(userId, username, avatarId, chips, isAi);
+    table.playersCount++;
+    return table;
+  }
+
+  public leaveTable(tableId: string, userId: string) {
+    const table = this.tables.get(tableId);
+    if (!table) return;
+
+    table.engine.removePlayer(userId);
+    table.playersCount--;
+  }
+}
+
+export const casinoManager = new CasinoManager();
