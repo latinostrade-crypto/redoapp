@@ -2570,13 +2570,19 @@ export function Web3Dashboard({
           setPvpSubMode('public');
           setSelectedStake(recoveredStake);
           setQueueLength(result.queueLength || 1);
-          setMatchmakingState('searching');
+          setMatchmakingState((prev) => {
+            if (prev === 'success') return prev;
+            return 'searching';
+          });
           return;
         }
         if (result.status === 'expired') {
           setCurrentTab('pvp');
           setPvpSubMode('public');
-          setMatchmakingState('idle');
+          setMatchmakingState((prev) => {
+            if (prev === 'success' || prev === 'joining' || prev === 'searching') return prev;
+            return 'idle';
+          });
           setPublicQueueError('');
           return;
         }
@@ -3505,8 +3511,8 @@ export function Web3Dashboard({
         // overtook the new join POST.
         if (
           matchmakingStateRef.current === 'joining'
-          && result.failedAt
-          && result.failedAt < publicJoinStartedAtRef.current
+          || matchmakingStateRef.current === 'success'
+          || (result.failedAt && result.failedAt < publicJoinStartedAtRef.current)
         ) return;
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');

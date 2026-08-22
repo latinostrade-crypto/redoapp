@@ -7238,6 +7238,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => isSameUser(player.userId, userId));
   if (!forceFresh && existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode && (existingQueuedPlayer.gameType || 'uno') === gameType) {
+    existingQueuedPlayer.joinedAt = Date.now();
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,
