@@ -345,8 +345,8 @@ export function BlackjackGame({
           )}
         </div>
 
-        {/* BOTTOM / SEATS: MULTIPLE SEATED PLAYERS (UP TO 10) */}
-        <div className="w-full flex flex-nowrap items-end justify-center gap-2 min-[380px]:gap-4 z-30 pb-2 max-h-[220px] overflow-y-auto no-scrollbar px-2">
+        {/* BOTTOM / SEATS: 4 SEATED PLAYERS TABLE LAYOUT */}
+        <div className="w-full grid grid-cols-4 gap-1.5 min-[380px]:gap-2 z-30 pb-2 px-1">
           {gameState.players.length === 0 ? (
             <div className="w-full py-4 text-center text-[9px] font-black text-amber-300 animate-pulse">
               CONNECTING SEATS TO CASINO TABLE...

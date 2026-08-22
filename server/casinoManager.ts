@@ -3,6 +3,7 @@ import { BlackjackEngine } from './blackjackEngine';
 
 export interface CasinoTable {
   id: string;
+  name: string;
   gameType: 'poker' | 'blackjack';
   mode: 'public' | 'free' | 'practice';
   minBuyIn: number;
@@ -27,10 +28,10 @@ export class CasinoManager {
     ] as const;
 
     for (const config of configs) {
-      const tables = this.getTables(config.gameType, config.mode);
+      const availableTables = this.getTables(config.gameType, config.mode).filter(t => t.playersCount < t.maxPlayers);
       const targetCount = 3;
-      if (tables.length < targetCount) {
-        for (let i = 0; i < targetCount - tables.length; i++) {
+      if (availableTables.length < targetCount) {
+        for (let i = 0; i < targetCount - availableTables.length; i++) {
           this.createTable(config.gameType, config.mode, config.minBuyIn, config.maxPlayers);
         }
       }
@@ -38,11 +39,15 @@ export class CasinoManager {
   }
 
   public createTable(gameType: 'poker' | 'blackjack', mode: 'public' | 'free' | 'practice', minBuyIn: number, maxPlayers: number = 10): CasinoTable {
-    const id = `table-${gameType}-${mode}-${Date.now()}`;
+    const existingSameType = this.getTables(gameType, mode);
+    const maxIndex = existingSameType.reduce((max, t) => Math.max(max, parseInt(t.name) || 0), 0);
+    const name = String(maxIndex + 1);
+    const id = `table-${gameType}-${mode}-${name}-${Date.now()}`;
     const engine = gameType === 'poker' ? new PokerEngine(id, minBuyIn/10, minBuyIn/5) : new BlackjackEngine(id);
     
     const table: CasinoTable = {
       id,
+      name,
       gameType,
       mode,
       minBuyIn,

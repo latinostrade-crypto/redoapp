@@ -84,25 +84,29 @@ function ChipStack({ amount, label }: { amount: number; label?: string }) {
 function PokerCardView({
   card,
   hidden = false,
+  faceDown = false,
   isLarge = false,
   isWinning = false,
+  className = '',
 }: {
   card?: PokerCard;
   hidden?: boolean;
+  faceDown?: boolean;
   isLarge?: boolean;
   isWinning?: boolean;
+  className?: string;
   key?: React.Key;
 }) {
   const cardSizeClass = isLarge
     ? 'w-9 h-13 min-[380px]:w-11 min-[380px]:h-15'
     : 'w-8 h-11 min-[380px]:w-9 min-[380px]:h-13';
 
-  if (hidden || !card) {
+  if (hidden || faceDown || !card) {
     return (
       <motion.div
         initial={{ scale: 0.4, y: -20, opacity: 0 }}
         animate={{ scale: 1, y: 0, opacity: 1 }}
-        className={`${cardSizeClass} border-2 border-black rounded-md shadow-md overflow-hidden bg-slate-950 select-none shrink-0`}
+        className={`${cardSizeClass} border-2 border-black rounded-md shadow-md overflow-hidden bg-slate-950 select-none shrink-0 ${className}`}
       >
         <img
           src="/card-thumbs/back.jpeg"
@@ -123,7 +127,7 @@ function PokerCardView({
       transition={{ type: 'spring', stiffness: 350, damping: 25 }}
       className={`${cardSizeClass} bg-slate-100 border-2 ${
         isWinning ? 'border-[#ffcc00] ring-2 ring-[#ffcc00] shadow-[0_0_12px_#ffcc00]' : 'border-black'
-      } rounded-md p-1 flex flex-col justify-between select-none shadow-[2px_2px_0_#000] shrink-0 relative overflow-hidden`}
+      } rounded-md p-1 flex flex-col justify-between select-none shadow-[2px_2px_0_#000] shrink-0 relative overflow-hidden ${className}`}
     >
       <div className={`text-[10px] min-[380px]:text-[11px] font-black leading-none ${suitInfo.color}`}>
         {rankLabel}
@@ -340,22 +344,23 @@ export function PokerGame({
           };
 
           const POSITIONS = [
-            'left-[-4px] top-[45%]',
-            'left-[-4px] top-[18%]',
-            'left-[4px] top-[0%]',
-            'top-[-4px] left-[30%]',
-            'top-[-6px] left-1/2 -translate-x-1/2',
-            'top-[-4px] right-[30%]',
-            'right-[4px] top-[0%]',
-            'right-[-4px] top-[18%]',
-            'right-[-4px] top-[45%]',
+            'left-[4px] top-[58%]',
+            'left-[-4px] top-[40%]',
+            'left-[-4px] top-[20%]',
+            'left-[4px] top-[3%]',
+            'top-[-4px] left-[20%]',
+            'top-[-4px] right-[20%]',
+            'right-[4px] top-[3%]',
+            'right-[-4px] top-[20%]',
+            'right-[-4px] top-[40%]',
+            'right-[4px] top-[58%]',
           ];
 
           return (
             <>
               {opponents.map((opp, idx) => {
                 const pos = POSITIONS[idx % POSITIONS.length];
-                const isReverse = pos.includes('right-');
+                const isReverse = pos.includes('right');
                 return renderOpponentView(opp, pos, isReverse);
               })}
             </>

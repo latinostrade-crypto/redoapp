@@ -26,12 +26,6 @@ const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
   { name: 'Koala Jack', avatar: 'koala' },
   { name: 'Panda Ace', avatar: 'panda' },
   { name: 'Fox River', avatar: 'fox' },
-  { name: 'Bear Ace', avatar: 'bear' },
-  { name: 'Shark Fin', avatar: 'cat' },
-  { name: 'Wolf Stack', avatar: 'cat' },
-  { name: 'Eagle Eye', avatar: 'rabbit' },
-  { name: 'Lion Share', avatar: 'panda' },
-  { name: 'Tiger Bluff', avatar: 'fox' }
 ];
 
 export function useBlackjackGame(options?: {
@@ -526,7 +520,7 @@ export function useBlackjackGame(options?: {
         eliminated: false,
       };
 
-      const bots: BlackjackPlayer[] = DEFAULT_BOTS.map((bot, idx) => ({
+      const bots: BlackjackPlayer[] = DEFAULT_BOTS.slice(0, 3).map((bot, idx) => ({
         id: `ai_${idx + 1}`,
         name: bot.name,
         avatar: bot.avatar,

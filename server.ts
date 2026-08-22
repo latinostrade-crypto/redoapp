@@ -8449,10 +8449,39 @@ function findSettledTournamentMatch(matchId: string): TournamentMatch | null {
   return null;
 }
 
+function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
+  let match = activeMatches.get(matchId);
+  if (!match && matchId.startsWith('table-')) {
+    const table = casinoManager.getTable(matchId);
+    if (table) {
+      match = {
+        matchId: table.id,
+        gameType: table.gameType,
+        mode: table.mode === 'public' ? 'pvp' : table.mode === 'free' ? 'pvp' : 'offline',
+        players: [],
+        createdAt: Date.now(),
+        creatorUserId: 'casino',
+        stake: table.minBuyIn,
+        gameState: {
+          phase: 'playing',
+          players: [],
+          deck: [],
+          discardPile: [],
+          direction: 1,
+          currentColor: 'red',
+          logs: []
+        },
+        [table.gameType === 'poker' ? 'pokerGameState' : 'blackjackGameState']: table.engine.state
+      } as unknown as ActiveMatch;
+    }
+  }
+  return match;
+}
+
 function handleMatchState(req: AuthenticatedRequest, res: Response) {
   const { matchId } = req.params;
   const userId = getAuthenticatedUserId(req);
-  const activeMatch = activeMatches.get(matchId);
+  const activeMatch = getActiveMatchOrCasino(matchId);
   if (!activeMatch) {
     const settledMatch = findSettledTournamentMatch(matchId);
     if (settledMatch) {
@@ -8492,7 +8521,7 @@ app.get('/api/matchmaker/match-state/:matchId', requireAuth, handleMatchState);
 app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest, res) => {
   const { matchId } = req.params;
   const userId = getAuthenticatedUserId(req);
-  const activeMatch = activeMatches.get(matchId);
+  const activeMatch = getActiveMatchOrCasino(matchId);
   if (!activeMatch) {
     const settledMatch = findSettledTournamentMatch(matchId);
     if (settledMatch) {
@@ -8537,7 +8566,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     );
 
     if (!isStillConnected) {
-      const match = activeMatches.get(matchId);
+      const match = getActiveMatchOrCasino(matchId);
       if (match) {
         const player = match.gameState.players.find(p => isSameUser(p.userId, userId));
         const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
@@ -8563,7 +8592,7 @@ app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) =>
   };
   const userId = getAuthenticatedUserId(req);
 
-  const activeMatch = activeMatches.get(matchId);
+  const activeMatch = getActiveMatchOrCasino(matchId);
   if (!activeMatch) {
     return res.status(404).json({ error: 'Match not found.' });
   }
@@ -9190,6 +9219,7 @@ app.get('/api/casino/tables', (req, res) => {
   
   const tables = casinoManager.getTables(gameType, mode).map(t => ({
     id: t.id,
+    name: t.name,
     gameType: t.gameType,
     mode: t.mode,
     minBuyIn: t.minBuyIn,
@@ -9202,7 +9232,7 @@ app.get('/api/casino/tables', (req, res) => {
 
 app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
-  const { tableId } = req.body;
+  const { tableId, chips } = req.body;
   if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
 
   const table = casinoManager.getTable(tableId);
@@ -9215,11 +9245,16 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
   const user = getUser(userId);
   const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
 
+  let buyInAmount = chips || table.minBuyIn;
+
   if (table.mode === 'public') {
-    if (user.casinoChips < table.minBuyIn) {
-      return res.status(400).json({ error: `Not enough casino chips. Need ${table.minBuyIn} chips.` });
+    if (buyInAmount < table.minBuyIn) {
+      return res.status(400).json({ error: `Min buy in is ${table.minBuyIn}` });
     }
-    user.casinoChips = round2(user.casinoChips - table.minBuyIn);
+    if (user.casinoChips < buyInAmount) {
+      return res.status(400).json({ error: `Not enough casino chips.` });
+    }
+    user.casinoChips = round2(user.casinoChips - buyInAmount);
   } else if (table.mode === 'free') {
     if (user.energy < 2) {
       return res.status(400).json({ error: 'Not enough energy. Need 2 energy.' });
@@ -9229,7 +9264,7 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
   schedulePersist({ userId });
 
   try {
-    casinoManager.joinTable(tableId, userId, username, 'cat', table.minBuyIn);
+    casinoManager.joinTable(tableId, userId, username, 'cat', buyInAmount);
     res.json({ success: true, message: 'Joined table', tableId });
   } catch (err: any) {
     res.status(400).json({ error: err.message });

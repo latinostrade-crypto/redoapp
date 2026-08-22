@@ -6083,8 +6083,8 @@ export function Web3Dashboard({
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
                         <div className="flex flex-col">
-                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.id.split('-').pop()}</span>
-                          <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} TKT • {table.maxPlayers} Seats</span>
+                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.name || table.id.split('-').pop()}</span>
+                          <span className="text-[8px] text-slate-400">{table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
                           {table.playersCount < table.maxPlayers && (
@@ -6093,7 +6093,7 @@ export function Web3Dashboard({
                               onClick={() => {
                                 const tg = (window as any).Telegram?.WebApp;
                                 const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Poker Table ${table.id.split('-').pop()}!`);
+                                const text = encodeURIComponent(`Join me at Poker Table ${table.name || table.id.split('-').pop()}!`);
                                 const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
                                 if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
                                 else window.open(shareUrl, '_blank');
@@ -6106,17 +6106,9 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={async () => {
-                              try {
-                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
-                                  method: 'POST',
-                                  body: JSON.stringify({ tableId: table.id })
-                                });
-                                if (res.success && onStartPokerGame) {
-                                  onStartPokerGame('pvp', table.minBuyIn, table.id, undefined);
-                                }
-                              } catch(e) {
-                                console.error(e);
+                            onClick={() => {
+                              if (onStartPokerGame) {
+                                onStartPokerGame('pvp', table.minBuyIn, table.id, undefined);
                               }
                             }}
                             disabled={table.playersCount >= table.maxPlayers}
@@ -6126,7 +6118,7 @@ export function Web3Dashboard({
                                 : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
                             }`}
                           >
-                            {table.playersCount === 0 ? 'SEAT' : 'SPECTATE / JOIN'}
+                            OPEN
                           </button>
                         </div>
                       </div>
@@ -6151,7 +6143,7 @@ export function Web3Dashboard({
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
                         <div className="flex flex-col">
-                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.id.split('-').pop()}</span>
+                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.name || table.id.split('-').pop()}</span>
                           <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -6161,7 +6153,7 @@ export function Web3Dashboard({
                               onClick={() => {
                                 const tg = (window as any).Telegram?.WebApp;
                                 const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Poker Table ${table.id.split('-').pop()}!`);
+                                const text = encodeURIComponent(`Join me at Poker Table ${table.name || table.id.split('-').pop()}!`);
                                 const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
                                 if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
                                 else window.open(shareUrl, '_blank');
@@ -6174,22 +6166,9 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={async () => {
-                              if (energy.energy < 2) {
-                                alert("Not enough energy (2 required)");
-                                return;
-                              }
-                              try {
-                                const res = await apiRequest<{success: boolean; tableId: string; energy?: any}>('/api/casino/join-table', { 
-                                  method: 'POST',
-                                  body: JSON.stringify({ tableId: table.id })
-                                });
-                                if (res.success && onStartPokerGame) {
-                                  updateProfileEnergy({ ...energy, energy: energy.energy - 2 });
-                                  onStartPokerGame('pvp', 0, table.id, undefined);
-                                }
-                              } catch(e) {
-                                console.error(e);
+                            onClick={() => {
+                              if (onStartPokerGame) {
+                                onStartPokerGame('pvp', 0, table.id, undefined);
                               }
                             }}
                             disabled={table.playersCount >= table.maxPlayers}
@@ -6199,7 +6178,7 @@ export function Web3Dashboard({
                                 : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
                             }`}
                           >
-                            {table.playersCount === 0 ? 'SEAT (-2⚡)' : 'SPECTATE / JOIN'}
+                            OPEN
                           </button>
                         </div>
                       </div>
@@ -6276,8 +6255,8 @@ export function Web3Dashboard({
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
                         <div className="flex flex-col">
-                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.id.split('-').pop()}</span>
-                          <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} TKT • {table.maxPlayers} Seats</span>
+                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.name || table.id.split('-').pop()}</span>
+                          <span className="text-[8px] text-slate-400">{table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
                           {table.playersCount < table.maxPlayers && (
@@ -6286,7 +6265,7 @@ export function Web3Dashboard({
                               onClick={() => {
                                 const tg = (window as any).Telegram?.WebApp;
                                 const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.id.split('-').pop()}!`);
+                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.name || table.id.split('-').pop()}!`);
                                 const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
                                 if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
                                 else window.open(shareUrl, '_blank');
@@ -6299,17 +6278,9 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={async () => {
-                              try {
-                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
-                                  method: 'POST',
-                                  body: JSON.stringify({ tableId: table.id })
-                                });
-                                if (res.success && onStartBlackjackGame) {
-                                  onStartBlackjackGame('pvp', table.minBuyIn, table.id, undefined);
-                                }
-                              } catch(e) {
-                                console.error(e);
+                            onClick={() => {
+                              if (onStartBlackjackGame) {
+                                onStartBlackjackGame('pvp', table.minBuyIn, table.id, undefined);
                               }
                             }}
                             disabled={table.playersCount >= table.maxPlayers}
@@ -6319,7 +6290,7 @@ export function Web3Dashboard({
                                 : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
                             }`}
                           >
-                            {table.playersCount === 0 ? 'SEAT' : 'SPECTATE / JOIN'}
+                            OPEN
                           </button>
                         </div>
                       </div>
@@ -6344,7 +6315,7 @@ export function Web3Dashboard({
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
                         <div className="flex flex-col">
-                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.id.split('-').pop()}</span>
+                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.name || table.id.split('-').pop()}</span>
                           <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -6354,7 +6325,7 @@ export function Web3Dashboard({
                               onClick={() => {
                                 const tg = (window as any).Telegram?.WebApp;
                                 const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.id.split('-').pop()}!`);
+                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.name || table.id.split('-').pop()}!`);
                                 const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
                                 if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
                                 else window.open(shareUrl, '_blank');
@@ -6367,22 +6338,9 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={async () => {
-                              if (energy.energy < 2) {
-                                alert("Not enough energy (2 required)");
-                                return;
-                              }
-                              try {
-                                const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', { 
-                                  method: 'POST',
-                                  body: JSON.stringify({ tableId: table.id })
-                                });
-                                if (res.success && onStartBlackjackGame) {
-                                  updateProfileEnergy({ ...energy, energy: energy.energy - 2 });
-                                  onStartBlackjackGame('pvp', 0, table.id, undefined);
-                                }
-                              } catch(e) {
-                                console.error(e);
+                            onClick={() => {
+                              if (onStartBlackjackGame) {
+                                onStartBlackjackGame('pvp', 0, table.id, undefined);
                               }
                             }}
                             disabled={table.playersCount >= table.maxPlayers}
@@ -6392,7 +6350,7 @@ export function Web3Dashboard({
                                 : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
                             }`}
                           >
-                            {table.playersCount === 0 ? 'SEAT (-2⚡)' : 'SPECTATE / JOIN'}
+                            OPEN
                           </button>
                         </div>
                       </div>
