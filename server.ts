@@ -425,6 +425,8 @@ interface UserState {
   walletAddress?: string;
   availableTickets: number;
   heldTickets: number;
+  casinoChips: number;
+  practiceChips: number;
   xp: number;
   lastDailyXpAt: number | null;
   lastDailyEnergyAt: number | null;
@@ -1552,6 +1554,8 @@ function getUser(userId: string, walletAddress?: string): UserState {
     lastDailyEnergyAt: null,
     availableTickets: 0,
     heldTickets: 0,
+    casinoChips: 0,
+    practiceChips: 0,
     xp: 0,
     lastDailyXpAt: null,
     energy: DEFAULT_MAX_ENERGY,
@@ -1595,6 +1599,8 @@ function hydrateUser(user: UserState): boolean {
 
   setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(0, round2(user.availableTickets)) : 0);
   setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? Math.max(0, round2(user.heldTickets)) : 0);
+  setIfChanged('casinoChips', Number.isFinite(user.casinoChips) ? Math.max(0, round2(user.casinoChips)) : 0);
+  setIfChanged('practiceChips', Number.isFinite(user.practiceChips) ? Math.max(0, round2(user.practiceChips)) : 0);
   setIfChanged('xp', Number.isFinite(user.xp) ? user.xp : 0);
   const hydratedEnergy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
   if (user.energy !== hydratedEnergy) {
@@ -1876,6 +1882,8 @@ function buildBootstrapProfileResponse(user: UserState) {
     walletAddress: user.walletAddress || null,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
+    casinoChips: user.casinoChips,
+    practiceChips: user.practiceChips,
     xp: user.xp,
     energy: getEnergyState(user),
     referralCode: user.referralCode,
@@ -9204,8 +9212,22 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
     return res.status(409).json({ error: 'Table is full' });
   }
 
-  const username = 'Player';
-  
+  const user = getUser(userId);
+  const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
+
+  if (table.mode === 'public') {
+    if (user.casinoChips < table.minBuyIn) {
+      return res.status(400).json({ error: `Not enough casino chips. Need ${table.minBuyIn} chips.` });
+    }
+    user.casinoChips = round2(user.casinoChips - table.minBuyIn);
+  } else if (table.mode === 'free') {
+    if (user.energy < 2) {
+      return res.status(400).json({ error: 'Not enough energy. Need 2 energy.' });
+    }
+    user.energy -= 2;
+  }
+  schedulePersist({ userId });
+
   try {
     casinoManager.joinTable(tableId, userId, username, 'cat', table.minBuyIn);
     res.json({ success: true, message: 'Joined table', tableId });
@@ -9219,8 +9241,54 @@ app.post('/api/casino/leave-table', requireAuth, (req: AuthenticatedRequest, res
   const { tableId } = req.body;
   if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
 
-  casinoManager.leaveTable(tableId, userId);
+  const result = casinoManager.leaveTable(tableId, userId);
+  if (result) {
+    const user = getUser(userId);
+    if (result.mode === 'public') {
+      user.casinoChips = round2(user.casinoChips + result.chips);
+    } else if (result.mode === 'free' || result.mode === 'practice') {
+      user.practiceChips = round2(user.practiceChips + result.chips);
+    }
+    schedulePersist({ userId });
+  }
   res.json({ success: true, message: 'Left table' });
+});
+
+app.post('/api/casino/exchange', requireAuth, (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const { direction, amount } = req.body;
+  if (!amount || amount <= 0 || typeof amount !== 'number') {
+    return res.status(400).json({ error: 'Invalid amount' });
+  }
+
+  const user = getUser(userId);
+  
+  // 1 Ticket = 100 Casino Chips
+  const RATIO = 100;
+
+  if (direction === 'tkt_to_chips') {
+    if (user.availableTickets < amount) {
+      return res.status(400).json({ error: 'Not enough tickets.' });
+    }
+    user.availableTickets = round2(user.availableTickets - amount);
+    user.casinoChips = round2(user.casinoChips + (amount * RATIO));
+  } else if (direction === 'chips_to_tkt') {
+    const chipCost = amount * RATIO;
+    if (user.casinoChips < chipCost) {
+      return res.status(400).json({ error: 'Not enough casino chips.' });
+    }
+    user.casinoChips = round2(user.casinoChips - chipCost);
+    user.availableTickets = round2(user.availableTickets + amount);
+  } else {
+    return res.status(400).json({ error: 'Invalid exchange direction' });
+  }
+
+  schedulePersist({ userId });
+  res.json({ 
+    success: true, 
+    availableTickets: user.availableTickets, 
+    casinoChips: user.casinoChips 
+  });
 });
 
 function assertProductionBootstrapConfiguration() {

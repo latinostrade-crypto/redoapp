@@ -78,6 +78,8 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     walletAddress: profile.walletAddress ?? null,
     availableTickets: profile.availableTickets !== undefined && Number.isFinite(Number(profile.availableTickets)) ? Number(profile.availableTickets) : 0,
     heldTickets: Number(profile.heldTickets) || 0,
+    casinoChips: Number(profile.casinoChips) || 0,
+    practiceChips: Number(profile.practiceChips) || 0,
     xp: Number(profile.xp) || 0,
     energy: profile.energy ?? DEFAULT_ENERGY_STATE,
     referralCode: profile.referralCode ?? '',
@@ -1327,6 +1329,7 @@ export function Web3Dashboard({
   }, [activeProfile]);
   const [heldTickets, setHeldTickets] = useState(0);
   const [depositAmount, setDepositAmount] = useState('1');
+  const [exchangeAmount, setExchangeAmount] = useState('1');
   const [withdrawAmount, setWithdrawAmount] = useState('0.5');
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
@@ -4464,6 +4467,66 @@ export function Web3Dashboard({
                 </div>
 
                 <div className="pt-2 border-t border-black space-y-1.5">
+                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">Exchange</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={exchangeAmount}
+                      onChange={(e) => setExchangeAmount(e.target.value)}
+                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
+                      placeholder="Amount in TKT"
+                    />
+                    <button
+                      type="button"
+                      disabled={!authReady || accountRefreshState === 'refreshing'}
+                      onClick={() => {
+                        const amount = Number(exchangeAmount);
+                        if (!Number.isFinite(amount) || amount <= 0) return alert('Enter a valid amount');
+                        apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
+                          method: 'POST',
+                          body: JSON.stringify({ direction: 'tkt_to_chips', amount }),
+                        }).then((res) => {
+                          if (res.success) {
+                            setGoldenTickets(res.availableTickets);
+                            if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
+                            if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
+                            alert(`Exchanged ${amount} TKT for ${amount * 100} Chips`);
+                          }
+                        }).catch(e => alert(e.message));
+                      }}
+                      className="px-2 bg-purple-600 hover:bg-purple-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
+                    >
+                      Buy Chips
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!authReady || accountRefreshState === 'refreshing'}
+                      onClick={() => {
+                        const amount = Number(exchangeAmount);
+                        if (!Number.isFinite(amount) || amount <= 0) return alert('Enter a valid amount');
+                        apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
+                          method: 'POST',
+                          body: JSON.stringify({ direction: 'chips_to_tkt', amount }),
+                        }).then((res) => {
+                          if (res.success) {
+                            setGoldenTickets(res.availableTickets);
+                            if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
+                            if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
+                            alert(`Exchanged ${amount * 100} Chips for ${amount} TKT`);
+                          }
+                        }).catch(e => alert(e.message));
+                      }}
+                      className="px-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
+                    >
+                      Sell Chips
+                    </button>
+                  </div>
+                  <div className="text-[6px] text-slate-500 uppercase">Rate: 1 TKT = 100 Chips</div>
+                </div>
+
+                <div className="pt-2 border-t border-black space-y-1.5">
                   <div className="text-[7.5px] uppercase text-slate-400 font-bold">Deposit Tickets</div>
                   <div className="flex gap-2">
                     <input
@@ -6009,7 +6072,7 @@ export function Web3Dashboard({
                       <span>♠️</span> PUBLIC POKER TABLES
                     </h3>
                     <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
-                      BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                      BAL: <strong>{(profile?.casinoChips || 0).toFixed(0)}</strong> CHIPS
                     </span>
                   </div>
                   
@@ -6062,7 +6125,7 @@ export function Web3Dashboard({
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                   <div className="flex justify-between items-center text-[9px]">
                     <h3 className="font-black text-[#ffcc00] uppercase">POKER FREE TABLES</h3>
-                    <span className="text-[8px] text-slate-400">PRACTICE CHIPS</span>
+                    <span className="text-[8px] text-slate-400">BAL: {(profile?.practiceChips || 0).toFixed(0)} PRACTICE CHIPS</span>
                   </div>
                   
                   <div className="space-y-2">
@@ -6170,7 +6233,7 @@ export function Web3Dashboard({
                       <span>🃏</span> PUBLIC BLACKJACK TABLES
                     </h3>
                     <span className="text-[8px] text-[#00ff66] bg-black px-1.5 py-0.5 border border-black">
-                      BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                      BAL: <strong>{(profile?.casinoChips || 0).toFixed(0)}</strong> CHIPS
                     </span>
                   </div>
                   
@@ -6223,7 +6286,7 @@ export function Web3Dashboard({
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                   <div className="flex justify-between items-center text-[9px]">
                     <h3 className="font-black text-[#00ff66] uppercase">BLACKJACK FREE TABLES</h3>
-                    <span className="text-[8px] text-slate-400">PRACTICE CHIPS</span>
+                    <span className="text-[8px] text-slate-400">BAL: {(profile?.practiceChips || 0).toFixed(0)} PRACTICE CHIPS</span>
                   </div>
                   
                   <div className="space-y-2">

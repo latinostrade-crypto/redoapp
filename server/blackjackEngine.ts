@@ -102,8 +102,10 @@ export class BlackjackEngine {
     });
   }
 
-  removePlayer(userId: string) {
+  removePlayer(userId: string): number {
+    const player = this.state.players.find(p => p.userId === userId);
     this.state.players = this.state.players.filter(p => p.userId !== userId);
+    return player ? player.chips : 0;
   }
 
   log(msg: string) {

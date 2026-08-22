@@ -148,6 +148,8 @@ export interface PlayerProfile {
   walletAddress: string | null;
   availableTickets: number;
   heldTickets: number;
+  casinoChips: number;
+  practiceChips: number;
   xp: number;
   energy: EnergyState;
   referralCode: string;
