@@ -2245,10 +2245,7 @@ export function Web3Dashboard({
 
   const handleStartMatchmakingQueue = useCallback(() => {
     if (!authReady) {
-      const message = 'Session is still syncing with the backend. Try again in a moment.';
-      setPublicQueueError(message);
-      alert(message);
-      return;
+      setBootstrapAttempt((prev) => prev + 1);
     }
     if (selectedStake > 0 && !walletConnected && !isLocalNetwork) {
       const message = 'Connect wallet first for ticket-stake public matches.';
