@@ -358,9 +358,8 @@ if (typeof window !== 'undefined') {
       const current = (window as any).redoappActiveLoads || [];
       (window as any).redoappActiveLoads = current.filter((x: string) => x !== id);
 
-      if (path === '/api/users/sync' || path.startsWith('/api/matches/state/')) {
-        (window as any).redoappIsAppStarting = false;
-      }
+      // Any finished API call clears the initial app starting screen
+      (window as any).redoappIsAppStarting = false;
       window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
     }
   });

@@ -1256,13 +1256,19 @@ export function Web3Dashboard({
           }
         }));
       } catch {}
-      if (targetGame === 'poker' && onStartPokerGame) {
-        onStartPokerGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
-      } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
-        onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
-      } else {
-        onStartGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
-      }
+
+      const launchGame = () => {
+        if (targetGame === 'poker' && onStartPokerGame) {
+          onStartPokerGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
+        } else if (targetGame === 'blackjack' && onStartBlackjackGame) {
+          onStartBlackjackGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
+        } else {
+          onStartGame(result.mode || 'pvp', matchedStake, undefined, result.matchId);
+        }
+      };
+
+      // 1.0s buffer to show the Match Ready Screen before switching route
+      window.setTimeout(launchGame, 1000);
       return true;
     } catch (error) {
       openingPublicMatchRef.current = '';

@@ -1835,7 +1835,8 @@ function buildBootstrapProfileResponse(user: UserState) {
        match.gameType === 'blackjack' ? match.blackjackGameState?.stage === 'match_ended' :
        match.gameState.phase === 'game_over')
     );
-    const isStale = match && (Date.now() - (match.playStartedAt || match.createdAt || 0) > 10 * 60 * 1000);
+    const isUnstartedExpired = match && !match.playStartedAt && (Date.now() - match.createdAt > 60_000);
+    const isStale = match && ((Date.now() - (match.playStartedAt || match.createdAt || 0) > 5 * 60 * 1000) || isUnstartedExpired);
     if (match && !isGameOver && !isStale) {
       markMatchPlayerConnected(match, user.userId);
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);
@@ -1860,6 +1861,9 @@ function buildBootstrapProfileResponse(user: UserState) {
       };
     } else {
       activeMatchByUser.delete(user.userId);
+      for (const [uid] of activeMatchByUser.entries()) {
+        if (isSameUser(uid, user.userId)) activeMatchByUser.delete(uid);
+      }
     }
   }
 
