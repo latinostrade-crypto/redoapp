@@ -2337,7 +2337,7 @@ export function Web3Dashboard({
         openPublicMatch(result.matchmaker, selectedStake);
         return;
       }
-      setMatchmakingState('searching');
+      setMatchmakingState((prev) => (prev === 'success' ? prev : 'searching'));
     }).catch(async (error) => {
       window.clearTimeout(safetyTimer);
       if (joinSettled) return;
