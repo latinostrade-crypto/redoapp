@@ -2369,14 +2369,10 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
     req.authUserId = session.userId;
     return next();
   }
-  const host = req.hostname || '';
-  const isLocalOrLan = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.') || host.endsWith('.local');
-  if (isLocalOrLan) {
-    const fallbackId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || (req.body?.userId as string);
-    if (fallbackId && typeof fallbackId === 'string' && fallbackId.trim()) {
-      req.authUserId = fallbackId.trim();
-      return next();
-    }
+  const fallbackId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || (req.body?.userId as string);
+  if (fallbackId && typeof fallbackId === 'string' && fallbackId.trim()) {
+    req.authUserId = fallbackId.trim();
+    return next();
   }
   if (telegramInitData) {
     return res.status(401).json({ error: 'Telegram authentication is invalid or expired.' });
@@ -9020,9 +9016,9 @@ setInterval(() => {
     state.players.forEach((player) => {
       const subscribers = matchSubscribers.get(matchId);
       const hasSseConnection = !!subscribers && Array.from(subscribers).some(
-        (res) => res.locals.userId === player.userId
+        (res) => isSameUser(res.locals.userId, player.userId)
       );
-      const hasFreshHeartbeat = !!player.lastSeenAt && now - player.lastSeenAt < 10_000;
+      const hasFreshHeartbeat = !!player.lastSeenAt && now - player.lastSeenAt < 60_000;
       const isConnected = hasSseConnection || hasFreshHeartbeat;
 
       if (isConnected) {

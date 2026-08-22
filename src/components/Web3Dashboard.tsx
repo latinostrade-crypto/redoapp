@@ -1267,8 +1267,7 @@ export function Web3Dashboard({
         }
       };
 
-      // 1.0s buffer to show the Match Ready Screen before switching route
-      window.setTimeout(launchGame, 1000);
+      launchGame();
       return true;
     } catch (error) {
       openingPublicMatchRef.current = '';
