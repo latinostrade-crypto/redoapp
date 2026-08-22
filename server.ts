@@ -5689,6 +5689,24 @@ app.get('/api/debug/matchmaker', (_req, res) => {
   });
 });
 
+app.get('/api/debug/users', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const userList = Array.from(users.values())
+    .map((u) => ({
+      userId: u.userId,
+      telegramId: u.telegramId,
+      username: u.telegramUsername,
+      name: u.telegramFirstName,
+      energy: u.energy,
+      matchmakingFailureAt: u.matchmakingFailureAt,
+      matchmakingFailureReason: u.matchmakingFailureReason,
+      recentTx: u.transactions?.slice(0, 3),
+    }))
+    .reverse()
+    .slice(0, 30);
+  res.json({ totalUsers: users.size, users: userList });
+});
+
 function csvCell(value: unknown) {
   const raw = value === null || value === undefined ? '' : String(value);
   // Spreadsheet applications treat a leading formula marker as executable.
