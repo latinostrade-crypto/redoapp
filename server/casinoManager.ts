@@ -28,9 +28,11 @@ export class CasinoManager {
 
     for (const config of configs) {
       const tables = this.getTables(config.gameType, config.mode);
-      const hasEmptyTable = tables.some(t => t.playersCount === 0);
-      if (!hasEmptyTable) {
-        this.createTable(config.gameType, config.mode, config.minBuyIn, config.maxPlayers);
+      const targetCount = 3;
+      if (tables.length < targetCount) {
+        for (let i = 0; i < targetCount - tables.length; i++) {
+          this.createTable(config.gameType, config.mode, config.minBuyIn, config.maxPlayers);
+        }
       }
     }
   }

@@ -458,16 +458,23 @@ export function PokerGame({
 
             {/* Hole Cards + Avatar Pill */}
             <div className="flex items-end gap-1.5">
-              {/* Hole Cards (Prominent & Large) */}
               <div className="flex -space-x-3 shrink-0">
-                {(humanPlayer.holeCards || []).map((c, cIdx) => (
-                  <PokerCardView
-                    key={c?.id || cIdx}
-                    card={c}
-                    isLarge
-                    isWinning={c && gameState.winningCardIds?.includes(c.id)}
-                  />
-                ))}
+                {humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
+                  humanPlayer.holeCards.map((c, cIdx) => (
+                    <PokerCardView
+                      key={c?.id || cIdx}
+                      card={c}
+                      isLarge
+                      isWinning={c && gameState.winningCardIds?.includes(c.id)}
+                      faceDown={!c}
+                      className={cIdx === 1 ? 'rotate-6 origin-bottom-left' : '-rotate-6 origin-bottom-right'}
+                    />
+                  ))
+                ) : (
+                  <div className="bg-black/80 border border-[#ffcc00] px-3 py-1 rounded text-[8px] text-[#ffcc00] font-black uppercase tracking-widest flex items-center justify-center whitespace-nowrap min-w-[80px]">
+                    Waiting for next hand...
+                  </div>
+                )}
               </div>
 
               {/* Avatar Pill */}

@@ -87,6 +87,7 @@ export class PokerEngine {
 
   addPlayer(userId: string, username: string, avatarId: string, chips: number, isAi = false) {
     if (this.state.players.length >= 10) throw new Error("Table full");
+    const isMidGame = this.state.stage !== 'ended';
     this.state.players.push({
       userId,
       username,
@@ -95,9 +96,9 @@ export class PokerEngine {
       currentBet: 0,
       totalMatchInvested: 0,
       holeCards: [],
-      folded: false,
+      folded: isMidGame,
       isAllIn: false,
-      hasActedThisStage: false,
+      hasActedThisStage: isMidGame,
       eliminated: false,
       isAi
     });

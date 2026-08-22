@@ -405,6 +405,10 @@ export function BlackjackGame({
                         <Skull className="w-3 h-3" />
                         <span>BUSTED OUT</span>
                       </div>
+                    ) : playerCards.length === 0 ? (
+                      <div className="bg-black/80 border border-[#00ff66] px-3 py-1 rounded text-[8px] text-[#00ff66] font-black uppercase tracking-widest flex items-center justify-center whitespace-nowrap min-w-[80px]">
+                        Waiting for next hand...
+                      </div>
                     ) : (
                       playerCards.map((c, cIdx) => (
                         <BlackjackCardView key={c.id || cIdx} card={c} />

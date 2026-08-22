@@ -86,6 +86,7 @@ export class BlackjackEngine {
 
   addPlayer(userId: string, username: string, avatarId: string, chips: number, isAi = false) {
     if (this.state.players.length >= 10) throw new Error("Table full");
+    const isMidGame = this.state.stage !== 'match_ended' && this.state.stage !== 'round_ended';
     this.state.players.push({
       userId,
       username,
@@ -97,7 +98,7 @@ export class BlackjackEngine {
       isSoft: false,
       isBusted: false,
       hasBlackjack: false,
-      status: 'playing',
+      status: isMidGame ? 'stood' : 'playing',
       isAi
     });
   }

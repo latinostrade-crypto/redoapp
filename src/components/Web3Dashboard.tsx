@@ -777,7 +777,7 @@ export function Web3Dashboard({
     const savedTab = sessionStorage.getItem(DASHBOARD_TAB_STORAGE_KEY);
     return savedTab === 'events' || savedTab === 'pvp' || savedTab === 'rewards' ? savedTab : 'profile';
   });
-  const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice'>(() => {
+  const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice' | 'free'>(() => {
     return initialLaunchRoomParsedRef.current.code ? 'private' : 'public';
   });
   const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>(() => {
@@ -6087,6 +6087,22 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} TKT • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
+                          {table.playersCount < table.maxPlayers && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const tg = (window as any).Telegram?.WebApp;
+                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
+                                const text = encodeURIComponent(`Join me at Poker Table ${table.id.split('-').pop()}!`);
+                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+                                else window.open(shareUrl, '_blank');
+                              }}
+                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
+                            >
+                              INVITE
+                            </button>
+                          )}
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
@@ -6110,7 +6126,7 @@ export function Web3Dashboard({
                                 : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
                             }`}
                           >
-                            SEAT
+                            {table.playersCount === 0 ? 'SEAT' : 'SPECTATE / JOIN'}
                           </button>
                         </div>
                       </div>
@@ -6139,6 +6155,22 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
+                          {table.playersCount < table.maxPlayers && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const tg = (window as any).Telegram?.WebApp;
+                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
+                                const text = encodeURIComponent(`Join me at Poker Table ${table.id.split('-').pop()}!`);
+                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+                                else window.open(shareUrl, '_blank');
+                              }}
+                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
+                            >
+                              INVITE
+                            </button>
+                          )}
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
@@ -6167,7 +6199,7 @@ export function Web3Dashboard({
                                 : 'bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400'
                             }`}
                           >
-                            SEAT (-2⚡)
+                            {table.playersCount === 0 ? 'SEAT (-2⚡)' : 'SPECTATE / JOIN'}
                           </button>
                         </div>
                       </div>
@@ -6248,6 +6280,22 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} TKT • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
+                          {table.playersCount < table.maxPlayers && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const tg = (window as any).Telegram?.WebApp;
+                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
+                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.id.split('-').pop()}!`);
+                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+                                else window.open(shareUrl, '_blank');
+                              }}
+                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
+                            >
+                              INVITE
+                            </button>
+                          )}
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
@@ -6271,7 +6319,7 @@ export function Web3Dashboard({
                                 : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
                             }`}
                           >
-                            SEAT
+                            {table.playersCount === 0 ? 'SEAT' : 'SPECTATE / JOIN'}
                           </button>
                         </div>
                       </div>
@@ -6300,6 +6348,22 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} • {table.maxPlayers} Seats</span>
                         </div>
                         <div className="flex items-center gap-2">
+                          {table.playersCount < table.maxPlayers && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const tg = (window as any).Telegram?.WebApp;
+                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
+                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.id.split('-').pop()}!`);
+                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+                                else window.open(shareUrl, '_blank');
+                              }}
+                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
+                            >
+                              INVITE
+                            </button>
+                          )}
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
@@ -6328,7 +6392,7 @@ export function Web3Dashboard({
                                 : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
                             }`}
                           >
-                            SEAT (-2⚡)
+                            {table.playersCount === 0 ? 'SEAT (-2⚡)' : 'SPECTATE / JOIN'}
                           </button>
                         </div>
                       </div>
