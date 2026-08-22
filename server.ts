@@ -5634,6 +5634,33 @@ app.get('/api/admin/health', requireAdmin, (req, res) => {
   res.json(buildOperationalHealthStatus());
 });
 
+app.get('/api/debug/matchmaker', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    queueLength: matchmakingQueue.length,
+    queue: matchmakingQueue.map((p) => ({
+      userId: p.userId,
+      username: p.username,
+      stake: p.stake,
+      mode: p.mode,
+      gameType: p.gameType || 'uno',
+      joinedAt: p.joinedAt,
+      ageSec: Math.round((Date.now() - p.joinedAt) / 1000),
+    })),
+    activeMatchesCount: activeMatches.size,
+    activeMatches: Array.from(activeMatches.values()).map((m) => ({
+      matchId: m.matchId,
+      gameType: m.gameType || 'uno',
+      mode: m.mode,
+      stake: m.stake,
+      settled: m.settled,
+      playStartedAt: m.playStartedAt,
+      playersCount: m.players.length,
+      players: m.players.map((p) => ({ userId: p.userId, username: p.username })),
+    })),
+  });
+});
+
 function csvCell(value: unknown) {
   const raw = value === null || value === undefined ? '' : String(value);
   // Spreadsheet applications treat a leading formula marker as executable.
