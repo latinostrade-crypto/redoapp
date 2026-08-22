@@ -7135,7 +7135,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   // who briefly lost connection to lose their match slot.
   const isUnstartedAbandoned = existingActiveMatch && !existingActiveMatch.playStartedAt && (Date.now() - existingActiveMatch.createdAt > 90_000);
 
-  if (existingActiveMatch && !isGameOver && !isStaleMatch && !isDifferentGame && !isUnstartedAbandoned) {
+  if (existingActiveMatch && !isGameOver && !isStaleMatch && !isDifferentGame && !isUnstartedAbandoned && !forceFresh) {
     markMatchPlayerConnected(existingActiveMatch, userId);
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
@@ -7145,7 +7145,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       matchmaker: tryActivateQueuedMatch(userId),
       replayed: true,
     });
-  } else if (activeMatchId && (isGameOver || isStaleMatch || isDifferentGame || isUnstartedAbandoned)) {
+  } else if (activeMatchId && (isGameOver || isStaleMatch || isDifferentGame || isUnstartedAbandoned || forceFresh)) {
     activeMatchByUser.delete(userId);
     for (const [uid] of activeMatchByUser.entries()) {
       if (isSameUser(uid, userId)) activeMatchByUser.delete(uid);
@@ -7206,6 +7206,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       m.stake === stakeAmount &&
       !m.settled &&
       !m.playStartedAt &&
+      Date.now() - m.createdAt < 45_000 &&
       m.players.length < MAX_MATCH_PLAYERS &&
       !m.players.some((p) => isSameUser(p.userId, userId))
   );
@@ -7323,11 +7324,8 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
 
     schedulePersist({ userId });
     schedulePersist({ matchId: openActiveMatch.matchId });
+    maybeStartPublicMatch(openActiveMatch);
     broadcastMatch(openActiveMatch.matchId);
-
-    if (openActiveMatch.players.length >= 4) {
-      maybeStartPublicMatch(openActiveMatch);
-    }
 
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
