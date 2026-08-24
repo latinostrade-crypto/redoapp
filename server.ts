@@ -45,6 +45,12 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || '';
 const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || 'app_state';
 const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-state';
 const SUPABASE_PAGE_SIZE = 1000;
+const CASINO_RUNTIME_ROW_PREFIX = 'casino-runtime:';
+const CASINO_RUNTIME_IDLE_MS = 60_000;
+// Enable only after supabase/persistent_tables.sql has been applied. Keeping
+// the switch explicit makes a rolling deployment safe: old production data
+// continues to use the compatible app_state path until the schema is ready.
+const CASINO_TABLES_DB_MODE = process.env.CASINO_TABLES_DB_MODE === 'true';
 // Redis is deliberately limited to a short-lived cache for the referral list.
 // Supabase remains the durable source of truth for rewards, balances and users.
 const UPSTASH_REDIS_REST_URL = (process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
@@ -1094,6 +1100,89 @@ async function loadSupabaseRowsByPrefix(prefix: string): Promise<SupabaseStateRo
   }
 
   return rows;
+}
+
+// The existing app_state envelope remains a compatible fallback until the
+// normalized persistent_tables.sql migration is deployed. Runtime snapshots
+// are still durable across a Render restart today, and the migration moves
+// the same payload into casino_table_runtime without a client-facing change.
+async function loadCasinoRuntimeSnapshots() {
+  if (!supabaseAdmin) return;
+  if (CASINO_TABLES_DB_MODE) {
+    const { data, error } = await supabaseAdmin
+      .from('casino_table_runtime')
+      .select('table_id,state,updated_at')
+      .in('phase', ['active', 'paused']);
+    if (error) throw new Error(`Could not load casino runtimes: ${error.message}`);
+    (data || []).forEach((row: { table_id: string; state: unknown; updated_at: string }) => {
+      casinoManager.restoreRuntime(row.table_id, row.state, Date.parse(row.updated_at) || Date.now());
+    });
+    return;
+  }
+  const rows = await loadSupabaseRowsByPrefix(CASINO_RUNTIME_ROW_PREFIX);
+  rows.forEach((row) => {
+    const payload = row.payload as { tableId?: string; state?: unknown; lastActivityAt?: number };
+    if (typeof payload?.tableId === 'string') {
+      casinoManager.restoreRuntime(payload.tableId, payload.state, Number(payload.lastActivityAt) || Date.now());
+    }
+  });
+}
+
+async function persistCasinoRuntime(tableId: string) {
+  const table = casinoManager.getTable(tableId);
+  const state = casinoManager.getRuntimeState(tableId);
+  if (!table || !state) return;
+  if (supabaseAdmin) {
+    if (CASINO_TABLES_DB_MODE) {
+      const { error } = await supabaseAdmin.rpc('casino_checkpoint_runtime', {
+        p_table_id: tableId,
+        p_state: state,
+        p_phase: 'active',
+      });
+      if (error) throw new Error(`Could not checkpoint casino runtime: ${error.message}`);
+      return;
+    }
+    await upsertStateRow(`${CASINO_RUNTIME_ROW_PREFIX}${tableId}`, {
+      tableId,
+      state,
+      lastActivityAt: table.lastActivityAt,
+      savedAt: Date.now(),
+    });
+  }
+}
+
+async function takeCasinoSeatInDatabase(tableId: string, userId: string, buyInAmount: number, idempotencyKey: string) {
+  if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
+  const { data, error } = await supabaseAdmin.rpc('casino_take_table_seat', {
+    p_table_id: tableId,
+    p_user_id: userId,
+    p_buy_in: buyInAmount,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw new Error(`Could not take table seat: ${error.message}`);
+  return data as { joined: boolean; alreadySeated: boolean; buyInAmount: number };
+}
+
+async function heartbeatCasinoSeatInDatabase(tableId: string, userId: string) {
+  if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
+  const { data, error } = await supabaseAdmin.rpc('casino_heartbeat', {
+    p_table_id: tableId,
+    p_user_id: userId,
+  });
+  if (error) throw new Error(`Could not refresh table presence: ${error.message}`);
+  return data as string | null;
+}
+
+async function leaveCasinoSeatInDatabase(tableId: string, userId: string, chips: number, idempotencyKey: string) {
+  if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
+  const { data, error } = await supabaseAdmin.rpc('casino_leave_table_seat', {
+    p_table_id: tableId,
+    p_user_id: userId,
+    p_cash_out: chips,
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw new Error(`Could not leave table: ${error.message}`);
+  return data as { released: boolean; chips: number };
 }
 
 function createEmptyLevelStats(): ReferralLevelStats {
@@ -3411,6 +3500,17 @@ function startNextBlackjackRound(match: ActiveMatch) {
   const bj = match.blackjackGameState;
   if (!bj || bj.stage === 'match_ended') return;
 
+  if (match.creatorUserId === 'casino') {
+    bj.players = bj.players.filter((player) =>
+      !(player as any).pendingTableRemoval && player.isConnected !== false
+    );
+    if (bj.players.length === 0) {
+      bj.stage = 'round_ended';
+      bj.nextRoundStartsAt = null;
+      return;
+    }
+  }
+
   bj.currentHand += 1;
 
   if (bj.shoe.length < (bj.players.length + 1) * 5) {
@@ -3972,6 +4072,7 @@ function checkPokerMatchChampion(match: ActiveMatch) {
   const pk = match.pokerGameState;
   if (!pk) return;
   if (match.creatorUserId === 'casino') {
+    // Persistent tables never settle a tournament-style champion.
     pk.stage = 'idle';
     return;
   }
@@ -4137,6 +4238,12 @@ function advancePokerTurn(match: ActiveMatch) {
 function startNextPokerRound(match: ActiveMatch) {
   const pk = match.pokerGameState;
   if (!pk || pk.stage === 'match_ended') return;
+
+  if (match.creatorUserId === 'casino') {
+    pk.players = pk.players.filter((player) =>
+      !(player as any).pendingTableRemoval && player.isConnected !== false
+    );
+  }
 
   pk.players.forEach((p) => {
     if (p.chips <= 0) p.eliminated = true;
@@ -8457,7 +8564,7 @@ function findSettledTournamentMatch(matchId: string): TournamentMatch | null {
 function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
   let match = activeMatches.get(matchId);
   if (!match && matchId.startsWith('table-')) {
-    const table = casinoManager.getTable(matchId);
+    const table = casinoManager.openTable(matchId);
     if (table) {
       match = {
         matchId: table.id,
@@ -8467,6 +8574,9 @@ function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
         createdAt: Date.now(),
         creatorUserId: 'casino',
         stake: table.minBuyIn,
+        // A persistent table is already a live runtime. It must never enter
+        // the one-off public matchmaking connection lobby.
+        playStartedAt: Date.now(),
         gameState: {
           phase: 'playing',
           players: [],
@@ -8476,7 +8586,7 @@ function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
           currentColor: 'red',
           logs: []
         },
-        [table.gameType === 'poker' ? 'pokerGameState' : 'blackjackGameState']: table.engine.state
+        [table.gameType === 'poker' ? 'pokerGameState' : 'blackjackGameState']: table.engine!.state
       } as unknown as ActiveMatch;
     }
   }
@@ -8573,21 +8683,7 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     if (!isStillConnected) {
       const match = getActiveMatchOrCasino(matchId);
       if (match) {
-        if (match.creatorUserId === 'casino') {
-          const leaveResult = casinoManager.leaveTable(matchId, userId);
-          if (leaveResult && leaveResult.mode === 'public' && leaveResult.chips > 0) {
-            const user = getUser(userId);
-            user.availableTickets = round2(user.availableTickets + (leaveResult.chips / 100));
-            createLedgerEntry(user, {
-              id: `casino-leave:${matchId}:${userId}:${Date.now()}`,
-              event: 'Table Refund',
-              amount: leaveResult.chips / 100,
-              type: 'match_refund',
-              value: `+${leaveResult.chips} CHIPS`
-            });
-          }
-          broadcastMatch(matchId);
-        } else {
+        if (match.creatorUserId !== 'casino') {
           const player = match.gameState.players.find(p => isSameUser(p.userId, userId));
           const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
           if (player && player.isConnected !== false && !hasFreshHeartbeat) {
@@ -8953,14 +9049,29 @@ setInterval(() => {
       continue;
     }
 
+    if (match.creatorUserId === 'casino') {
+      const tablePlayers = match.pokerGameState?.players || match.blackjackGameState?.players || [];
+      tablePlayers.forEach((player: any) => {
+        if (!player.isAi && player.presenceExpiresAt && player.presenceExpiresAt <= now) {
+          player.isConnected = false;
+          player.disconnectedAt = player.disconnectedAt || now;
+        }
+      });
+    }
+
     if (match.gameType === 'poker' && match.pokerGameState) {
       const pk = match.pokerGameState;
+      if (match.creatorUserId === 'casino' && (pk.stage === 'idle' || pk.stage === 'ended')) {
+        startNextPokerRound(match);
+        broadcastMatch(matchId);
+        continue;
+      }
       if (pk.stage === 'match_ended') {
         match.players.forEach((p) => activeMatchByUser.delete(p.userId));
         settlePokerMatch(match);
         continue;
       }
-      if (match.mode === 'pvp' && !match.playStartedAt) {
+      if (match.creatorUserId !== 'casino' && match.mode === 'pvp' && !match.playStartedAt) {
         maybeStartPublicMatch(match, now);
         continue;
       }
@@ -9005,7 +9116,7 @@ setInterval(() => {
       // Check if all human players abandoned the poker table
       const hasActivePokerHumans = pk.players.some((p) => !p.isAi && !p.userId.startsWith('bot_') && p.isConnected !== false);
       const pokerAgeMs = now - match.createdAt;
-      if (!hasActivePokerHumans && pokerAgeMs > 30_000) {
+      if (match.creatorUserId !== 'casino' && !hasActivePokerHumans && pokerAgeMs > 30_000) {
         pk.stage = 'match_ended';
         match.players.forEach((p) => activeMatchByUser.delete(p.userId));
         settlePokerMatch(match);
@@ -9016,12 +9127,17 @@ setInterval(() => {
 
     if (match.gameType === 'blackjack' && match.blackjackGameState) {
       const bj = match.blackjackGameState;
+      if (match.creatorUserId === 'casino' && bj.stage === 'round_ended') {
+        startNextBlackjackRound(match);
+        broadcastMatch(matchId);
+        continue;
+      }
       if (bj.stage === 'match_ended') {
         match.players.forEach((p) => activeMatchByUser.delete(p.userId));
         settleBlackjackMatch(match);
         continue;
       }
-      if (match.mode === 'pvp' && !match.playStartedAt) {
+      if (match.creatorUserId !== 'casino' && match.mode === 'pvp' && !match.playStartedAt) {
         maybeStartPublicMatch(match, now);
         continue;
       }
@@ -9064,7 +9180,7 @@ setInterval(() => {
       // Check if all human players abandoned the blackjack table
       const hasActiveBjHumans = bj.players.some((p) => !p.isAi && !p.userId.startsWith('bot_') && p.isConnected !== false);
       const bjAgeMs = now - match.createdAt;
-      if (!hasActiveBjHumans && bjAgeMs > 30_000) {
+      if (match.creatorUserId !== 'casino' && !hasActiveBjHumans && bjAgeMs > 30_000) {
         bj.stage = 'match_ended';
         match.players.forEach((p) => activeMatchByUser.delete(p.userId));
         settleBlackjackMatch(match);
@@ -9186,7 +9302,20 @@ setInterval(() => {
       schedulePersist({ matchId });
     }
   }
+  // Empty bot-only table engines are disposable. Definitions remain visible
+  // in the lobby, but their decks and timers do not occupy process memory.
+  casinoManager.releaseDormantRuntimes(now, CASINO_RUNTIME_IDLE_MS);
 }, 1000);
+
+// A bounded checkpoint protects a live hand from deploy/restart without
+// writing on every animation frame or every spectator message.
+setInterval(() => {
+  casinoManager.getTables().forEach((table) => {
+    if (table.engine) persistCasinoRuntime(table.id).catch((error) => {
+      console.error(`Failed to checkpoint casino table ${table.id}`, error);
+    });
+  });
+}, 5_000);
 
 async function flushAndExit(signal: string) {
   try {
@@ -9241,7 +9370,7 @@ import { casinoManager } from './server/casinoManager';
 // --- Casino Endpoints ---
 
 app.get('/api/casino/tables', (req, res) => {
-  const mode = req.query.mode as 'public' | 'free' | 'practice';
+  const mode = req.query.mode as 'public' | 'free';
   const gameType = req.query.gameType as 'poker' | 'blackjack';
   
   const tables = casinoManager.getTables(gameType, mode).map(t => ({
@@ -9251,10 +9380,38 @@ app.get('/api/casino/tables', (req, res) => {
     mode: t.mode,
     minBuyIn: t.minBuyIn,
     playersCount: t.playersCount,
+    humanPlayersCount: t.humanPlayersCount,
     maxPlayers: t.maxPlayers
   }));
   
   res.json({ success: true, tables });
+});
+
+app.post('/api/casino/open-table/:tableId', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const table = casinoManager.openTable(req.params.tableId);
+  if (!table) return res.status(404).json({ error: 'Table not found' });
+  await persistCasinoRuntime(table.id);
+  return res.json({ success: true, tableId: table.id, gameType: table.gameType, mode: table.mode });
+});
+
+app.post('/api/casino/table-heartbeat', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const tableId = typeof req.body?.tableId === 'string' ? req.body.tableId : '';
+  const table = casinoManager.touchTable(tableId);
+  if (!table?.engine) return res.status(404).json({ error: 'Table runtime not found' });
+  const player = (table.engine as any).state.players.find((entry: any) => isSameUser(entry.userId, userId));
+  if (!player || player.isAi) return res.status(403).json({ error: 'User is not seated at this table' });
+  try {
+    const persistedExpiry = await heartbeatCasinoSeatInDatabase(tableId, userId);
+    if (CASINO_TABLES_DB_MODE && !persistedExpiry) return res.status(403).json({ error: 'User seat is no longer active' });
+  } catch (error: any) {
+    return res.status(409).json({ error: error.message });
+  }
+  player.isConnected = true;
+  player.lastSeenAt = Date.now();
+  player.presenceExpiresAt = Date.now() + 60_000;
+  await persistCasinoRuntime(tableId);
+  return res.json({ success: true, presenceExpiresAt: player.presenceExpiresAt });
 });
 
 app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest, res) => {
@@ -9264,15 +9421,15 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
 
   const table = casinoManager.getTable(tableId);
   if (!table) return res.status(404).json({ error: 'Table not found' });
+  if (!casinoManager.canJoinTable(tableId, userId)) return res.status(409).json({ error: 'Table is full' });
   
-  if (table.playersCount >= table.maxPlayers) {
-    return res.status(409).json({ error: 'Table is full' });
-  }
-
   const user = getUser(userId);
   const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
 
-  let buyInAmount = chips || table.minBuyIn;
+  const requestedChips = Number(chips);
+  const buyInAmount = table.mode === 'free'
+    ? 100
+    : (Number.isFinite(requestedChips) && requestedChips > 0 ? Math.floor(requestedChips) : table.minBuyIn);
 
   if (table.mode === 'public') {
     if (buyInAmount < table.minBuyIn) {
@@ -9281,37 +9438,87 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
     if (user.casinoChips < buyInAmount) {
       return res.status(400).json({ error: `Not enough casino chips.` });
     }
-    user.casinoChips = round2(user.casinoChips - buyInAmount);
   } else if (table.mode === 'free') {
     if (user.energy < 2) {
       return res.status(400).json({ error: 'Not enough energy. Need 2 energy.' });
     }
-    user.energy -= 2;
   }
-  schedulePersist({ userId });
 
   try {
-    casinoManager.joinTable(tableId, userId, username, 'cat', buyInAmount);
-    res.json({ success: true, message: 'Joined table', tableId });
+    const idempotencyKey = typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
+      ? req.body.idempotencyKey
+      : `casino-seat:${tableId}:${userId}:${crypto.randomUUID()}`;
+    const durableResult = await takeCasinoSeatInDatabase(tableId, userId, buyInAmount, idempotencyKey);
+    const result = casinoManager.joinTable(tableId, userId, username, 'cat', buyInAmount);
+    // Replayed button taps must be harmless: a seated player gets the same
+    // response without a second energy charge or another buy-in.
+    if (result.joined && (!durableResult || durableResult.joined)) {
+      if (table.mode === 'public') {
+        user.casinoChips = round2(user.casinoChips - buyInAmount);
+        createLedgerEntry(user, {
+          id: `casino-buy-in:${tableId}:${userId}:${Date.now()}`,
+          event: 'Public Table Buy-in',
+          value: `-${buyInAmount} CHIPS`,
+          type: 'stake_hold',
+          amount: -buyInAmount,
+        });
+      } else {
+        user.energy -= 2;
+        updateQuestProgress(user.userId, 'spend_energy', 2);
+        createLedgerEntry(user, {
+          id: `free-table-energy:${tableId}:${userId}:${Date.now()}`,
+          event: 'Free Table Entry',
+          value: '-2 Energy',
+          type: 'reward',
+          amount: -2,
+        });
+      }
+      // The RPC is the money transaction; this queued write only preserves
+      // the UI audit item and quest counters in the same user envelope.
+      schedulePersist({ userId });
+      await persistCasinoRuntime(tableId);
+    }
+    return res.json({ success: true, message: result.alreadySeated ? 'Already seated' : 'Joined table', tableId, joined: result.joined, buyInAmount });
   } catch (err: any) {
-    res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
 });
 
-app.post('/api/casino/leave-table', requireAuth, (req: AuthenticatedRequest, res) => {
+app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
   const { tableId } = req.body;
   if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
 
+  const quote = casinoManager.getLeaveQuote(tableId, userId);
+  if (quote && CASINO_TABLES_DB_MODE) {
+    try {
+      await leaveCasinoSeatInDatabase(
+        tableId,
+        userId,
+        quote.chips,
+        typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
+          ? req.body.idempotencyKey
+          : `casino-leave:${tableId}:${userId}:${crypto.randomUUID()}`,
+      );
+    } catch (error: any) {
+      return res.status(409).json({ error: error.message });
+    }
+  }
   const result = casinoManager.leaveTable(tableId, userId);
   if (result) {
     const user = getUser(userId);
     if (result.mode === 'public') {
       user.casinoChips = round2(user.casinoChips + result.chips);
-    } else if (result.mode === 'free' || result.mode === 'practice') {
-      user.practiceChips = round2(user.practiceChips + result.chips);
+      createLedgerEntry(user, {
+        id: `casino-cash-out:${tableId}:${userId}:${Date.now()}`,
+        event: 'Public Table Cash-out',
+        value: `+${result.chips} CHIPS`,
+        type: 'match_refund',
+        amount: result.chips,
+      });
     }
     schedulePersist({ userId });
+    await persistCasinoRuntime(tableId);
   }
   res.json({ success: true, message: 'Left table' });
 });
@@ -9378,6 +9585,7 @@ async function bootstrap() {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in production.');
   }
   await loadPersistedState();
+  await loadCasinoRuntimeSnapshots();
   await applyOneTimeReferralReset();
   await applyOneTimeBalanceRepair();
   ticketingService.reconcilePendingWithdrawals();

@@ -208,7 +208,12 @@ export default function App() {
       }
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
-    if (currentMatchId) {
+    if (currentMatchId?.startsWith('table-')) {
+      apiRequest('/api/casino/leave-table', {
+        method: 'POST',
+        body: JSON.stringify({ tableId: currentMatchId }),
+      }).catch(() => {});
+    } else if (currentMatchId) {
       apiRequest('/api/matches/leave-unstarted', {
         method: 'POST',
         body: JSON.stringify({ matchId: currentMatchId }),
@@ -236,7 +241,12 @@ export default function App() {
       }
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
-    if (currentMatchId) {
+    if (currentMatchId?.startsWith('table-')) {
+      apiRequest('/api/casino/leave-table', {
+        method: 'POST',
+        body: JSON.stringify({ tableId: currentMatchId }),
+      }).catch(() => {});
+    } else if (currentMatchId) {
       apiRequest('/api/matches/leave-unstarted', {
         method: 'POST',
         body: JSON.stringify({ matchId: currentMatchId }),

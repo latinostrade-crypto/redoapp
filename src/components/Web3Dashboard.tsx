@@ -455,6 +455,17 @@ function parseRoomStartParam(rawParam?: string, searchParam?: string): { code: s
   return { code, gameType };
 }
 
+function parseCasinoTableStartParam(rawParam?: string, searchParam?: string): {
+  id: string;
+  gameType?: 'poker' | 'blackjack';
+  mode?: 'public' | 'free';
+} {
+  const raw = (searchParam || rawParam || '').trim().replace(/^table_/i, '');
+  const matched = /^table-(poker|blackjack)-(public|free)-([12])$/i.exec(raw);
+  if (!matched) return { id: '' };
+  return { id: raw.toLowerCase(), gameType: matched[1].toLowerCase() as 'poker' | 'blackjack', mode: matched[2].toLowerCase() as 'public' | 'free' };
+}
+
 function buildPrivateRoomSharePayload(roomCode: string, gameType: 'uno' | 'poker' | 'blackjack' = 'uno') {
   const startParam = `room_${gameType}_${roomCode}`;
   return {
@@ -739,7 +750,7 @@ export function Web3Dashboard({
     const startApp = getTelegramStartParam();
     const tableFromSearch = new URLSearchParams(window.location.search).get('table');
     let candidate = '';
-    if (tableFromSearch) {
+    if (tableFromSearch?.startsWith('tourn')) {
       candidate = tableFromSearch;
     } else if (startApp?.startsWith('tournament_table_')) {
       candidate = startApp.replace('tournament_table_', '');
@@ -758,10 +769,18 @@ export function Web3Dashboard({
     }
   }
 
+  const initialLaunchCasinoTableRef = useRef<{ id: string; gameType?: 'poker' | 'blackjack'; mode?: 'public' | 'free' }>({ id: '' });
+  if (!initialLaunchCasinoTableRef.current.id) {
+    const startApp = getTelegramStartParam();
+    const tableFromSearch = new URLSearchParams(window.location.search).get('table') || undefined;
+    initialLaunchCasinoTableRef.current = parseCasinoTableStartParam(startApp, tableFromSearch);
+  }
+  const casinoLaunchOpenedRef = useRef(false);
+
   const launchTournamentMatchConsumedRef = useRef(false);
 
   const [currentTab, setCurrentTab] = useState<DashboardTab>(() => {
-    if (initialLaunchRoomParsedRef.current.code) {
+    if (initialLaunchRoomParsedRef.current.code || initialLaunchCasinoTableRef.current.id) {
       return 'pvp';
     }
     const startApp = getTelegramStartParam();
@@ -778,10 +797,12 @@ export function Web3Dashboard({
     return savedTab === 'events' || savedTab === 'pvp' || savedTab === 'rewards' ? savedTab : 'profile';
   });
   const [pvpSubMode, setPvpSubMode] = useState<'public' | 'private' | 'practice' | 'free'>(() => {
-    return initialLaunchRoomParsedRef.current.code ? 'private' : 'public';
+    return initialLaunchRoomParsedRef.current.code
+      ? 'private'
+      : (initialLaunchCasinoTableRef.current.mode || 'public');
   });
   const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>(() => {
-    return initialLaunchRoomParsedRef.current.gameType || 'uno';
+    return initialLaunchRoomParsedRef.current.gameType || initialLaunchCasinoTableRef.current.gameType || 'uno';
   });
   const [casinoTables, setCasinoTables] = useState<any[]>([]);
 
@@ -801,7 +822,9 @@ export function Web3Dashboard({
       }
     };
     fetchTables();
-    const interval = setInterval(fetchTables, 1500);
+    // Table definitions are permanent; this is merely a low-frequency seat
+    // count refresh, not a matchmaking poll.
+    const interval = setInterval(fetchTables, 12_000);
     return () => { active = false; clearInterval(interval); };
   }, [currentTab, pvpGameTab, pvpSubMode]);
 
@@ -1367,6 +1390,27 @@ export function Web3Dashboard({
   const privateStakeRequiresWallet = !isLocalNetwork && privateRoomStake > 0;
   const launchStartParam = getReferralStartParam();
   const authReady = bootstrapState === 'ready';
+
+  // A shared permanent-table link always opens as a spectator. Taking a seat
+  // remains an explicit action inside the table, so a link can never spend
+  // tickets or energy on the recipient's behalf.
+  useEffect(() => {
+    const launch = initialLaunchCasinoTableRef.current;
+    if (!authReady || !launch.id || casinoLaunchOpenedRef.current || !launch.gameType) return;
+    casinoLaunchOpenedRef.current = true;
+    apiRequest(`/api/casino/open-table/${encodeURIComponent(launch.id)}`, { method: 'POST' })
+      .then(() => {
+        if (launch.gameType === 'poker') {
+          onStartPokerGame?.('pvp', launch.mode === 'free' ? 0 : 50, launch.id, launch.id);
+        } else {
+          onStartBlackjackGame?.('pvp', launch.mode === 'free' ? 0 : 50, launch.id, launch.id);
+        }
+      })
+      .catch(() => {
+        casinoLaunchOpenedRef.current = false;
+      });
+  }, [authReady, onStartBlackjackGame, onStartPokerGame]);
+
   const refreshPendingWithdrawal = useCallback(async () => {
     if (withdrawalRefreshInFlightRef.current) return null;
     withdrawalRefreshInFlightRef.current = true;
@@ -6127,7 +6171,7 @@ export function Web3Dashboard({
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                   <div className="flex justify-between items-center text-[9px]">
                     <h3 className="font-black text-[#ffcc00] uppercase">POKER FREE TABLES</h3>
-                    <span className="text-[8px] text-slate-400">BAL: {(profile?.practiceChips || 0).toFixed(0)} PRACTICE CHIPS</span>
+                    <span className="text-[8px] text-slate-400">ENTRY: ⚡ 2 · 100 FREE CHIPS</span>
                   </div>
                   
                   <div className="space-y-2">
@@ -6157,7 +6201,7 @@ export function Web3Dashboard({
                               INVITE
                             </button>
                           )}
-                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
+                          <span className="text-[8px] text-slate-300">{table.humanPlayersCount ?? table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
                             onClick={() => {
@@ -6285,7 +6329,7 @@ export function Web3Dashboard({
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                   <div className="flex justify-between items-center text-[9px]">
                     <h3 className="font-black text-[#00ff66] uppercase">BLACKJACK FREE TABLES</h3>
-                    <span className="text-[8px] text-slate-400">BAL: {(profile?.practiceChips || 0).toFixed(0)} PRACTICE CHIPS</span>
+                    <span className="text-[8px] text-slate-400">ENTRY: ⚡ 2 · 100 FREE CHIPS</span>
                   </div>
                   
                   <div className="space-y-2">
@@ -6315,7 +6359,7 @@ export function Web3Dashboard({
                               INVITE
                             </button>
                           )}
-                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
+                          <span className="text-[8px] text-slate-300">{table.humanPlayersCount ?? table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
                             onClick={() => {

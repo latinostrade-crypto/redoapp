@@ -23,6 +23,9 @@ export interface ServerBlackjackPlayer {
   status: 'playing' | 'stood' | 'busted' | 'blackjack';
   isAi?: boolean;
   isConnected?: boolean;
+  wins?: number;
+  eliminated?: boolean;
+  lastProfit?: number;
 }
 
 export interface ServerBlackjackGameState {
@@ -34,6 +37,14 @@ export interface ServerBlackjackGameState {
   stage: 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
   turnStartedAt: number;
   turnTimeoutSec: number;
+  pot: number;
+  stake: number;
+  currentHand: number;
+  maxHands: number;
+  winnerUserId?: string | null;
+  matchChampionUserId?: string | null;
+  nextRoundStartsAt?: number | null;
+  winningHandDesc?: string;
   logs: Array<{ id: string; timestamp: string; message: string; type: string }>;
 }
 
@@ -81,6 +92,14 @@ export class BlackjackEngine {
       stage: 'round_ended',
       turnStartedAt: Date.now(),
       turnTimeoutSec: 15,
+      pot: 0,
+      stake: 0,
+      currentHand: 1,
+      // Persistent tables do not have a tournament-style terminal hand.
+      maxHands: Number.MAX_SAFE_INTEGER,
+      winnerUserId: null,
+      matchChampionUserId: null,
+      nextRoundStartsAt: null,
       logs: []
     };
   }
@@ -109,7 +128,9 @@ export class BlackjackEngine {
       isBusted: false,
       hasBlackjack: false,
       status: isMidGame ? 'stood' : 'playing',
-      isAi
+      isAi,
+      wins: 0,
+      eliminated: false,
     });
   }
 
@@ -177,6 +198,7 @@ export class BlackjackEngine {
       p.chips -= this.defaultBet;
       p.status = 'playing';
     });
+    this.state.pot = active.reduce((total, player) => total + player.bet, 0);
 
     // Deal 2 cards
     for(let i=0; i<2; i++) {
@@ -278,5 +300,6 @@ export class BlackjackEngine {
     });
 
     this.state.stage = 'round_ended';
+    this.state.nextRoundStartsAt = Date.now() + 5_000;
   }
 }

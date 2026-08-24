@@ -837,6 +837,19 @@ export function useBlackjackGame(options?: {
     return () => window.clearInterval(interval);
   }, [gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
 
+  const isSeatedAtPersistentBlackjackTable = gameState.players.some((player) => player.id === 'player');
+  useEffect(() => {
+    if (!remoteMatchId?.startsWith('table-') || !isSeatedAtPersistentBlackjackTable) return;
+    const heartbeat = () => apiRequest('/api/casino/table-heartbeat', {
+      method: 'POST',
+      body: JSON.stringify({ tableId: remoteMatchId }),
+      timeoutMs: 8_000,
+    }).catch(() => undefined);
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 25_000);
+    return () => window.clearInterval(timer);
+  }, [isSeatedAtPersistentBlackjackTable, remoteMatchId]);
+
   // AI Turn Handling in Offline Mode
   useEffect(() => {
     if (remoteMatchId || gameState.stage !== 'player_turn' || gameState.isDealing) return;

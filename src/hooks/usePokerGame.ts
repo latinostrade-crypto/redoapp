@@ -901,6 +901,19 @@ export function usePokerGame(options?: {
     return () => window.clearInterval(interval);
   }, [gameState.isMatchOver, gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
 
+  const isSeatedAtPersistentPokerTable = gameState.players.some((player) => player.id === 'player');
+  useEffect(() => {
+    if (!remoteMatchId?.startsWith('table-') || !isSeatedAtPersistentPokerTable) return;
+    const heartbeat = () => apiRequest('/api/casino/table-heartbeat', {
+      method: 'POST',
+      body: JSON.stringify({ tableId: remoteMatchId }),
+      timeoutMs: 8_000,
+    }).catch(() => undefined);
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 25_000);
+    return () => window.clearInterval(timer);
+  }, [isSeatedAtPersistentPokerTable, remoteMatchId]);
+
   /**
    * Bot Action Engine (Offline Mode Only)
    */
