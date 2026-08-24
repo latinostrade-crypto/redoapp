@@ -4072,8 +4072,10 @@ function checkPokerMatchChampion(match: ActiveMatch) {
   const pk = match.pokerGameState;
   if (!pk) return;
   if (match.creatorUserId === 'casino') {
-    // Persistent tables never settle a tournament-style champion.
-    pk.stage = 'idle';
+    // A persistent table never settles a tournament champion, but the hand
+    // result must remain visible long enough for every client to receive the
+    // showdown before the next-round tick changes state.
+    pk.nextRoundStartsAt = Date.now() + 5_000;
     return;
   }
 
@@ -4251,6 +4253,13 @@ function startNextPokerRound(match: ActiveMatch) {
 
   const survivors = pk.players.filter((p) => !p.eliminated && p.chips > 0);
   if (survivors.length <= 1) {
+    if (match.creatorUserId === 'casino') {
+      // Keep the final showdown on screen first. The next tick turns this
+      // into a waiting table instead of inventing a tournament champion.
+      pk.stage = 'idle';
+      pk.nextRoundStartsAt = null;
+      return;
+    }
     checkPokerMatchChampion(match);
     return;
   }
@@ -8588,6 +8597,10 @@ function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
         },
         [table.gameType === 'poker' ? 'pokerGameState' : 'blackjackGameState']: table.engine!.state
       } as unknown as ActiveMatch;
+      // Persistent tables use the same authoritative tick as every other
+      // match. Without this registration all-in/showdown state was visible,
+      // but its scheduled next-round transition was never processed.
+      activeMatches.set(matchId, match);
     }
   }
   return match;
@@ -9061,7 +9074,7 @@ setInterval(() => {
 
     if (match.gameType === 'poker' && match.pokerGameState) {
       const pk = match.pokerGameState;
-      if (match.creatorUserId === 'casino' && (pk.stage === 'idle' || pk.stage === 'ended')) {
+      if (match.creatorUserId === 'casino' && pk.stage === 'idle') {
         startNextPokerRound(match);
         broadcastMatch(matchId);
         continue;
@@ -9304,7 +9317,12 @@ setInterval(() => {
   }
   // Empty bot-only table engines are disposable. Definitions remain visible
   // in the lobby, but their decks and timers do not occupy process memory.
-  casinoManager.releaseDormantRuntimes(now, CASINO_RUNTIME_IDLE_MS);
+  casinoManager.releaseDormantRuntimes(now, CASINO_RUNTIME_IDLE_MS).forEach((tableId) => {
+    // The engine has been released, so discard the wrapper that feeds the
+    // game loop as well. Opening the permanent definition later builds a
+    // clean, bot-only ambience runtime on demand.
+    activeMatches.delete(tableId);
+  });
 }, 1000);
 
 // A bounded checkpoint protects a live hand from deploy/restart without
@@ -9458,8 +9476,13 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
     const result = casinoManager.joinTable(tableId, userId, username, 'cat', buyInAmount);
     // Replayed button taps must be harmless: a seated player gets the same
     // response without a second energy charge or another buy-in.
-    if (result.joined && (!durableResult || durableResult.joined)) {
-      if (table.mode === 'public') {
+    if (result.joined) {
+      // The database is the source of truth for the debit.  A runtime can be
+      // recreated after a Render restart, in which case the DB reports an
+      // existing seat while CasinoManager adds the player back in memory.
+      // Restore that runtime, but never charge the player twice.
+      const shouldChargeLocalEnvelope = !durableResult || durableResult.joined;
+      if (shouldChargeLocalEnvelope && table.mode === 'public') {
         user.casinoChips = round2(user.casinoChips - buyInAmount);
         createLedgerEntry(user, {
           id: `casino-buy-in:${tableId}:${userId}:${Date.now()}`,
@@ -9468,7 +9491,7 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
           type: 'stake_hold',
           amount: -buyInAmount,
         });
-      } else {
+      } else if (shouldChargeLocalEnvelope) {
         user.energy -= 2;
         updateQuestProgress(user.userId, 'spend_energy', 2);
         createLedgerEntry(user, {
@@ -9481,12 +9504,21 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
       }
       // The RPC is the money transaction; this queued write only preserves
       // the UI audit item and quest counters in the same user envelope.
-      schedulePersist({ userId });
+      if (shouldChargeLocalEnvelope) schedulePersist({ userId });
       await persistCasinoRuntime(tableId);
     }
     return res.json({ success: true, message: result.alreadySeated ? 'Already seated' : 'Joined table', tableId, joined: result.joined, buyInAmount });
   } catch (err: any) {
-    return res.status(400).json({ error: err.message });
+    const rawMessage = err instanceof Error ? err.message : String(err || 'Could not take a table seat');
+    // A legacy released seat can exist until the one-time database repair is
+    // applied. Do not expose a Postgres constraint name to a Telegram user.
+    if (/casino_table_seats_pkey|duplicate key value|unique constraint/i.test(rawMessage)) {
+      return res.status(409).json({
+        code: 'seat_state_conflict',
+        error: 'Your previous seat is being restored. Please tap Join table once more.',
+      });
+    }
+    return res.status(400).json({ error: rawMessage });
   }
 });
 

@@ -837,6 +837,17 @@ export function useBlackjackGame(options?: {
     return () => window.clearInterval(interval);
   }, [gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
 
+  // Seat confirmation should feel immediate; do not make the user wait for
+  // the normal multiplayer poll before replacing spectator state.
+  useEffect(() => {
+    const onSeatTaken = (event: Event) => {
+      const tableId = (event as CustomEvent<{ tableId?: string }>).detail?.tableId;
+      if (tableId && tableId === remoteMatchId) void syncRemoteMatchState(tableId);
+    };
+    window.addEventListener('redoapp:casino-seat-taken', onSeatTaken);
+    return () => window.removeEventListener('redoapp:casino-seat-taken', onSeatTaken);
+  }, [remoteMatchId, syncRemoteMatchState]);
+
   const isSeatedAtPersistentBlackjackTable = gameState.players.some((player) => player.id === 'player');
   useEffect(() => {
     if (!remoteMatchId?.startsWith('table-') || !isSeatedAtPersistentBlackjackTable) return;

@@ -60,6 +60,12 @@ try {
   const heartbeat = await request('persistent_table_user', '/api/casino/table-heartbeat', { method: 'POST', body: JSON.stringify({ tableId }) });
   assert.ok(heartbeat.presenceExpiresAt > Date.now());
   await request('persistent_table_user', '/api/casino/leave-table', { method: 'POST', body: JSON.stringify({ tableId, idempotencyKey: 'persistent-table-free-leave-1' }) });
+  const rejoin = await request('persistent_table_user', '/api/casino/join-table', {
+    method: 'POST',
+    body: JSON.stringify({ tableId, chips: 100, idempotencyKey: 'persistent-table-free-entry-2' }),
+  });
+  assert.equal(rejoin.joined, true, 'a released seat must be reusable by the same player');
+  await request('persistent_table_user', '/api/casino/leave-table', { method: 'POST', body: JSON.stringify({ tableId, idempotencyKey: 'persistent-table-free-leave-2' }) });
   console.log('Persistent table checks passed.');
 } finally {
   if (!server.killed) server.kill('SIGTERM');

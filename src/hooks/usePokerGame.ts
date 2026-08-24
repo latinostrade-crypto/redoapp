@@ -901,6 +901,17 @@ export function usePokerGame(options?: {
     return () => window.clearInterval(interval);
   }, [gameState.isMatchOver, gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
 
+  // The buy-in dialog completes before the next polling interval. Refresh the
+  // authoritative table state immediately so the user sees their seat at once.
+  useEffect(() => {
+    const onSeatTaken = (event: Event) => {
+      const tableId = (event as CustomEvent<{ tableId?: string }>).detail?.tableId;
+      if (tableId && tableId === remoteMatchId) void syncRemoteMatchState(tableId);
+    };
+    window.addEventListener('redoapp:casino-seat-taken', onSeatTaken);
+    return () => window.removeEventListener('redoapp:casino-seat-taken', onSeatTaken);
+  }, [remoteMatchId, syncRemoteMatchState]);
+
   const isSeatedAtPersistentPokerTable = gameState.players.some((player) => player.id === 'player');
   useEffect(() => {
     if (!remoteMatchId?.startsWith('table-') || !isSeatedAtPersistentPokerTable) return;

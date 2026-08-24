@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiRequest } from '../utils/api';
 import { useUserProfile } from '../hooks/useUserProfile';
@@ -154,9 +154,13 @@ export function BlackjackGame({
   const [buyInAmount, setBuyInAmount] = useState(100);
   const [exchangeAmount, setExchangeAmount] = useState(1);
   const [isExchanging, setIsExchanging] = useState(false);
+  const [isJoiningSeat, setIsJoiningSeat] = useState(false);
+  const [seatJoinError, setSeatJoinError] = useState('');
+  const seatRequestIdRef = useRef('');
   const { profile, fetchProfile } = useUserProfile();
 
   const handleTakeSeat = async () => {
+    setSeatJoinError('');
     setShowBuyInModal(true);
   };
 
@@ -181,18 +185,30 @@ export function BlackjackGame({
     }
   };
 
-  const handleConfirmBuyIn = async () => {
+  const handleConfirmBuyIn = async (requestedChips = buyInAmount) => {
+    if (isJoiningSeat) return;
+    setIsJoiningSeat(true);
+    setSeatJoinError('');
+    if (!seatRequestIdRef.current) seatRequestIdRef.current = `seat-${gameState.matchId}-${crypto.randomUUID()}`;
     try {
-      const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', {
+      const res = await apiRequest<{success: boolean; tableId: string; joined?: boolean; message?: string}>('/api/casino/join-table', {
         method: 'POST',
-        body: JSON.stringify({ tableId: gameState.matchId, chips: buyInAmount })
+        retryOnNetworkError: true,
+        networkAttempts: 2,
+        timeoutMs: 90_000,
+        body: JSON.stringify({ tableId: gameState.matchId, chips: requestedChips, idempotencyKey: seatRequestIdRef.current })
       });
       if (res.success) {
         setShowBuyInModal(false);
-        window.location.reload();
+        seatRequestIdRef.current = '';
+        await fetchProfile();
+        window.dispatchEvent(new CustomEvent('redoapp:casino-seat-taken', { detail: { tableId: gameState.matchId } }));
       }
     } catch (err) {
       console.error(err);
+      setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : 'Could not take a seat. Please retry.');
+    } finally {
+      setIsJoiningSeat(false);
     }
   };
 
@@ -772,32 +788,21 @@ export function BlackjackGame({
                 </div>
               )}
               <div className="flex gap-2 w-full mt-2">
-                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">Cancel</button>
+                <button disabled={isJoiningSeat} onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600 disabled:opacity-50">Cancel</button>
                 <button 
-                  onClick={async () => {
+                  disabled={isJoiningSeat}
+                  onClick={() => {
                     let chipsToBuyIn = buyInAmount;
                     if (gameState.matchId.includes('-free-')) chipsToBuyIn = 100;
                     if (gameState.matchId.includes('-practice-')) chipsToBuyIn = 1000;
-                    try {
-                      const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', {
-                        method: 'POST',
-                        body: JSON.stringify({ tableId: gameState.matchId, chips: chipsToBuyIn })
-                      });
-                      if (res.success) {
-                        setShowBuyInModal(false);
-                      } else {
-                        alert('Failed to join table');
-                      }
-                    } catch (err) {
-                      console.error(err);
-                      alert(err instanceof Error ? err.message : 'Error joining table');
-                    }
-                  }} 
-                  className="flex-1 px-2 py-2 bg-[#00ff66] text-black text-[9px] border border-black font-bold uppercase hover:bg-green-400"
+                    void handleConfirmBuyIn(chipsToBuyIn);
+                  }}
+                  className="flex-1 px-2 py-2 bg-[#00ff66] text-black text-[9px] border border-black font-bold uppercase hover:bg-green-400 disabled:opacity-60"
                 >
-                  Join Table
+                  {isJoiningSeat ? <><Loader2 className="inline w-3 h-3 animate-spin mr-1" />JOINING…</> : 'Join Table'}
                 </button>
               </div>
+              {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{seatJoinError}</div>}
             </div>
           </motion.div>
         )}

@@ -53,7 +53,9 @@ export class CasinoManager {
   private updateCounts(table: CasinoTable) {
     const players = (table.engine as any)?.state?.players || [];
     table.playersCount = players.length;
-    table.humanPlayersCount = players.filter((player: any) => !player.isAi && !String(player.userId).startsWith('bot_')).length;
+    table.humanPlayersCount = players.filter((player: any) =>
+      !player.isAi && !String(player.userId).startsWith('bot_') && player.isConnected !== false
+    ).length;
   }
 
   public activateTable(tableId: string): CasinoTable | undefined {
@@ -131,11 +133,21 @@ export class CasinoManager {
     const table = this.activateTable(tableId);
     if (!table?.engine) throw new Error('Table not found');
     const state = (table.engine as any).state;
-    const existing = state.players.find((player: any) => player.userId === userId);
+    const existingIndex = state.players.findIndex((player: any) => player.userId === userId);
+    const existing = existingIndex >= 0 ? state.players[existingIndex] : undefined;
     if (existing) {
-      existing.isConnected = true;
-      this.updateCounts(table);
-      return { table, joined: false, alreadySeated: true };
+      // Leaving during a hand deliberately keeps a folded/disconnected player
+      // until that hand is safe to resolve. A later explicit buy-in is a new
+      // seat, not a reconnect to the zero-stack shell left by removePlayer.
+      if (existing.isConnected === false || existing.eliminated) {
+        state.players.splice(existingIndex, 1);
+      } else {
+        existing.isConnected = true;
+        existing.lastSeenAt = Date.now();
+        existing.presenceExpiresAt = Date.now() + 60_000;
+        this.updateCounts(table);
+        return { table, joined: false, alreadySeated: true };
+      }
     }
     this.updateCounts(table);
     if (table.playersCount >= table.maxPlayers) throw new Error('Table is full');
@@ -176,7 +188,8 @@ export class CasinoManager {
     return player && !player.isAi ? { chips: Math.max(0, Math.floor(Number(player.chips) || 0)), mode: table.mode } : null;
   }
 
-  public releaseDormantRuntimes(now = Date.now(), idleMs = 60_000) {
+  public releaseDormantRuntimes(now = Date.now(), idleMs = 60_000): string[] {
+    const released: string[] = [];
     this.tables.forEach((table) => {
       if (!table.engine || now - table.lastActivityAt < idleMs) return;
       this.updateCounts(table);
@@ -184,8 +197,11 @@ export class CasinoManager {
         table.engine = null;
         table.activatedAt = null;
         table.playersCount = 0;
+        table.humanPlayersCount = 0;
+        released.push(table.id);
       }
     });
+    return released;
   }
 }
 

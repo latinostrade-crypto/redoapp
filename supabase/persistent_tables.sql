@@ -70,8 +70,7 @@ create table if not exists public.casino_table_seats (
   presence_expires_at timestamptz,
   joined_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  primary key (table_id, user_id),
-  unique nulls not distinct (table_id, seat_number)
+  primary key (table_id, user_id)
 );
 
 create index if not exists casino_table_seats_user_state_idx
@@ -79,6 +78,9 @@ create index if not exists casino_table_seats_user_state_idx
 create index if not exists casino_table_seats_presence_idx
   on public.casino_table_seats (table_id, presence_expires_at)
   where state in ('seated', 'afk', 'leaving');
+create unique index if not exists casino_table_seats_active_seat_unique_idx
+  on public.casino_table_seats (table_id, seat_number)
+  where state in ('reserved', 'seated', 'afk', 'leaving') and seat_number is not null;
 
 create table if not exists public.casino_chip_ledger (
   id uuid primary key default gen_random_uuid(),
@@ -143,6 +145,7 @@ declare
   v_mode text;
   v_chips integer;
   v_energy integer;
+  v_seat_number smallint;
   v_result jsonb;
 begin
   select * into v_existing from public.casino_chip_ledger where idempotency_key = p_idempotency_key;
@@ -171,6 +174,16 @@ begin
   select count(*) into v_active_seats from public.casino_table_seats
     where table_id = p_table_id and state in ('reserved', 'seated', 'afk', 'leaving');
   if v_active_seats >= v_table.max_players then raise exception 'Table is full'; end if;
+  select slot::smallint into v_seat_number
+  from generate_series(1, v_table.max_players) as slot
+  where not exists (
+    select 1 from public.casino_table_seats
+    where table_id = p_table_id and seat_number = slot
+      and state in ('reserved', 'seated', 'afk', 'leaving')
+  )
+  order by slot
+  limit 1;
+  if v_seat_number is null then raise exception 'Table is full'; end if;
 
   if v_mode = 'public' then
     if p_buy_in < v_table.min_buy_in or p_buy_in > v_table.max_buy_in then raise exception 'Invalid public buy-in'; end if;
@@ -186,7 +199,14 @@ begin
 
   update public.app_state set payload = v_user where id = 'user:' || p_user_id;
   insert into public.casino_table_seats (table_id, user_id, seat_number, state, chips, presence_expires_at)
-    values (p_table_id, p_user_id, v_active_seats + 1, 'seated', p_buy_in, now() + interval '60 seconds');
+    values (p_table_id, p_user_id, v_seat_number, 'seated', p_buy_in, now() + interval '60 seconds')
+  on conflict (table_id, user_id) do update set
+    seat_number = excluded.seat_number,
+    state = 'seated',
+    chips = excluded.chips,
+    presence_expires_at = excluded.presence_expires_at,
+    joined_at = now(),
+    updated_at = now();
   v_result := jsonb_build_object('joined', true, 'alreadySeated', false, 'buyInAmount', p_buy_in);
   insert into public.casino_chip_ledger (idempotency_key, user_id, table_id, event, chip_delta, energy_delta, request_result)
     values (
@@ -274,7 +294,7 @@ begin
     v_chips := coalesce((v_user ->> 'casinoChips')::integer, 0) + p_cash_out;
     update public.app_state set payload = jsonb_set(v_user, '{casinoChips}', to_jsonb(v_chips)) where id = 'user:' || p_user_id;
   end if;
-  update public.casino_table_seats set state = 'released', presence_expires_at = null where table_id = p_table_id and user_id = p_user_id;
+  update public.casino_table_seats set state = 'released', seat_number = null, presence_expires_at = null where table_id = p_table_id and user_id = p_user_id;
   v_result := jsonb_build_object('released', true, 'chips', case when v_table.mode = 'public' then p_cash_out else 0 end);
   insert into public.casino_chip_ledger (idempotency_key, user_id, table_id, event, chip_delta, request_result)
     values (p_idempotency_key, p_user_id, p_table_id, case when v_table.mode = 'public' then 'public_cash_out' else 'seat_release' end, case when v_table.mode = 'public' then p_cash_out else 0 end, v_result);
