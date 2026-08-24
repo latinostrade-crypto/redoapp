@@ -11,6 +11,7 @@
     "build": "vite build",
     "test:traffic": "node scripts/check-traffic-budget.mjs",
     "test:pvp-handoff": "node scripts/test-pvp-handoff.mjs",
+    "test:multiplayer-rooms": "node scripts/test-multiplayer-rooms.mjs",
     "test:persistent-tables": "node scripts/test-persistent-tables.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

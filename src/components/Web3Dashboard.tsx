@@ -154,8 +154,12 @@ function buildTelegramMiniAppSchemeLink(startParam: string) {
   return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
 }
 
-function buildMatchmakerDeliveryUrl(endpoint: 'status' | 'status-beacon' | 'stream' | 'wait-beacon', params?: URLSearchParams) {
-  return buildAuthenticatedUrl(`/api/matchmaker/${endpoint}`, params);
+function buildMatchmakerDeliveryUrl(endpoint: 'join-beacon' | 'status' | 'status-beacon' | 'stream' | 'wait-beacon', params?: URLSearchParams) {
+  // Production delivery stays on the Mini App origin. Render's rewrite is
+  // deliberately used here so WKWebView does not have to keep a cross-origin
+  // EventSource/fetch alive while Telegram switches app state.
+  const path = isLocal ? `/api/matchmaker/${endpoint}` : `/match-api/${endpoint}`;
+  return buildAuthenticatedUrl(path, params);
 }
 
 async function getPublicQueueStatusViaSameOrigin(): Promise<PublicQueueStatus> {
@@ -1948,17 +1952,17 @@ export function Web3Dashboard({
       return Promise.resolve(false);
     }
     setPrivateRoomError('');
+    const joinPayload = {
+      roomCode: roomCodeToUse,
+      username: userName,
+      avatarId: selectedAvatar,
+      walletAddress: rawAddress || null,
+      gameType: pvpGameTab,
+    };
     return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
       retryOnNetworkError: true,
-      body: JSON.stringify({
-        roomCode: roomCodeToUse,
-        userId: currentUserId,
-        username: userName,
-        avatarId: selectedAvatar,
-        walletAddress: rawAddress || null,
-        gameType: pvpGameTab,
-      }),
+      body: JSON.stringify({ ...joinPayload, userId: currentUserId }),
     }).then((result) => {
       initialLaunchRoomCodeRef.current = '';
       applyPrivateRoomJoin(result, roomCodeToUse);
@@ -1972,10 +1976,17 @@ export function Web3Dashboard({
           return true;
         }
       } catch {}
+      try {
+        const result = await joinPrivateRoomViaBridge(joinPayload);
+        applyPrivateRoomJoin(result, roomCodeToUse);
+        return true;
+      } catch {}
       const message = error instanceof Error ? error.message : 'Failed to join private room.';
       setPrivateRoomError(message);
       return false;
     });
+  // The bridge callback is declared below with the other WebView transport helpers.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady, currentUserId, userName, selectedAvatar, rawAddress, pvpGameTab, privateJoinCode, privateRoomCode, applyPrivateRoomState]);
 
   useEffect(() => {
@@ -2035,17 +2046,17 @@ export function Web3Dashboard({
     // Call the raw API directly instead of going through joinPrivateRoomByCode
     // so we don't capture a stale version of that callback.
     setPrivateRoomError('');
+    const joinPayload = {
+      roomCode: code,
+      username: userName,
+      avatarId: selectedAvatar,
+      walletAddress: rawAddress || null,
+      gameType: parsed.gameType || initialLaunchRoomParsedRef.current.gameType || 'uno',
+    };
     apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
       retryOnNetworkError: true,
-      body: JSON.stringify({
-        roomCode: code,
-        userId: effectiveUserId,
-        username: userName,
-        avatarId: selectedAvatar,
-        walletAddress: rawAddress || null,
-        gameType: parsed.gameType || initialLaunchRoomParsedRef.current.gameType || 'uno',
-      }),
+      body: JSON.stringify({ ...joinPayload, userId: effectiveUserId }),
     }).then((result) => {
       applyPrivateRoomJoin(result, code);
     }).catch(async (error) => {
@@ -2056,8 +2067,12 @@ export function Web3Dashboard({
           return;
         }
       } catch {}
-      const message = error instanceof Error ? error.message : 'Failed to join private room.';
-      setPrivateRoomError(message);
+      joinPrivateRoomViaBridge(joinPayload).then((result) => {
+        applyPrivateRoomJoin(result, code);
+      }).catch(() => {
+        const message = error instanceof Error ? error.message : 'Failed to join private room.';
+        setPrivateRoomError(message);
+      });
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authReady, currentUserId]); // intentionally omit joinPrivateRoomByCode — see comment above
@@ -2117,6 +2132,7 @@ export function Web3Dashboard({
     walletAddress: string | null;
     stake: number;
     mode: 'pvp';
+    gameType: 'uno' | 'poker' | 'blackjack';
   }) => {
     return new Promise<PublicMatchmakerResponse>((resolve, reject) => {
       const bridgeRequestId = `match-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -2127,7 +2143,7 @@ export function Web3Dashboard({
         parentOrigin: window.location.origin,
       });
       const iframe = createWebViewBridgeIframe();
-      iframe.src = buildAuthenticatedUrl(`/api/matchmaker/join-beacon?${params.toString()}`);
+      iframe.src = buildMatchmakerDeliveryUrl('join-beacon', params);
       const timeout = window.setTimeout(() => {
         cleanup();
         reject(new Error('Public queue bridge timed out.'));
@@ -2151,6 +2167,50 @@ export function Web3Dashboard({
       iframe.addEventListener('error', () => {
         cleanup();
         reject(new Error('Public queue bridge failed to load.'));
+      }, { once: true });
+      window.addEventListener('message', onMessage);
+      document.body.appendChild(iframe);
+    });
+  };
+
+  const joinPrivateRoomViaBridge = (payload: {
+    roomCode: string;
+    username: string;
+    avatarId: string;
+    walletAddress: string | null;
+    gameType: 'uno' | 'poker' | 'blackjack';
+  }) => {
+    return new Promise<PrivateRoomResponse>((resolve, reject) => {
+      const bridgeRequestId = `room-join-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const params = new URLSearchParams({
+        ...Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value ?? '')])),
+        responseMode: 'iframe',
+        bridgeRequestId,
+        parentOrigin: window.location.origin,
+      });
+      const iframe = createWebViewBridgeIframe();
+      iframe.src = buildAuthenticatedUrl(`/api/private-rooms/join-beacon?${params.toString()}`);
+      const expectedOrigin = new URL(iframe.src, window.location.origin).origin;
+      const timeout = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Private room join bridge timed out.'));
+      }, 15_000);
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+        iframe.remove();
+      };
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
+        const data = event.data as { source?: string; requestId?: string; payload?: PrivateRoomResponse; error?: string };
+        if (data?.source !== 'redoapp-room-join-bridge' || data.requestId !== bridgeRequestId) return;
+        cleanup();
+        if (data.payload) resolve(data.payload);
+        else reject(new Error(data.error || 'Private room join bridge failed.'));
+      };
+      iframe.addEventListener('error', () => {
+        cleanup();
+        reject(new Error('Private room join bridge failed to load.'));
       }, { once: true });
       window.addEventListener('message', onMessage);
       document.body.appendChild(iframe);
@@ -2307,12 +2367,7 @@ export function Web3Dashboard({
       requestedRoomCode,
     };
 
-    apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
-      method: 'POST',
-      retryOnNetworkError: false,
-      timeoutMs: 10000,
-      body: JSON.stringify(createPayload),
-    }).then((result) => {
+    const applyCreatedRoom = (result: PrivateRoomResponse) => {
       if (typeof result.availableTickets === 'number') setGoldenTickets(result.availableTickets);
       if (typeof result.heldTickets === 'number') setHeldTickets(result.heldTickets);
       if (result.roomCode) {
@@ -2321,11 +2376,26 @@ export function Web3Dashboard({
         const link = result.telegramLink || buildPrivateRoomSharePayload(result.roomCode, pvpGameTab).telegramLink;
         setGeneratedLink(link);
       }
-      if (result.status === 'started') {
-        applyPrivateRoomState(result);
+      if (result.status === 'started') applyPrivateRoomState(result);
+    };
+
+    apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
+      method: 'POST',
+      retryOnNetworkError: false,
+      timeoutMs: 10000,
+      body: JSON.stringify(createPayload),
+    }).then(applyCreatedRoom).catch(async (error) => {
+      // The first POST may have committed before Telegram dropped its response.
+      // Replaying the same request id through the iframe is safe server-side.
+      try {
+        const result = await createPrivateRoomViaBridge(createPayload);
+        applyCreatedRoom(result);
+      } catch (bridgeError) {
+        setPrivateRoomStatus('idle');
+        setPrivateRoomCreateState('idle');
+        setGeneratedLink('');
+        setPrivateRoomError(cleanErrorMessage(bridgeError || error, 'private-room'));
       }
-    }).catch((err) => {
-      console.warn('Room creation background register notice:', err);
     });
   };
 
@@ -2478,7 +2548,6 @@ export function Web3Dashboard({
     }).catch(async (error) => {
       window.clearTimeout(safetyTimer);
       if (joinSettled) return;
-      joinSettled = true;
       
       console.error('[Matchmaking UI] POST /join failed:', error.message, 'Current state:', matchmakingStateRef.current);
       
@@ -2489,10 +2558,12 @@ export function Web3Dashboard({
         console.log('[Matchmaking UI] Recovery fetch returned status:', recovered.status);
         
         if (recovered.status === 'ready' && recovered.matchId) {
+          joinSettled = true;
           openPublicMatch(recovered, selectedStake);
           return;
         }
         if (recovered.status === 'searching') {
+          joinSettled = true;
           setQueueLength(recovered.queueLength || 1);
           setMatchmakingState((prev) => {
             if (prev === 'success') return prev;
@@ -2503,7 +2574,25 @@ export function Web3Dashboard({
       } catch (e) {
         console.error('[Matchmaking UI] Recovery fetch completely failed.', e);
       }
-      
+
+      try {
+        const bridged = await joinPublicQueueViaBridge(joinPayload);
+        joinSettled = true;
+        setGoldenTickets(bridged.availableTickets);
+        setHeldTickets(bridged.heldTickets);
+        if (bridged.energy) updateProfileEnergy(bridged.energy);
+        if (bridged.matchmaker?.status === 'ready' && bridged.matchmaker.matchId) {
+          openPublicMatch(bridged.matchmaker, selectedStake);
+          return;
+        }
+        setQueueLength(bridged.matchmaker?.players?.length || bridged.matchmaker?.queueLength || 1);
+        setMatchmakingState('searching');
+        return;
+      } catch (bridgeError) {
+        console.error('[Matchmaking UI] Join bridge failed.', bridgeError);
+      }
+
+      joinSettled = true;
       setMatchmakingState((prev) => {
         if (prev === 'success') return prev;
         setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));

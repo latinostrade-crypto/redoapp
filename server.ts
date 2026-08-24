@@ -7880,6 +7880,29 @@ function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Reco
   return res.json(payload);
 }
 
+function sendPrivateRoomJoinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  if (input?.responseMode === 'iframe') {
+    const parentOrigin = typeof input.parentOrigin === 'string' && /^https?:\/\/[^/]+$/i.test(input.parentOrigin)
+      ? input.parentOrigin
+      : '';
+    if (!parentOrigin) return res.status(400).json({ error: 'Invalid bridge origin.' });
+    const message = JSON.stringify({
+      source: 'redoapp-room-join-bridge',
+      requestId: String(input.bridgeRequestId || ''),
+      payload,
+    }).replace(/</g, '\\u003c');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
+  }
+  if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="transparent"/></svg>');
+  }
+  return res.json(payload);
+}
+
 function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId, requestedRoomCode, gameType: rawGameType } = input as {
@@ -7925,19 +7948,9 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     joinedAt: Date.now(),
     costsCommitted: false,
   };
-  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
-    room.hostUserId === userId && room.status === 'waiting'
-  );
-  if (existingWaitingRoom) {
-    const oldCode = existingWaitingRoom.roomCode;
-    const oldMatchId = existingWaitingRoom.matchId;
-    privateRooms.delete(oldCode);
-    if (oldMatchId) {
-      activeMatches.delete(oldMatchId);
-      activeMatchByUser.delete(userId);
-    }
-    schedulePersist({ deleteRoomCode: oldCode, deleteMatchId: oldMatchId || undefined });
-  }
+  // Check idempotency before touching an existing room. Telegram WebViews can
+  // lose a committed POST response; a replay must return the original room,
+  // never delete its guests or replace its match.
   if (normalizedRequestId) {
     const existingRoom = Array.from(privateRooms.values()).find((room) =>
       room.hostUserId === userId && room.createRequestId === normalizedRequestId);
@@ -7946,7 +7959,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       return sendPrivateRoomCreateSuccess(req, res, {
         success: true,
         roomCode: existingRoom.roomCode,
-        telegramLink: buildTelegramMiniAppLink(`room_${existingRoom.roomCode}`),
+        telegramLink: buildTelegramMiniAppLink(`room_${existingRoom.gameType || gameType}_${existingRoom.roomCode}`),
         stake: existingRoom.stake,
         targetPlayers: existingRoom.targetPlayers,
         gameType: existingRoom.gameType || gameType,
@@ -7958,6 +7971,27 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
         energy: getEnergyState(existingUser),
       });
     }
+  }
+
+  const existingWaitingRoom = Array.from(privateRooms.values()).find((room) =>
+    room.hostUserId === userId && room.status === 'waiting'
+  );
+  if (existingWaitingRoom) {
+    const existingUser = getUser(userId, walletAddress);
+    return sendPrivateRoomCreateSuccess(req, res, {
+      success: true,
+      roomCode: existingWaitingRoom.roomCode,
+      telegramLink: buildTelegramMiniAppLink(`room_${existingWaitingRoom.gameType || gameType}_${existingWaitingRoom.roomCode}`),
+      stake: existingWaitingRoom.stake,
+      targetPlayers: existingWaitingRoom.targetPlayers,
+      gameType: existingWaitingRoom.gameType || gameType,
+      status: existingWaitingRoom.status,
+      matchId: existingWaitingRoom.matchId || null,
+      playersCount: existingWaitingRoom.players.length,
+      availableTickets: existingUser.availableTickets,
+      heldTickets: existingUser.heldTickets,
+      energy: getEnergyState(existingUser),
+    });
   }
 
   const user = getUser(userId, walletAddress);
@@ -8013,7 +8047,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   return sendPrivateRoomCreateSuccess(req, res, {
     success: true,
     roomCode,
-    telegramLink: buildTelegramMiniAppLink(`room_${roomCode}`),
+    telegramLink: buildTelegramMiniAppLink(`room_${gameType}_${roomCode}`),
     stake: stakeAmount,
     targetPlayers: targetPlayersCount,
     gameType,
@@ -8054,15 +8088,16 @@ app.get('/api/private-rooms/create-beacon', optionalAuth, rateLimitMiddleware(10
 
 const joinFailuresMap = new Map<string, { count: number; lockedUntil: number }>();
 
-app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), (req: AuthenticatedRequest, res) => {
-  const { roomCode, username, avatarId, walletAddress } = req.body as {
+function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
+  const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
+  const { roomCode, username, avatarId, walletAddress } = input as {
     roomCode: string;
     userId?: string;
     username: string;
     avatarId: string;
     walletAddress?: string;
   };
-  const userId = getPrivateRoomUserId(req, req.body as Record<string, unknown>);
+  const userId = getPrivateRoomUserId(req, input);
   if (!userId) {
     return res.status(400).json({ error: 'Missing private room user id.' });
   }
@@ -8096,7 +8131,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
       broadcastMatch(match.matchId);
     }
     broadcastPrivateRoom(room.roomCode);
-    return res.json({
+    return sendPrivateRoomJoinSuccess(req, res, {
       success: true,
       roomCode: room.roomCode,
       telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
@@ -8142,16 +8177,11 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     costsCommitted: false,
   };
 
-  const completesRoom = room.players.length + 1 >= room.targetPlayers;
   if (match?.costsCommitted) {
     room.players.forEach((player) => {
       if (player.costsCommitted === undefined) player.costsCommitted = true;
     });
   }
-  if (completesRoom && !commitPrivateRoomCosts(room, [...room.players, newPlayer])) {
-    return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
-  }
-
   room.players.push(newPlayer);
 
   if (match) {
@@ -8194,18 +8224,12 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
 
       activeMatchByUser.set(userId, match.matchId);
 
-      const anyLeft = match.players.some(p => p.userId.startsWith('waiting_for_player_'));
-      if ((!anyLeft || room.players.length >= room.targetPlayers) && room.status !== 'started') {
-        startPrivateRoomMatchHelper(room, match);
-      }
-    } else if (room.players.length >= room.targetPlayers && room.status !== 'started') {
-      startPrivateRoomMatchHelper(room, match);
     }
   }
 
-  if (room.status === 'started') {
-    commitPrivateRoomCosts(room, [newPlayer]);
-  }
+  // A private lobby is host-controlled. Starting on the last join raced the
+  // lobby UI and left late clients hydrating a game they had not accepted yet.
+  // /start atomically commits every participant's costs and creates the hand.
 
   privateRooms.set(room.roomCode, room);
   schedulePersist({ roomCode: room.roomCode, matchId: room.matchId || undefined });
@@ -8214,7 +8238,7 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
   }
   broadcastPrivateRoom(room.roomCode);
 
-  return res.json({
+  return sendPrivateRoomJoinSuccess(req, res, {
     success: true,
     roomCode: room.roomCode,
     telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
@@ -8229,7 +8253,10 @@ app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
   });
-});
+}
+
+app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
+app.get('/api/private-rooms/join-beacon', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
 
 app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), (req: AuthenticatedRequest, res) => {
   const { roomCode } = req.body as { roomCode: string; userId?: string };
