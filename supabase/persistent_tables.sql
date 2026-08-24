@@ -148,6 +148,11 @@ declare
   v_seat_number smallint;
   v_result jsonb;
 begin
+  -- Never leave a Telegram button spinning behind a competing seat/leave
+  -- transaction. The client can retry with its idempotency key after a clear
+  -- error instead of waiting for the HTTP timeout.
+  perform set_config('lock_timeout', '5s', true);
+  perform set_config('statement_timeout', '15s', true);
   select * into v_existing from public.casino_chip_ledger where idempotency_key = p_idempotency_key;
   if found then return v_existing.request_result; end if;
 

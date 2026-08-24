@@ -58,6 +58,43 @@ export class CasinoManager {
     ).length;
   }
 
+  /**
+   * Bots are visual ambience for an empty table only. A human must never join
+   * an in-progress bot hand: that mixes two rule sets and leaves the client
+   * waiting on a bot turn after it has already paid for a human seat.
+   */
+  private removeBotsForHumanTable(table: CasinoTable) {
+    const state = (table.engine as any)?.state;
+    if (!state) return;
+    state.players = state.players.filter((player: any) =>
+      !player.isAi && !String(player.userId).startsWith('bot_')
+    );
+
+    if (table.gameType === 'poker') {
+      state.stage = 'idle';
+      state.pot = 0;
+      state.currentBet = 0;
+      state.communityCards = [];
+      state.winnerUserIds = [];
+      state.winningCardIds = [];
+      state.winningHandDesc = undefined;
+      state.nextRoundStartsAt = null;
+    } else {
+      state.stage = 'round_ended';
+      state.pot = 0;
+      state.nextRoundStartsAt = null;
+      state.winningHandDesc = undefined;
+      state.dealer.cards = [];
+      state.players.forEach((player: any) => {
+        player.cards = [];
+        player.bet = 0;
+        player.score = 0;
+        player.status = 'playing';
+      });
+    }
+    state.turnStartedAt = Date.now();
+  }
+
   public activateTable(tableId: string): CasinoTable | undefined {
     const table = this.tables.get(tableId);
     if (!table) return undefined;
@@ -150,6 +187,10 @@ export class CasinoManager {
       }
     }
     this.updateCounts(table);
+    if (table.humanPlayersCount === 0) {
+      this.removeBotsForHumanTable(table);
+      this.updateCounts(table);
+    }
     if (table.playersCount >= table.maxPlayers) throw new Error('Table is full');
     table.engine.addPlayer(userId, username, avatarId, chips, false);
     const joinedPlayer = state.players.find((player: any) => player.userId === userId);
@@ -159,14 +200,6 @@ export class CasinoManager {
     }
     table.lastActivityAt = Date.now();
     this.updateCounts(table);
-    // Bots are only the empty-table ambience. Once a person takes a seat,
-    // they leave at the next hand boundary and never participate in a human
-    // table's next round.
-    if (table.humanPlayersCount >= 1) {
-      state.players
-        .filter((player: any) => player.isAi && String(player.userId).startsWith('bot_'))
-        .forEach((player: any) => { player.pendingTableRemoval = true; });
-    }
     return { table, joined: true, alreadySeated: false };
   }
 

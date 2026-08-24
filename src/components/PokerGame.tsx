@@ -224,8 +224,8 @@ export function PokerGame({
       const res = await apiRequest<{success: boolean; tableId: string; joined?: boolean; message?: string}>('/api/casino/join-table', {
         method: 'POST',
         retryOnNetworkError: true,
-        networkAttempts: 2,
-        timeoutMs: 90_000,
+        networkAttempts: 1,
+        timeoutMs: 20_000,
         body: JSON.stringify({ tableId: gameState.matchId, chips: requestedChips, idempotencyKey: seatRequestIdRef.current })
       });
       if (res.success) {

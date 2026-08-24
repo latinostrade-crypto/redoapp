@@ -33,6 +33,10 @@ declare
   v_seat_number smallint;
   v_result jsonb;
 begin
+  -- Bound lock waits so a concurrent join/leave returns a retryable error
+  -- instead of holding the Mini App in JOINING state.
+  perform set_config('lock_timeout', '5s', true);
+  perform set_config('statement_timeout', '15s', true);
   select * into v_existing from public.casino_chip_ledger where idempotency_key = p_idempotency_key;
   if found then return v_existing.request_result; end if;
 

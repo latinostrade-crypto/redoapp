@@ -1128,7 +1128,9 @@ async function loadCasinoRuntimeSnapshots() {
   });
 }
 
-async function persistCasinoRuntime(tableId: string) {
+const casinoRuntimePersistTails = new Map<string, Promise<void>>();
+
+async function persistCasinoRuntimeNow(tableId: string) {
   const table = casinoManager.getTable(tableId);
   const state = casinoManager.getRuntimeState(tableId);
   if (!table || !state) return;
@@ -1149,6 +1151,25 @@ async function persistCasinoRuntime(tableId: string) {
       savedAt: Date.now(),
     });
   }
+}
+
+/**
+ * Checkpoints for the same table must be ordered. A heartbeat, action and
+ * periodic save can otherwise complete out of order and restore an older
+ * poker hand after a Render restart.
+ */
+function persistCasinoRuntime(tableId: string) {
+  const previous = casinoRuntimePersistTails.get(tableId) || Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(() => persistCasinoRuntimeNow(tableId));
+  casinoRuntimePersistTails.set(tableId, next);
+  void next.finally(() => {
+    if (casinoRuntimePersistTails.get(tableId) === next) {
+      casinoRuntimePersistTails.delete(tableId);
+    }
+  });
+  return next;
 }
 
 async function takeCasinoSeatInDatabase(tableId: string, userId: string, buyInAmount: number, idempotencyKey: string) {
@@ -8572,6 +8593,11 @@ function findSettledTournamentMatch(matchId: string): TournamentMatch | null {
 
 function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
   let match = activeMatches.get(matchId);
+  if (match && matchId.startsWith('table-')) {
+    // Spectators and seated players refresh this endpoint regularly. Keep an
+    // observed runtime alive, but do not wake any other catalogue entries.
+    casinoManager.touchTable(matchId);
+  }
   if (!match && matchId.startsWith('table-')) {
     const table = casinoManager.openTable(matchId);
     if (table) {
@@ -9051,10 +9077,6 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   const allMatchesToTick = Array.from(activeMatches.values());
-  casinoManager.getTables().forEach(table => {
-    const m = getActiveMatchOrCasino(table.id);
-    if (m) allMatchesToTick.push(m);
-  });
   for (const match of allMatchesToTick) {
     const matchId = match.matchId;
     if (match.settled) {
@@ -9414,6 +9436,9 @@ app.get('/api/casino/tables', (req, res) => {
 app.post('/api/casino/open-table/:tableId', requireAuth, async (req: AuthenticatedRequest, res) => {
   const table = casinoManager.openTable(req.params.tableId);
   if (!table) return res.status(404).json({ error: 'Table not found' });
+  // Register only the table the visitor actually opened. The server tick can
+  // now advance bot turns without eagerly allocating every permanent table.
+  getActiveMatchOrCasino(table.id);
   await persistCasinoRuntime(table.id);
   return res.json({ success: true, tableId: table.id, gameType: table.gameType, mode: table.mode });
 });
@@ -9507,6 +9532,9 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
       if (shouldChargeLocalEnvelope) schedulePersist({ userId });
       await persistCasinoRuntime(tableId);
     }
+    // A seat is visible to every spectator immediately; they should not need
+    // to wait for the next 1.2-second recovery poll.
+    broadcastMatch(tableId);
     return res.json({ success: true, message: result.alreadySeated ? 'Already seated' : 'Joined table', tableId, joined: result.joined, buyInAmount });
   } catch (err: any) {
     const rawMessage = err instanceof Error ? err.message : String(err || 'Could not take a table seat');

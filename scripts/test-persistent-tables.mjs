@@ -66,6 +66,22 @@ try {
   });
   assert.equal(rejoin.joined, true, 'a released seat must be reusable by the same player');
   await request('persistent_table_user', '/api/casino/leave-table', { method: 'POST', body: JSON.stringify({ tableId, idempotencyKey: 'persistent-table-free-leave-2' }) });
+
+  const pokerTableId = 'table-poker-free-1';
+  await request('poker_table_user_one', `/api/casino/open-table/${pokerTableId}`, { method: 'POST' });
+  await request('poker_table_user_one', '/api/casino/join-table', {
+    method: 'POST', body: JSON.stringify({ tableId: pokerTableId, chips: 100, idempotencyKey: 'poker-human-entry-1' }),
+  });
+  const afterFirstSeat = await request('poker_table_user_one', `/api/matches/state/${pokerTableId}`);
+  assert.equal(afterFirstSeat.pokerGameState.players.length, 1, 'bots must leave immediately when a human takes the table');
+  assert.equal(afterFirstSeat.pokerGameState.stage, 'idle', 'one human waits for an opponent instead of a bot turn');
+  await request('poker_table_user_two', '/api/casino/join-table', {
+    method: 'POST', body: JSON.stringify({ tableId: pokerTableId, chips: 100, idempotencyKey: 'poker-human-entry-2' }),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const afterSecondSeat = await request('poker_table_user_one', `/api/matches/state/${pokerTableId}`);
+  assert.equal(afterSecondSeat.pokerGameState.players.length, 2, 'two humans must occupy the human-only table');
+  assert.equal(afterSecondSeat.pokerGameState.stage, 'preflop', 'the human hand must start through the authoritative tick');
   console.log('Persistent table checks passed.');
 } finally {
   if (!server.killed) server.kill('SIGTERM');
