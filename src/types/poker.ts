@@ -123,6 +123,8 @@ export interface PokerGameState {
   matchId?: string;
   tableId?: string;
   waitingForPlayers?: boolean;
+  waitingForOpponent?: boolean;
+  isPersistentTable?: boolean;
   connectionDeadlineAt?: number | null;
   stateVersion?: number;
 }

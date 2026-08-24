@@ -304,7 +304,7 @@ export function BlackjackGame({
             <span>LOBBY</span>
           </button>
           <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
-            HAND {gameState.currentHand || 1}/{gameState.maxHands || 5}
+            {gameState.isPersistentTable ? 'LIVE TABLE' : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5}`}
           </span>
           <span className="text-[7.5px] font-black text-[#ffcc00] uppercase bg-black px-1.5 py-0.5 border border-black">
             PRIZE: {gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT`}
@@ -374,7 +374,7 @@ export function BlackjackGame({
             <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse">
               <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
               <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
-                WAITING FOR PLAYERS TO CONNECT...
+                {gameState.waitingForOpponent ? 'WAITING FOR ONE MORE PLAYER...' : 'WAITING FOR PLAYERS TO CONNECT...'}
               </span>
             </div>
           ) : (
@@ -563,7 +563,7 @@ export function BlackjackGame({
                 <h2 className="text-[10px] font-black uppercase tracking-wider text-[#00ff66]">
                   {gameState.stage === 'match_ended'
                     ? `🏆 ${gameState.matchChampion?.name?.toUpperCase() || gameState.winner?.toUpperCase() || 'PLAYER'} WINS!`
-                    : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5} RESULTS`}
+                    : gameState.isPersistentTable ? 'ROUND RESULTS' : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5} RESULTS`}
                 </h2>
               </div>
 

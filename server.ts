@@ -1120,6 +1120,7 @@ async function loadCasinoRuntimeSnapshots() {
       casinoManager.restoreRuntime(row.table_id, row.state, Date.parse(row.updated_at) || Date.now());
       casinoRuntimeStateVersions.set(row.table_id, Math.max(1, Number(row.revision) || 1));
     });
+    casinoTablesDatabaseReady = true;
     return;
   }
   const rows = await loadSupabaseRowsByPrefix(CASINO_RUNTIME_ROW_PREFIX);
@@ -1136,6 +1137,37 @@ const casinoRuntimePersistTails = new Map<string, Promise<void>>();
 // newly recovered state as older than its last SSE update.
 const casinoRuntimeStateVersions = new Map<string, number>();
 const casinoTableMutationTails = new Map<string, Promise<unknown>>();
+// A casino table is wallet-backed.  If its dedicated schema cannot be read at
+// boot, keep the HTTP service available but reject casino writes instead of
+// either crashing Render or silently falling back to process-only balances.
+let casinoTablesDatabaseReady = !CASINO_TABLES_DB_MODE;
+const CASINO_DATABASE_OPERATION_TIMEOUT_MS = 12_000;
+
+function casinoDatabaseUnavailableError() {
+  return Object.assign(new Error('Casino tables are temporarily reconnecting. Please try again in a moment.'), {
+    statusCode: 503,
+    code: 'casino_database_unavailable',
+  });
+}
+
+async function withCasinoDatabaseDeadline<T>(operation: PromiseLike<T>, label: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => {
+          const error: any = new Error(`Casino database ${label} timed out. Please retry.`);
+          error.statusCode = 503;
+          error.code = 'casino_database_timeout';
+          reject(error);
+        }, CASINO_DATABASE_OPERATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 /** Serialize wallet, seat and game mutations for one permanent table. */
 function runCasinoTableMutation<T>(tableId: string, operation: () => Promise<T> | T): Promise<T> {
@@ -1192,34 +1224,37 @@ function persistCasinoRuntime(tableId: string) {
 
 async function takeCasinoSeatInDatabase(tableId: string, userId: string, buyInAmount: number, idempotencyKey: string) {
   if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
-  const { data, error } = await supabaseAdmin.rpc('casino_take_table_seat', {
+  if (!casinoTablesDatabaseReady) throw casinoDatabaseUnavailableError();
+  const { data, error } = await withCasinoDatabaseDeadline(supabaseAdmin.rpc('casino_take_table_seat', {
     p_table_id: tableId,
     p_user_id: userId,
     p_buy_in: buyInAmount,
     p_idempotency_key: idempotencyKey,
-  });
+  }), 'seat reservation');
   if (error) throw new Error(`Could not take table seat: ${error.message}`);
   return data as { joined: boolean; alreadySeated: boolean; buyInAmount: number };
 }
 
 async function heartbeatCasinoSeatInDatabase(tableId: string, userId: string) {
   if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
-  const { data, error } = await supabaseAdmin.rpc('casino_heartbeat', {
+  if (!casinoTablesDatabaseReady) throw casinoDatabaseUnavailableError();
+  const { data, error } = await withCasinoDatabaseDeadline(supabaseAdmin.rpc('casino_heartbeat', {
     p_table_id: tableId,
     p_user_id: userId,
-  });
+  }), 'presence refresh');
   if (error) throw new Error(`Could not refresh table presence: ${error.message}`);
   return data as string | null;
 }
 
 async function leaveCasinoSeatInDatabase(tableId: string, userId: string, chips: number, idempotencyKey: string) {
   if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
-  const { data, error } = await supabaseAdmin.rpc('casino_leave_table_seat', {
+  if (!casinoTablesDatabaseReady) throw casinoDatabaseUnavailableError();
+  const { data, error } = await withCasinoDatabaseDeadline(supabaseAdmin.rpc('casino_leave_table_seat', {
     p_table_id: tableId,
     p_user_id: userId,
     p_cash_out: chips,
     p_idempotency_key: idempotencyKey,
-  });
+  }), 'seat release');
   if (error) throw new Error(`Could not leave table: ${error.message}`);
   return data as { released: boolean; chips: number };
 }
@@ -1228,13 +1263,14 @@ type DurableCasinoSeat = { state: string; chips: number; presence_expires_at: st
 
 async function getCasinoSeatInDatabase(tableId: string, userId: string): Promise<DurableCasinoSeat | null> {
   if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
-  const { data, error } = await supabaseAdmin
+  if (!casinoTablesDatabaseReady) throw casinoDatabaseUnavailableError();
+  const { data, error } = await withCasinoDatabaseDeadline(supabaseAdmin
     .from('casino_table_seats')
     .select('state,chips,presence_expires_at')
     .eq('table_id', tableId)
     .eq('user_id', userId)
     .in('state', ['reserved', 'seated', 'afk', 'leaving'])
-    .maybeSingle();
+    .maybeSingle(), 'seat lookup');
   if (error) throw new Error(`Could not read table seat: ${error.message}`);
   return data as DurableCasinoSeat | null;
 }
@@ -4662,6 +4698,9 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
 
   const champion = pk.players.find((p) => p.userId === pk.matchChampionUserId);
   const turnTimeLeft = Math.max(0, Math.ceil((15_000 - (Date.now() - (pk.turnStartedAt || Date.now()))) / 1000));
+  const isPersistentTable = match.creatorUserId === 'casino';
+  const connectedHumans = pk.players.filter((player) => !player.isAi && !String(player.userId).startsWith('bot_') && player.isConnected !== false).length;
+  const waitingForOpponent = isPersistentTable && connectedHumans === 1;
 
   const pokerGameState = {
     stage: pk.stage,
@@ -4691,7 +4730,9 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
     roomCode: (match as any).roomCode,
     nextRoundStartsAt: pk.nextRoundStartsAt || null,
     stateVersion: match.stateVersion || 0,
-    waitingForPlayers: !match.playStartedAt,
+    waitingForPlayers: isPersistentTable ? waitingForOpponent : !match.playStartedAt,
+    waitingForOpponent,
+    isPersistentTable,
     connectionDeadlineAt: match.connectionDeadlineAt || null,
   };
 
@@ -4786,12 +4827,17 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
   } : null;
 
   const turnTimeLeft = Math.max(0, Math.ceil((15_000 - (Date.now() - (bj.turnStartedAt || Date.now()))) / 1000));
+  const isPersistentTable = match.creatorUserId === 'casino';
+  const connectedHumans = bj.players.filter((player) => !player.isAi && !String(player.userId).startsWith('bot_') && player.isConnected !== false).length;
+  const waitingForOpponent = isPersistentTable && connectedHumans === 1;
 
   const blackjackGameState = {
     stage: bj.stage,
     pot: bj.pot,
     stake: match.stake,
     mode: match.mode,
+    currentHand: bj.currentHand,
+    maxHands: bj.maxHands,
     currentPlayerIndex: bj.currentPlayerIndex,
     players: mappedPlayers,
     dealer: mappedDealer,
@@ -4809,7 +4855,9 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
     matchId: match.matchId,
     roomCode: (match as any).roomCode,
     stateVersion: match.stateVersion || 0,
-    waitingForPlayers: !match.playStartedAt,
+    waitingForPlayers: isPersistentTable ? waitingForOpponent : !match.playStartedAt,
+    waitingForOpponent,
+    isPersistentTable,
     connectionDeadlineAt: match.connectionDeadlineAt || null,
   };
 
@@ -9603,10 +9651,13 @@ app.get('/api/casino/my-seat/:tableId', requireAuth, async (req: AuthenticatedRe
   const userId = getAuthenticatedUserId(req);
   const tableId = req.params.tableId;
   try {
+    // This intentionally reads outside the mutation lane. A response may be
+    // lost after Postgres commits a seat; reconciliation must still work when
+    // the original join request is waiting for its own database deadline.
+    const table = casinoManager.getTable(tableId);
+    if (!table) throw Object.assign(new Error('Table not found'), { statusCode: 404 });
+    const durableSeat = await getCasinoSeatInDatabase(tableId, userId);
     const payload = await runCasinoTableMutation(tableId, async () => {
-      const table = casinoManager.getTable(tableId);
-      if (!table) throw Object.assign(new Error('Table not found'), { statusCode: 404 });
-      const durableSeat = await getCasinoSeatInDatabase(tableId, userId);
       const runtimePlayer = (table.engine as any)?.state?.players?.find((player: any) => isSameUser(player.userId, userId));
       if (durableSeat && !runtimePlayer) {
         const user = getUser(userId);
@@ -9781,7 +9832,16 @@ async function bootstrap() {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in production.');
   }
   await loadPersistedState();
-  await loadCasinoRuntimeSnapshots();
+  try {
+    await loadCasinoRuntimeSnapshots();
+  } catch (error) {
+    // Keep Render healthy during a transient Supabase outage or a migration
+    // mismatch.  Casino routes fail closed with 503 until the next deploy /
+    // restart has restored the durable schema; balances are never handled in
+    // a process-only fallback.
+    casinoTablesDatabaseReady = false;
+    console.error('Casino table persistence is unavailable at bootstrap; casino writes are disabled', error);
+  }
   await applyOneTimeReferralReset();
   await applyOneTimeBalanceRepair();
   ticketingService.reconcilePendingWithdrawals();

@@ -498,7 +498,7 @@ export function PokerGame({
             <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse select-none">
               <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
               <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
-                WAITING FOR PLAYERS TO CONNECT...
+                {gameState.waitingForOpponent ? 'WAITING FOR ONE MORE PLAYER...' : 'WAITING FOR PLAYERS TO CONNECT...'}
               </span>
             </div>
           ) : (
