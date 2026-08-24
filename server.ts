@@ -3970,6 +3970,10 @@ function createInitialPokerMatchState(players: QueuePlayer[], stake: number): Se
 function checkPokerMatchChampion(match: ActiveMatch) {
   const pk = match.pokerGameState;
   if (!pk) return;
+  if (match.creatorUserId === 'casino') {
+    pk.stage = 'idle';
+    return;
+  }
 
   pk.players.forEach((p) => {
     if (p.chips <= 0) {
@@ -5590,7 +5594,7 @@ function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
 }
 
 function broadcastMatch(matchId: string) {
-  const activeMatch = activeMatches.get(matchId);
+  const activeMatch = getActiveMatchOrCasino(matchId);
   const subscribers = matchSubscribers.get(matchId);
   if (!activeMatch || !subscribers) return;
   subscribers.forEach((response) => {
@@ -8568,14 +8572,30 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
     if (!isStillConnected) {
       const match = getActiveMatchOrCasino(matchId);
       if (match) {
-        const player = match.gameState.players.find(p => isSameUser(p.userId, userId));
-        const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
-        if (player && player.isConnected !== false && !hasFreshHeartbeat) {
-          player.isConnected = false;
-          player.disconnectedAt = Date.now();
-          match.gameState.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...match.gameState.logs].slice(0, 50);
-          schedulePersist({ matchId });
+        if (match.creatorUserId === 'casino') {
+          const leaveResult = casinoManager.leaveTable(matchId, userId);
+          if (leaveResult && leaveResult.mode === 'public' && leaveResult.chips > 0) {
+            const user = getUser(userId);
+            user.availableTickets = round2(user.availableTickets + (leaveResult.chips / 100));
+            createLedgerEntry(user, {
+              id: `casino-leave:${matchId}:${userId}:${Date.now()}`,
+              amount: leaveResult.chips / 100,
+              type: 'match_refund',
+              description: 'Left public casino table',
+              balanceAfter: user.availableTickets
+            });
+          }
           broadcastMatch(matchId);
+        } else {
+          const player = match.gameState.players.find(p => isSameUser(p.userId, userId));
+          const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
+          if (player && player.isConnected !== false && !hasFreshHeartbeat) {
+            player.isConnected = false;
+            player.disconnectedAt = Date.now();
+            match.gameState.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...match.gameState.logs].slice(0, 50);
+            schedulePersist({ matchId });
+            broadcastMatch(matchId);
+          }
         }
       }
     }
@@ -8920,7 +8940,13 @@ setInterval(() => {
 
 setInterval(() => {
   const now = Date.now();
-  for (const [matchId, match] of activeMatches.entries()) {
+  const allMatchesToTick = Array.from(activeMatches.values());
+  casinoManager.getTables().forEach(table => {
+    const m = getActiveMatchOrCasino(table.id);
+    if (m) allMatchesToTick.push(m);
+  });
+  for (const match of allMatchesToTick) {
+    const matchId = match.matchId;
     if (match.settled) {
       match.players.forEach((p) => activeMatchByUser.delete(p.userId));
       continue;

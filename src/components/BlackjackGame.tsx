@@ -704,42 +704,86 @@ export function BlackjackGame({
                 <div className="text-[9px] text-slate-300">Tickets: <span className="text-pink-400 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
               </div>
 
-              <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
-                <div className="text-[8px] text-slate-400 mb-1 font-bold">Convert TKT to Chips (1 TKT = 100 Chips):</div>
-                <div className="flex gap-2">
+              {gameState.matchId.includes('-free-') ? (
+                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
+                  <p className="text-white text-[10px]">
+                    Cost: <span className="text-[#00ff66] font-black">⚡ 2 Energy</span>
+                  </p>
+                  <p className="text-white text-[10px]">
+                    You receive: <span className="text-[#00ff66] font-black">100 Free Chips</span>
+                  </p>
+                </div>
+              ) : gameState.matchId.includes('-practice-') ? (
+                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
+                  <p className="text-white text-[10px]">
+                    Cost: <span className="text-[#00ff66] font-black">Free</span>
+                  </p>
+                  <p className="text-white text-[10px]">
+                    You receive: <span className="text-[#00ff66] font-black">1000 Practice Chips</span>
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
+                  <div className="text-[8px] text-slate-400 mb-1 font-bold">Convert TKT to Chips (1 TKT = 100 Chips):</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={exchangeAmount}
+                      onChange={e => setExchangeAmount(Number(e.target.value))}
+                      className="bg-black border border-pink-500/50 text-pink-400 font-bold px-2 py-1 text-center text-[10px] w-full"
+                    />
+                    <button 
+                      onClick={handleExchange} 
+                      disabled={isExchanging}
+                      className="px-2 py-1 bg-pink-900 text-pink-200 text-[8px] border border-pink-700 font-bold uppercase hover:bg-pink-800 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      Convert
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.matchId.includes('-public-') && (
+                <div className="flex flex-col gap-1 w-full mt-2">
+                  <div className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</div>
                   <input
                     type="number"
-                    min={1}
-                    step={1}
-                    value={exchangeAmount}
-                    onChange={e => setExchangeAmount(Number(e.target.value))}
-                    className="bg-black border border-pink-500/50 text-pink-400 font-bold px-2 py-1 text-center text-[10px] w-full"
+                    min={50}
+                    step={50}
+                    value={buyInAmount}
+                    onChange={e => setBuyInAmount(Number(e.target.value))}
+                    className="bg-black border border-[#00ff66] text-[#00ff66] font-bold px-2 py-1.5 text-center text-[10px] w-full"
                   />
-                  <button 
-                    onClick={handleExchange} 
-                    disabled={isExchanging}
-                    className="px-2 py-1 bg-pink-900 text-pink-200 text-[8px] border border-pink-700 font-bold uppercase hover:bg-pink-800 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    Convert
-                  </button>
                 </div>
-              </div>
-
-              <div className="flex flex-col gap-1 w-full">
-                <div className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</div>
-                <div className="text-[8px] text-slate-500">If this is a FREE table, you will be charged 2 Energy instead.</div>
-                <input
-                  type="number"
-                  min={50}
-                  step={50}
-                  value={buyInAmount}
-                  onChange={e => setBuyInAmount(Number(e.target.value))}
-                  className="bg-black border border-[#00ff66] text-[#00ff66] font-bold px-2 py-1.5 text-center text-[10px] w-full mt-1"
-                />
-              </div>
+              )}
               <div className="flex gap-2 w-full mt-2">
                 <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">Cancel</button>
-                <button onClick={handleConfirmBuyIn} className="flex-1 px-2 py-2 bg-[#00ff66] text-black text-[9px] border border-black font-bold uppercase hover:bg-green-400">Join Table</button>
+                <button 
+                  onClick={async () => {
+                    let chipsToBuyIn = buyInAmount;
+                    if (gameState.matchId.includes('-free-')) chipsToBuyIn = 100;
+                    if (gameState.matchId.includes('-practice-')) chipsToBuyIn = 1000;
+                    try {
+                      const res = await apiRequest<{success: boolean; tableId: string}>('/api/casino/join-table', {
+                        method: 'POST',
+                        body: JSON.stringify({ tableId: gameState.matchId, chips: chipsToBuyIn })
+                      });
+                      if (res.success) {
+                        setShowBuyInModal(false);
+                      } else {
+                        alert('Failed to join table');
+                      }
+                    } catch (err) {
+                      console.error(err);
+                      alert('Error joining table');
+                    }
+                  }} 
+                  className="flex-1 px-2 py-2 bg-[#00ff66] text-black text-[9px] border border-black font-bold uppercase hover:bg-green-400"
+                >
+                  Join Table
+                </button>
               </div>
             </div>
           </motion.div>

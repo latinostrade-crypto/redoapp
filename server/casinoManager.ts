@@ -23,8 +23,10 @@ export class CasinoManager {
     const configs = [
       { gameType: 'poker', mode: 'free', minBuyIn: 100, maxPlayers: 10 },
       { gameType: 'poker', mode: 'public', minBuyIn: 50, maxPlayers: 10 },
+      { gameType: 'poker', mode: 'practice', minBuyIn: 100, maxPlayers: 10 },
       { gameType: 'blackjack', mode: 'free', minBuyIn: 100, maxPlayers: 4 },
-      { gameType: 'blackjack', mode: 'public', minBuyIn: 50, maxPlayers: 4 }
+      { gameType: 'blackjack', mode: 'public', minBuyIn: 50, maxPlayers: 4 },
+      { gameType: 'blackjack', mode: 'practice', minBuyIn: 100, maxPlayers: 4 }
     ] as const;
 
     for (const config of configs) {
