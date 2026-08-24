@@ -69,6 +69,41 @@ const DASHBOARD_TAB_STORAGE_KEY = 'redoapp_dashboard_tab';
 const PROMO_EVENT_DISMISSED_KEY = 'redoapp_ayanami_promo_dismissed';
 const DEFAULT_ENERGY_STATE: PlayerProfile['energy'] = { energy: 10, maxEnergy: 10, nextEnergyAt: null, regenIntervalSec: 1800 };
 type DashboardTab = 'profile' | 'events' | 'pvp' | 'rewards';
+type CasinoGameType = 'poker' | 'blackjack';
+type CasinoTableMode = 'public' | 'free';
+type CasinoTableView = {
+  id: string;
+  name: string;
+  gameType: CasinoGameType;
+  mode: CasinoTableMode;
+  minBuyIn: number;
+  playersCount: number;
+  humanPlayersCount: number;
+  maxPlayers: number;
+};
+
+// The table catalogue is product configuration, not network state. Keeping it
+// in the Mini App means every account sees the same two tables immediately,
+// even while Render is waking up or Telegram briefly suspends a request.
+const PERMANENT_CASINO_TABLES: CasinoTableView[] = (['poker', 'blackjack'] as const).flatMap((gameType) =>
+  (['public', 'free'] as const).flatMap((mode) => [1, 2].map((number) => ({
+    id: `table-${gameType}-${mode}-${number}`,
+    name: String(number),
+    gameType,
+    mode,
+    minBuyIn: mode === 'free' ? 100 : 50,
+    playersCount: 0,
+    humanPlayersCount: 0,
+    maxPlayers: gameType === 'poker' ? 10 : 4,
+  }))),
+);
+
+function getPermanentCasinoTables(gameType: CasinoGameType, mode: CasinoTableMode, liveTables: CasinoTableView[]) {
+  const liveById = new Map(liveTables.map((table) => [table.id, table]));
+  return PERMANENT_CASINO_TABLES
+    .filter((table) => table.gameType === gameType && table.mode === mode)
+    .map((table) => ({ ...table, ...(liveById.get(table.id) || {}) }));
+}
 function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): PlayerProfile | null {
   if (!profile?.userId) return null;
   return {
@@ -804,28 +839,53 @@ export function Web3Dashboard({
   const [pvpGameTab, setPvpGameTab] = useState<'uno' | 'poker' | 'blackjack'>(() => {
     return initialLaunchRoomParsedRef.current.gameType || initialLaunchCasinoTableRef.current.gameType || 'uno';
   });
-  const [casinoTables, setCasinoTables] = useState<any[]>([]);
+  const [casinoTableLiveData, setCasinoTableLiveData] = useState<CasinoTableView[]>([]);
+  const [casinoTableStatus, setCasinoTableStatus] = useState<'idle' | 'refreshing' | 'ready' | 'offline'>('idle');
+  const casinoTables = pvpGameTab === 'uno' || pvpSubMode === 'practice' || pvpSubMode === 'private'
+    ? []
+    : getPermanentCasinoTables(pvpGameTab, pvpSubMode, casinoTableLiveData);
 
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
 
   useEffect(() => {
-    if (currentTab !== 'pvp' || pvpGameTab === 'uno' || pvpSubMode === 'practice') return;
+    if (currentTab !== 'pvp' || pvpGameTab === 'uno' || pvpSubMode === 'practice' || pvpSubMode === 'private') return;
     let active = true;
+    let requestInFlight = false;
     const fetchTables = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      if (active) setCasinoTableStatus((status) => status === 'ready' ? 'ready' : 'refreshing');
       try {
-        const res = await apiRequest<{ success: boolean; tables: any[] }>(`/api/casino/tables?gameType=${pvpGameTab}&mode=${pvpSubMode}&_t=${Date.now()}`);
+        const res = await apiRequest<{ success: boolean; tables: CasinoTableView[] }>(`/api/casino/tables?gameType=${pvpGameTab}&mode=${pvpSubMode}&_t=${Date.now()}`, {
+          retryOnNetworkError: true,
+          networkAttempts: 2,
+          timeoutMs: 20_000,
+        });
         if (active && res.success) {
-          setCasinoTables(res.tables || []);
+          const allowedIds = new Set(PERMANENT_CASINO_TABLES.map((table) => table.id));
+          setCasinoTableLiveData((res.tables || []).filter((table) => allowedIds.has(table.id)));
+          setCasinoTableStatus('ready');
         }
       } catch (err) {
         console.error('Failed to fetch casino tables', err);
+        if (active) setCasinoTableStatus('offline');
+      } finally {
+        requestInFlight = false;
       }
     };
+    wakeBackend();
     fetchTables();
-    // Table definitions are permanent; this is merely a low-frequency seat
-    // count refresh, not a matchmaking poll.
-    const interval = setInterval(fetchTables, 12_000);
-    return () => { active = false; clearInterval(interval); };
+    // The catalogue is already on screen. This only refreshes seat counts.
+    const interval = setInterval(fetchTables, 30_000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') fetchTables();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [currentTab, pvpGameTab, pvpSubMode]);
 
   useEffect(() => {
@@ -6122,8 +6182,8 @@ export function Web3Dashboard({
                   </div>
                   
                   <div className="space-y-2">
-                    {casinoTables.length === 0 && (
-                      <div className="text-[9px] text-slate-500 text-center py-4">No public tables available</div>
+                    {casinoTableStatus !== 'ready' && (
+                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
                     )}
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
@@ -6175,8 +6235,8 @@ export function Web3Dashboard({
                   </div>
                   
                   <div className="space-y-2">
-                    {casinoTables.length === 0 && (
-                      <div className="text-[9px] text-slate-500 text-center py-4">No free tables available</div>
+                    {casinoTableStatus !== 'ready' && (
+                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
                     )}
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
@@ -6280,8 +6340,8 @@ export function Web3Dashboard({
                   </div>
                   
                   <div className="space-y-2">
-                    {casinoTables.length === 0 && (
-                      <div className="text-[9px] text-slate-500 text-center py-4">No public tables available</div>
+                    {casinoTableStatus !== 'ready' && (
+                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
                     )}
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
@@ -6333,8 +6393,8 @@ export function Web3Dashboard({
                   </div>
                   
                   <div className="space-y-2">
-                    {casinoTables.length === 0 && (
-                      <div className="text-[9px] text-slate-500 text-center py-4">No free tables available</div>
+                    {casinoTableStatus !== 'ready' && (
+                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
                     )}
                     {casinoTables.map((table) => (
                       <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">

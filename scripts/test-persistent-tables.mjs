@@ -39,9 +39,18 @@ async function request(userId, endpoint, options = {}) {
 try {
   await waitForServer();
   for (const [gameType, mode] of [['poker', 'public'], ['poker', 'free'], ['blackjack', 'public'], ['blackjack', 'free']]) {
-    const result = await request('persistent_table_user', `/api/casino/tables?gameType=${gameType}&mode=${mode}`);
+    const response = await fetch(`${baseUrl}/api/casino/tables?gameType=${gameType}&mode=${mode}`);
+    assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
+    const result = await response.json();
+    assert.equal(response.ok, true, `${gameType}/${mode} catalogue must be public`);
     assert.equal(result.tables.length, 2, `${gameType}/${mode} must expose exactly two permanent tables`);
+    assert.deepEqual(result.tables.map((table) => table.id), [
+      `table-${gameType}-${mode}-1`,
+      `table-${gameType}-${mode}-2`,
+    ]);
   }
+  const invalidFilter = await fetch(`${baseUrl}/api/casino/tables?gameType=uno&mode=public`);
+  assert.equal(invalidFilter.status, 400, 'catalogue endpoint must reject unsupported filters');
   const tableId = 'table-blackjack-free-1';
   await request('persistent_table_user', `/api/casino/open-table/${tableId}`, { method: 'POST' });
   const first = await request('persistent_table_user', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId, chips: 100, idempotencyKey: 'persistent-table-free-entry-1' }) });

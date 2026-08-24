@@ -9372,6 +9372,12 @@ import { casinoManager } from './server/casinoManager';
 app.get('/api/casino/tables', (req, res) => {
   const mode = req.query.mode as 'public' | 'free';
   const gameType = req.query.gameType as 'poker' | 'blackjack';
+  if (!['public', 'free'].includes(mode) || !['poker', 'blackjack'].includes(gameType)) {
+    return res.status(400).json({ error: 'Invalid casino table filter' });
+  }
+  // The catalogue is immutable; do not let an intermediary or Telegram WebView
+  // cache a previous live-seat response as if it were the table definition.
+  res.set('Cache-Control', 'no-store, max-age=0');
   
   const tables = casinoManager.getTables(gameType, mode).map(t => ({
     id: t.id,
@@ -9384,7 +9390,7 @@ app.get('/api/casino/tables', (req, res) => {
     maxPlayers: t.maxPlayers
   }));
   
-  res.json({ success: true, tables });
+  res.json({ success: true, catalogVersion: 1, tables });
 });
 
 app.post('/api/casino/open-table/:tableId', requireAuth, async (req: AuthenticatedRequest, res) => {
