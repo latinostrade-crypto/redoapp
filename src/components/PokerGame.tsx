@@ -164,8 +164,22 @@ export function PokerGame({
     setTimeout(() => setActiveEmoji(null), 3500);
   };
 
-  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
   const isSpectator = !gameState.players.find((p) => p.id === 'player');
+  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0] || {
+    id: 'spectator',
+    name: 'Spectator',
+    avatar: 'rabbit',
+    chips: 0,
+    currentBet: 0,
+    totalMatchInvested: 0,
+    holeCards: [],
+    folded: true,
+    isAllIn: false,
+    eliminated: false,
+    isAi: false,
+    isBusted: false,
+    isConnected: true
+  } as any;
   const [showBuyInModal, setShowBuyInModal] = useState(false);
   const [buyInAmount, setBuyInAmount] = useState(200);
   const [exchangeAmount, setExchangeAmount] = useState(1);
@@ -330,14 +344,6 @@ export function PokerGame({
 
         {/* DYNAMIC OPPONENTS RENDERING */}
         {(() => {
-          if (!humanPlayer) {
-            return (
-              <div className="absolute top-12 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 px-3 py-1 rounded text-[8px] text-amber-300 font-mono">
-                <Loader2 className="w-3 h-3 animate-spin text-amber-400" />
-                <span>Connecting table seats...</span>
-              </div>
-            );
-          }
           const opponents = gameState.players.filter((p) => p.id !== humanPlayer.id);
           const renderOpponentView = (opp: typeof gameState.players[0], posClass: string, reverse = false) => {
             const isTurn = gameState.players[gameState.currentPlayerIndex]?.id === opp.id && gameState.stage !== 'ended';

@@ -135,8 +135,21 @@ export function BlackjackGame({
     setMuted(sound.getMuted());
   };
 
-  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0];
   const isSpectator = !gameState.players.find((p) => p.id === 'player');
+  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0] || {
+    id: 'spectator',
+    name: 'Spectator',
+    avatar: 'rabbit',
+    chips: 0,
+    bet: 0,
+    score: 0,
+    cards: [],
+    isBusted: false,
+    hasStood: true,
+    isEliminated: false,
+    isAi: false,
+    isConnected: true
+  } as any;
   const [showBuyInModal, setShowBuyInModal] = useState(false);
   const [buyInAmount, setBuyInAmount] = useState(100);
   const [exchangeAmount, setExchangeAmount] = useState(1);

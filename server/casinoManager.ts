@@ -111,9 +111,17 @@ export class CasinoManager {
     const table = this.tables.get(tableId);
     if (!table) return null;
 
+    const state = (table.engine as any).state;
+    const playerExisted = state && state.players && state.players.some((p: any) => p.userId === userId);
+
     const remainingChips = table.engine.removePlayer(userId);
-    table.playersCount--;
-    return { chips: remainingChips, mode: table.mode };
+    
+    if (playerExisted) {
+      table.playersCount = Math.max(0, table.playersCount - 1);
+      return { chips: remainingChips, mode: table.mode };
+    }
+    
+    return null;
   }
 }
 
