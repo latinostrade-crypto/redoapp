@@ -9047,7 +9047,7 @@ setInterval(() => {
             bj.turnStartedAt = now;
           }
           const elapsedSec = Math.floor((now - bj.turnStartedAt) / 1000);
-          const isBot = Boolean(currPlayer.isAi || currPlayer.userId.startsWith('bot_'));
+          const isBot = Boolean(currPlayer.isAi || currPlayer.userId.startsWith('bot_') || currPlayer.isConnected === false);
           const limit = isBot ? 1 : 15;
           if (elapsedSec >= limit) {
             if (currPlayer.score < 12) {

@@ -18,6 +18,7 @@ export interface ServerPokerPlayer {
   handScore?: number;
   handDesc?: string;
   isAi?: boolean;
+  isConnected?: boolean;
 }
 
 export interface ServerPokerGameState {
@@ -86,6 +87,15 @@ export class PokerEngine {
   }
 
   addPlayer(userId: string, username: string, avatarId: string, chips: number, isAi = false) {
+    const existing = this.state.players.find(p => p.userId === userId);
+    if (existing) {
+      existing.isConnected = true;
+      existing.chips += chips;
+      existing.username = username;
+      existing.avatarId = avatarId;
+      return;
+    }
+
     if (this.state.players.length >= 10) throw new Error("Table full");
     const isMidGame = this.state.stage !== 'ended';
     this.state.players.push({
@@ -100,14 +110,37 @@ export class PokerEngine {
       isAllIn: false,
       hasActedThisStage: isMidGame,
       eliminated: false,
-      isAi
+      isAi,
+      isConnected: true
     });
   }
 
   removePlayer(userId: string): number {
-    const player = this.state.players.find(p => p.userId === userId);
-    this.state.players = this.state.players.filter(p => p.userId !== userId);
-    return player ? player.chips : 0;
+    const pIdx = this.state.players.findIndex(p => p.userId === userId);
+    if (pIdx === -1) return 0;
+    const player = this.state.players[pIdx];
+
+    if (this.state.stage === 'ended') {
+      this.state.players.splice(pIdx, 1);
+      const refund = player.chips;
+      player.chips = 0;
+      return refund;
+    }
+
+    // Mid-game removal (disconnect / leave)
+    player.isConnected = false;
+    player.folded = true;
+    player.eliminated = true;
+    
+    // Fast-forward turn if it was their turn
+    if (pIdx === this.state.currentPlayerIndex) {
+      player.hasActedThisStage = true;
+      this.advanceTurn();
+    }
+    
+    const refund = player.chips;
+    player.chips = 0;
+    return refund;
   }
 
   log(msg: string, type = 'info') {
@@ -120,6 +153,7 @@ export class PokerEngine {
   }
 
   startHand() {
+    this.state.players = this.state.players.filter(p => p.isConnected !== false);
     const activePlayers = this.state.players.filter(p => !p.eliminated && p.chips > 0);
     if (activePlayers.length < 2) return false;
 

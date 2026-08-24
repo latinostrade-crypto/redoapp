@@ -22,6 +22,7 @@ export interface ServerBlackjackPlayer {
   hasBlackjack: boolean;
   status: 'playing' | 'stood' | 'busted' | 'blackjack';
   isAi?: boolean;
+  isConnected?: boolean;
 }
 
 export interface ServerBlackjackGameState {
@@ -85,6 +86,15 @@ export class BlackjackEngine {
   }
 
   addPlayer(userId: string, username: string, avatarId: string, chips: number, isAi = false) {
+    const existing = this.state.players.find(p => p.userId === userId);
+    if (existing) {
+      existing.isConnected = true;
+      existing.chips += chips;
+      existing.username = username;
+      existing.avatarId = avatarId;
+      return;
+    }
+
     if (this.state.players.length >= 4) throw new Error("Table full");
     const isMidGame = this.state.stage !== 'match_ended' && this.state.stage !== 'round_ended';
     this.state.players.push({
@@ -104,9 +114,29 @@ export class BlackjackEngine {
   }
 
   removePlayer(userId: string): number {
-    const player = this.state.players.find(p => p.userId === userId);
-    this.state.players = this.state.players.filter(p => p.userId !== userId);
-    return player ? player.chips : 0;
+    const pIdx = this.state.players.findIndex(p => p.userId === userId);
+    if (pIdx === -1) return 0;
+    const player = this.state.players[pIdx];
+
+    if (this.state.stage === 'round_ended' || this.state.stage === 'match_ended') {
+      this.state.players.splice(pIdx, 1);
+      const refund = player.chips;
+      player.chips = 0;
+      return refund;
+    }
+
+    // Mid-game removal
+    player.isConnected = false;
+    player.status = 'stood';
+    
+    // Fast-forward turn if it was their turn
+    if (pIdx === this.state.currentPlayerIndex && this.state.stage === 'player_turn') {
+      this.nextPlayer();
+    }
+    
+    const refund = player.chips;
+    player.chips = 0;
+    return refund;
   }
 
   log(msg: string) {
@@ -129,6 +159,8 @@ export class BlackjackEngine {
   }
 
   startRound() {
+    this.state.players = this.state.players.filter(p => p.isConnected !== false);
+
     if (this.state.shoe.length < 52) {
       this.state.shoe = createShoe();
     }

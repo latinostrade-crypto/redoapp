@@ -30,10 +30,10 @@ export class CasinoManager {
     ] as const;
 
     for (const config of configs) {
-      const availableTables = this.getTables(config.gameType, config.mode).filter(t => t.playersCount < t.maxPlayers);
+      const allTables = this.getTables(config.gameType, config.mode);
       const targetCount = 3;
-      if (availableTables.length < targetCount) {
-        for (let i = 0; i < targetCount - availableTables.length; i++) {
+      if (allTables.length < targetCount) {
+        for (let i = 0; i < targetCount - allTables.length; i++) {
           this.createTable(config.gameType, config.mode, config.minBuyIn, config.maxPlayers);
         }
       }
@@ -82,7 +82,6 @@ export class CasinoManager {
 
     table.engine.addPlayer(userId, username, avatarId, chips, isAi);
     table.playersCount++;
-    this.ensureTables();
 
     // Auto-start game if waiting
     if (table.gameType === 'poker') {
