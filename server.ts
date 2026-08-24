@@ -1224,6 +1224,28 @@ async function leaveCasinoSeatInDatabase(tableId: string, userId: string, chips:
   return data as { released: boolean; chips: number };
 }
 
+type DurableCasinoSeat = { state: string; chips: number; presence_expires_at: string | null };
+
+async function getCasinoSeatInDatabase(tableId: string, userId: string): Promise<DurableCasinoSeat | null> {
+  if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
+  const { data, error } = await supabaseAdmin
+    .from('casino_table_seats')
+    .select('state,chips,presence_expires_at')
+    .eq('table_id', tableId)
+    .eq('user_id', userId)
+    .in('state', ['reserved', 'seated', 'afk', 'leaving'])
+    .maybeSingle();
+  if (error) throw new Error(`Could not read table seat: ${error.message}`);
+  return data as DurableCasinoSeat | null;
+}
+
+/** A slow checkpoint must never keep a paid seat request in JOINING. */
+function checkpointCasinoRuntimeInBackground(tableId: string, reason: string) {
+  void persistCasinoRuntime(tableId).catch((error) => {
+    console.error(`Casino runtime checkpoint failed (${reason})`, { tableId, error });
+  });
+}
+
 function createEmptyLevelStats(): ReferralLevelStats {
   return {
     total: 0,
@@ -9537,108 +9559,113 @@ app.get('/api/casino/tables', (req, res) => {
 });
 
 app.post('/api/casino/open-table/:tableId', requireAuth, async (req: AuthenticatedRequest, res) => {
-  const table = casinoManager.openTable(req.params.tableId);
-  if (!table) return res.status(404).json({ error: 'Table not found' });
-  // Register only the table the visitor actually opened. The server tick can
-  // now advance bot turns without eagerly allocating every permanent table.
-  getActiveMatchOrCasino(table.id);
-  await persistCasinoRuntime(table.id);
-  return res.json({ success: true, tableId: table.id, gameType: table.gameType, mode: table.mode });
+  try {
+    const payload = await runCasinoTableMutation(req.params.tableId, () => {
+      const table = casinoManager.openTable(req.params.tableId);
+      if (!table) throw new Error('Table not found');
+      getActiveMatchOrCasino(table.id);
+      checkpointCasinoRuntimeInBackground(table.id, 'open-table');
+      return { success: true, tableId: table.id, gameType: table.gameType, mode: table.mode };
+    });
+    return res.json(payload);
+  } catch (error) {
+    return res.status(404).json({ error: error instanceof Error ? error.message : 'Table not found' });
+  }
 });
 
 app.post('/api/casino/table-heartbeat', requireAuth, async (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
   const tableId = typeof req.body?.tableId === 'string' ? req.body.tableId : '';
-  const table = casinoManager.touchTable(tableId);
-  if (!table?.engine) return res.status(404).json({ error: 'Table runtime not found' });
-  const player = (table.engine as any).state.players.find((entry: any) => isSameUser(entry.userId, userId));
-  if (!player || player.isAi) return res.status(403).json({ error: 'User is not seated at this table' });
   try {
-    const persistedExpiry = await heartbeatCasinoSeatInDatabase(tableId, userId);
-    if (CASINO_TABLES_DB_MODE && !persistedExpiry) return res.status(403).json({ error: 'User seat is no longer active' });
+    const payload = await runCasinoTableMutation(tableId, async () => {
+      const table = casinoManager.touchTable(tableId);
+      if (!table?.engine) throw Object.assign(new Error('Table runtime not found'), { statusCode: 404 });
+      const player = (table.engine as any).state.players.find((entry: any) => isSameUser(entry.userId, userId));
+      if (!player || player.isAi) throw Object.assign(new Error('User is not seated at this table'), { statusCode: 403 });
+      const persistedExpiry = await heartbeatCasinoSeatInDatabase(tableId, userId);
+      if (CASINO_TABLES_DB_MODE && !persistedExpiry) throw Object.assign(new Error('User seat is no longer active'), { statusCode: 403 });
+      player.isConnected = true;
+      player.lastSeenAt = Date.now();
+      player.presenceExpiresAt = Date.now() + 60_000;
+      checkpointCasinoRuntimeInBackground(tableId, 'heartbeat');
+      return { success: true, presenceExpiresAt: player.presenceExpiresAt };
+    });
+    return res.json(payload);
   } catch (error: any) {
-    return res.status(409).json({ error: error.message });
+    return res.status(error.statusCode || 409).json({ error: error.message });
   }
-  player.isConnected = true;
-  player.lastSeenAt = Date.now();
-  player.presenceExpiresAt = Date.now() + 60_000;
-  await persistCasinoRuntime(tableId);
-  return res.json({ success: true, presenceExpiresAt: player.presenceExpiresAt });
+});
+
+// After a mobile timeout the request may have committed in Supabase but lost
+// its HTTP response.  This read-only reconciliation endpoint lets the client
+// resume the seat instead of charging or waiting again.
+app.get('/api/casino/my-seat/:tableId', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const tableId = req.params.tableId;
+  try {
+    const payload = await runCasinoTableMutation(tableId, async () => {
+      const table = casinoManager.getTable(tableId);
+      if (!table) throw Object.assign(new Error('Table not found'), { statusCode: 404 });
+      const durableSeat = await getCasinoSeatInDatabase(tableId, userId);
+      const runtimePlayer = (table.engine as any)?.state?.players?.find((player: any) => isSameUser(player.userId, userId));
+      if (durableSeat && !runtimePlayer) {
+        const user = getUser(userId);
+        const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
+        casinoManager.joinTable(tableId, userId, username, 'cat', durableSeat.chips);
+        checkpointCasinoRuntimeInBackground(tableId, 'seat-reconcile');
+        broadcastMatch(tableId);
+      }
+      const seated = Boolean(durableSeat || runtimePlayer);
+      return { success: true, tableId, seated, chips: durableSeat?.chips || Math.max(0, Number(runtimePlayer?.chips) || 0) };
+    });
+    return res.json(payload);
+  } catch (error: any) {
+    return res.status(error.statusCode || 409).json({ error: error.message });
+  }
 });
 
 app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
   const { tableId, chips } = req.body;
   if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
-
-  const table = casinoManager.getTable(tableId);
-  if (!table) return res.status(404).json({ error: 'Table not found' });
-  if (!casinoManager.canJoinTable(tableId, userId)) return res.status(409).json({ error: 'Table is full' });
-  
-  const user = getUser(userId);
-  const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
-
-  const requestedChips = Number(chips);
-  const buyInAmount = table.mode === 'free'
-    ? 100
-    : (Number.isFinite(requestedChips) && requestedChips > 0 ? Math.floor(requestedChips) : table.minBuyIn);
-
-  if (table.mode === 'public') {
-    if (buyInAmount < table.minBuyIn) {
-      return res.status(400).json({ error: `Min buy in is ${table.minBuyIn}` });
-    }
-    if (user.casinoChips < buyInAmount) {
-      return res.status(400).json({ error: `Not enough casino chips.` });
-    }
-  } else if (table.mode === 'free') {
-    if (user.energy < 2) {
-      return res.status(400).json({ error: 'Not enough energy. Need 2 energy.' });
-    }
-  }
-
   try {
-    const idempotencyKey = typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
-      ? req.body.idempotencyKey
-      : `casino-seat:${tableId}:${userId}:${crypto.randomUUID()}`;
-    const durableResult = await takeCasinoSeatInDatabase(tableId, userId, buyInAmount, idempotencyKey);
-    const result = casinoManager.joinTable(tableId, userId, username, 'cat', buyInAmount);
-    // Replayed button taps must be harmless: a seated player gets the same
-    // response without a second energy charge or another buy-in.
-    if (result.joined) {
-      // The database is the source of truth for the debit.  A runtime can be
-      // recreated after a Render restart, in which case the DB reports an
-      // existing seat while CasinoManager adds the player back in memory.
-      // Restore that runtime, but never charge the player twice.
-      const shouldChargeLocalEnvelope = !durableResult || durableResult.joined;
-      if (shouldChargeLocalEnvelope && table.mode === 'public') {
-        user.casinoChips = round2(user.casinoChips - buyInAmount);
-        createLedgerEntry(user, {
-          id: `casino-buy-in:${tableId}:${userId}:${Date.now()}`,
-          event: 'Public Table Buy-in',
-          value: `-${buyInAmount} CHIPS`,
-          type: 'stake_hold',
-          amount: -buyInAmount,
-        });
-      } else if (shouldChargeLocalEnvelope) {
-        user.energy -= 2;
-        updateQuestProgress(user.userId, 'spend_energy', 2);
-        createLedgerEntry(user, {
-          id: `free-table-energy:${tableId}:${userId}:${Date.now()}`,
-          event: 'Free Table Entry',
-          value: '-2 Energy',
-          type: 'reward',
-          amount: -2,
-        });
+    const payload = await runCasinoTableMutation(tableId, async () => {
+      const table = casinoManager.getTable(tableId);
+      if (!table) throw Object.assign(new Error('Table not found'), { statusCode: 404 });
+      if (!casinoManager.canJoinTable(tableId, userId)) throw Object.assign(new Error('Table is full'), { statusCode: 409 });
+
+      const user = getUser(userId);
+      const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
+      const requestedChips = Number(chips);
+      const buyInAmount = table.mode === 'free'
+        ? 100
+        : (Number.isFinite(requestedChips) && requestedChips > 0 ? Math.floor(requestedChips) : table.minBuyIn);
+      if (table.mode === 'public' && buyInAmount < table.minBuyIn) throw new Error(`Min buy in is ${table.minBuyIn}`);
+      if (table.mode === 'public' && user.casinoChips < buyInAmount) throw new Error('Not enough casino chips.');
+      if (table.mode === 'free' && user.energy < 2) throw new Error('Not enough energy. Need 2 energy.');
+
+      const idempotencyKey = typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
+        ? req.body.idempotencyKey
+        : `casino-seat:${tableId}:${userId}:${crypto.randomUUID()}`;
+      const durableResult = await takeCasinoSeatInDatabase(tableId, userId, buyInAmount, idempotencyKey);
+      const result = casinoManager.joinTable(tableId, userId, username, 'cat', buyInAmount);
+      if (result.joined) {
+        const shouldChargeLocalEnvelope = !durableResult || durableResult.joined;
+        if (shouldChargeLocalEnvelope && table.mode === 'public') {
+          user.casinoChips = round2(user.casinoChips - buyInAmount);
+          createLedgerEntry(user, { id: `casino-buy-in:${tableId}:${userId}:${Date.now()}`, event: 'Public Table Buy-in', value: `-${buyInAmount} CHIPS`, type: 'stake_hold', amount: -buyInAmount });
+        } else if (shouldChargeLocalEnvelope) {
+          user.energy -= 2;
+          updateQuestProgress(user.userId, 'spend_energy', 2);
+          createLedgerEntry(user, { id: `free-table-energy:${tableId}:${userId}:${Date.now()}`, event: 'Free Table Entry', value: '-2 Energy', type: 'reward', amount: -2 });
+        }
+        if (shouldChargeLocalEnvelope) schedulePersist({ userId });
+        checkpointCasinoRuntimeInBackground(tableId, 'join-table');
       }
-      // The RPC is the money transaction; this queued write only preserves
-      // the UI audit item and quest counters in the same user envelope.
-      if (shouldChargeLocalEnvelope) schedulePersist({ userId });
-      await persistCasinoRuntime(tableId);
-    }
-    // A seat is visible to every spectator immediately; they should not need
-    // to wait for the next 1.2-second recovery poll.
-    broadcastMatch(tableId);
-    return res.json({ success: true, message: result.alreadySeated ? 'Already seated' : 'Joined table', tableId, joined: result.joined, buyInAmount });
+      broadcastMatch(tableId);
+      return { success: true, message: result.alreadySeated ? 'Already seated' : 'Joined table', tableId, joined: result.joined, buyInAmount };
+    });
+    return res.json(payload);
   } catch (err: any) {
     const rawMessage = err instanceof Error ? err.message : String(err || 'Could not take a table seat');
     // A legacy released seat can exist until the one-time database repair is
@@ -9649,7 +9676,7 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
         error: 'Your previous seat is being restored. Please tap Join table once more.',
       });
     }
-    return res.status(400).json({ error: rawMessage });
+    return res.status(err?.statusCode || 400).json({ error: rawMessage });
   }
 });
 

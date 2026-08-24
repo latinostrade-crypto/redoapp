@@ -57,6 +57,8 @@ try {
   await request('persistent_table_user', `/api/casino/open-table/${tableId}`, { method: 'POST' });
   const first = await request('persistent_table_user', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId, chips: 100, idempotencyKey: 'persistent-table-free-entry-1' }) });
   assert.equal(first.joined, true);
+  const seatStatus = await request('persistent_table_user', `/api/casino/my-seat/${tableId}`);
+  assert.equal(seatStatus.seated, true, 'a timed-out client must be able to reconcile an existing seat');
   const repeat = await request('persistent_table_user', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId, chips: 100, idempotencyKey: 'persistent-table-free-entry-1' }) });
   assert.equal(repeat.joined, false, 'a repeated join must not create a second seat or charge');
   const heartbeat = await request('persistent_table_user', '/api/casino/table-heartbeat', { method: 'POST', body: JSON.stringify({ tableId }) });
@@ -104,6 +106,14 @@ try {
     body: JSON.stringify({ matchId: pokerTableId, action, expectedStateVersion: afterSecondSeat.pokerGameState.stateVersion }),
   });
   assert.equal(staleAction.status, 409, 'a delayed action must not apply to a later table state');
+
+  const concurrentTableId = 'table-blackjack-free-2';
+  await request('seat_race_one', `/api/casino/open-table/${concurrentTableId}`, { method: 'POST' });
+  const concurrentJoins = await Promise.all([
+    request('seat_race_one', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId: concurrentTableId, chips: 100, idempotencyKey: 'seat-race-one' }) }),
+    request('seat_race_two', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId: concurrentTableId, chips: 100, idempotencyKey: 'seat-race-two' }) }),
+  ]);
+  assert.equal(concurrentJoins.filter((entry) => entry.joined).length, 2, 'simultaneous human joins must be serialized without a phantom wait');
   console.log('Persistent table checks passed.');
 } finally {
   if (!server.killed) server.kill('SIGTERM');

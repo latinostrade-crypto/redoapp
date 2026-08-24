@@ -85,7 +85,7 @@ services:
       - key: SUPABASE_STATE_ROW_ID
         value: runtime-state
       - key: CASINO_TABLES_DB_MODE
-        value: false
+        value: true
       - key: UPSTASH_REDIS_REST_URL
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN

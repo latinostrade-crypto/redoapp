@@ -236,6 +236,26 @@ export function PokerGame({
       }
     } catch (err) {
       console.error(err);
+      const message = err instanceof Error ? err.message : '';
+      if (/timed out|interrupted/i.test(message) && gameState.matchId) {
+        setSeatJoinError('Checking whether your seat was reserved…');
+        try {
+          const recovered = await apiRequest<{ seated: boolean }>(`/api/casino/my-seat/${encodeURIComponent(gameState.matchId)}`, {
+            timeoutMs: 8_000,
+            retryOnNetworkError: true,
+            networkAttempts: 1,
+          });
+          if (recovered.seated) {
+            setShowBuyInModal(false);
+            seatRequestIdRef.current = '';
+            await fetchProfile();
+            window.dispatchEvent(new CustomEvent('redoapp:casino-seat-taken', { detail: { tableId: gameState.matchId } }));
+            return;
+          }
+        } catch (recoveryError) {
+          console.error('Poker seat reconciliation failed', recoveryError);
+        }
+      }
       setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : 'Could not take a seat. Please retry.');
     } finally {
       setIsJoiningSeat(false);
@@ -967,7 +987,7 @@ export function PokerGame({
                 </div>
               )}
               <div className="flex gap-2 w-full mt-2">
-                <button disabled={isJoiningSeat} onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600 disabled:opacity-50">Cancel</button>
+                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">{isJoiningSeat ? 'Continue in background' : 'Cancel'}</button>
                 <button 
                   disabled={isJoiningSeat}
                   onClick={() => {
