@@ -2,6 +2,18 @@
 -- Apply after redoapp_init.sql. Clients have no direct privileges; the Node
 -- game server is the sole writer and uses the service-role key.
 
+-- Older Redoapp projects predate the shared timestamp helper. Defining it
+-- here keeps this migration self-contained and safe to rerun.
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
 create table if not exists public.casino_table_catalog (
   id text primary key,
   game_type text not null check (game_type in ('poker', 'blackjack')),
