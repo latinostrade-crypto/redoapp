@@ -83,6 +83,22 @@ export function usePokerGame(options?: {
   // Online Multiplayer state tracking
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
   const settledRef = useRef<boolean>(false);
+  const remoteStateVersionRef = useRef(0);
+
+  // A delayed polling response must never repaint an earlier turn over an
+  // SSE update that already contains the opponent's action.
+  const applyRemoteState = useCallback((state: PokerGameState) => {
+    const version = Number(state.stateVersion || 0);
+    if (version && version < remoteStateVersionRef.current) return false;
+    if (version) remoteStateVersionRef.current = version;
+    setGameState((prev) => ({
+      ...prev,
+      ...state,
+      waitingForPlayers: state.waitingForPlayers !== undefined ? state.waitingForPlayers : false,
+    }));
+    if (typeof state.turnTimeLeft === 'number') setTurnTimeLeft(state.turnTimeLeft);
+    return true;
+  }, []);
 
   const clearDealingTimeouts = () => {
     dealingTimeoutsRef.current.forEach((t) => clearTimeout(t));
@@ -116,14 +132,7 @@ export function usePokerGame(options?: {
       );
       const state = result.pokerGameState || result.gameState;
       if (state) {
-        setGameState((prev) => ({
-          ...prev,
-          ...state,
-          waitingForPlayers: state.waitingForPlayers !== undefined ? state.waitingForPlayers : false,
-        }));
-        if (typeof state.turnTimeLeft === 'number') {
-          setTurnTimeLeft(state.turnTimeLeft);
-        }
+        applyRemoteState(state);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err || '');
@@ -135,7 +144,7 @@ export function usePokerGame(options?: {
         }
       }
     }
-  }, [remoteMatchId, options]);
+  }, [remoteMatchId, options, applyRemoteState]);
 
   /**
    * Start a new Texas Hold'em Poker Session
@@ -486,7 +495,7 @@ export function usePokerGame(options?: {
           }
         );
         const state = result.pokerGameState || result.gameState;
-        if (state) setGameState(state);
+        if (state) applyRemoteState(state);
       } catch (err) {
         console.error('Poker fold action error', err);
         syncRemoteMatchState();
@@ -528,7 +537,7 @@ export function usePokerGame(options?: {
           }
         );
         const state = result.pokerGameState || result.gameState;
-        if (state) setGameState(state);
+        if (state) applyRemoteState(state);
       } catch (err) {
         console.error('Poker call/check action error', err);
         syncRemoteMatchState();
@@ -599,7 +608,7 @@ export function usePokerGame(options?: {
             }
           );
           const state = result.pokerGameState || result.gameState;
-          if (state) setGameState(state);
+          if (state) applyRemoteState(state);
         } catch (err) {
           console.error('Poker raise action error', err);
           syncRemoteMatchState();
@@ -671,7 +680,7 @@ export function usePokerGame(options?: {
           }
         );
         const state = result.pokerGameState || result.gameState;
-        if (state) setGameState(state);
+        if (state) applyRemoteState(state);
       } catch (err) {
         console.error('Poker next_hand action error', err);
         syncRemoteMatchState();
@@ -827,14 +836,7 @@ export function usePokerGame(options?: {
         const payload = JSON.parse((event as MessageEvent).data);
         const pkState: PokerGameState = payload.pokerGameState || payload.gameState;
         if (pkState) {
-          setGameState((prev) => ({
-            ...prev,
-            ...pkState,
-            waitingForPlayers: pkState.waitingForPlayers !== undefined ? pkState.waitingForPlayers : false,
-          }));
-          if (typeof pkState.turnTimeLeft === 'number') {
-            setTurnTimeLeft(pkState.turnTimeLeft);
-          }
+          if (!applyRemoteState(pkState)) return;
 
           if ((pkState.stage === 'match_ended' || pkState.isMatchOver) && !settledRef.current) {
             settledRef.current = true;
@@ -884,7 +886,7 @@ export function usePokerGame(options?: {
         remoteMatchStreamRef.current = null;
       }
     };
-  }, [options, remoteMatchId, syncRemoteMatchState]);
+  }, [options, remoteMatchId, syncRemoteMatchState, applyRemoteState]);
 
   // Continuous Polling during Online Match Setup and Gameplay
   useEffect(() => {

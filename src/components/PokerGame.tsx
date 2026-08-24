@@ -276,9 +276,9 @@ export function PokerGame({
 
     const timer = setInterval(() => {
       setNextHandCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          if (onNextHand) onNextHand();
+          if (prev <= 1) {
+            clearInterval(timer);
+          if (gameState.mode === 'offline' && onNextHand) onNextHand();
           return 0;
         }
         return prev - 1;
@@ -286,7 +286,7 @@ export function PokerGame({
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [gameState.stage, onNextHand]);
+  }, [gameState.stage, gameState.mode, onNextHand]);
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
@@ -661,7 +661,7 @@ export function PokerGame({
 
               {/* Action Buttons: Next Hand & Lobby */}
               <div className="space-y-1.5 pt-1">
-                {!gameState.isMatchOver && (
+                {gameState.mode === 'offline' && !gameState.isMatchOver && (
                   <button
                     type="button"
                     onClick={onNextHand}

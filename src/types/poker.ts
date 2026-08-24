@@ -124,4 +124,5 @@ export interface PokerGameState {
   tableId?: string;
   waitingForPlayers?: boolean;
   connectionDeadlineAt?: number | null;
+  stateVersion?: number;
 }

@@ -566,6 +566,8 @@ interface ActiveMatch {
   payoutResult?: any;
   turnTimeoutSec?: number;
   creatorUserId?: string;
+  /** Monotonic version of a persistent table snapshot. */
+  stateVersion?: number;
 }
 
 
@@ -1111,11 +1113,12 @@ async function loadCasinoRuntimeSnapshots() {
   if (CASINO_TABLES_DB_MODE) {
     const { data, error } = await supabaseAdmin
       .from('casino_table_runtime')
-      .select('table_id,state,updated_at')
+      .select('table_id,state,updated_at,revision')
       .in('phase', ['active', 'paused']);
     if (error) throw new Error(`Could not load casino runtimes: ${error.message}`);
-    (data || []).forEach((row: { table_id: string; state: unknown; updated_at: string }) => {
+    (data || []).forEach((row: { table_id: string; state: unknown; updated_at: string; revision?: number }) => {
       casinoManager.restoreRuntime(row.table_id, row.state, Date.parse(row.updated_at) || Date.now());
+      casinoRuntimeStateVersions.set(row.table_id, Math.max(1, Number(row.revision) || 1));
     });
     return;
   }
@@ -1129,6 +1132,21 @@ async function loadCasinoRuntimeSnapshots() {
 }
 
 const casinoRuntimePersistTails = new Map<string, Promise<void>>();
+// Preserve ordering across Render restarts: a client must not discard the
+// newly recovered state as older than its last SSE update.
+const casinoRuntimeStateVersions = new Map<string, number>();
+const casinoTableMutationTails = new Map<string, Promise<unknown>>();
+
+/** Serialize wallet, seat and game mutations for one permanent table. */
+function runCasinoTableMutation<T>(tableId: string, operation: () => Promise<T> | T): Promise<T> {
+  const previous = casinoTableMutationTails.get(tableId) || Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  casinoTableMutationTails.set(tableId, next);
+  void next.finally(() => {
+    if (casinoTableMutationTails.get(tableId) === next) casinoTableMutationTails.delete(tableId);
+  }).catch(() => undefined);
+  return next;
+}
 
 async function persistCasinoRuntimeNow(tableId: string) {
   const table = casinoManager.getTable(tableId);
@@ -3525,7 +3543,10 @@ function startNextBlackjackRound(match: ActiveMatch) {
     bj.players = bj.players.filter((player) =>
       !(player as any).pendingTableRemoval && player.isConnected !== false
     );
-    if (bj.players.length === 0) {
+    const humanPlayers = bj.players.filter((player) => !player.isAi && !String(player.userId).startsWith('bot_'));
+    // A shared multiplayer blackjack table must not deal a human into the
+    // middle of a bot round or leave a single buyer on a phantom opponent.
+    if (humanPlayers.length < 2) {
       bj.stage = 'round_ended';
       bj.nextRoundStartsAt = null;
       return;
@@ -3625,6 +3646,9 @@ function applyBlackjackAction(match: ActiveMatch, userId: string, action: string
   }
 
   if (action === 'blackjack_next_hand' || action === 'next_hand') {
+    if (match.creatorUserId === 'casino') {
+      throw new Error('Persistent tables start the next hand on the server.');
+    }
     if (bj.stage === 'round_ended') {
       startNextBlackjackRound(match);
       schedulePersist({ matchId: match.matchId });
@@ -4355,6 +4379,9 @@ function applyPokerAction(match: ActiveMatch, userId: string, rawAction: string,
 
   const action = rawAction.replace(/^poker_/, '');
   if (action === 'next_hand' || action === 'poker_next_hand') {
+    if (match.creatorUserId === 'casino') {
+      throw new Error('Persistent tables start the next hand on the server.');
+    }
     if (pk.stage === 'ended') {
       startNextPokerRound(match);
       return;
@@ -4641,6 +4668,7 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
     matchId: match.matchId,
     roomCode: (match as any).roomCode,
     nextRoundStartsAt: pk.nextRoundStartsAt || null,
+    stateVersion: match.stateVersion || 0,
     waitingForPlayers: !match.playStartedAt,
     connectionDeadlineAt: match.connectionDeadlineAt || null,
   };
@@ -4758,6 +4786,7 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
     turnStartedAt: bj.turnStartedAt,
     matchId: match.matchId,
     roomCode: (match as any).roomCode,
+    stateVersion: match.stateVersion || 0,
     waitingForPlayers: !match.playStartedAt,
     connectionDeadlineAt: match.connectionDeadlineAt || null,
   };
@@ -5734,7 +5763,14 @@ function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
 function broadcastMatch(matchId: string) {
   const activeMatch = getActiveMatchOrCasino(matchId);
   const subscribers = matchSubscribers.get(matchId);
-  if (!activeMatch || !subscribers) return;
+  if (!activeMatch) return;
+  // SSE and fallback polling may be delivered out of order.  A permanent
+  // table therefore advances a server-owned snapshot version on each push.
+  if (activeMatch.creatorUserId === 'casino') {
+    activeMatch.stateVersion = (activeMatch.stateVersion || 0) + 1;
+    casinoRuntimeStateVersions.set(matchId, activeMatch.stateVersion);
+  }
+  if (!subscribers) return;
   subscribers.forEach((response) => {
     const userId = response.locals.userId as string | undefined;
     if (!userId) return;
@@ -8608,6 +8644,7 @@ function getActiveMatchOrCasino(matchId: string): ActiveMatch | undefined {
         players: [],
         createdAt: Date.now(),
         creatorUserId: 'casino',
+        stateVersion: casinoRuntimeStateVersions.get(table.id) || 1,
         stake: table.minBuyIn,
         // A persistent table is already a live runtime. It must never enter
         // the one-off public matchmaking connection lobby.
@@ -8738,49 +8775,55 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
   });
 });
 
-app.post('/api/matches/action', requireAuth, (req: AuthenticatedRequest, res) => {
-  const { matchId, action, cardId, chosenColor, amount } = req.body as {
+app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const { matchId, action, cardId, chosenColor, amount, expectedStateVersion } = req.body as {
     matchId: string;
     action: string;
     cardId?: string;
     chosenColor?: CardColor;
     amount?: number;
+    expectedStateVersion?: number;
   };
   const userId = getAuthenticatedUserId(req);
-
-  const activeMatch = getActiveMatchOrCasino(matchId);
-  if (!activeMatch) {
-    return res.status(404).json({ error: 'Match not found.' });
-  }
-
   try {
-    if (activeMatch.gameType === 'poker' || activeMatch.pokerGameState || action.startsWith('poker_') || action === 'fold' || action === 'check' || action === 'call' || action === 'raise' || action === 'all_in') {
-      applyPokerAction(activeMatch, userId, action, amount);
-    } else if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand' || action === 'place_bet' || action === 'bet') {
-      applyBlackjackAction(activeMatch, userId, action, amount);
-    } else if (action === 'play') {
-      if (!cardId) {
-        return res.status(400).json({ error: 'Missing cardId for play action.' });
+    const result = await runCasinoTableMutation(matchId, async () => {
+      const activeMatch = getActiveMatchOrCasino(matchId);
+      if (!activeMatch) {
+        const error: any = new Error('Match not found.');
+        error.statusCode = 404;
+        throw error;
       }
-      applyPlayAction(activeMatch, userId, cardId, chosenColor);
-    } else if (action === 'draw') {
-      applyDrawAction(activeMatch, userId);
-    } else if (action === 'pass') {
-      applyPassAction(activeMatch, userId);
-    } else {
-      return res.status(400).json({ error: 'Unsupported action.' });
-    }
+      if (activeMatch.creatorUserId === 'casino' && Number.isFinite(expectedStateVersion)
+        && Number(expectedStateVersion) !== (activeMatch.stateVersion || 0)) {
+        const error: any = new Error('Table state changed. Refreshing the current turn.');
+        error.statusCode = 409;
+        error.currentState = buildPerspectiveState(activeMatch, userId);
+        throw error;
+      }
+      if (activeMatch.gameType === 'poker' || activeMatch.pokerGameState || action.startsWith('poker_') || action === 'fold' || action === 'check' || action === 'call' || action === 'raise' || action === 'all_in') {
+        applyPokerAction(activeMatch, userId, action, amount);
+      } else if (activeMatch.gameType === 'blackjack' || activeMatch.blackjackGameState || action.startsWith('blackjack_') || action === 'hit' || action === 'stand' || action === 'double' || action === 'next_hand' || action === 'place_bet' || action === 'bet') {
+        applyBlackjackAction(activeMatch, userId, action, amount);
+      } else if (action === 'play') {
+        if (!cardId) throw new Error('Missing cardId for play action.');
+        applyPlayAction(activeMatch, userId, cardId, chosenColor);
+      } else if (action === 'draw') {
+        applyDrawAction(activeMatch, userId);
+      } else if (action === 'pass') {
+        applyPassAction(activeMatch, userId);
+      } else {
+        throw new Error('Unsupported action.');
+      }
 
-    const perspective = buildPerspectiveState(activeMatch, userId);
-    broadcastMatch(matchId);
-    return res.json({
-      success: true,
-      ...perspective,
+      broadcastMatch(matchId);
+      return { success: true, ...buildPerspectiveState(activeMatch, userId) };
     });
+    return res.json(result);
   } catch (error) {
-    const status = error instanceof Error && error.message.startsWith('Supabase ') ? 503 : 400;
+    const status = (error as any)?.statusCode || (error instanceof Error && error.message.startsWith('Supabase ') ? 503 : 400);
     return res.status(status).json({
       error: error instanceof Error ? error.message : 'Match action failed.',
+      currentState: (error as any)?.currentState,
     });
   }
 });
@@ -9074,6 +9117,29 @@ setInterval(() => {
   });
 }, 15_000);
 
+function recoverCasinoTickFailure(match: ActiveMatch, error: unknown) {
+  const stage = match.pokerGameState?.stage || match.blackjackGameState?.stage;
+  console.error('Casino table tick recovered', {
+    tableId: match.matchId,
+    stateVersion: match.stateVersion || 0,
+    stage,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  if (match.pokerGameState) {
+    match.pokerGameState.stage = 'idle';
+    match.pokerGameState.nextRoundStartsAt = null;
+    match.pokerGameState.turnStartedAt = Date.now();
+  } else if (match.blackjackGameState) {
+    match.blackjackGameState.stage = 'round_ended';
+    match.blackjackGameState.nextRoundStartsAt = null;
+    match.blackjackGameState.turnStartedAt = Date.now();
+  }
+  broadcastMatch(match.matchId);
+  void persistCasinoRuntime(match.matchId).catch((persistError) => {
+    console.error(`Failed to persist recovered casino table ${match.matchId}`, persistError);
+  });
+}
+
 setInterval(() => {
   const now = Date.now();
   const allMatchesToTick = Array.from(activeMatches.values());
@@ -9135,16 +9201,21 @@ setInterval(() => {
           const isBot = Boolean(currPlayer.isAi || currPlayer.userId.startsWith('bot_') || currPlayer.isConnected === false);
           const limit = isBot ? 1 : 15;
           if (elapsedSec >= limit) {
-            const needed = pk.currentBet - currPlayer.currentBet;
-            if (needed <= 0) {
-              applyPokerAction(match, currPlayer.userId, 'check');
-            } else if (isBot && currPlayer.chips >= needed && Math.random() > 0.5) {
-              applyPokerAction(match, currPlayer.userId, 'call');
-            } else {
-              applyPokerAction(match, currPlayer.userId, 'fold');
+            try {
+              const needed = pk.currentBet - currPlayer.currentBet;
+              if (needed <= 0) {
+                applyPokerAction(match, currPlayer.userId, 'check');
+              } else if (isBot && currPlayer.chips >= needed && Math.random() > 0.5) {
+                applyPokerAction(match, currPlayer.userId, 'call');
+              } else {
+                applyPokerAction(match, currPlayer.userId, 'fold');
+              }
+              broadcastMatch(matchId);
+              schedulePersist({ matchId });
+            } catch (error) {
+              if (match.creatorUserId === 'casino') recoverCasinoTickFailure(match, error);
+              else console.error(`Poker tick failed for ${matchId}`, error);
             }
-            broadcastMatch(matchId);
-            schedulePersist({ matchId });
           }
         }
       }
@@ -9163,8 +9234,11 @@ setInterval(() => {
     if (match.gameType === 'blackjack' && match.blackjackGameState) {
       const bj = match.blackjackGameState;
       if (match.creatorUserId === 'casino' && bj.stage === 'round_ended') {
-        startNextBlackjackRound(match);
-        broadcastMatch(matchId);
+        const humanCount = bj.players.filter((p) => !p.isAi && !p.userId.startsWith('bot_') && p.isConnected !== false).length;
+        if (humanCount >= 2) {
+          startNextBlackjackRound(match);
+          broadcastMatch(matchId);
+        }
         continue;
       }
       if (bj.stage === 'match_ended') {
@@ -9201,13 +9275,18 @@ setInterval(() => {
           const isBot = Boolean(currPlayer.isAi || currPlayer.userId.startsWith('bot_') || currPlayer.isConnected === false);
           const limit = isBot ? 1 : 15;
           if (elapsedSec >= limit) {
-            if (currPlayer.score < 12) {
-              applyBlackjackAction(match, currPlayer.userId, 'hit');
-            } else {
-              applyBlackjackAction(match, currPlayer.userId, 'stand');
+            try {
+              if (currPlayer.score < 12) {
+                applyBlackjackAction(match, currPlayer.userId, 'hit');
+              } else {
+                applyBlackjackAction(match, currPlayer.userId, 'stand');
+              }
+              broadcastMatch(matchId);
+              schedulePersist({ matchId });
+            } catch (error) {
+              if (match.creatorUserId === 'casino') recoverCasinoTickFailure(match, error);
+              else console.error(`Blackjack tick failed for ${matchId}`, error);
             }
-            broadcastMatch(matchId);
-            schedulePersist({ matchId });
           }
         }
       }
@@ -9408,6 +9487,30 @@ setInterval(() => {
 import { casinoManager } from './server/casinoManager';
 
 // --- Casino Endpoints ---
+
+// Render health checks must not depend on Supabase or a live table.  A 200
+// here distinguishes an unhealthy process from a transient game-operation
+// failure and makes deployment alerts actionable.
+app.get('/health', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ status: 'ok', service: 'redoapp-backend', now: Date.now() });
+});
+
+app.get('/api/casino/health', requireAuth, (_req: AuthenticatedRequest, res) => {
+  const tables = casinoManager.getTables().map((table) => {
+    const state: any = casinoManager.getRuntimeState(table.id);
+    return {
+      tableId: table.id,
+      active: Boolean(table.engine),
+      humanPlayers: table.humanPlayersCount,
+      players: table.playersCount,
+      stage: state?.stage || 'dormant',
+      stateVersion: casinoRuntimeStateVersions.get(table.id) || 0,
+      mutationQueued: casinoTableMutationTails.has(table.id),
+    };
+  });
+  res.json({ status: 'ok', tables });
+});
 
 app.get('/api/casino/tables', (req, res) => {
   const mode = req.query.mode as 'public' | 'free';

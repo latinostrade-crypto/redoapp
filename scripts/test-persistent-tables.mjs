@@ -38,6 +38,8 @@ async function request(userId, endpoint, options = {}) {
 
 try {
   await waitForServer();
+  const health = await fetch(`${baseUrl}/health`);
+  assert.equal(health.status, 200, 'Render health endpoint must be independent of game state');
   for (const [gameType, mode] of [['poker', 'public'], ['poker', 'free'], ['blackjack', 'public'], ['blackjack', 'free']]) {
     const response = await fetch(`${baseUrl}/api/casino/tables?gameType=${gameType}&mode=${mode}`);
     assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
@@ -82,6 +84,26 @@ try {
   const afterSecondSeat = await request('poker_table_user_one', `/api/matches/state/${pokerTableId}`);
   assert.equal(afterSecondSeat.pokerGameState.players.length, 2, 'two humans must occupy the human-only table');
   assert.equal(afterSecondSeat.pokerGameState.stage, 'preflop', 'the human hand must start through the authoritative tick');
+  assert.ok(afterSecondSeat.pokerGameState.stateVersion > afterFirstSeat.pokerGameState.stateVersion,
+    'human join/start transitions must have a newer authoritative snapshot version');
+  const activePlayer = afterSecondSeat.pokerGameState.players[afterSecondSeat.pokerGameState.currentPlayerIndex];
+  const action = activePlayer.currentBet < afterSecondSeat.pokerGameState.currentBet ? 'call' : 'check';
+  const actionResult = await request(activePlayer.userId, '/api/matches/action', {
+    method: 'POST',
+    body: JSON.stringify({
+      matchId: pokerTableId,
+      action,
+      expectedStateVersion: afterSecondSeat.pokerGameState.stateVersion,
+    }),
+  });
+  assert.ok(actionResult.pokerGameState.stateVersion > afterSecondSeat.pokerGameState.stateVersion,
+    'a player action must publish a strictly newer state for every client');
+  const staleAction = await fetch(`${baseUrl}/api/matches/action`, {
+    method: 'POST',
+    headers: { 'x-user-id': activePlayer.userId, 'content-type': 'application/json' },
+    body: JSON.stringify({ matchId: pokerTableId, action, expectedStateVersion: afterSecondSeat.pokerGameState.stateVersion }),
+  });
+  assert.equal(staleAction.status, 409, 'a delayed action must not apply to a later table state');
   console.log('Persistent table checks passed.');
 } finally {
   if (!server.killed) server.kill('SIGTERM');

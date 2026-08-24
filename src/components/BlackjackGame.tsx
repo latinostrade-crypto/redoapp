@@ -581,7 +581,7 @@ export function BlackjackGame({
 
               {/* Action Buttons */}
               <div className="space-y-1 pt-0.5">
-                {gameState.stage === 'round_ended' && (
+                {gameState.mode === 'offline' && gameState.stage === 'round_ended' && (
                   <button
                     type="button"
                     onClick={onNextHand}

@@ -91,6 +91,16 @@ export function useBlackjackGame(options?: {
   // Online Multiplayer state tracking
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
   const settledRef = useRef<boolean>(false);
+  const remoteStateVersionRef = useRef(0);
+
+  const applyRemoteState = useCallback((state: BlackjackGameState) => {
+    const version = Number(state.stateVersion || 0);
+    if (version && version < remoteStateVersionRef.current) return false;
+    if (version) remoteStateVersionRef.current = version;
+    setGameState(state);
+    if (typeof state.turnTimeLeft === 'number') setTurnTimeLeft(state.turnTimeLeft);
+    return true;
+  }, []);
 
   const clearDealingTimeouts = () => {
     dealingTimeoutsRef.current.forEach((t) => clearTimeout(t));
@@ -109,10 +119,7 @@ export function useBlackjackGame(options?: {
       );
       const state = result.blackjackGameState || result.gameState;
       if (state) {
-        setGameState(state);
-        if (typeof state.turnTimeLeft === 'number') {
-          setTurnTimeLeft(state.turnTimeLeft);
-        }
+        applyRemoteState(state);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err || '');
@@ -124,7 +131,7 @@ export function useBlackjackGame(options?: {
         }
       }
     }
-  }, [remoteMatchId, options]);
+  }, [remoteMatchId, options, applyRemoteState]);
 
   /**
    * Advance to the next player's turn or start Dealer turn if all finished (Offline Mode)
@@ -423,7 +430,7 @@ export function useBlackjackGame(options?: {
             }
           );
           const state = result.blackjackGameState || result.gameState;
-          if (state) setGameState(state);
+          if (state) applyRemoteState(state);
         } catch (err) {
           console.error('Blackjack place_bet error', err);
           syncRemoteMatchState();
@@ -578,7 +585,7 @@ export function useBlackjackGame(options?: {
           }
         );
         const state = result.blackjackGameState || result.gameState;
-        if (state) setGameState(state);
+        if (state) applyRemoteState(state);
       } catch (err) {
         console.error('Blackjack hit action error', err);
         syncRemoteMatchState();
@@ -641,7 +648,7 @@ export function useBlackjackGame(options?: {
           }
         );
         const state = result.blackjackGameState || result.gameState;
-        if (state) setGameState(state);
+        if (state) applyRemoteState(state);
       } catch (err) {
         console.error('Blackjack stand action error', err);
         syncRemoteMatchState();
@@ -683,7 +690,7 @@ export function useBlackjackGame(options?: {
           }
         );
         const state = result.blackjackGameState || result.gameState;
-        if (state) setGameState(state);
+        if (state) applyRemoteState(state);
       } catch (err) {
         console.error('Blackjack double action error', err);
         syncRemoteMatchState();
@@ -742,7 +749,7 @@ export function useBlackjackGame(options?: {
             }
           );
           const state = result.blackjackGameState || result.gameState;
-          if (state) setGameState(state);
+          if (state) applyRemoteState(state);
         } catch (err) {
           console.error('Blackjack next_hand action error', err);
           syncRemoteMatchState();
@@ -772,10 +779,7 @@ export function useBlackjackGame(options?: {
         const payload = JSON.parse((event as MessageEvent).data);
         const bjState: BlackjackGameState = payload.blackjackGameState || payload.gameState;
         if (bjState) {
-          setGameState(bjState);
-          if (typeof bjState.turnTimeLeft === 'number') {
-            setTurnTimeLeft(bjState.turnTimeLeft);
-          }
+          if (!applyRemoteState(bjState)) return;
 
           if (bjState.stage === 'match_ended' && !settledRef.current) {
             settledRef.current = true;
@@ -820,7 +824,7 @@ export function useBlackjackGame(options?: {
         remoteMatchStreamRef.current = null;
       }
     };
-  }, [options, remoteMatchId, syncRemoteMatchState]);
+  }, [options, remoteMatchId, syncRemoteMatchState, applyRemoteState]);
 
   // Continuous Polling during Online Match Setup and Gameplay
   useEffect(() => {
