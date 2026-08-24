@@ -792,7 +792,7 @@ export function Web3Dashboard({
     let active = true;
     const fetchTables = async () => {
       try {
-        const res = await apiRequest<{ success: boolean; tables: any[] }>(`/api/casino/tables?gameType=${pvpGameTab}&mode=${pvpSubMode}`);
+        const res = await apiRequest<{ success: boolean; tables: any[] }>(`/api/casino/tables?gameType=${pvpGameTab}&mode=${pvpSubMode}&_t=${Date.now()}`);
         if (active && res.success) {
           setCasinoTables(res.tables || []);
         }
@@ -6265,13 +6265,10 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => setJoinTablePrompt({ table, gameType: 'blackjack' })}
-                            disabled={table.playersCount >= table.maxPlayers}
-                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
-                              table.playersCount >= table.maxPlayers 
-                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-                                : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
-                            }`}
+                            onClick={() => {
+                              if (onStartBlackjackGame) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
+                            }}
+                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#00ff66] text-black cursor-pointer hover:bg-green-400`}
                           >
                             OPEN
                           </button>
@@ -6321,13 +6318,10 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => setJoinTablePrompt({ table, gameType: 'blackjack' })}
-                            disabled={table.playersCount >= table.maxPlayers}
-                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
-                              table.playersCount >= table.maxPlayers 
-                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-                                : 'bg-[#00ff66] text-black cursor-pointer hover:bg-green-400'
-                            }`}
+                            onClick={() => {
+                              if (onStartBlackjackGame) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
+                            }}
+                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#00ff66] text-black cursor-pointer hover:bg-green-400`}
                           >
                             OPEN
                           </button>

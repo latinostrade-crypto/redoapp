@@ -370,7 +370,7 @@ interface ServerPokerPlayer {
 
 interface ServerPokerGameState {
   deck: ServerPokerCard[];
-  stage: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended' | 'match_ended';
+  stage: 'idle' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended' | 'match_ended';
   pot: number;
   currentBet: number;
   minRaise: number;
@@ -559,6 +559,7 @@ interface ActiveMatch {
   pokerGameState?: ServerPokerGameState;
   payoutResult?: any;
   turnTimeoutSec?: number;
+  creatorUserId?: string;
 }
 
 
@@ -8579,10 +8580,10 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
             user.availableTickets = round2(user.availableTickets + (leaveResult.chips / 100));
             createLedgerEntry(user, {
               id: `casino-leave:${matchId}:${userId}:${Date.now()}`,
+              event: 'Table Refund',
               amount: leaveResult.chips / 100,
               type: 'match_refund',
-              description: 'Left public casino table',
-              balanceAfter: user.availableTickets
+              value: `+${leaveResult.chips} CHIPS`
             });
           }
           broadcastMatch(matchId);

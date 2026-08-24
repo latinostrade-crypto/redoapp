@@ -969,7 +969,7 @@ export function PokerGame({
                       }
                     } catch (err) {
                       console.error(err);
-                      alert('Error joining table');
+                      alert(err instanceof Error ? err.message : 'Error joining table');
                     }
                   }} 
                   className="flex-1 px-2 py-2 bg-[#ffcc00] text-black text-[9px] border border-black font-bold uppercase hover:bg-yellow-400"
