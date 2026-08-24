@@ -21,9 +21,9 @@ export class CasinoManager {
 
   public ensureTables() {
     const configs = [
-      { gameType: 'poker', mode: 'free', minBuyIn: 10, maxPlayers: 10 },
+      { gameType: 'poker', mode: 'free', minBuyIn: 100, maxPlayers: 10 },
       { gameType: 'poker', mode: 'public', minBuyIn: 50, maxPlayers: 10 },
-      { gameType: 'blackjack', mode: 'free', minBuyIn: 10, maxPlayers: 4 },
+      { gameType: 'blackjack', mode: 'free', minBuyIn: 100, maxPlayers: 4 },
       { gameType: 'blackjack', mode: 'public', minBuyIn: 50, maxPlayers: 4 }
     ] as const;
 
@@ -74,6 +74,9 @@ export class CasinoManager {
     const table = this.tables.get(tableId);
     if (!table) throw new Error("Table not found");
     if (table.playersCount >= table.maxPlayers) throw new Error("Table is full");
+    if (isAi && (table.mode === 'public' || table.mode === 'free')) {
+      throw new Error("AI is not allowed on public/free tables");
+    }
 
     table.engine.addPlayer(userId, username, avatarId, chips, isAi);
     table.playersCount++;
@@ -84,7 +87,8 @@ export class CasinoManager {
       const state = (table.engine as any).state;
       if (state.stage === 'idle' || state.stage === 'ended' || state.stage === 'match_ended') {
         const activePlayers = state.players.filter((p: any) => !p.eliminated && p.chips > 0);
-        if (activePlayers.length >= 2) {
+        const realPlayersCount = activePlayers.filter((p: any) => !p.isAi).length;
+        if (activePlayers.length >= 2 && (table.mode === 'practice' || realPlayersCount >= 2)) {
           (table.engine as any).startHand();
         }
       }

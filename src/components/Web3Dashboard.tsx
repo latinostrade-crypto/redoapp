@@ -784,6 +784,7 @@ export function Web3Dashboard({
     return initialLaunchRoomParsedRef.current.gameType || 'uno';
   });
   const [casinoTables, setCasinoTables] = useState<any[]>([]);
+  const [joinTablePrompt, setJoinTablePrompt] = useState<{table: any, gameType: string} | null>(null);
   const [showPayoutDetails, setShowPayoutDetails] = useState(false);
 
   useEffect(() => {
@@ -6106,11 +6107,7 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => {
-                              if (onStartPokerGame) {
-                                onStartPokerGame('pvp', table.minBuyIn, table.id, undefined);
-                              }
-                            }}
+                            onClick={() => setJoinTablePrompt({ table, gameType: 'poker' })}
                             disabled={table.playersCount >= table.maxPlayers}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
                               table.playersCount >= table.maxPlayers 
@@ -6166,11 +6163,7 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => {
-                              if (onStartPokerGame) {
-                                onStartPokerGame('pvp', 0, table.id, undefined);
-                              }
-                            }}
+                            onClick={() => setJoinTablePrompt({ table, gameType: 'poker' })}
                             disabled={table.playersCount >= table.maxPlayers}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
                               table.playersCount >= table.maxPlayers 
@@ -6278,11 +6271,7 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => {
-                              if (onStartBlackjackGame) {
-                                onStartBlackjackGame('pvp', table.minBuyIn, table.id, undefined);
-                              }
-                            }}
+                            onClick={() => setJoinTablePrompt({ table, gameType: 'blackjack' })}
                             disabled={table.playersCount >= table.maxPlayers}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
                               table.playersCount >= table.maxPlayers 
@@ -6338,11 +6327,7 @@ export function Web3Dashboard({
                           <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
                           <button 
                             type="button"
-                            onClick={() => {
-                              if (onStartBlackjackGame) {
-                                onStartBlackjackGame('pvp', 0, table.id, undefined);
-                              }
-                            }}
+                            onClick={() => setJoinTablePrompt({ table, gameType: 'blackjack' })}
                             disabled={table.playersCount >= table.maxPlayers}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors ${
                               table.playersCount >= table.maxPlayers 
@@ -6748,6 +6733,89 @@ export function Web3Dashboard({
           </div>
         </div>
       )}
+      {/* Join Table Prompt Modal */}
+      <AnimatePresence>
+        {joinTablePrompt && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 10 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 10 }}
+              className="bg-[#18181c] border-[4px] border-black p-5 max-w-sm w-full font-mono text-center shadow-[6px_6px_0_#000]"
+            >
+              <h3 className="text-[#ffcc00] font-black text-xl uppercase mb-4 tracking-wide text-shadow-sm">Take a Seat</h3>
+              
+              {joinTablePrompt.table.mode === 'free' ? (
+                <div className="space-y-3 mb-6">
+                  <p className="text-white text-xs leading-relaxed">
+                    Take a seat at Table {joinTablePrompt.table.name || joinTablePrompt.table.id.split('-').pop()}?
+                  </p>
+                  <div className="bg-black/50 p-3 border border-slate-700 rounded-sm inline-block">
+                    <p className="text-white text-[10px]">
+                      Cost: <span className="text-[#00ff66] font-black">⚡ 2 Energy</span><br />
+                      You receive: <span className="text-[#ffcc00] font-black">100 Free Chips</span>
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 mb-6">
+                  <p className="text-white text-xs leading-relaxed">
+                    Take a seat at Table {joinTablePrompt.table.name || joinTablePrompt.table.id.split('-').pop()}?
+                  </p>
+                  <div className="bg-black/50 p-3 border border-slate-700 rounded-sm inline-block">
+                    <p className="text-white text-[10px]">
+                      Buy-in: <span className="text-[#ffcc00] font-black">{joinTablePrompt.table.minBuyIn} Chips</span><br />
+                      <span className="text-slate-400 text-[9px]">(1 Ticket = 100 Chips)</span>
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 justify-center">
+                <button
+                  type="button"
+                  onClick={() => setJoinTablePrompt(null)}
+                  className="flex-1 px-4 py-2 bg-slate-800 text-white border-2 border-black font-black text-[10px] uppercase hover:bg-slate-700 transition-colors pixel-btn-interactive"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const { table, gameType } = joinTablePrompt;
+                    try {
+                      const res = await apiRequest<{ success: boolean; error?: string }>('/api/casino/join-table', {
+                        method: 'POST',
+                        body: JSON.stringify({ tableId: table.id })
+                      });
+                      if (res.success) {
+                        setJoinTablePrompt(null);
+                        if (gameType === 'poker' && onStartPokerGame) {
+                          onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
+                        } else if (gameType === 'blackjack' && onStartBlackjackGame) {
+                          onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
+                        }
+                      } else {
+                        alert(res.error || 'Failed to join table');
+                      }
+                    } catch (e: any) {
+                      alert(e.message || 'Failed to join table');
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 bg-[#ffcc00] text-black border-2 border-black font-black text-[10px] uppercase hover:bg-yellow-400 transition-colors pixel-btn-interactive"
+                >
+                  Take Seat
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
