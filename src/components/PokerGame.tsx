@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PokerCard, PokerGameState } from '../types/poker';
 import { apiRequest } from '../utils/api';
+import { useUserProfile } from '../hooks/useUserProfile';
 import { sound } from '../utils/sound';
 import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, Minus, Loader2 } from 'lucide-react';
 import { Avatar } from './Avatars';
@@ -167,10 +168,33 @@ export function PokerGame({
   const isSpectator = !gameState.players.find((p) => p.id === 'player');
   const [showBuyInModal, setShowBuyInModal] = useState(false);
   const [buyInAmount, setBuyInAmount] = useState(200);
+  const [exchangeAmount, setExchangeAmount] = useState(1);
+  const [isExchanging, setIsExchanging] = useState(false);
+  const { profile, fetchProfile } = useUserProfile();
 
   const handleTakeSeat = async () => {
-    // If it's private/pvp we don't know the mode from GameState directly, but we can try to just show modal
     setShowBuyInModal(true);
+  };
+
+  const handleExchange = async () => {
+    if (isExchanging) return;
+    setIsExchanging(true);
+    try {
+      const res = await apiRequest<{success: boolean}>('/api/casino/exchange', {
+        method: 'POST',
+        body: JSON.stringify({ direction: 'tkt_to_chips', amount: exchangeAmount })
+      });
+      if (res.success) {
+        await fetchProfile();
+        setExchangeAmount(1);
+      } else {
+        alert('Exchange failed');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsExchanging(false);
+    }
   };
 
   const handleConfirmBuyIn = async () => {
@@ -181,7 +205,7 @@ export function PokerGame({
       });
       if (res.success) {
         setShowBuyInModal(false);
-        window.location.reload(); // Quick refresh to catch socket update
+        window.location.reload();
       }
     } catch (err) {
       console.error(err);
@@ -851,6 +875,61 @@ export function PokerGame({
         </div>
       )}
       <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="absolute bottom-2 left-2 z-40" />
+
+      {/* BUY IN MODAL */}
+      <AnimatePresence>
+        {showBuyInModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 font-mono"
+          >
+            <div className="bg-[#18181c] border-2 border-[#ffcc00] pixel-box-sm p-4 flex flex-col items-center gap-3 w-72 shadow-[0_0_20px_rgba(255,204,0,0.3)]">
+              <h2 className="text-[#ffcc00] font-black text-xs uppercase text-center w-full border-b border-[#ffcc00]/30 pb-2">Buy In</h2>
+              <div className="text-center w-full space-y-1">
+                <div className="text-[9px] text-slate-300">Balance: <span className="text-[#00ff66] font-bold">{(profile?.casinoChips || 0).toFixed(0)} Chips</span></div>
+                <div className="text-[9px] text-slate-300">Tickets: <span className="text-pink-400 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
+              </div>
+              
+              <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
+                <div className="text-[8px] text-slate-400 mb-1 font-bold">Convert TKT to Chips (1 TKT = 100 Chips):</div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={exchangeAmount}
+                    onChange={e => setExchangeAmount(Number(e.target.value))}
+                    className="bg-black border border-pink-500/50 text-pink-400 font-bold px-2 py-1 text-center text-[10px] w-full"
+                  />
+                  <button 
+                    onClick={handleExchange} 
+                    disabled={isExchanging}
+                    className="px-2 py-1 bg-pink-900 text-pink-200 text-[8px] border border-pink-700 font-bold uppercase hover:bg-pink-800 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    Convert
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1 w-full">
+                <div className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</div>
+                <input
+                  type="number"
+                  min={100}
+                  step={50}
+                  value={buyInAmount}
+                  onChange={e => setBuyInAmount(Number(e.target.value))}
+                  className="bg-black border border-[#ffcc00] text-[#ffcc00] font-bold px-2 py-1.5 text-center text-[10px] w-full"
+                />
+              </div>
+              <div className="flex gap-2 w-full mt-2">
+                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">Cancel</button>
+                <button onClick={handleConfirmBuyIn} className="flex-1 px-2 py-2 bg-[#ffcc00] text-black text-[9px] border border-black font-bold uppercase hover:bg-yellow-400">Join Table</button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

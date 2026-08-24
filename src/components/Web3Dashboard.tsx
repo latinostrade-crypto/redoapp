@@ -800,7 +800,7 @@ export function Web3Dashboard({
       }
     };
     fetchTables();
-    const interval = setInterval(fetchTables, 5000);
+    const interval = setInterval(fetchTables, 1500);
     return () => { active = false; clearInterval(interval); };
   }, [currentTab, pvpGameTab, pvpSubMode]);
 

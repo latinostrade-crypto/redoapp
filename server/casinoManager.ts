@@ -78,6 +78,26 @@ export class CasinoManager {
     table.engine.addPlayer(userId, username, avatarId, chips, isAi);
     table.playersCount++;
     this.ensureTables();
+
+    // Auto-start game if waiting
+    if (table.gameType === 'poker') {
+      const state = (table.engine as any).state;
+      if (state.stage === 'idle' || state.stage === 'ended' || state.stage === 'match_ended') {
+        const activePlayers = state.players.filter((p: any) => !p.eliminated && p.chips > 0);
+        if (activePlayers.length >= 2) {
+          (table.engine as any).startHand();
+        }
+      }
+    } else if (table.gameType === 'blackjack') {
+      const state = (table.engine as any).state;
+      if (state.stage === 'idle' || state.stage === 'round_ended' || state.stage === 'match_ended') {
+        const activePlayers = state.players.filter((p: any) => !p.isBusted && p.chips > 0);
+        if (activePlayers.length >= 1) {
+          (table.engine as any).startRound();
+        }
+      }
+    }
+
     return table;
   }
 
