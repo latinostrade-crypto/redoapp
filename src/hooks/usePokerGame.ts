@@ -642,7 +642,7 @@ export function usePokerGame(options?: {
           ...prev,
           pot: nextPot,
           currentBet: newCurrentBet,
-          minRaise: newCurrentBet + BIG_BLIND,
+          minRaise: newCurrentBet + Math.max(BIG_BLIND, newCurrentBet - prev.currentBet),
           players: updatedPlayers,
         };
       });

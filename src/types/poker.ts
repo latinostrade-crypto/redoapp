@@ -53,6 +53,8 @@ export interface PokerPlayer {
   lastAction?: string; // e.g. 'CHECK', 'CALL', 'RAISE 10', 'FOLD', 'ALL-IN'
   hasActedThisStage?: boolean;
   eliminated?: boolean;
+  hasShownCards?: boolean;
+  mucked?: boolean;
   isConnected?: boolean;
   disconnectedAt?: number | null;
   chipBalance?: number; // Total global chip balance of the player
@@ -84,9 +86,15 @@ export interface PokerGameLog {
   type: 'info' | 'bet' | 'fold' | 'deal' | 'win';
 }
 
+export interface PokerSidePot {
+  amount: number;
+  eligiblePlayerIds: PokerPlayerId[];
+}
+
 export interface PokerGameState {
   stage: PokerStage;
   pot: number;
+  sidePots?: PokerSidePot[];
   currentBet: number; // Minimum bet amount required to call in current betting round
   minRaise: number;
   communityCards: PokerCard[];

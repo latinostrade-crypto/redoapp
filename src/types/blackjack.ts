@@ -16,7 +16,7 @@ export interface BlackjackCard {
   hidden?: boolean;
 }
 
-export type BlackjackHandStatus = 'playing' | 'stood' | 'busted' | 'blackjack';
+export type BlackjackHandStatus = 'playing' | 'stood' | 'busted' | 'blackjack' | 'surrendered';
 
 export interface BlackjackPlayer {
   id: string;
@@ -31,10 +31,25 @@ export interface BlackjackPlayer {
   hasBlackjack: boolean;
   status: BlackjackHandStatus;
   wins: number;
+  
+  isInsured?: boolean;
+  surrendered?: boolean;
+  
+  hasSplit?: boolean;
+  splitCards?: BlackjackCard[];
+  splitBet?: number;
+  splitScore?: number;
+  splitIsSoft?: boolean;
+  splitIsBusted?: boolean;
+  splitHasBlackjack?: boolean;
+  splitStatus?: BlackjackHandStatus;
+  splitWins?: number;
+  activeHand?: 1 | 2;
+
   isAi?: boolean;
   eliminated?: boolean;
   lastProfit?: number;
-  chipBalance?: number; // Total global chip balance of the player
+  chipBalance?: number;
 }
 
 export interface BlackjackTable {
@@ -48,7 +63,7 @@ export interface BlackjackTable {
 
 export type BlackjackStage = 'idle' | 'betting' | 'player_turn' | 'dealer_turn' | 'round_ended' | 'match_ended';
 
-export type BlackjackActionType = 'hit' | 'stand' | 'double' | 'next_hand' | 'place_bet';
+export type BlackjackActionType = 'hit' | 'stand' | 'double' | 'split' | 'surrender' | 'insurance' | 'next_hand' | 'place_bet';
 
 export interface BlackjackGameState {
   stage: BlackjackStage;
