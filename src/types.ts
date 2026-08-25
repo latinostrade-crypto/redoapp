@@ -186,6 +186,7 @@ export interface PlayerProfile {
   activeMatch?: {
     matchId: string;
     mode: 'pvp' | 'private';
+    gameType?: 'uno' | 'poker' | 'blackjack';
     stake: number;
     roomCode?: string | null;
     gameState?: GameState;

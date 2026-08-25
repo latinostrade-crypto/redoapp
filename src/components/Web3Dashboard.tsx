@@ -25,9 +25,6 @@ const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'red
 const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
 const MIN_MATCH_PLAYERS = 2;
 const MAX_MATCH_PLAYERS = 4;
-// Keep the UI in sync with the backend's no-opponent expiry. Compatible pairs
-// still launch immediately; this window only covers cold starts and Telegram
-// WebView reconnects before the other player's join request reaches Render.
 const MATCHMAKING_TIMEOUT_SEC = 75;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 2;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
@@ -733,24 +730,17 @@ const TournamentCountdown = React.memo(function TournamentCountdown({
   return <>{countdown}</>;
 });
 
-const MatchmakingCountdown = React.memo(function MatchmakingCountdown({
-  deadlineAt,
-}: {
-  deadlineAt: number;
-}) {
+const MatchmakingCountdown = React.memo(function MatchmakingCountdown({ deadlineAt }: { deadlineAt: number }) {
   const [seconds, setSeconds] = useState(() => Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
 
   useEffect(() => {
-    const update = () => {
-      if (document.visibilityState === 'hidden') return;
-      setSeconds(Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
-    };
+    const update = () => setSeconds(Math.max(0, Math.ceil((deadlineAt - Date.now()) / 1000)));
     update();
-    const timer = setInterval(update, 1000);
-    return () => clearInterval(timer);
+    const timer = window.setInterval(update, 1_000);
+    return () => window.clearInterval(timer);
   }, [deadlineAt]);
 
-  return <>{seconds}S</>;
+  return <>{seconds}s</>;
 });
 
 export function Web3Dashboard({
@@ -1231,6 +1221,7 @@ export function Web3Dashboard({
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
   const [queueLength, setQueueLength] = useState(1);
+  const [queueSearchDeadlineAt, setQueueSearchDeadlineAt] = useState(0);
   const [publicQueueError, setPublicQueueError] = useState('');
   const [buyingTickets, setBuyingTickets] = useState(false);
   const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
@@ -1296,7 +1287,6 @@ export function Web3Dashboard({
   const publicMatchLaunchTimerRef = useRef<number | null>(null);
   const publicJoinAttemptRef = useRef(0);
   const publicJoinStartedAtRef = useRef(0);
-  const publicQueueDeadlineAtRef = useRef(0);
   const matchmakingStateRef = useRef(matchmakingState);
   const createRequestCounterRef = useRef(0);
   const autoResumedDepositRef = useRef('');
@@ -1355,8 +1345,8 @@ export function Web3Dashboard({
       if (!isAlreadyOpening) {
         launchedPublicMatchRef.current = '';
         publicJoinAttemptRef.current += 1;
-        publicQueueDeadlineAtRef.current = 0;
         setQueueLength(result.players?.length || 1);
+        setQueueSearchDeadlineAt(0);
         setMatchmakingState('success');
       }
 
@@ -2453,8 +2443,8 @@ export function Web3Dashboard({
       queueStreamRef.current?.close();
       queueStreamRef.current = null;
       openingPublicMatchRef.current = '';
-      publicQueueDeadlineAtRef.current = 0;
       setMatchmakingState('idle');
+      setQueueSearchDeadlineAt(0);
       const balance = await apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
       setGoldenTickets(balance.availableTickets);
       setHeldTickets(balance.heldTickets);
@@ -2503,9 +2493,9 @@ export function Web3Dashboard({
     wakeBackend();
     setPublicQueueError('');
     setQueueLength(1);
+    setQueueSearchDeadlineAt(Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000);
     openingPublicMatchRef.current = '';
     try { localStorage.removeItem('redoapp_active_match'); } catch {}
-    publicQueueDeadlineAtRef.current = Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000;
     const joinAttempt = publicJoinAttemptRef.current + 1;
     publicJoinAttemptRef.current = joinAttempt;
     publicJoinStartedAtRef.current = Date.now();
@@ -2548,6 +2538,9 @@ export function Web3Dashboard({
         updateProfileEnergy(result.energy);
       }
       setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
+      if (result.matchmaker?.status === 'searching') {
+        setQueueSearchDeadlineAt(Date.now() + (result.matchmaker.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
+      }
       
       console.log('[Matchmaking UI] POST /join resolved.', 'Status:', result.matchmaker?.status, 'MatchId:', result.matchmaker?.matchId);
       
@@ -2582,6 +2575,7 @@ export function Web3Dashboard({
         if (recovered.status === 'searching') {
           joinSettled = true;
           setQueueLength(recovered.queueLength || 1);
+          setQueueSearchDeadlineAt(Date.now() + (recovered.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
           setMatchmakingState((prev) => {
             if (prev === 'success') return prev;
             return 'searching';
@@ -2603,6 +2597,9 @@ export function Web3Dashboard({
           return;
         }
         setQueueLength(bridged.matchmaker?.players?.length || bridged.matchmaker?.queueLength || 1);
+        if (bridged.matchmaker?.status === 'searching') {
+          setQueueSearchDeadlineAt(Date.now() + (bridged.matchmaker.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
+        }
         setMatchmakingState('searching');
         return;
       } catch (bridgeError) {
@@ -2823,6 +2820,7 @@ export function Web3Dashboard({
           setPvpSubMode('public');
           setSelectedStake(recoveredStake);
           setQueueLength(result.queueLength || 1);
+          setQueueSearchDeadlineAt(Date.now() + (result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
           setMatchmakingState((prev) => {
             if (prev === 'success') return prev;
             return 'searching';
@@ -2863,6 +2861,62 @@ export function Web3Dashboard({
         setFullProfileLoading(false);
       });
   };
+
+  // SSE and the same-origin bridge are accelerators only. Telegram can suspend
+  // either transport without unmounting the dashboard, so an assigned player
+  // must also reconcile against the normal authenticated profile endpoint.
+  // This is the path that guarantees the first queue player enters the table
+  // even if its ready event was missed.
+  useEffect(() => {
+    if (!authReady || !publicMatchmakingActive) return;
+    let disposed = false;
+    let inFlight = false;
+
+    const reconcileAssignedMatch = async () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 });
+        if (disposed) return;
+        const normalized = normalizeProfile(me);
+        setProfile(normalized);
+        setFullProfile(normalized);
+        setGoldenTickets(me.availableTickets);
+        setHeldTickets(me.heldTickets);
+        const activeMatch = normalized?.activeMatch;
+        if (activeMatch?.mode === 'pvp' && activeMatch.matchId) {
+          openPublicMatch({
+            status: 'ready',
+            matchId: activeMatch.matchId,
+            stake: activeMatch.stake,
+            mode: 'pvp',
+            gameType: activeMatch.gameType,
+            players: activeMatch.players,
+            gameState: activeMatch.gameState,
+          }, Number(activeMatch.stake ?? selectedStake));
+        }
+      } catch {
+        // Queue polling and the bridge remain active; a transient profile
+        // failure must not turn a pending search into an error state.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    reconcileAssignedMatch();
+    const timer = window.setInterval(reconcileAssignedMatch, 5_000);
+    const resume = () => {
+      if (document.visibilityState !== 'hidden') reconcileAssignedMatch();
+    };
+    window.addEventListener('pageshow', resume);
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener('pageshow', resume);
+      document.removeEventListener('visibilitychange', resume);
+    };
+  }, [authReady, publicMatchmakingActive, openPublicMatch, selectedStake]);
 
   const loadReferralInvites = (cursor: string | null = null) => {
     if (referralInvitesLoading) return Promise.resolve();
@@ -3746,8 +3800,7 @@ export function Web3Dashboard({
       
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
-        const countdownSec = typeof result.countdownSec === 'number' ? result.countdownSec : MATCHMAKING_TIMEOUT_SEC;
-        publicQueueDeadlineAtRef.current = Date.now() + countdownSec * 1000;
+        setQueueSearchDeadlineAt(Date.now() + (result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
         setMatchmakingState((prev) => {
           if (prev === 'success') {
             console.log('[Matchmaking UI] SSE queue-status searching ignored because state is success.');
@@ -3769,6 +3822,7 @@ export function Web3Dashboard({
         ) return;
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
+        setQueueSearchDeadlineAt(0);
         setPublicQueueError('');
       }
       if (result.status === 'idle') {
@@ -3789,6 +3843,7 @@ export function Web3Dashboard({
         }
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
+        setQueueSearchDeadlineAt(0);
         setPublicQueueError('Matchmaking connection lost or timed out. Please try joining again.');
       }
     };
@@ -5792,8 +5847,10 @@ export function Web3Dashboard({
                 <>
                   {matchmakingState === 'joining' || matchmakingState === 'searching' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                      <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black text-[#00d2ff] text-lg animate-pulse">
-                        ⌁
+                      <div className="relative flex items-center justify-center mx-auto w-12 h-10 bg-slate-950 border border-black text-[#00d2ff]">
+                        <span className="text-[10px] font-black tabular-nums">
+                          <MatchmakingCountdown deadlineAt={queueSearchDeadlineAt || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
+                        </span>
                       </div>
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
@@ -5807,8 +5864,8 @@ export function Web3Dashboard({
                             : queueLength >= 2
                             ? 'Everyone is joining the same table. It will recruit up to 4 players for 10 seconds.'
                             : selectedStake === 0
-                              ? 'Looking for players for a free 2–4 player UNO table.'
-                              : 'Looking for players with the same stake for a 2–4 player UNO table.'}
+                              ? `Searching for a free UNO table: ${queueLength}/2 players needed to open it.`
+                              : `Searching for a ${selectedStake} TKT UNO table: ${queueLength}/2 players needed to open it.`}
                         </p>
                       </div>
                       <button

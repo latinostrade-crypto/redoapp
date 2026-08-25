@@ -5294,6 +5294,16 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   // start independently while the server is still recruiting seats three/four.
   if (recruitmentOpen) return false;
 
+  // Public UNO has one pre-game phase, not a recruitment timer followed by a
+  // second 60-second "connecting" timer. Once the shared 10-second window
+  // closes, every reserved player must already have reached the table or the
+  // table is cancelled without a charge. This prevents one player from seeing
+  // a misleading extra countdown while another is stranded in the dashboard.
+  if (isUnoPublic && !allConnected) {
+    cancelUnstartedPublicMatch(match, 'UNO table connection was not completed during recruitment. Match cancelled.');
+    return false;
+  }
+
   // Other games may fast-start once the minimum human count has connected.
   const connectedHumanCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
   const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS && !isTournament && !isUnoPublic;
@@ -5585,7 +5595,7 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   similarPlayers.sort((a, b) => a.joinedAt - b.joinedAt);
   const oldestPlayer = similarPlayers[0] ?? player;
   const waitedMs = Date.now() - oldestPlayer.joinedAt;
-  const timeoutMs = playerGameType === 'uno' && player.mode === 'pvp' ? 5 * 60_000 : MATCHMAKING_TIMEOUT_MS;
+  const timeoutMs = MATCHMAKING_TIMEOUT_MS;
 
   return {
     status: 'searching',
@@ -5624,9 +5634,7 @@ function expireTimedOutMatchmakingPlayers(now = Date.now()) {
   });
   const expired = matchmakingQueue.filter((player) => {
     const key = `${player.gameType || 'uno'}_${player.mode}_${player.stake}`;
-    const timeoutMs = (player.gameType || 'uno') === 'uno' && player.mode === 'pvp'
-      ? 5 * 60_000
-      : MATCHMAKING_TIMEOUT_MS;
+    const timeoutMs = MATCHMAKING_TIMEOUT_MS;
     return now - player.joinedAt >= timeoutMs
       && (groupSizes.get(key) || 0) < MIN_MATCH_PLAYERS;
   });

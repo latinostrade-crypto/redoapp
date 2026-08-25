@@ -85,6 +85,11 @@ try {
   assert.equal(queueB.status, 'ready');
   assert.equal(queueA.matchId, queueB.matchId, 'matched users must receive one shared match id');
 
+  // This is the non-SSE recovery route used by a first Telegram client that
+  // missed the ready frame while it remained on the dashboard.
+  const profileA = await request('pvp_handoff_a', '/api/me');
+  assert.equal(profileA.activeMatch?.matchId, queueA.matchId, 'profile reconciliation must expose the assigned match to the first player');
+
   const debug = await (await fetch(`${baseUrl}/api/debug/matchmaker`)).json();
   const waitingMatch = debug.activeMatches.find((match) => match.matchId === queueA.matchId);
   assert.ok(waitingMatch, 'the matched table must exist');
