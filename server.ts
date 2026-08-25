@@ -7963,8 +7963,11 @@ function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Reco
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
+    // Helmet's default SAMEORIGIN would otherwise block the cross-origin
+    // Telegram fallback iframe and leave the client waiting forever.
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'unsafe-inline'; frame-ancestors ${parentOrigin}; base-uri 'none'`);
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
   }
   if (req.method === 'GET') {
@@ -8009,8 +8012,11 @@ function sendPrivateRoomJoinSuccess(req: Request, res: Response, payload: Record
       requestId: String(input.bridgeRequestId || ''),
       payload,
     }).replace(/</g, '\\u003c');
+    // Helmet sets SAMEORIGIN globally. This intentional, short-lived bridge
+    // is embedded by the canonical frontend on a different origin.
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'unsafe-inline'; frame-ancestors ${parentOrigin}; base-uri 'none'`);
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
   }
   if (req.method === 'GET') {
@@ -8080,9 +8086,13 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
         stake: existingRoom.stake,
         targetPlayers: existingRoom.targetPlayers,
         gameType: existingRoom.gameType || gameType,
-        status: existingRoom.status,
-        matchId: existingRoom.matchId || null,
-        playersCount: existingRoom.players.length,
+          status: existingRoom.status,
+          matchId: existingRoom.matchId || null,
+          playersCount: existingRoom.players.length,
+          players: existingRoom.players,
+          hostUserId: existingRoom.hostUserId,
+          canStart: existingRoom.status === 'waiting' && existingRoom.players.length >= MIN_MATCH_PLAYERS,
+          joinable: existingRoom.status === 'waiting' && existingRoom.players.length < existingRoom.targetPlayers,
         availableTickets: existingUser.availableTickets,
         heldTickets: existingUser.heldTickets,
         energy: getEnergyState(existingUser),
@@ -8105,6 +8115,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       status: existingWaitingRoom.status,
       matchId: existingWaitingRoom.matchId || null,
       playersCount: existingWaitingRoom.players.length,
+      players: existingWaitingRoom.players,
+      hostUserId: existingWaitingRoom.hostUserId,
+      canStart: existingWaitingRoom.players.length >= MIN_MATCH_PLAYERS,
+      joinable: existingWaitingRoom.players.length < existingWaitingRoom.targetPlayers,
       availableTickets: existingUser.availableTickets,
       heldTickets: existingUser.heldTickets,
       energy: getEnergyState(existingUser),
@@ -8152,6 +8166,10 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     status: 'waiting',
     matchId: null,
     playersCount: 1,
+    players: [hostPlayer],
+    hostUserId: userId,
+    canStart: false,
+    joinable: targetPlayersCount > 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
@@ -8177,6 +8195,28 @@ function startPrivateRoomMatchHelper(room: PrivateRoom, match: ActiveMatch) {
 
 app.post('/api/private-rooms/create', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
 app.get('/api/private-rooms/create-beacon', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
+
+// A committed POST response can be lost when Telegram suspends a WebView.
+// The client reconciles the idempotency key through this authenticated read
+// before it ever attempts another create.
+app.get('/api/private-rooms/create-status/:createRequestId', optionalAuth, (req: AuthenticatedRequest, res) => {
+  const userId = getPrivateRoomUserId(req, req.query as Record<string, unknown>);
+  const createRequestId = String(req.params.createRequestId || '').trim().slice(0, 100);
+  if (!userId || !createRequestId) {
+    return res.status(400).json({ error: 'Missing room creation recovery data.' });
+  }
+  const room = Array.from(privateRooms.values()).find((candidate) =>
+    candidate.hostUserId === userId && candidate.createRequestId === createRequestId
+  );
+  if (!room) return res.status(404).json({ status: 'not_found' });
+  const user = getUser(userId);
+  return res.json({
+    ...buildPrivateRoomPayload(room),
+    operationStatus: 'created',
+    availableTickets: user.availableTickets,
+    heldTickets: user.heldTickets,
+  });
+});
 
 const joinFailuresMap = new Map<string, { count: number; lockedUntil: number }>();
 
@@ -8640,8 +8680,9 @@ function sendMatchStateSuccess(req: Request, res: Response, payload: Record<stri
       payload,
     }).replace(/</g, '\\u003c');
     res.removeHeader('X-Frame-Options');
+    res.removeHeader('X-Frame-Options');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors *; base-uri 'none'");
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'unsafe-inline'; frame-ancestors ${parentOrigin}; base-uri 'none'`);
     return res.type('html').send(`<!doctype html><meta charset="utf-8"><script>parent.postMessage(${message}, ${JSON.stringify(parentOrigin)})</script>`);
   }
   return res.json(payload);

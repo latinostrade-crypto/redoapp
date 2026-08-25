@@ -71,6 +71,32 @@ try {
   assert.equal(created.matchId, null, 'waiting rooms must not create placeholder matches');
   assert.match(created.telegramLink, /startapp=room_uno_ABCD1234$/);
 
+  // A committed POST can lose its response in a Telegram WebView. The client
+  // must reconcile the idempotency key rather than create another room.
+  const recoveredCreate = await request('room_host', '/api/private-rooms/create-status/room-create-replay-001');
+  assert.equal(recoveredCreate.operationStatus, 'created');
+  assert.equal(recoveredCreate.roomCode, created.roomCode);
+  assert.equal(recoveredCreate.players.length, 1);
+  assert.equal(recoveredCreate.hostUserId, 'room_host');
+
+  const bridgeResponse = await fetch(`${baseUrl}/api/private-rooms/create-beacon?${new URLSearchParams({
+    ...Object.fromEntries(Object.entries(createPayload).map(([key, value]) => [key, String(value)])),
+    responseMode: 'iframe',
+    bridgeRequestId: 'bridge-header-check',
+    parentOrigin: 'https://redoapp.org',
+  })}`, { headers: { 'x-user-id': 'room_host' } });
+  assert.equal(bridgeResponse.ok, true);
+  assert.equal(bridgeResponse.headers.get('x-frame-options'), null, 'cross-origin iframe bridge must not inherit Helmet SAMEORIGIN');
+  assert.match(bridgeResponse.headers.get('content-security-policy') || '', /frame-ancestors https:\/\/redoapp\.org/);
+
+  const joinBridgeResponse = await fetch(`${baseUrl}/api/private-rooms/join-beacon?${new URLSearchParams({
+    roomCode: 'ABCD1234', username: 'B', avatarId: 'fox', walletAddress: '', gameType: 'uno',
+    responseMode: 'iframe', bridgeRequestId: 'join-bridge-header-check', parentOrigin: 'https://redoapp.org',
+  })}`, { headers: { 'x-user-id': 'room_b' } });
+  assert.equal(joinBridgeResponse.ok, true);
+  assert.equal(joinBridgeResponse.headers.get('x-frame-options'), null, 'join bridge must be embeddable by the frontend');
+  assert.match(joinBridgeResponse.headers.get('content-security-policy') || '', /frame-ancestors https:\/\/redoapp\.org/);
+
   // A full Telegram WebApp reload must be able to reconstruct the waiting
   // lobby from the server, rather than forcing the host to create it again.
   const hostProfile = await request('room_host', '/api/me');
