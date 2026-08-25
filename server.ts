@@ -2053,7 +2053,13 @@ function buildBootstrapProfileResponse(user: UserState) {
     // A private host can be in Telegram's share picker for several minutes.
     // Only the public connection lobby has a short unstarted deadline.
     const isUnstartedExpired = match?.mode === 'pvp' && !match.playStartedAt && (Date.now() - match.createdAt > 60_000);
-    const isStale = match && ((Date.now() - (match.playStartedAt || match.createdAt || 0) > 5 * 60 * 1000) || isUnstartedExpired);
+    // A permanent casino table is intentionally long-lived. Applying the
+    // one-off match TTL here made a seated Telegram user lose recovery after
+    // five minutes and forced a manual reload/open of the table.
+    const isPersistentCasinoTable = match?.creatorUserId === 'casino' || match?.matchId.startsWith('table-');
+    const isStale = match && (!isPersistentCasinoTable && (
+      (Date.now() - (match.playStartedAt || match.createdAt || 0) > 5 * 60 * 1000) || isUnstartedExpired
+    ));
     if (match && !isGameOver && !isStale) {
       markMatchPlayerConnected(match, user.userId);
       const associatedRoom = Array.from(privateRooms.values()).find(r => r.matchId === match.matchId);

@@ -2686,7 +2686,9 @@ export function Web3Dashboard({
         (match as any).status === 'completed' ||
         (match as any).status === 'finished' ||
         match.gameState?.phase === 'game_over' ||
-        (match as any).pokerGameState?.stage === 'idle' ||
+        // A permanent poker table is intentionally idle while its first
+        // seated human waits for an opponent. It is recoverable, not ended.
+        (!String(match.matchId || '').startsWith('table-') && (match as any).pokerGameState?.stage === 'idle') ||
         (match as any).pokerGameState?.stage === 'match_ended' ||
         (match as any).blackjackGameState?.stage === 'idle' ||
         (match as any).blackjackGameState?.stage === 'match_ended';
