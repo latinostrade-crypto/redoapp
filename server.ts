@@ -9315,6 +9315,21 @@ function recoverCasinoTickFailure(match: ActiveMatch, error: unknown) {
   });
 }
 
+function resetEmptyCasinoTableToBotAmbience(match: ActiveMatch) {
+  const table = casinoManager.resetToBotAmbience(match.matchId);
+  if (!table?.engine) return false;
+  if (table.gameType === 'poker') {
+    match.pokerGameState = table.engine.state as unknown as ServerPokerGameState;
+  } else {
+    match.blackjackGameState = table.engine.state as unknown as ServerBlackjackGameState;
+  }
+  match.stateVersion = (match.stateVersion || 0) + 1;
+  casinoRuntimeStateVersions.set(match.matchId, match.stateVersion);
+  checkpointCasinoRuntimeInBackground(match.matchId, 'empty-table-bot-reset');
+  broadcastMatch(match.matchId);
+  return true;
+}
+
 setInterval(() => {
   const now = Date.now();
   const allMatchesToTick = Array.from(activeMatches.values());
@@ -9333,6 +9348,15 @@ setInterval(() => {
           player.disconnectedAt = player.disconnectedAt || now;
         }
       });
+      const hasConnectedHuman = tablePlayers.some((player: any) =>
+        !player.isAi && !String(player.userId).startsWith('bot_') && player.isConnected !== false
+      );
+      const hasExpiredHuman = tablePlayers.some((player: any) =>
+        !player.isAi && !String(player.userId).startsWith('bot_')
+      );
+      if (!hasConnectedHuman && hasExpiredHuman && resetEmptyCasinoTableToBotAmbience(match)) {
+        continue;
+      }
     }
 
     if (match.gameType === 'poker' && match.pokerGameState) {

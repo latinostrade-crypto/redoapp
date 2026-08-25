@@ -134,6 +134,21 @@ export class CasinoManager {
     return this.activateTable(id);
   }
 
+  /**
+   * An empty persistent table must never keep a disconnected human hand in
+   * memory. Recreate its lightweight bot ambience so the next observer sees a
+   * valid live table instead of a stale turn owned by an expired player.
+   */
+  public resetToBotAmbience(id: string): CasinoTable | undefined {
+    const table = this.tables.get(id);
+    if (!table) return undefined;
+    table.engine = null;
+    table.activatedAt = null;
+    table.playersCount = 0;
+    table.humanPlayersCount = 0;
+    return this.activateTable(id);
+  }
+
   /** Restores only a server-created snapshot; clients never supply this. */
   public restoreRuntime(id: string, state: unknown, lastActivityAt = Date.now()): CasinoTable | undefined {
     const table = this.activateTable(id);

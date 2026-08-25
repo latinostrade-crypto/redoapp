@@ -92,8 +92,14 @@ export function useBlackjackGame(options?: {
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
   const settledRef = useRef<boolean>(false);
   const remoteStateVersionRef = useRef(0);
+  const remoteStateMatchIdRef = useRef('');
 
   const applyRemoteState = useCallback((state: BlackjackGameState) => {
+    const incomingMatchId = state.matchId || state.tableId || '';
+    if (incomingMatchId && incomingMatchId !== remoteStateMatchIdRef.current) {
+      remoteStateMatchIdRef.current = incomingMatchId;
+      remoteStateVersionRef.current = 0;
+    }
     const version = Number(state.stateVersion || 0);
     if (version && version < remoteStateVersionRef.current) return false;
     if (version) remoteStateVersionRef.current = version;
@@ -454,6 +460,7 @@ export function useBlackjackGame(options?: {
     ) => {
       sound.playShuffle();
       settledRef.current = false;
+      remoteStateVersionRef.current = 0;
 
       let resolvedMatchId = matchId;
       if (!resolvedMatchId && typeof window !== 'undefined') {
@@ -467,6 +474,7 @@ export function useBlackjackGame(options?: {
           }
         } catch {}
       }
+      remoteStateMatchIdRef.current = resolvedMatchId || '';
 
       if (mode === 'pvp' || mode === 'private') {
         setRemoteMatchId(resolvedMatchId || null);
@@ -581,6 +589,7 @@ export function useBlackjackGame(options?: {
             body: JSON.stringify({
               matchId: remoteMatchId,
               action: 'hit',
+              expectedStateVersion: gameState.stateVersion,
             }),
           }
         );
@@ -644,6 +653,7 @@ export function useBlackjackGame(options?: {
             body: JSON.stringify({
               matchId: remoteMatchId,
               action: 'stand',
+              expectedStateVersion: gameState.stateVersion,
             }),
           }
         );
@@ -686,6 +696,7 @@ export function useBlackjackGame(options?: {
             body: JSON.stringify({
               matchId: remoteMatchId,
               action: 'double',
+              expectedStateVersion: gameState.stateVersion,
             }),
           }
         );
@@ -742,9 +753,10 @@ export function useBlackjackGame(options?: {
             {
               method: 'POST',
               body: JSON.stringify({
-                matchId: remoteMatchId,
-                action: 'next_hand',
-                amount: nextBet,
+              matchId: remoteMatchId,
+              action: 'next_hand',
+              amount: nextBet,
+              expectedStateVersion: gameState.stateVersion,
               }),
             }
           );

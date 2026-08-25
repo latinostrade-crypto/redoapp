@@ -84,10 +84,16 @@ export function usePokerGame(options?: {
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
   const settledRef = useRef<boolean>(false);
   const remoteStateVersionRef = useRef(0);
+  const remoteStateMatchIdRef = useRef('');
 
   // A delayed polling response must never repaint an earlier turn over an
   // SSE update that already contains the opponent's action.
   const applyRemoteState = useCallback((state: PokerGameState) => {
+    const incomingMatchId = state.matchId || state.tableId || '';
+    if (incomingMatchId && incomingMatchId !== remoteStateMatchIdRef.current) {
+      remoteStateMatchIdRef.current = incomingMatchId;
+      remoteStateVersionRef.current = 0;
+    }
     const version = Number(state.stateVersion || 0);
     if (version && version < remoteStateVersionRef.current) return false;
     if (version) remoteStateVersionRef.current = version;
@@ -162,6 +168,7 @@ export function usePokerGame(options?: {
       clearDealingTimeouts();
       isAdvancingRef.current = false;
       settledRef.current = false;
+      remoteStateVersionRef.current = 0;
 
       let resolvedMatchId = matchId;
       if (!resolvedMatchId && typeof window !== 'undefined') {
@@ -175,6 +182,7 @@ export function usePokerGame(options?: {
           }
         } catch {}
       }
+      remoteStateMatchIdRef.current = resolvedMatchId || '';
 
       if (mode === 'pvp' || mode === 'private') {
         setRemoteMatchId(resolvedMatchId || null);
@@ -491,6 +499,7 @@ export function usePokerGame(options?: {
             body: JSON.stringify({
               matchId: remoteMatchId,
               action: 'fold',
+              expectedStateVersion: gameState.stateVersion,
             }),
           }
         );
@@ -533,6 +542,7 @@ export function usePokerGame(options?: {
             body: JSON.stringify({
               matchId: remoteMatchId,
               action,
+              expectedStateVersion: gameState.stateVersion,
             }),
           }
         );
@@ -604,6 +614,7 @@ export function usePokerGame(options?: {
                 matchId: remoteMatchId,
                 action: 'raise',
                 amount: raiseToAmount,
+                expectedStateVersion: gameState.stateVersion,
               }),
             }
           );
@@ -676,6 +687,7 @@ export function usePokerGame(options?: {
             body: JSON.stringify({
               matchId: remoteMatchId,
               action: 'next_hand',
+              expectedStateVersion: gameState.stateVersion,
             }),
           }
         );
