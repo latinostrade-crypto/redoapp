@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, buildAuthHeaders, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal, isSameUser } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal, isSameUser } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -149,86 +149,6 @@ function buildTelegramMiniAppLink(startParam: string) {
 
 function buildTelegramMiniAppSchemeLink(startParam: string) {
   return `tg://resolve?domain=${encodeURIComponent(TELEGRAM_BOT_USERNAME)}&appname=${encodeURIComponent(TELEGRAM_APP_SHORT_NAME)}&startapp=${encodeURIComponent(startParam)}`;
-}
-
-function buildMatchmakerDeliveryUrl(endpoint: 'join-beacon' | 'status' | 'status-beacon' | 'stream' | 'wait-beacon', params?: URLSearchParams) {
-  // Production delivery stays on the Mini App origin. Render's rewrite is
-  // deliberately used here so WKWebView does not have to keep a cross-origin
-  // EventSource/fetch alive while Telegram switches app state.
-  const path = isLocal ? `/api/matchmaker/${endpoint}` : `/match-api/${endpoint}`;
-  return buildAuthenticatedUrl(path, params);
-}
-
-async function getPublicQueueStatusViaSameOrigin(): Promise<PublicQueueStatus> {
-  const params = new URLSearchParams({ requestId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` });
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 6_000);
-  try {
-    const response = await fetch(buildMatchmakerDeliveryUrl('status', params), {
-      method: 'GET',
-      cache: 'no-store',
-      headers: {
-        Accept: 'application/json',
-        ...buildAuthHeaders(),
-      },
-      signal: controller.signal,
-    });
-    const rawBody = await response.text();
-    const data = rawBody ? JSON.parse(rawBody) : null;
-    if (!response.ok) {
-      throw new Error(data?.error || `Matchmaking status failed with ${response.status}.`);
-    }
-    return data as PublicQueueStatus;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-}
-
-function waitForPublicMatchViaBridge(): Promise<PublicQueueStatus> {
-  return new Promise((resolve, reject) => {
-    const bridgeRequestId = `queue-wait-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const params = new URLSearchParams({
-      responseMode: 'iframe',
-      bridgeRequestId,
-      parentOrigin: window.location.origin,
-      waitMs: '60000',
-      requestId: bridgeRequestId,
-    });
-    const iframe = createWebViewBridgeIframe();
-    iframe.src = buildMatchmakerDeliveryUrl('wait-beacon', params);
-    const expectedOrigin = new URL(iframe.src, window.location.origin).origin;
-    let timeout = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('Public match wait bridge timed out.'));
-    }, 68_000);
-    const cleanup = () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener('message', onMessage);
-      iframe.remove();
-    };
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
-      const data = event.data as {
-        source?: string;
-        requestId?: string;
-        payload?: PublicQueueStatus;
-        error?: string;
-      };
-      if (
-        (data?.source !== 'redoapp-matchmaker-status-bridge' && data?.source !== 'redoapp-matchmaker-watch-bridge')
-        || data.requestId !== bridgeRequestId
-      ) return;
-      cleanup();
-      if (data.payload) resolve(data.payload);
-      else reject(new Error(data.error || 'Public match wait bridge failed.'));
-    };
-    iframe.addEventListener('error', () => {
-      cleanup();
-      reject(new Error('Public match wait bridge failed to load.'));
-    }, { once: true });
-    window.addEventListener('message', onMessage);
-    document.body.appendChild(iframe);
-  });
 }
 
 function createWebViewBridgeIframe() {
@@ -1278,7 +1198,6 @@ export function Web3Dashboard({
   });
   const [nftCheckMessage, setNftCheckMessage] = useState('');
   const privateRoomStreamRef = useRef<EventSource | null>(null);
-  const queueStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
   const recoveredActiveMatchRef = useRef('');
@@ -2117,53 +2036,6 @@ export function Web3Dashboard({
     });
   };
 
-  const joinPublicQueueViaBridge = (payload: {
-    username: string;
-    avatarId: string;
-    walletAddress: string | null;
-    stake: number;
-    mode: 'pvp';
-    gameType: 'uno' | 'poker' | 'blackjack';
-  }) => {
-    return new Promise<PublicMatchmakerResponse>((resolve, reject) => {
-      const bridgeRequestId = `match-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const params = new URLSearchParams({
-        ...Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value ?? '')])),
-        responseMode: 'iframe',
-        bridgeRequestId,
-        parentOrigin: window.location.origin,
-      });
-      const iframe = createWebViewBridgeIframe();
-      iframe.src = buildMatchmakerDeliveryUrl('join-beacon', params);
-      const timeout = window.setTimeout(() => {
-        cleanup();
-        reject(new Error('Public queue bridge timed out.'));
-      }, 15_000);
-      const cleanup = () => {
-        window.clearTimeout(timeout);
-        window.removeEventListener('message', onMessage);
-        iframe.remove();
-      };
-      const onMessage = (event: MessageEvent) => {
-        if (event.origin !== new URL(API_BASE_URL).origin || event.source !== iframe.contentWindow) return;
-        const data = event.data as { source?: string; requestId?: string; payload?: PublicMatchmakerResponse; error?: string };
-        if (data?.source !== 'redoapp-matchmaker-bridge' || data.requestId !== bridgeRequestId) return;
-        cleanup();
-        if (data.payload) {
-          resolve(data.payload);
-        } else {
-          reject(new Error(data.error || 'Public queue bridge failed.'));
-        }
-      };
-      iframe.addEventListener('error', () => {
-        cleanup();
-        reject(new Error('Public queue bridge failed to load.'));
-      }, { once: true });
-      window.addEventListener('message', onMessage);
-      document.body.appendChild(iframe);
-    });
-  };
-
   const joinPrivateRoomViaBridge = (payload: {
     roomCode: string;
     username: string;
@@ -2205,86 +2077,6 @@ export function Web3Dashboard({
       }, { once: true });
       window.addEventListener('message', onMessage);
       document.body.appendChild(iframe);
-    });
-  };
-
-  const getPublicQueueStatusViaBridge = () => {
-    return new Promise<PublicQueueStatus>((resolve, reject) => {
-      const bridgeRequestId = `queue-status-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const params = new URLSearchParams({
-        responseMode: 'iframe',
-        bridgeRequestId,
-        parentOrigin: window.location.origin,
-      });
-      const iframe = createWebViewBridgeIframe();
-      iframe.src = buildMatchmakerDeliveryUrl('status-beacon', params);
-      const expectedOrigin = new URL(iframe.src, window.location.origin).origin;
-      const timeout = window.setTimeout(() => {
-        cleanup();
-        reject(new Error('Public queue status bridge timed out.'));
-      }, 8_000);
-      const cleanup = () => {
-        window.clearTimeout(timeout);
-        window.removeEventListener('message', onMessage);
-        iframe.remove();
-      };
-      const onMessage = (event: MessageEvent) => {
-        if (event.origin !== expectedOrigin || event.source !== iframe.contentWindow) return;
-        const data = event.data as { source?: string; requestId?: string; payload?: {
-          status: 'idle' | 'searching' | 'ready' | 'expired';
-          queueLength?: number;
-          countdownSec?: number;
-          matchId?: string;
-          players?: Array<{ userId: string; username: string; avatarId: string; stake: number }>;
-          message?: string;
-          failedAt?: number;
-        }; error?: string };
-        if (data?.source !== 'redoapp-matchmaker-status-bridge' || data.requestId !== bridgeRequestId) return;
-        cleanup();
-        if (data.payload) {
-          resolve(data.payload);
-        } else {
-          reject(new Error(data.error || 'Public queue status bridge failed.'));
-        }
-      };
-      iframe.addEventListener('error', () => {
-        cleanup();
-        reject(new Error('Public queue status bridge failed to load.'));
-      }, { once: true });
-      window.addEventListener('message', onMessage);
-      document.body.appendChild(iframe);
-    });
-  };
-
-  const getPublicQueueStatusViaScript = () => {
-    return new Promise<PublicQueueStatus>((resolve, reject) => {
-      const callbackName = `__redoappQueue_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      const params = new URLSearchParams({
-        responseMode: 'script',
-        callback: callbackName,
-      });
-      const script = document.createElement('script');
-      let timeoutId = 0;
-      const cleanup = () => {
-        window.clearTimeout(timeoutId);
-        delete (window as any)[callbackName];
-        script.remove();
-      };
-      (window as any)[callbackName] = (result: PublicQueueStatus) => {
-        cleanup();
-        resolve(result);
-      };
-      script.async = true;
-      script.src = buildMatchmakerDeliveryUrl('status-beacon', params);
-      script.addEventListener('error', () => {
-        cleanup();
-        reject(new Error('Public queue status callback failed to load.'));
-      }, { once: true });
-      timeoutId = window.setTimeout(() => {
-        cleanup();
-        reject(new Error('Public queue status callback timed out.'));
-      }, 8_000);
-      document.head.appendChild(script);
     });
   };
 
@@ -2440,8 +2232,6 @@ export function Web3Dashboard({
       // this happened first, and cancel accidentally became the recovery path
       // for a match the server had already assigned.
       publicJoinAttemptRef.current += 1;
-      queueStreamRef.current?.close();
-      queueStreamRef.current = null;
       openingPublicMatchRef.current = '';
       setMatchmakingState('idle');
       setQueueSearchDeadlineAt(0);
@@ -2452,7 +2242,7 @@ export function Web3Dashboard({
       // A 409 means that assignment won the race with this tap. Fetch the
       // authoritative status and enter the shared table instead of hiding it.
       try {
-        const assigned = await getPublicQueueStatusViaSameOrigin();
+        const assigned = await apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 });
         if (assigned.status === 'ready' && assigned.matchId) {
           openPublicMatch(assigned, selectedStake);
           return;
@@ -2562,8 +2352,7 @@ export function Web3Dashboard({
       console.error('[Matchmaking UI] POST /join failed:', error.message, 'Current state:', matchmakingStateRef.current);
       
       try {
-        const recovered = await getPublicQueueStatusViaSameOrigin()
-          .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8000 }));
+        const recovered = await apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 });
           
         console.log('[Matchmaking UI] Recovery fetch returned status:', recovered.status);
         
@@ -2586,26 +2375,6 @@ export function Web3Dashboard({
         console.error('[Matchmaking UI] Recovery fetch completely failed.', e);
       }
 
-      try {
-        const bridged = await joinPublicQueueViaBridge(joinPayload);
-        joinSettled = true;
-        setGoldenTickets(bridged.availableTickets);
-        setHeldTickets(bridged.heldTickets);
-        if (bridged.energy) updateProfileEnergy(bridged.energy);
-        if (bridged.matchmaker?.status === 'ready' && bridged.matchmaker.matchId) {
-          openPublicMatch(bridged.matchmaker, selectedStake);
-          return;
-        }
-        setQueueLength(bridged.matchmaker?.players?.length || bridged.matchmaker?.queueLength || 1);
-        if (bridged.matchmaker?.status === 'searching') {
-          setQueueSearchDeadlineAt(Date.now() + (bridged.matchmaker.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
-        }
-        setMatchmakingState('searching');
-        return;
-      } catch (bridgeError) {
-        console.error('[Matchmaking UI] Join bridge failed.', bridgeError);
-      }
-
       joinSettled = true;
       setMatchmakingState((prev) => {
         if (prev === 'success') return prev;
@@ -2613,7 +2382,7 @@ export function Web3Dashboard({
         return 'idle';
       });
     });
-  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy, getPublicQueueStatusViaSameOrigin]);
+  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy]);
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     if (!authReady || !getSessionToken()) {
@@ -2809,10 +2578,7 @@ export function Web3Dashboard({
   // owns. Recover it before the user can submit another join request.
   useEffect(() => {
     if (!authReady || matchmakingState !== 'idle' || activeProfile?.activeMatch) return;
-    getPublicQueueStatusViaSameOrigin()
-      .catch(() => getPublicQueueStatusViaScript())
-      .catch(() => getPublicQueueStatusViaBridge())
-      .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 }))
+    apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 })
       .then((result) => {
         const recoveredStake = Number(result.stake ?? result.players?.[0]?.stake ?? 0);
         if (result.status === 'searching') {
@@ -2861,62 +2627,6 @@ export function Web3Dashboard({
         setFullProfileLoading(false);
       });
   };
-
-  // SSE and the same-origin bridge are accelerators only. Telegram can suspend
-  // either transport without unmounting the dashboard, so an assigned player
-  // must also reconcile against the normal authenticated profile endpoint.
-  // This is the path that guarantees the first queue player enters the table
-  // even if its ready event was missed.
-  useEffect(() => {
-    if (!authReady || !publicMatchmakingActive) return;
-    let disposed = false;
-    let inFlight = false;
-
-    const reconcileAssignedMatch = async () => {
-      if (disposed || inFlight) return;
-      inFlight = true;
-      try {
-        const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000, retryOnNetworkError: true, networkAttempts: 2 });
-        if (disposed) return;
-        const normalized = normalizeProfile(me);
-        setProfile(normalized);
-        setFullProfile(normalized);
-        setGoldenTickets(me.availableTickets);
-        setHeldTickets(me.heldTickets);
-        const activeMatch = normalized?.activeMatch;
-        if (activeMatch?.mode === 'pvp' && activeMatch.matchId) {
-          openPublicMatch({
-            status: 'ready',
-            matchId: activeMatch.matchId,
-            stake: activeMatch.stake,
-            mode: 'pvp',
-            gameType: activeMatch.gameType,
-            players: activeMatch.players,
-            gameState: activeMatch.gameState,
-          }, Number(activeMatch.stake ?? selectedStake));
-        }
-      } catch {
-        // Queue polling and the bridge remain active; a transient profile
-        // failure must not turn a pending search into an error state.
-      } finally {
-        inFlight = false;
-      }
-    };
-
-    reconcileAssignedMatch();
-    const timer = window.setInterval(reconcileAssignedMatch, 5_000);
-    const resume = () => {
-      if (document.visibilityState !== 'hidden') reconcileAssignedMatch();
-    };
-    window.addEventListener('pageshow', resume);
-    document.addEventListener('visibilitychange', resume);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-      window.removeEventListener('pageshow', resume);
-      document.removeEventListener('visibilitychange', resume);
-    };
-  }, [authReady, publicMatchmakingActive, openPublicMatch, selectedStake]);
 
   const loadReferralInvites = (cursor: string | null = null) => {
     if (referralInvitesLoading) return Promise.resolve();
@@ -3787,17 +3497,9 @@ export function Web3Dashboard({
     if (!publicMatchmakingActive) return;
     let disposed = false;
     let statusRequestInFlight = false;
-    let lastQueueStatusAt = 0;
-    queueStreamRef.current?.close();
-    const stream = new EventSource(buildMatchmakerDeliveryUrl('stream'));
-    queueStreamRef.current = stream;
 
     const handleQueueStatus = (result: PublicQueueStatus) => {
       if (disposed) return;
-      lastQueueStatusAt = Date.now();
-      
-      console.log('[Matchmaking UI] SSE queue-status received:', result.status, 'MatchId:', result.matchId, 'Current state:', matchmakingStateRef.current);
-      
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
         setQueueSearchDeadlineAt(Date.now() + (result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
@@ -3848,64 +3550,31 @@ export function Web3Dashboard({
       }
     };
 
-    stream.addEventListener('queue-status', (event) => {
-      try {
-        const result = JSON.parse((event as MessageEvent).data);
-        handleQueueStatus(result);
-      } catch {
-        // A malformed/replayed SSE frame must not stop the polling fallback.
-      }
-    });
-    stream.addEventListener('heartbeat', () => {
-      // SSE connection alive ping; do not suppress status polling
-    });
-
-    const requestQueueStatus = (force = false) => {
+    // Public matchmaking has exactly one client handoff transport: an
+    // authenticated request to the authoritative backend. Keeping SSE,
+    // same-origin rewrites, iframe bridges and profile polling alive together
+    // created races where only one participant consumed `ready`.
+    const requestQueueStatus = () => {
       if (disposed || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
-      if (!force && lastQueueStatusAt && Date.now() - lastQueueStatusAt < 800) return;
       if (statusRequestInFlight) return;
       statusRequestInFlight = true;
-      getPublicQueueStatusViaSameOrigin()
-        .catch(() => apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
-          timeoutMs: 5_000,
-          retryOnNetworkError: true,
-          networkAttempts: 2,
-        }))
+      apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
+        timeoutMs: 8_000,
+        retryOnNetworkError: true,
+        networkAttempts: 2,
+      })
         .then(handleQueueStatus)
+        .catch(() => undefined)
         .finally(() => {
           statusRequestInFlight = false;
         });
     };
 
-    let waitBridgeDisposed = false;
-    const runWaitBridge = () => {
-      if (disposed || waitBridgeDisposed) return;
-      waitForPublicMatchViaBridge()
-        .then((result) => {
-          handleQueueStatus(result);
-          if (!disposed && result.status === 'searching') {
-            window.setTimeout(runWaitBridge, 2000);
-          }
-        })
-        .catch(() => {
-          if (!disposed) {
-            window.setTimeout(runWaitBridge, 2500);
-          }
-        });
-    };
-    runWaitBridge();
-
-    stream.onerror = () => requestQueueStatus(true);
-    requestQueueStatus(true);
-    const activeSearchPollTimer = window.setInterval(() => {
-      requestQueueStatus(true);
-    }, 1500);
-    const pollTimer = window.setInterval(() => {
-      requestQueueStatus();
-    }, 12_000);
-    const handleResume = () => requestQueueStatus(true);
+    requestQueueStatus();
+    const activeSearchPollTimer = window.setInterval(requestQueueStatus, 1_500);
+    const handleResume = () => requestQueueStatus();
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') requestQueueStatus(true);
+      if (document.visibilityState === 'visible') requestQueueStatus();
     };
     const telegramWebApp = (window as any).Telegram?.WebApp;
     telegramWebApp?.onEvent?.('activated', handleResume);
@@ -3914,18 +3583,12 @@ export function Web3Dashboard({
 
     return () => {
       disposed = true;
-      waitBridgeDisposed = true;
       window.clearInterval(activeSearchPollTimer);
-      window.clearInterval(pollTimer);
       telegramWebApp?.offEvent?.('activated', handleResume);
       window.removeEventListener('pageshow', handleResume);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      stream.close();
-      if (queueStreamRef.current === stream) {
-        queueStreamRef.current = null;
-      }
     };
-  }, [publicMatchmakingActive, currentUserId, openPublicMatch, selectedStake]);
+  }, [publicMatchmakingActive, openPublicMatch, selectedStake]);
 
   useEffect(() => {
     const targetMatchId = initialLaunchTournamentMatchIdRef.current;
@@ -3997,7 +3660,6 @@ export function Web3Dashboard({
   useEffect(() => {
     return () => {
       privateRoomStreamRef.current?.close();
-      queueStreamRef.current?.close();
     };
   }, []);
 

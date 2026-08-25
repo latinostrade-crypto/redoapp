@@ -8,25 +8,20 @@ const gameHook = readFileSync(path.join(root, 'src/hooks/useUnoGame.ts'), 'utf8'
 const server = readFileSync(path.join(root, 'server.ts'), 'utf8');
 const tickets = readFileSync(path.join(root, 'server/tickets.ts'), 'utf8');
 
-assert.equal(
-  dashboard.includes('watchFrame.src = buildAuthenticatedUrl(`/api/matchmaker/watch'),
-  false,
-  'Public matchmaking must not create the legacy polling watch iframe.',
-);
-assert.equal(
-  dashboard.includes('Run every transport independently'),
-  false,
-  'Queue recovery must remain sequential instead of fanning out transports.',
-);
 assert.match(
   dashboard,
-  /getPublicQueueStatusViaSameOrigin\(\)\s*\.catch\(\(\) => apiRequest<PublicQueueStatus>/,
-  'Queue recovery must prefer one same-origin request before the direct API fallback.',
+  /apiRequest<PublicQueueStatus>\('\/api\/matchmaker\/status'/,
+  'Public matchmaking must use the authenticated backend status endpoint.',
 );
-assert.match(
-  dashboard,
-  /requestQueueStatus\(\);\s*\}, 12_000\);/,
-  'Queue fallback polling must stay at twelve seconds or slower.',
+assert.equal(
+  dashboard.includes('new EventSource(buildMatchmakerDeliveryUrl('),
+  false,
+  'Public matchmaking must not run a competing SSE handoff transport.',
+);
+assert.equal(
+  dashboard.includes('waitForPublicMatchViaBridge'),
+  false,
+  'Public matchmaking must not run an iframe wait bridge beside its status poll.',
 );
 assert.match(
   dashboard,
