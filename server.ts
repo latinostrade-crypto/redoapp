@@ -605,6 +605,9 @@ interface MatchmakingStatusPayload {
   queueLength?: number;
   playersNeeded?: number;
   countdownSec?: number;
+  /** Absolute server deadline. Clients must render this directly. */
+  queueExpiresAt?: number;
+  stateVersion?: number;
   matchId?: string;
   players?: QueuePlayer[];
   stake?: number;
@@ -5631,6 +5634,8 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     queueLength: similarPlayers.length,
     playersNeeded: Math.max(0, MIN_MATCH_PLAYERS - similarPlayers.length),
     countdownSec: Math.max(0, Math.ceil((timeoutMs - waitedMs) / 1000)),
+    queueExpiresAt: oldestPlayer.joinedAt + timeoutMs,
+    stateVersion: oldestPlayer.joinedAt,
     stake: player.stake,
     mode: player.mode,
     gameType: playerGameType,
@@ -7579,7 +7584,9 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   }
   const existingQueuedPlayer = matchmakingQueue.find((player) => isSameUser(player.userId, userId));
   if (!forceFresh && existingQueuedPlayer && existingQueuedPlayer.stake === stakeAmount && existingQueuedPlayer.mode === mode && (existingQueuedPlayer.gameType || 'uno') === gameType) {
-    existingQueuedPlayer.joinedAt = Date.now();
+    // A lost mobile response can legitimately replay this request. Preserve
+    // the original queue order and expiry; replay is observation, not a new
+    // search attempt.
     return sendMatchmakerJoinSuccess(req, res, {
       success: true,
       availableTickets: user.availableTickets,

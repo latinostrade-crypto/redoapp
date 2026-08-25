@@ -74,6 +74,17 @@ try {
     body: JSON.stringify(joinPayload('Handoff A', 'rabbit')),
   });
   assert.equal(firstJoin.matchmaker.status, 'searching');
+  const firstExpiry = firstJoin.matchmaker.queueExpiresAt;
+  assert.ok(firstExpiry, 'queued player must receive an absolute server expiry');
+
+  // Simulate a Telegram retry after a lost join response. It must observe the
+  // existing queue and never move the player to the back or restart its timer.
+  const replayedFirstJoin = await request('pvp_handoff_a', '/api/matchmaker/join', {
+    method: 'POST',
+    body: JSON.stringify(joinPayload('Handoff A', 'rabbit')),
+  });
+  assert.equal(replayedFirstJoin.replayed, true);
+  assert.equal(replayedFirstJoin.matchmaker.queueExpiresAt, firstExpiry, 'replayed join must preserve the original queue deadline');
 
   await request('pvp_handoff_b', '/api/matchmaker/join', {
     method: 'POST',

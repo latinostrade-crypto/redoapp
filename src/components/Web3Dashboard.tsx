@@ -552,6 +552,8 @@ type PublicQueueStatus = {
   status: 'idle' | 'searching' | 'ready' | 'expired';
   queueLength?: number;
   countdownSec?: number;
+  queueExpiresAt?: number;
+  stateVersion?: number;
   matchId?: string;
   stake?: number;
   mode?: 'pvp' | 'private';
@@ -561,6 +563,12 @@ type PublicQueueStatus = {
   failedAt?: number;
   gameState?: GameState;
 };
+
+function getQueueDeadline(status?: Pick<PublicQueueStatus, 'queueExpiresAt' | 'countdownSec'> | null) {
+  const serverDeadline = Number(status?.queueExpiresAt);
+  if (Number.isFinite(serverDeadline) && serverDeadline > 0) return serverDeadline;
+  return Date.now() + (Number(status?.countdownSec) || MATCHMAKING_TIMEOUT_SEC) * 1000;
+}
 
 interface PendingDepositState {
   intentId: string;
@@ -1145,6 +1153,7 @@ export function Web3Dashboard({
   const [queueLength, setQueueLength] = useState(1);
   const [queueSearchDeadlineAt, setQueueSearchDeadlineAt] = useState(0);
   const [publicQueueError, setPublicQueueError] = useState('');
+  const [publicQueueCanceling, setPublicQueueCanceling] = useState(false);
   const [buyingTickets, setBuyingTickets] = useState(false);
   const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
   const [depositStatusMessage, setDepositStatusMessage] = useState('');
@@ -2225,11 +2234,16 @@ export function Web3Dashboard({
   };
 
   const handleLeavePublicQueue = useCallback(async () => {
+    if (publicQueueCanceling) return;
     sound.playPop();
     setPublicQueueError('');
+    setPublicQueueCanceling(true);
     try {
       await apiRequest('/api/matchmaker/leave', {
         method: 'POST',
+        timeoutMs: 8_000,
+        retryOnNetworkError: true,
+        networkAttempts: 2,
         body: JSON.stringify({ userId: currentUserId }),
       });
       // Only a confirmed queue cancellation may turn this UI idle. Previously
@@ -2252,11 +2266,15 @@ export function Web3Dashboard({
           return;
         }
       } catch {
-        // Surface the original error below if reconciliation itself failed.
+        // Keep session recovery alive below; a lost cancel response cannot
+        // strand a player in an unobservable state.
       }
-      setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
+      setPublicQueueError('Checking public match status…');
+      setMatchmakingState((state) => state === 'success' ? state : 'searching');
+    } finally {
+      setPublicQueueCanceling(false);
     }
-  }, [currentUserId, openPublicMatch, selectedStake]);
+  }, [currentUserId, openPublicMatch, publicQueueCanceling, selectedStake]);
 
   const handleStartMatchmakingQueue = useCallback(() => {
     if (!authReady) {
@@ -2333,7 +2351,7 @@ export function Web3Dashboard({
       }
       setQueueLength(result.matchmaker?.players?.length || result.matchmaker?.queueLength || 1);
       if (result.matchmaker?.status === 'searching') {
-        setQueueSearchDeadlineAt(Date.now() + (result.matchmaker.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
+        setQueueSearchDeadlineAt(getQueueDeadline(result.matchmaker));
       }
       
       console.log('[Matchmaking UI] POST /join resolved.', 'Status:', result.matchmaker?.status, 'MatchId:', result.matchmaker?.matchId);
@@ -2368,7 +2386,7 @@ export function Web3Dashboard({
         if (recovered.status === 'searching') {
           joinSettled = true;
           setQueueLength(recovered.queueLength || 1);
-          setQueueSearchDeadlineAt(Date.now() + (recovered.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
+          setQueueSearchDeadlineAt(getQueueDeadline(recovered));
           setMatchmakingState((prev) => {
             if (prev === 'success') return prev;
             return 'searching';
@@ -2382,8 +2400,11 @@ export function Web3Dashboard({
       joinSettled = true;
       setMatchmakingState((prev) => {
         if (prev === 'success') return prev;
-        setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
-        return 'idle';
+        // The server may have accepted the request even when its response was
+        // lost by Telegram/Render. Stay in recoverable searching state until
+        // the authoritative status endpoint says idle, ready or expired.
+        setPublicQueueError('Connection delayed — checking your match…');
+        return 'searching';
       });
     });
   }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy]);
@@ -2590,7 +2611,7 @@ export function Web3Dashboard({
           setPvpSubMode('public');
           setSelectedStake(recoveredStake);
           setQueueLength(result.queueLength || 1);
-          setQueueSearchDeadlineAt(Date.now() + (result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
+          setQueueSearchDeadlineAt(getQueueDeadline(result));
           setMatchmakingState((prev) => {
             if (prev === 'success') return prev;
             return 'searching';
@@ -3506,7 +3527,7 @@ export function Web3Dashboard({
       if (disposed) return;
       if (result.status === 'searching') {
         setQueueLength(result.queueLength || 1);
-        setQueueSearchDeadlineAt(Date.now() + (result.countdownSec ?? MATCHMAKING_TIMEOUT_SEC) * 1000);
+        setQueueSearchDeadlineAt(getQueueDeadline(result));
         setMatchmakingState((prev) => {
           if (prev === 'success') {
             console.log('[Matchmaking UI] SSE queue-status searching ignored because state is success.');
@@ -5537,9 +5558,10 @@ export function Web3Dashboard({
                       <button
                         type="button"
                         onClick={handleLeavePublicQueue}
+                        disabled={publicQueueCanceling}
                         className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive"
                       >
-                        Cancel Queue
+                        {publicQueueCanceling ? 'Checking…' : 'Cancel Queue'}
                       </button>
                     </div>
                   ) : matchmakingState === 'success' ? (
