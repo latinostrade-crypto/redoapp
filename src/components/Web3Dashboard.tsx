@@ -1230,7 +1230,6 @@ export function Web3Dashboard({
 
   const [selectedStake, setSelectedStake] = useState<PublicStakeOption>(0);
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
-  const [readyMatchData, setReadyMatchData] = useState<PublicQueueStatus | null>(null);
   const [queueLength, setQueueLength] = useState(1);
   const [publicQueueError, setPublicQueueError] = useState('');
   const [buyingTickets, setBuyingTickets] = useState(false);
@@ -1325,7 +1324,7 @@ export function Web3Dashboard({
   }, [matchmakingState]);
   const currentUserId = activeProfile?.userId || bootstrapUserId;
 
-  const openPublicMatch = useCallback((result: PublicQueueStatus, fallbackStake: number, launchNow = false) => {
+  const openPublicMatch = useCallback((result: PublicQueueStatus, fallbackStake: number, launchNow = true) => {
     if (result.status !== 'ready' || !result.matchId) return false;
     if (tournamentData?.matches) {
       const matchInTourn = tournamentData.matches.find((m) => m.matchId === result.matchId);
@@ -1358,7 +1357,6 @@ export function Web3Dashboard({
         publicJoinAttemptRef.current += 1;
         publicQueueDeadlineAtRef.current = 0;
         setQueueLength(result.players?.length || 1);
-        setReadyMatchData(result);
         setMatchmakingState('success');
       }
 
@@ -1382,13 +1380,10 @@ export function Web3Dashboard({
         launchGame();
       };
 
-      if (launchNow) {
-        launchOnce();
-      } else if (!isAlreadyOpening) {
-        // Render the ready screen before changing the parent game route. This
-        // gives Telegram WebViews a visible, usable manual fallback.
-        publicMatchLaunchTimerRef.current = window.setTimeout(launchOnce, 1800);
-      }
+      // Both players enter the same table immediately. A separate ready
+      // overlay created divergent states on mobile: one user saw 1/2 while
+      // the other was still left in the queue.
+      if (launchNow || !isAlreadyOpening) launchOnce();
       return true;
     } catch (error) {
       openingPublicMatchRef.current = '';
@@ -2443,25 +2438,41 @@ export function Web3Dashboard({
     }
   };
 
-  const handleLeavePublicQueue = useCallback(() => {
+  const handleLeavePublicQueue = useCallback(async () => {
     sound.playPop();
-    publicJoinAttemptRef.current += 1;
-    queueStreamRef.current?.close();
-    queueStreamRef.current = null;
-    openingPublicMatchRef.current = '';
-    publicQueueDeadlineAtRef.current = 0;
-    setMatchmakingState('idle');
     setPublicQueueError('');
-    apiRequest('/api/matchmaker/leave', {
-      method: 'POST',
-      body: JSON.stringify({ userId: currentUserId }),
-    }).then(() => {
-      return apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
-    }).then((balance) => {
+    try {
+      await apiRequest('/api/matchmaker/leave', {
+        method: 'POST',
+        body: JSON.stringify({ userId: currentUserId }),
+      });
+      // Only a confirmed queue cancellation may turn this UI idle. Previously
+      // this happened first, and cancel accidentally became the recovery path
+      // for a match the server had already assigned.
+      publicJoinAttemptRef.current += 1;
+      queueStreamRef.current?.close();
+      queueStreamRef.current = null;
+      openingPublicMatchRef.current = '';
+      publicQueueDeadlineAtRef.current = 0;
+      setMatchmakingState('idle');
+      const balance = await apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance');
       setGoldenTickets(balance.availableTickets);
       setHeldTickets(balance.heldTickets);
-    }).catch(() => undefined);
-  }, [currentUserId]);
+    } catch (error) {
+      // A 409 means that assignment won the race with this tap. Fetch the
+      // authoritative status and enter the shared table instead of hiding it.
+      try {
+        const assigned = await getPublicQueueStatusViaSameOrigin();
+        if (assigned.status === 'ready' && assigned.matchId) {
+          openPublicMatch(assigned, selectedStake);
+          return;
+        }
+      } catch {
+        // Surface the original error below if reconciliation itself failed.
+      }
+      setPublicQueueError(cleanErrorMessage(error, 'matchmaker'));
+    }
+  }, [currentUserId, openPublicMatch, selectedStake]);
 
   const handleStartMatchmakingQueue = useCallback(() => {
     if (!authReady) {
@@ -5781,27 +5792,23 @@ export function Web3Dashboard({
                 <>
                   {matchmakingState === 'joining' || matchmakingState === 'searching' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                      <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black">
-                        <span className="text-[10px] font-black text-[#00d2ff]">
-                          <MatchmakingCountdown deadlineAt={publicQueueDeadlineAtRef.current || (Date.now() + MATCHMAKING_TIMEOUT_SEC * 1000)} />
-                        </span>
+                      <div className="relative flex items-center justify-center mx-auto w-10 h-10 bg-slate-950 border border-black text-[#00d2ff] text-lg animate-pulse">
+                        ⌁
                       </div>
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
                           {matchmakingState === 'joining'
                             ? 'CONNECTING TO QUEUE'
-                            : queueLength >= 2
-                            ? '✨ OPPONENT FOUND! PREPARING TABLE...'
-                            : 'QUEUE ACTIVE'}
+                            : queueLength >= 2 ? 'TABLE FOUND — OPENING UNO TABLE' : 'SEARCHING FOR UNO PLAYERS'}
                         </h3>
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                           {matchmakingState === 'joining'
-                            ? `You are ready. Players: ${queueLength}/${MIN_MATCH_PLAYERS} minimum. Connecting securely to the match server…`
+                            ? 'Connecting to the match server…'
                             : queueLength >= 2
-                            ? `Opponent found! Connecting table and starting match in up to 15s...`
+                            ? 'Everyone is joining the same table. It will recruit up to 4 players for 10 seconds.'
                             : selectedStake === 0
-                              ? `Searching for free players (${queueLength}/${MAX_MATCH_PLAYERS}). Table starts when another player joins or auto-fills in 20s.`
-                              : `Searching for real players (${queueLength}/${MAX_MATCH_PLAYERS}). Ticket games are strict PVP.`}
+                              ? 'Looking for players for a free 2–4 player UNO table.'
+                              : 'Looking for players with the same stake for a 2–4 player UNO table.'}
                         </p>
                       </div>
                       <button
@@ -5814,14 +5821,7 @@ export function Web3Dashboard({
                     </div>
                   ) : matchmakingState === 'success' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-2 font-mono">
-                      <h3 className="font-black text-[10px] text-[#00ff66] uppercase">
-                        MATCH READY!
-                      </h3>
-                      <p className="text-[8px] text-slate-455">
-                        {selectedStake === 0
-                          ? 'Free public match ready. Energy has been spent.'
-                          : `Match ready. Prize pool: ${(selectedStake * Math.max(queueLength, MIN_MATCH_PLAYERS) * 0.96).toFixed(2)} TKT`}
-                      </p>
+                      <h3 className="font-black text-[10px] text-[#00ff66] uppercase">OPENING UNO TABLE…</h3>
                     </div>
                   ) : (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
@@ -6880,62 +6880,6 @@ export function Web3Dashboard({
               className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-[9px] uppercase border border-black"
             >
               Close Leaderboard
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* MATCH READY OVERLAY BUFFER SCREEN */}
-      {readyMatchData && matchmakingState === 'success' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md animate-fade-in font-mono">
-          <div className="w-full max-w-sm bg-[#111318] border-4 border-[#00ff66] p-5 space-y-4 shadow-[0_0_40px_rgba(0,255,102,0.4)] text-center relative overflow-hidden">
-            <div className="absolute -top-10 -right-10 w-24 h-24 bg-[#00ff66]/10 rounded-full blur-xl pointer-events-none" />
-            <div className="space-y-1">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#00ff66]/20 border border-[#00ff66] rounded-full text-[#00ff66] text-[10px] font-black tracking-widest uppercase">
-                <Sparkles className="w-3.5 h-3.5 animate-spin" />
-                <span>MATCH FOUND!</span>
-              </div>
-              <h2 className="text-sm font-black text-white uppercase tracking-wider">
-                {readyMatchData.gameType === 'poker'
-                  ? '♠️ TEXAS HOLD\'EM TABLE'
-                  : readyMatchData.gameType === 'blackjack'
-                  ? '🃏 21 BLACKJACK ARENA'
-                  : '🎮 UNO BATTLE'}
-              </h2>
-              <p className="text-[9px] text-slate-400">
-                {readyMatchData.stake && readyMatchData.stake > 0
-                  ? `Stake: ${readyMatchData.stake} TKT | Real PVP Match`
-                  : 'Free Match | Casual PVP'}
-              </p>
-            </div>
-
-            {/* Players List */}
-            {readyMatchData.players && readyMatchData.players.length > 0 && (
-              <div className="grid grid-cols-2 gap-2 bg-slate-950/80 p-2.5 border border-slate-800 rounded">
-                {readyMatchData.players.slice(0, 4).map((p, idx) => (
-                  <div key={p.userId || idx} className="flex items-center gap-1.5 truncate text-[9px] text-left">
-                    <Avatar id={(p.avatarId as any) || 'rabbit'} size={20} />
-                    <span className="font-bold text-slate-200 truncate">{p.username || 'Player'}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="space-y-2 pt-1">
-              <div className="w-full bg-slate-900 border border-slate-700 h-2 rounded overflow-hidden">
-                <div className="bg-[#00ff66] h-full animate-[pulse_1s_infinite] w-full" />
-              </div>
-              <p className="text-[8.5px] text-[#00ff66] font-black uppercase tracking-wider animate-pulse">
-                🚀 Connecting table & launching session...
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => openPublicMatch(readyMatchData, selectedStake, true)}
-              className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e65c] text-black font-black text-[11px] uppercase border-2 border-black tracking-wider shadow-[3px_3px_0_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
-            >
-              ENTER TABLE NOW 🎮
             </button>
           </div>
         </div>

@@ -21,6 +21,9 @@ const server = spawn(process.execPath, [tsxCli, path.join(root, 'server.ts')], {
     SUPABASE_SERVICE_ROLE_KEY: '',
     APP_SESSION_SECRET: 'pvp-handoff-test-secret-that-is-long-enough',
     RUNTIME_STATE_DIR: runtimeDir,
+    // Keep the production behaviour (a server-owned recruitment phase) while
+    // making this integration test fast.
+    PUBLIC_UNO_RECRUITMENT_MS: '600',
   },
   stdio: 'ignore',
   windowsHide: true,
@@ -90,7 +93,38 @@ try {
   const tableA = await request('pvp_handoff_a', `/api/matches/state/${queueA.matchId}`);
   assert.equal(tableA.gameState.waitingForPlayers, true, 'the first table arrival must see the connection lobby');
   const tableB = await request('pvp_handoff_b', `/api/matches/state/${queueB.matchId}`);
-  assert.equal(tableB.gameState.waitingForPlayers, false, 'the second table arrival must start the shared match');
+  assert.equal(tableB.gameState.waitingForPlayers, true, 'the second table arrival must see the same recruitment lobby');
+  assert.equal(tableB.gameState.recruitmentOpen, true, 'UNO must keep recruiting after the first two players arrive');
+
+  // Seats three and four join the already-created table rather than a second
+  // queue. They are not considered connected until their own table request.
+  const thirdJoin = await request('pvp_handoff_c', '/api/matchmaker/join', {
+    method: 'POST',
+    body: JSON.stringify(joinPayload('Handoff C', 'bear')),
+  });
+  const fourthJoin = await request('pvp_handoff_d', '/api/matchmaker/join', {
+    method: 'POST',
+    body: JSON.stringify(joinPayload('Handoff D', 'koala')),
+  });
+  assert.equal(thirdJoin.matchmaker.matchId, queueA.matchId);
+  assert.equal(fourthJoin.matchmaker.matchId, queueA.matchId);
+  await request('pvp_handoff_c', `/api/matches/state/${queueA.matchId}`);
+  await request('pvp_handoff_d', `/api/matches/state/${queueA.matchId}`);
+
+  // Server time, not a client timer, closes recruitment and starts everyone
+  // together. Triggering a state read after the short test deadline exercises
+  // the same lifecycle path used by the production ticker.
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const started = await request('pvp_handoff_a', `/api/matches/state/${queueA.matchId}`);
+  assert.equal(started.gameState.waitingForPlayers, false, 'the table starts only after recruitment closes');
+  assert.equal(started.gameState.players.length, 4, 'all four recruited players share one UNO table');
+
+  const cancelAfterAssignment = await fetch(`${baseUrl}/api/matchmaker/leave`, {
+    method: 'POST',
+    headers: { 'x-user-id': 'pvp_handoff_b', 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(cancelAfterAssignment.status, 409, 'cancel must not erase an assigned public match');
 
   await request('pvp_retry_a', '/api/matchmaker/join', {
     method: 'POST',
@@ -107,6 +141,13 @@ try {
   });
   assert.equal(retry.replayed, true);
   assert.equal(retry.matchmaker.matchId, beforeRetry.matchId, 'a retry must keep the player in the same match');
+  await request('pvp_retry_a', `/api/matches/state/${beforeRetry.matchId}`);
+  const retryLobby = await request('pvp_retry_b', `/api/matches/state/${beforeRetry.matchId}`);
+  assert.equal(retryLobby.gameState.waitingForPlayers, true, 'a two-player table also waits through the common recruitment phase');
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const twoPlayerStarted = await request('pvp_retry_a', `/api/matches/state/${beforeRetry.matchId}`);
+  assert.equal(twoPlayerStarted.gameState.waitingForPlayers, false, 'a valid two-player UNO table starts when the recruitment timer ends');
+  assert.equal(twoPlayerStarted.gameState.players.length, 2);
 
   console.log('PVP handoff checks passed.');
 } finally {

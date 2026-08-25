@@ -284,6 +284,7 @@ export default function App() {
 
   const currentActivePlayer = gameState.players[gameState.currentPlayerIndex];
   const isWaitingForPlayers = gameMode === 'pvp' && !!gameState.waitingForPlayers;
+  const isPublicUnoRecruiting = isWaitingForPlayers && !!gameState.recruitmentOpen && !!gameState.recruitmentDeadlineAt;
   const isHumanTurn = !isWaitingForPlayers && currentActivePlayer?.id === 'player';
   const connectedPlayerCount = gameState.players.filter((player) => player.isConnected !== false).length;
   const totalMatchPlayerCount = gameState.players.length;
@@ -303,12 +304,15 @@ export default function App() {
     && gameState.players.some((player) => player.name === 'Waiting...');
 
   useEffect(() => {
-    if (!isWaitingForPlayers || !gameState.connectionDeadlineAt) return;
-    const update = () => setConnectionTimeLeft(Math.max(0, Math.ceil((gameState.connectionDeadlineAt! - Date.now()) / 1000)));
+    const lobbyDeadlineAt = isPublicUnoRecruiting
+      ? gameState.recruitmentDeadlineAt
+      : gameState.connectionDeadlineAt;
+    if (!isWaitingForPlayers || !lobbyDeadlineAt) return;
+    const update = () => setConnectionTimeLeft(Math.max(0, Math.ceil((lobbyDeadlineAt - Date.now()) / 1000)));
     update();
     const timer = window.setInterval(update, 500);
     return () => window.clearInterval(timer);
-  }, [isWaitingForPlayers, gameState.connectionDeadlineAt]);
+  }, [isWaitingForPlayers, isPublicUnoRecruiting, gameState.recruitmentDeadlineAt, gameState.connectionDeadlineAt]);
 
   const leaveUnstartedMatch = useCallback(async () => {
     if (isLeavingUnstartedMatch) return;
@@ -890,13 +894,19 @@ export default function App() {
           {isWaitingForPlayers && (
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0c0f12]/90 p-4 font-mono backdrop-blur-sm">
               <div className="w-full max-w-xs border-4 border-black bg-slate-950 p-5 text-center shadow-[4px_4px_0_#000]">
-                <div className="text-[11px] font-black uppercase tracking-wider text-[#00d2ff]">Connecting players</div>
+                <div className="text-[11px] font-black uppercase tracking-wider text-[#00d2ff]">
+                  {isPublicUnoRecruiting ? 'UNO table — recruiting players' : 'Connecting players'}
+                </div>
                 <div className="mt-3 text-[24px] font-black text-[#ffcc00]">{connectionTimeLeft}s</div>
                 <div className="mt-1 text-[9px] font-black uppercase text-[#00ff66]">
-                  {connectedPlayerCount}/{totalMatchPlayerCount} players connected
+                  {isPublicUnoRecruiting
+                    ? `${connectedPlayerCount}/4 players at table`
+                    : `${connectedPlayerCount}/${totalMatchPlayerCount} players connected`}
                 </div>
                 <div className="mt-3 text-[7px] leading-relaxed text-slate-400">
-                  The match starts when everyone connects. If nobody connects, no tickets or energy are charged.
+                  {isPublicUnoRecruiting
+                    ? 'The server is holding this shared table open for more players. The game starts for everyone when this timer ends.'
+                    : 'The match starts when everyone connects. If nobody connects, no tickets or energy are charged.'}
                 </div>
                 <button
                   type="button"

@@ -83,6 +83,12 @@ const MAX_MATCH_PLAYERS = 4;
 // This is only the no-opponent expiry; as soon as two compatible players are
 // present runMatchmakingTick starts their table immediately.
 const MATCHMAKING_TIMEOUT_MS = 75_000;
+// Public UNO is a 2–4 player table. Once the first pair is assigned, everybody
+// enters the same table and the server keeps recruiting for this short window.
+const configuredUnoRecruitmentMs = Number(process.env.PUBLIC_UNO_RECRUITMENT_MS ?? '10000');
+const PUBLIC_UNO_RECRUITMENT_MS = Number.isFinite(configuredUnoRecruitmentMs)
+  ? Math.max(0, Math.min(30_000, configuredUnoRecruitmentMs))
+  : 10_000;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 2;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
 // Telegram legitimately backgrounds a Mini App while the user picks a chat
@@ -562,6 +568,7 @@ interface ActiveMatch {
   players: QueuePlayer[];
   createdAt: number;
   connectionDeadlineAt?: number;
+  recruitmentDeadlineAt?: number;
   playStartedAt?: number | null;
   costsCommitted?: boolean;
   settled: boolean;
@@ -4965,6 +4972,13 @@ function buildPerspectiveState(match: ActiveMatch, userId: string) {
       accusablePlayers: [],
       waitingForPlayers: !match.playStartedAt,
       connectionDeadlineAt: match.connectionDeadlineAt || null,
+      recruitmentDeadlineAt: match.recruitmentDeadlineAt || null,
+      recruitmentOpen: Boolean(
+        match.mode === 'pvp'
+        && match.gameType === 'uno'
+        && !match.playStartedAt
+        && Date.now() < (match.recruitmentDeadlineAt || match.createdAt)
+      ),
       playerWins: mappedPlayerWins,
       winsRequired: (match.gameState as any).winsRequired || (currentTournament?.winsRequired || 1),
     },
@@ -5128,8 +5142,13 @@ function activateMatch(matchId: string, mode: MatchMode, players: QueuePlayer[],
     players,
     createdAt,
     connectionDeadlineAt: mode === 'pvp' ? createdAt + 60_000 : (waitsForPrivatePlayers ? createdAt + 60_000 : undefined),
+    recruitmentDeadlineAt: mode === 'pvp' && gameType === 'uno'
+      ? createdAt + PUBLIC_UNO_RECRUITMENT_MS
+      : undefined,
     playStartedAt: waitsForPlayers ? null : createdAt,
-    costsCommitted: players.every((player) => player.costsCommitted !== false),
+    // `held` means tickets are reserved, not that match entry has been
+    // committed. Energy and final ticket accounting happen only at start.
+    costsCommitted: players.every((player) => player.costsCommitted === true),
     settled: false,
     gameState: createInitialMatchState(players),
     blackjackGameState: gameType === 'blackjack' ? createInitialBlackjackMatchState(players, stake) : undefined,
@@ -5175,6 +5194,11 @@ function ensureMatchLifecycle(match: ActiveMatch) {
     match.connectionDeadlineAt = match.createdAt;
     match.playStartedAt = match.playStartedAt || match.createdAt;
     match.costsCommitted = true;
+  }
+  // A persisted match created before the recruitment phase must continue as
+  // it was; never put it back into a lobby after a deployment.
+  if (match.mode === 'pvp' && match.gameType === 'uno' && match.recruitmentDeadlineAt === undefined && !match.playStartedAt) {
+    match.recruitmentDeadlineAt = match.createdAt;
   }
 }
 
@@ -5259,13 +5283,20 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   const isTournament = match.matchId.startsWith('tourn-');
   const timeoutMs = 60_000;
   const deadlineReached = now >= (match.connectionDeadlineAt || match.createdAt + timeoutMs);
+  const isUnoPublic = match.gameType === 'uno' && !isTournament;
+  const recruitmentDeadlineAt = match.recruitmentDeadlineAt || match.createdAt;
+  const recruitmentOpen = isUnoPublic && now < recruitmentDeadlineAt;
   
   const connectedPlayers = match.gameState.players.filter((player) => player.hasConnected || player.isAi);
   const allConnected = connectedPlayers.length === match.gameState.players.length && connectedPlayers.length >= MIN_MATCH_PLAYERS;
 
-  // Start immediately when MIN_MATCH_PLAYERS humans have connected or all players are connected
+  // The first UNO pair opens a common table lobby. Do not let either client
+  // start independently while the server is still recruiting seats three/four.
+  if (recruitmentOpen) return false;
+
+  // Other games may fast-start once the minimum human count has connected.
   const connectedHumanCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
-  const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS && !isTournament;
+  const enoughHumansConnected = connectedHumanCount >= MIN_MATCH_PLAYERS && !isTournament && !isUnoPublic;
 
   // If not all matched players are connected and deadline not reached yet, continue waiting in lobby
   // unless we have enough humans connected for a fast start
@@ -5298,6 +5329,10 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
     }
 
     const connectedCount = match.gameState.players.filter((p) => p.hasConnected && !p.isAi).length;
+    if (isUnoPublic) {
+      cancelUnstartedPublicMatch(match, 'Not all UNO table players connected in time. Match cancelled.');
+      return false;
+    }
     if (match.stake === 0 && connectedCount > 0) {
       match.gameState.players.forEach((player) => {
         if (!player.hasConnected && !player.isAi) {
@@ -5550,12 +5585,13 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
   similarPlayers.sort((a, b) => a.joinedAt - b.joinedAt);
   const oldestPlayer = similarPlayers[0] ?? player;
   const waitedMs = Date.now() - oldestPlayer.joinedAt;
+  const timeoutMs = playerGameType === 'uno' && player.mode === 'pvp' ? 5 * 60_000 : MATCHMAKING_TIMEOUT_MS;
 
   return {
     status: 'searching',
     queueLength: similarPlayers.length,
     playersNeeded: Math.max(0, MIN_MATCH_PLAYERS - similarPlayers.length),
-    countdownSec: Math.max(0, Math.ceil((MATCHMAKING_TIMEOUT_MS - waitedMs) / 1000)),
+    countdownSec: Math.max(0, Math.ceil((timeoutMs - waitedMs) / 1000)),
     stake: player.stake,
     mode: player.mode,
     gameType: playerGameType,
@@ -5588,7 +5624,10 @@ function expireTimedOutMatchmakingPlayers(now = Date.now()) {
   });
   const expired = matchmakingQueue.filter((player) => {
     const key = `${player.gameType || 'uno'}_${player.mode}_${player.stake}`;
-    return now - player.joinedAt >= MATCHMAKING_TIMEOUT_MS
+    const timeoutMs = (player.gameType || 'uno') === 'uno' && player.mode === 'pvp'
+      ? 5 * 60_000
+      : MATCHMAKING_TIMEOUT_MS;
+    return now - player.joinedAt >= timeoutMs
       && (groupSizes.get(key) || 0) < MIN_MATCH_PLAYERS;
   });
   if (expired.length === 0) return;
@@ -5617,6 +5656,11 @@ function runMatchmakingTick() {
   // Sweep dead/stale matches so users are never trapped in unended games
   const now = Date.now();
   for (const [matchId, match] of activeMatches.entries()) {
+    if (match.mode === 'pvp' && !match.playStartedAt) {
+      // The ticker is the authority that closes a recruitment/connection
+      // lobby even when no client happens to make another request at its end.
+      maybeStartPublicMatch(match, now);
+    }
     const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 65_000);
     const isStaleExpired = now - (match.playStartedAt || match.createdAt || now) > 10 * 60 * 1000;
     if ((isUnstartedExpired || isStaleExpired) && !match.settled) {
@@ -5646,6 +5690,7 @@ function runMatchmakingTick() {
     let i = 0;
     while (i < players.length) {
       const remaining = players.length - i;
+      const gameType = players[i]?.gameType || 'uno';
       if (remaining >= MIN_MATCH_PLAYERS) {
         const groupSlice = players.slice(i, i + MAX_MATCH_PLAYERS);
         const oldestPlayer = groupSlice[0];
@@ -5673,7 +5718,7 @@ function runMatchmakingTick() {
         i += groupSlice.length;
       } else {
         const waitingPlayer = players[i];
-        if (waitingPlayer && waitingPlayer.stake === 0 && Date.now() - waitingPlayer.joinedAt >= 65_000) {
+        if (waitingPlayer && waitingPlayer.stake === 0 && gameType !== 'uno' && Date.now() - waitingPlayer.joinedAt >= 65_000) {
           const gameType = waitingPlayer.gameType || 'uno';
           const botCount = gameType === 'blackjack' ? 2 : 1;
           const bots: QueuePlayer[] = [];
@@ -7555,7 +7600,9 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       m.stake === stakeAmount &&
       !m.settled &&
       !m.playStartedAt &&
-      Date.now() - m.createdAt < 45_000 &&
+      ((m.gameType || 'uno') === 'uno'
+        ? Date.now() < (m.recruitmentDeadlineAt || m.createdAt)
+        : Date.now() - m.createdAt < 45_000) &&
       m.players.length < MAX_MATCH_PLAYERS &&
       !m.players.some((p) => isSameUser(p.userId, userId))
   );
@@ -7565,10 +7612,6 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       user.availableTickets = round2(user.availableTickets - stakeAmount);
       user.heldTickets = round2(user.heldTickets + stakeAmount);
     }
-    if (user.energy >= energyCost) {
-      spendEnergy(user, energyCost, stakeAmount === 0 ? 'Free Public Match Energy' : 'Online Match Energy');
-    }
-
     const newPlayer: QueuePlayer = {
       userId,
       username,
@@ -7577,10 +7620,14 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       mode,
       gameType,
       joinedAt: Date.now(),
-      costsCommitted: true,
+      // Costs are committed atomically only when the recruitment lobby starts
+      // the match. A third/fourth player that never reaches the table is not
+      // charged merely for reserving a seat.
+      costsCommitted: stakeAmount > 0 ? 'held' : false,
     };
 
     openActiveMatch.players.push(newPlayer);
+    openActiveMatch.costsCommitted = false;
     activeMatchByUser.set(userId, openActiveMatch.matchId);
 
     const state = ensureServerDeck(openActiveMatch.gameState, 7);
@@ -7592,9 +7639,9 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       avatarId,
       hand: startingHand,
       isAi: false,
-      isConnected: true,
-      hasConnected: true,
-      lastSeenAt: Date.now(),
+      isConnected: false,
+      hasConnected: false,
+      lastSeenAt: null,
       disconnectedAt: null,
       unoDeclared: false,
       emotion: 'happy',
@@ -8853,6 +8900,19 @@ app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, r
 app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
   const user = getUser(userId);
+  const assigned = tryActivateQueuedMatch(userId);
+  if (assigned?.status === 'ready' && assigned.matchId) {
+    // Cancellation is valid only while the user is actually queued. Once the
+    // server has assigned a shared table, keep the match intact and return
+    // the canonical handoff payload so a delayed client can open it.
+    return res.status(409).json({
+      code: 'match_assigned',
+      error: 'A match has already been assigned.',
+      matchmaker: assigned,
+      availableTickets: user.availableTickets,
+      heldTickets: user.heldTickets,
+    });
+  }
   user.matchmakingFailureAt = null;
   user.matchmakingFailureReason = null;
   const player = matchmakingQueue.find(p => isSameUser(p.userId, userId));

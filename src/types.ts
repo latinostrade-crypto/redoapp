@@ -72,6 +72,8 @@ export interface GameState {
   turnStartedAt?: number;
   waitingForPlayers?: boolean;
   connectionDeadlineAt?: number | null;
+  recruitmentDeadlineAt?: number | null;
+  recruitmentOpen?: boolean;
   playerWins?: Record<string, number>;
   winsRequired?: number;
 }
@@ -255,4 +257,3 @@ export interface TournamentLeaderboardEntry {
   winsCount: number;
   lastWinAt: number;
 }
-
