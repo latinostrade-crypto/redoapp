@@ -14,6 +14,8 @@
     "test:multiplayer-rooms": "node scripts/test-multiplayer-rooms.mjs",
     "test:private-room-client": "node scripts/test-private-room-client-contract.mjs",
     "test:persistent-tables": "node scripts/test-persistent-tables.mjs",
+    "test:casino-restart": "node scripts/test-casino-restart-recovery.mjs",
+    "test:poker-resilience": "tsx scripts/test-poker-engine-resilience.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",

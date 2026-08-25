@@ -1140,15 +1140,34 @@ async function loadCasinoRuntimeSnapshots() {
       casinoManager.restoreRuntime(row.table_id, row.state, Date.parse(row.updated_at) || Date.now());
       casinoRuntimeStateVersions.set(row.table_id, Math.max(1, Number(row.revision) || 1));
     });
+    discardPersistedCasinoMatchWrappers();
     casinoTablesDatabaseReady = true;
     return;
   }
   const rows = await loadSupabaseRowsByPrefix(CASINO_RUNTIME_ROW_PREFIX);
   rows.forEach((row) => {
-    const payload = row.payload as { tableId?: string; state?: unknown; lastActivityAt?: number };
+    const payload = row.payload as { tableId?: string; state?: unknown; lastActivityAt?: number; revision?: number };
     if (typeof payload?.tableId === 'string') {
       casinoManager.restoreRuntime(payload.tableId, payload.state, Number(payload.lastActivityAt) || Date.now());
+      casinoRuntimeStateVersions.set(payload.tableId, Math.max(1, Number(payload.revision) || 1));
     }
+  });
+  discardPersistedCasinoMatchWrappers();
+}
+
+/**
+ * Casino engines are restored from their own ordered runtime snapshots.
+ * Generic ActiveMatch rows are only process wrappers around those engines;
+ * retaining a deserialized wrapper after a Render restart makes state reads
+ * point at an older object than casinoManager's authoritative runtime.
+ */
+function discardPersistedCasinoMatchWrappers() {
+  activeMatches.forEach((match, matchId) => {
+    if (match.creatorUserId !== 'casino' && !matchId.startsWith('table-')) return;
+    activeMatches.delete(matchId);
+  });
+  activeMatchByUser.forEach((matchId, userId) => {
+    if (matchId.startsWith('table-')) activeMatchByUser.delete(userId);
   });
 }
 
@@ -1218,6 +1237,7 @@ async function persistCasinoRuntimeNow(tableId: string) {
       tableId,
       state,
       lastActivityAt: table.lastActivityAt,
+      revision: casinoRuntimeStateVersions.get(tableId) || 1,
       savedAt: Date.now(),
     });
   }
@@ -5957,6 +5977,10 @@ function broadcastMatch(matchId: string) {
   if (activeMatch.creatorUserId === 'casino') {
     activeMatch.stateVersion = (activeMatch.stateVersion || 0) + 1;
     casinoRuntimeStateVersions.set(matchId, activeMatch.stateVersion);
+    // Do not make a player's request wait for storage, but checkpoint every
+    // observable casino transition. This closes the window in which Render
+    // can restart after a broadcast yet before the five-second checkpoint.
+    checkpointCasinoRuntimeInBackground(matchId, 'state-broadcast');
   }
   if (!subscribers) return;
   subscribers.forEach((response) => {
@@ -9870,39 +9894,43 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
   const userId = getAuthenticatedUserId(req);
   const { tableId } = req.body;
   if (!tableId) return res.status(400).json({ error: 'Missing tableId' });
-
-  const quote = casinoManager.getLeaveQuote(tableId, userId);
-  if (quote && CASINO_TABLES_DB_MODE) {
-    try {
-      await leaveCasinoSeatInDatabase(
-        tableId,
-        userId,
-        quote.chips,
-        typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
-          ? req.body.idempotencyKey
-          : `casino-leave:${tableId}:${userId}:${crypto.randomUUID()}`,
-      );
-    } catch (error: any) {
-      return res.status(409).json({ error: error.message });
-    }
+  try {
+    const payload = await runCasinoTableMutation(tableId, async () => {
+      const quote = casinoManager.getLeaveQuote(tableId, userId);
+      if (quote && CASINO_TABLES_DB_MODE) {
+        await leaveCasinoSeatInDatabase(
+          tableId,
+          userId,
+          quote.chips,
+          typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
+            ? req.body.idempotencyKey
+            : `casino-leave:${tableId}:${userId}:${crypto.randomUUID()}`,
+        );
+      }
+      const result = casinoManager.leaveTable(tableId, userId);
+      if (result) {
+        const user = getUser(userId);
+        if (result.mode === 'public') {
+          user.casinoChips = round2(user.casinoChips + result.chips);
+          createLedgerEntry(user, {
+            id: `casino-cash-out:${tableId}:${userId}:${Date.now()}`,
+            event: 'Public Table Cash-out',
+            value: `+${result.chips} CHIPS`,
+            type: 'match_refund',
+            amount: result.chips,
+          });
+        }
+        schedulePersist({ userId });
+        broadcastMatch(tableId);
+        await persistCasinoRuntime(tableId);
+      }
+      return { success: true, message: 'Left table' };
+    });
+    res.json(payload);
+  } catch (error: any) {
+    console.error('Casino leave-table failed', { tableId, userId, error: error instanceof Error ? error.message : String(error) });
+    res.status(error?.statusCode || 409).json({ error: error instanceof Error ? error.message : 'Could not leave table. Please retry.' });
   }
-  const result = casinoManager.leaveTable(tableId, userId);
-  if (result) {
-    const user = getUser(userId);
-    if (result.mode === 'public') {
-      user.casinoChips = round2(user.casinoChips + result.chips);
-      createLedgerEntry(user, {
-        id: `casino-cash-out:${tableId}:${userId}:${Date.now()}`,
-        event: 'Public Table Cash-out',
-        value: `+${result.chips} CHIPS`,
-        type: 'match_refund',
-        amount: result.chips,
-      });
-    }
-    schedulePersist({ userId });
-    await persistCasinoRuntime(tableId);
-  }
-  res.json({ success: true, message: 'Left table' });
 });
 
 app.post('/api/casino/exchange', requireAuth, (req: AuthenticatedRequest, res) => {

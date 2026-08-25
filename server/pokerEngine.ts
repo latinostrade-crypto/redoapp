@@ -132,8 +132,17 @@ export class PokerEngine {
     player.folded = true;
     player.eliminated = true;
     
-    // Fast-forward turn if it was their turn
-    if (pIdx === this.state.currentPlayerIndex) {
+    // A departure can leave no eligible players (two users leave at nearly
+    // the same time) or exactly one winner. Resolve that state immediately;
+    // waiting for a no-longer-valid turn used to reach showdown with [] and
+    // crash the Node process.
+    const remainingActive = this.state.players.filter((entry) =>
+      !entry.folded && !entry.eliminated && entry.isConnected !== false
+    );
+    if (remainingActive.length <= 1) {
+      this.doShowdown();
+    // Fast-forward turn if it was their turn.
+    } else if (pIdx === this.state.currentPlayerIndex) {
       player.hasActedThisStage = true;
       this.advanceTurn();
     }
@@ -268,8 +277,8 @@ export class PokerEngine {
   }
 
   advanceTurn() {
-    const active = this.state.players.filter(p => !p.folded);
-    if (active.length === 1) {
+    const active = this.state.players.filter(p => !p.folded && !p.eliminated && p.isConnected !== false);
+    if (active.length <= 1) {
       this.doShowdown();
       return;
     }
@@ -336,7 +345,20 @@ export class PokerEngine {
 
   doShowdown() {
     this.state.stage = 'showdown';
-    const active = this.state.players.filter(p => !p.folded);
+    const active = this.state.players.filter(p => !p.folded && !p.eliminated && p.isConnected !== false);
+
+    // It is valid for every participant to leave/disconnect in one tick.
+    // There is no winner to evaluate, but the hand must still close cleanly.
+    if (active.length === 0) {
+      this.state.winnerUserIds = [];
+      this.state.winningCardIds = [];
+      this.state.winningHandDesc = 'Hand cancelled';
+      this.state.pot = 0;
+      this.log('Hand cancelled because all players left the table.', 'info');
+      this.state.stage = 'ended';
+      this.state.turnStartedAt = Date.now();
+      return;
+    }
     
     if (active.length === 1) {
       const winner = active[0];
