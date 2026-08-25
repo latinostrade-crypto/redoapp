@@ -578,7 +578,7 @@ type PrivateRoomResponse = {
   telegramLink?: string;
   playersCount: number;
   targetPlayers?: number;
-  status: 'waiting' | 'started';
+  status: 'waiting' | 'starting' | 'started' | 'ready' | 'completed' | 'cancelled';
   matchId?: string;
   stake?: number;
   gameType?: 'uno' | 'poker' | 'blackjack';
@@ -586,6 +586,8 @@ type PrivateRoomResponse = {
   players?: PrivateRoomPlayer[];
   availableTickets?: number;
   heldTickets?: number;
+  canStart?: boolean;
+  joinable?: boolean;
 };
 type ReferralPageResponse = {
   invites: ReferralInvite[];
@@ -1162,6 +1164,7 @@ export function Web3Dashboard({
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [privateRoomPlayersList, setPrivateRoomPlayersList] = useState<PrivateRoomPlayer[]>([]);
   const [privateRoomHostUserId, setPrivateRoomHostUserId] = useState<string>('');
+  const [privateRoomSnapshot, setPrivateRoomSnapshot] = useState<PrivateRoomResponse | null>(null);
   const [showConnectModal, setShowConnectModal] = useState(false);
   const [showPromoModal, setShowPromoModal] = useState<boolean>(() => {
     try {
@@ -1555,6 +1558,7 @@ export function Web3Dashboard({
     setPrivateRoomPlayersCount(0);
     setPrivateRoomPlayersList([]);
     setPrivateRoomHostUserId('');
+    setPrivateRoomSnapshot(null);
     setPrivateRoomStatus('idle');
     setPrivateRoomCreateState('idle');
     setPrivateRoomError('');
@@ -1579,7 +1583,7 @@ export function Web3Dashboard({
   // Bug #4 fix: accept overrideRoomCode as explicit parameter to avoid stale closure.
   // React state updates (setPrivateRoomCode) are async, so at the time this callback
   // runs, privateRoomCode may still be '' even though we just called setPrivateRoomCode.
-  const applyPrivateRoomState = useCallback((result: { status: 'waiting' | 'started' | 'ready' | 'completed' | 'cancelled'; playersCount?: number; targetPlayers?: number; matchId?: string | null; gameType?: 'uno' | 'poker' | 'blackjack'; hostUserId?: string; stake?: number; roomCode?: string; players?: Array<{ userId: string; username: string; avatarId: string; stake: number }> }, overrideRoomCode?: string) => {
+  const applyPrivateRoomState = useCallback((result: PrivateRoomResponse, overrideRoomCode?: string) => {
     if (result.status === 'completed' || result.status === 'cancelled') {
       try {
         localStorage.removeItem('redoapp_active_match');
@@ -1596,16 +1600,16 @@ export function Web3Dashboard({
       setGeneratedLink(buildPrivateRoomSharePayload(resolvedRoomCode, result.gameType || pvpGameTab).telegramLink);
     }
 
-    const count = result.playersCount || result.players?.length || 1;
+    const players = Array.isArray(result.players) ? result.players : [];
+    const count = players.length;
+    setPrivateRoomSnapshot({ ...result, roomCode: resolvedRoomCode || result.roomCode, players, playersCount: count });
     setPrivateRoomPlayersCount(count);
     if (result.hostUserId) {
       setPrivateRoomHostUserId(result.hostUserId);
     } else if (result.players?.[0]?.userId) {
       setPrivateRoomHostUserId(result.players[0].userId);
     }
-    if (Array.isArray(result.players)) {
-      setPrivateRoomPlayersList(result.players);
-    }
+    setPrivateRoomPlayersList(players);
     if (result.targetPlayers && [2, 3, 4].includes(result.targetPlayers)) {
       setPrivateRoomTargetPlayers(result.targetPlayers as 2 | 3 | 4);
     }
@@ -1686,11 +1690,15 @@ export function Web3Dashboard({
   }, [privateRoomCode, privateJoinCode, currentUserId, applyPrivateRoomState]);
 
   const renderPrivateWaitingRoomLobby = (gameTitle: string) => {
-    const resolvedCode = privateRoomCode || privateJoinCode;
+    const room = privateRoomSnapshot;
+    const resolvedCode = room?.roomCode || privateRoomCode || privateJoinCode;
+    const roomPlayers = room?.players || privateRoomPlayersList;
+    const roomPlayerCount = room ? roomPlayers.length : privateRoomPlayersCount;
+    const roomTargetPlayers = room?.targetPlayers || privateRoomTargetPlayers;
+    const roomIsStarting = room?.status === 'starting';
     const isCurrentPlayerHost = Boolean(
       currentUserId && (
-        (privateRoomHostUserId && privateRoomHostUserId === currentUserId) ||
-        (!privateRoomHostUserId && privateRoomPlayersList[0]?.userId === currentUserId)
+        (room?.hostUserId || privateRoomHostUserId) === currentUserId
       )
     );
 
@@ -1709,23 +1717,25 @@ export function Web3Dashboard({
             )}
           </div>
           <span className="text-[#00ff66] font-mono font-black text-[9px]">
-            {privateRoomPlayersCount || 1}/{privateRoomTargetPlayers} PLAYERS
+            {roomPlayerCount}/{roomTargetPlayers} PLAYERS
           </span>
         </div>
 
         {/* Status Alert Banner */}
         <div className={`p-2 rounded border text-[8px] font-mono leading-relaxed ${
           isCurrentPlayerHost
-            ? (privateRoomPlayersCount >= 2 
+            ? (room?.canStart ?? roomPlayerCount >= 2
                 ? 'bg-[#00ff66]/10 border-[#00ff66]/40 text-[#00ff66]' 
                 : 'bg-[#ffcc00]/10 border-[#ffcc00]/40 text-[#ffcc00] animate-pulse')
             : 'bg-[#00d2ff]/10 border-[#00d2ff]/40 text-[#00d2ff] animate-pulse'
         }`}>
-          {isCurrentPlayerHost ? (
-            privateRoomPlayersCount >= 2 ? (
+          {roomIsStarting ? (
+            <div className="flex items-center gap-1.5 font-bold"><span>⏳</span><span>Locking seats and preparing the table…</span></div>
+          ) : isCurrentPlayerHost ? (
+            (room?.canStart ?? roomPlayerCount >= 2) ? (
               <div className="flex items-center gap-1.5 font-bold">
                 <span>✨</span>
-                <span>{privateRoomPlayersCount} players ready! You can start now or wait for more players.</span>
+                <span>{roomPlayerCount} players seated. Start when ready.</span>
               </div>
             ) : (
               <div className="flex items-center gap-1.5 font-bold">
@@ -1777,8 +1787,8 @@ export function Web3Dashboard({
 
         {/* Player Slots */}
         <div className="space-y-1.5 py-1">
-          {Array.from({ length: privateRoomTargetPlayers }).map((_, idx) => {
-            const player = privateRoomPlayersList[idx];
+          {Array.from({ length: roomTargetPlayers }).map((_, idx) => {
+            const player = roomPlayers[idx];
             const isJoined = Boolean(player);
             const isSelf = player && currentUserId && player.userId === currentUserId;
             const isSlotHost = idx === 0;
@@ -1818,14 +1828,18 @@ export function Web3Dashboard({
         </div>
 
         {/* Host Action or Guest Waiting Banner */}
-        {isCurrentPlayerHost ? (
-          privateRoomPlayersCount >= 2 ? (
+        {roomIsStarting ? (
+          <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase">
+            ⏳ Starting table…
+          </div>
+        ) : isCurrentPlayerHost ? (
+          (room?.canStart ?? roomPlayerCount >= 2) ? (
             <button
               type="button"
               onClick={handleStartPrivateRoomMatch}
               className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] font-black uppercase pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer active:translate-y-0.5"
             >
-              START {gameTitle.toUpperCase()} MATCH ({privateRoomPlayersCount} PLAYERS) ➔
+              START {gameTitle.toUpperCase()} MATCH ({roomPlayerCount} PLAYERS) ➔
             </button>
           ) : (
             <div className="w-full py-2.5 bg-slate-900/80 text-[#ffcc00] border border-slate-800 text-[8.5px] font-mono text-center uppercase animate-pulse">
@@ -2123,19 +2137,15 @@ export function Web3Dashboard({
 
     const createRequestId = `room-${Date.now()}-${createRequestCounterRef.current += 1}-${Math.random().toString(36).slice(2, 8)}`;
     const requestedRoomCode = generatePrivateRoomCode();
-    const fallbackPayload = buildPrivateRoomSharePayload(requestedRoomCode, pvpGameTab);
-
-    // Apply waiting state IMMEDIATELY so the room lobby & share buttons display without any network lag
+    // Do not render invented seats while the create request is in flight.
+    // The waiting table appears only from the server's confirmed snapshot.
     setCurrentTab('pvp');
     setPvpSubMode('private');
-    setPrivateRoomCode(requestedRoomCode);
-    setPrivateJoinCode(requestedRoomCode);
     setPrivateRoomTargetPlayers(effectiveTargetPlayers as 2 | 3 | 4);
-    setPrivateRoomPlayersCount(1);
-    setPrivateRoomHostUserId(currentUserId);
-    setPrivateRoomStatus('waiting');
-    setPrivateRoomCreateState('waiting');
-    setGeneratedLink(fallbackPayload.telegramLink);
+    setPrivateRoomSnapshot(null);
+    setPrivateRoomStatus('idle');
+    setPrivateRoomCreateState('creating');
+    setGeneratedLink('');
     setPrivateRoomError('');
 
     const createPayload = {
@@ -2153,13 +2163,7 @@ export function Web3Dashboard({
     const applyCreatedRoom = (result: PrivateRoomResponse) => {
       if (typeof result.availableTickets === 'number') setGoldenTickets(result.availableTickets);
       if (typeof result.heldTickets === 'number') setHeldTickets(result.heldTickets);
-      if (result.roomCode) {
-        setPrivateRoomCode(result.roomCode);
-        setPrivateJoinCode(result.roomCode);
-        const link = result.telegramLink || buildPrivateRoomSharePayload(result.roomCode, pvpGameTab).telegramLink;
-        setGeneratedLink(link);
-      }
-      if (result.status === 'started') applyPrivateRoomState(result);
+      applyPrivateRoomState(result, result.roomCode);
     };
 
     apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
@@ -5802,7 +5806,13 @@ export function Web3Dashboard({
                       </div>
                     </div>
                   ) : (
-                    generatedLink || privateRoomStatus === 'waiting' ? (
+                    initialLaunchRoomParsedRef.current.code && !privateRoomSnapshot && !privateRoomError ? (
+                      <div className="bg-[#08131f] border border-[#00d2ff]/50 pixel-box-sm p-5 text-center space-y-2 font-mono">
+                        <div className="text-[#00d2ff] text-[10px] font-black uppercase">Joining private table…</div>
+                        <div className="text-slate-400 text-[8px]">Room #{initialLaunchRoomParsedRef.current.code}</div>
+                        <div className="text-slate-500 text-[7px]">Confirming your seat with the game server.</div>
+                      </div>
+                    ) : generatedLink || privateRoomStatus === 'waiting' ? (
                       renderPrivateWaitingRoomLobby('UNO')
                     ) : (
                       <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">

@@ -593,7 +593,10 @@ interface PrivateRoom {
   players: QueuePlayer[];
   createdAt: number;
   lastActivityAt?: number;
-  status: 'waiting' | 'ready' | 'started';
+  // A room is a lobby, not a partially constructed game.  Keeping those
+  // lifecycles separate prevents placeholder seats from leaking into the
+  // player count and makes the start transition atomic.
+  status: 'waiting' | 'starting' | 'started';
   matchId?: string;
 }
 
@@ -2073,6 +2076,32 @@ function buildBootstrapProfileResponse(user: UserState) {
       for (const [uid] of activeMatchByUser.entries()) {
         if (isSameUser(uid, user.userId)) activeMatchByUser.delete(uid);
       }
+    }
+  }
+
+  // Waiting private rooms intentionally have no ActiveMatch yet. Surface them
+  // in the bootstrap response so a Telegram reload restores the actual lobby
+  // instead of dumping the host or guest back into the main menu.
+  if (!activeMatchInfo) {
+    const waitingRoom = Array.from(privateRooms.values()).find((room) =>
+      room.status === 'waiting' && room.players.some((player) => isSameUser(player.userId, user.userId))
+    );
+    if (waitingRoom) {
+      activeMatchInfo = {
+        matchId: `room:${waitingRoom.roomCode}`,
+        gameType: waitingRoom.gameType || 'uno',
+        mode: 'private',
+        stake: waitingRoom.stake,
+        status: 'waiting',
+        playStartedAt: null,
+        roomCode: waitingRoom.roomCode,
+        players: waitingRoom.players.map((player) => ({
+          userId: player.userId,
+          username: player.username,
+          avatarId: player.avatarId,
+          stake: player.stake,
+        })),
+      };
     }
   }
 
@@ -5810,6 +5839,8 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
     matchId: room.matchId || null,
     gameType: room.gameType || 'uno',
     hostUserId: room.hostUserId,
+    canStart: room.status === 'waiting' && room.players.length >= MIN_MATCH_PLAYERS,
+    joinable: room.status === 'waiting' && room.players.length < room.targetPlayers,
   };
 }
 
@@ -5829,12 +5860,6 @@ function broadcastMatchCancelled(matchId: string, reason: string) {
     response.end();
   });
   matchSubscribers.delete(matchId);
-}
-
-function privateRoomHasOpenSeats(room: PrivateRoom) {
-  const match = room.matchId ? activeMatches.get(room.matchId) : null;
-  return room.players.length < room.targetPlayers
-    || Boolean(match?.players.some((player) => player.userId.startsWith('waiting_for_player_')));
 }
 
 function refundPrivateRoomReservation(player: QueuePlayer, roomCode: string, reason: string) {
@@ -8095,25 +8120,6 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     } while (privateRooms.has(roomCode));
   }
 
-  const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  
-  // Set up match players with placeholders
-  const matchPlayers: QueuePlayer[] = [hostPlayer];
-  for (let i = 1; i < targetPlayersCount; i++) {
-    matchPlayers.push({
-      userId: `waiting_for_player_${i}`,
-      username: 'Waiting...',
-      avatarId: 'koala',
-      stake: stakeAmount,
-      mode: 'private',
-      gameType,
-      joinedAt: Date.now(),
-      costsCommitted: false,
-    });
-  }
-
-  activateMatch(matchId, 'private', matchPlayers, stakeAmount, gameType);
-
   privateRooms.set(roomCode, {
     roomCode,
     createRequestId: normalizedRequestId || undefined,
@@ -8125,7 +8131,6 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     status: 'waiting',
-    matchId,
   });
   schedulePersist({ roomCode });
   broadcastPrivateRoom(roomCode);
@@ -8138,7 +8143,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     targetPlayers: targetPlayersCount,
     gameType,
     status: 'waiting',
-    matchId,
+    matchId: null,
     playersCount: 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
@@ -8152,17 +8157,11 @@ function startPrivateRoomMatchHelper(room: PrivateRoom, match: ActiveMatch) {
   match.costsCommitted = true;
   match.playStartedAt = startedAt;
   match.players = [...room.players];
-
-  if (match.gameType === 'poker' || match.pokerGameState) {
-    match.pokerGameState = createInitialPokerMatchState(match.players, match.stake);
-    match.pokerGameState.turnStartedAt = startedAt;
-  } else if (match.gameType === 'blackjack' || match.blackjackGameState) {
-    match.blackjackGameState = createInitialBlackjackMatchState(match.players, match.stake);
-    match.blackjackGameState.turnStartedAt = startedAt;
-  } else {
-    match.gameState = createInitialMatchState(match.players);
-    match.gameState.turnStartedAt = startedAt;
-  }
+  // activateMatch created the first hand exactly once. Do not rebuild it
+  // here: retries or duplicate UI events must not reshuffle a live table.
+  match.gameState.turnStartedAt = match.gameState.turnStartedAt || startedAt;
+  if (match.blackjackGameState) match.blackjackGameState.turnStartedAt = match.blackjackGameState.turnStartedAt || startedAt;
+  if (match.pokerGameState) match.pokerGameState.turnStartedAt = match.pokerGameState.turnStartedAt || startedAt;
 
   match.players.forEach((p) => {
     activeMatchByUser.set(p.userId, match.matchId);
@@ -8209,10 +8208,13 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   joinFailuresMap.delete(lockoutKey);
   const match = room.matchId ? activeMatches.get(room.matchId) : null;
 
-  if (room.players.some((player) => isSameUser(player.userId, userId)) || (match && match.players.some((player) => isSameUser(player.userId, userId)))) {
+  // Re-opening the same invite is a recovery operation.  Never add a second
+  // seat and, once started, return the existing match so the client can go
+  // directly to the table.
+  if (room.players.some((player) => isSameUser(player.userId, userId))) {
     const user = getUser(userId, walletAddress);
-    activeMatchByUser.set(userId, match ? match.matchId : (room.matchId || ''));
     if (match) {
+      activeMatchByUser.set(userId, match.matchId);
       markMatchPlayerConnected(match, userId);
       broadcastMatch(match.matchId);
     }
@@ -8234,9 +8236,7 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     });
   }
 
-  const hasPlaceholders = !!match && match.players.some(p => p.userId.startsWith('waiting_for_player_'));
-
-  if (room.status === 'started' && !hasPlaceholders) {
+  if (room.status !== 'waiting') {
     return res.status(400).json({ error: 'Private room has already started.' });
   }
   if (room.players.length >= room.targetPlayers) {
@@ -8263,66 +8263,15 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     costsCommitted: false,
   };
 
-  if (match?.costsCommitted) {
-    room.players.forEach((player) => {
-      if (player.costsCommitted === undefined) player.costsCommitted = true;
-    });
-  }
   room.players.push(newPlayer);
   room.lastActivityAt = Date.now();
-
-  if (match) {
-    // Replace the first placeholder in match.players
-    const placeholderIdx = match.players.findIndex(p => p.userId.startsWith('waiting_for_player_'));
-    if (placeholderIdx !== -1) {
-      const placeholderUserId = match.players[placeholderIdx].userId;
-      match.players[placeholderIdx] = newPlayer;
-      
-      const gsPlayerIdx = match.gameState.players.findIndex(p => p.userId === placeholderUserId);
-      if (gsPlayerIdx !== -1) {
-        match.gameState.players[gsPlayerIdx].userId = userId;
-        match.gameState.players[gsPlayerIdx].username = username;
-        match.gameState.players[gsPlayerIdx].avatarId = avatarId;
-      }
-
-      if (match.blackjackGameState) {
-        const bjPlayerIdx = match.blackjackGameState.players.findIndex(p => p.userId === placeholderUserId);
-        if (bjPlayerIdx !== -1) {
-          match.blackjackGameState.players[bjPlayerIdx].userId = userId;
-          match.blackjackGameState.players[bjPlayerIdx].username = username;
-          match.blackjackGameState.players[bjPlayerIdx].avatarId = avatarId;
-          match.blackjackGameState.players[bjPlayerIdx].isAi = false;
-          match.blackjackGameState.players[bjPlayerIdx].isConnected = true;
-          match.blackjackGameState.players[bjPlayerIdx].hasConnected = true;
-        }
-      }
-
-      if (match.pokerGameState) {
-        const pkPlayerIdx = match.pokerGameState.players.findIndex(p => p.userId === placeholderUserId);
-        if (pkPlayerIdx !== -1) {
-          match.pokerGameState.players[pkPlayerIdx].userId = userId;
-          match.pokerGameState.players[pkPlayerIdx].username = username;
-          match.pokerGameState.players[pkPlayerIdx].avatarId = avatarId;
-          match.pokerGameState.players[pkPlayerIdx].isAi = false;
-          match.pokerGameState.players[pkPlayerIdx].isConnected = true;
-          match.pokerGameState.players[pkPlayerIdx].hasConnected = true;
-        }
-      }
-
-      activeMatchByUser.set(userId, match.matchId);
-
-    }
-  }
 
   // A private lobby is host-controlled. Starting on the last join raced the
   // lobby UI and left late clients hydrating a game they had not accepted yet.
   // /start atomically commits every participant's costs and creates the hand.
 
   privateRooms.set(room.roomCode, room);
-  schedulePersist({ roomCode: room.roomCode, matchId: room.matchId || undefined });
-  if (match) {
-    broadcastMatch(match.matchId);
-  }
+  schedulePersist({ roomCode: room.roomCode });
   broadcastPrivateRoom(room.roomCode);
 
   return sendPrivateRoomJoinSuccess(req, res, {
@@ -8366,15 +8315,45 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
     return res.status(400).json({ error: 'At least 2 players are required to start.' });
   }
 
-  const match = room.matchId ? activeMatches.get(room.matchId) : null;
-  if (!match) {
-    return res.status(404).json({ error: 'Match not found.' });
+  // Start is idempotent. A Telegram retry must return the original table and
+  // never shuffle a new hand or charge the same participants twice.
+  if (room.status === 'started' && room.matchId) {
+    const existingMatch = activeMatches.get(room.matchId);
+    if (existingMatch) {
+      return res.json({
+        success: true,
+        roomCode: room.roomCode,
+        status: 'started',
+        matchId: existingMatch.matchId,
+        playersCount: room.players.length,
+        targetPlayers: room.targetPlayers,
+        players: room.players,
+        hostUserId: room.hostUserId,
+        stake: room.stake,
+        gameType: room.gameType || 'uno',
+      });
+    }
+    return res.status(409).json({ error: 'Private room start is being recovered. Please retry.' });
   }
 
+  if (room.status !== 'waiting') {
+    return res.status(409).json({ error: 'Private room is already starting.' });
+  }
+
+  room.status = 'starting';
+  privateRooms.set(room.roomCode, room);
+  broadcastPrivateRoom(room.roomCode);
+
   if (!commitPrivateRoomCosts(room, room.players)) {
+    room.status = 'waiting';
+    privateRooms.set(room.roomCode, room);
+    broadcastPrivateRoom(room.roomCode);
     return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
   }
 
+  const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const match = activateMatch(matchId, 'private', [...room.players], room.stake, room.gameType || 'uno');
+  room.matchId = match.matchId;
   startPrivateRoomMatchHelper(room, match);
   room.lastActivityAt = Date.now();
 
@@ -8389,6 +8368,10 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
     status: 'started',
     matchId: room.matchId,
     playersCount: room.players.length,
+    targetPlayers: room.targetPlayers,
+    players: room.players,
+    hostUserId: room.hostUserId,
+    stake: room.stake,
     gameType: room.gameType || 'uno',
   });
 });
@@ -8412,8 +8395,7 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
   }
 
   if (room) {
-    const roomMatch = room.matchId ? activeMatches.get(room.matchId) : match;
-    if (!privateRoomHasOpenSeats(room)) {
+    if (room.status !== 'waiting') {
       return res.status(409).json({ error: 'The private match has already started and cannot be cancelled.' });
     }
     const leavingPlayer = room.players.find((player) => player.userId === userId);
@@ -8421,12 +8403,6 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
       activeMatchByUser.delete(userId);
       return res.json({ success: true, alreadyLeft: true });
     }
-    if (roomMatch?.costsCommitted) {
-      room.players.forEach((player) => {
-        if (player.costsCommitted === undefined) player.costsCommitted = true;
-      });
-    }
-
     if (room.hostUserId === userId) {
       room.players.forEach((player) => {
         refundPrivateRoomReservation(player, room.roomCode, 'Private Room Cancel Refund');
@@ -8459,34 +8435,8 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
     refundPrivateRoomReservation(leavingPlayer, room.roomCode, 'Private Room Leave Refund');
     room.players = room.players.filter((player) => player.userId !== userId);
     activeMatchByUser.delete(userId);
-    if (roomMatch) {
-      const playerIndex = roomMatch.players.findIndex((player) => player.userId === userId);
-      if (playerIndex >= 0) {
-        const placeholderUserId = `waiting_for_player_${playerIndex}_${Date.now()}`;
-        roomMatch.players[playerIndex] = {
-          userId: placeholderUserId,
-          username: 'Waiting...',
-          avatarId: 'koala',
-          stake: room.stake,
-          mode: 'private',
-          joinedAt: Date.now(),
-          costsCommitted: false,
-        };
-        const statePlayer = roomMatch.gameState.players.find((player) => player.userId === userId);
-        if (statePlayer) {
-          statePlayer.userId = placeholderUserId;
-          statePlayer.username = 'Waiting...';
-          statePlayer.avatarId = 'koala';
-        }
-        roomMatch.playStartedAt = null;
-        roomMatch.gameState.turnStartedAt = undefined;
-        roomMatch.costsCommitted = false;
-        room.status = 'waiting';
-      }
-    }
-    schedulePersist({ roomCode: room.roomCode, matchId: room.matchId });
+    schedulePersist({ roomCode: room.roomCode });
     broadcastPrivateRoom(room.roomCode);
-    if (room.matchId) broadcastMatch(room.matchId);
     await persistStateNow();
     return res.json({ success: true, left: true });
   }

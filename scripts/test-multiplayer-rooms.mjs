@@ -68,6 +68,7 @@ try {
   });
   assert.equal(created.roomCode, 'ABCD1234');
   assert.equal(created.status, 'waiting');
+  assert.equal(created.matchId, null, 'waiting rooms must not create placeholder matches');
   assert.match(created.telegramLink, /startapp=room_uno_ABCD1234$/);
 
   // A full Telegram WebApp reload must be able to reconstruct the waiting
@@ -108,9 +109,22 @@ try {
   });
   assert.equal(started.status, 'started');
   assert.equal(started.playersCount, 4);
+  assert.ok(started.matchId, 'the match is created only by the atomic start transition');
 
-  const stateA = await request('room_host', `/api/matches/state/${created.matchId}`);
-  const stateD = await request('room_d', `/api/matches/state/${created.matchId}`);
+  const startedAgain = await request('room_host', '/api/private-rooms/start', {
+    method: 'POST', body: JSON.stringify({ roomCode: created.roomCode }),
+  });
+  assert.equal(startedAgain.matchId, started.matchId, 'retrying start must not reshuffle or create another match');
+
+  const lateJoin = await fetch(`${baseUrl}/api/private-rooms/join`, {
+    method: 'POST',
+    headers: { 'x-user-id': 'room_late', 'content-type': 'application/json' },
+    body: JSON.stringify({ roomCode: created.roomCode, ...player('Late', 'koala') }),
+  });
+  assert.equal(lateJoin.status, 400, 'a started private table must freeze its participant list');
+
+  const stateA = await request('room_host', `/api/matches/state/${started.matchId}`);
+  const stateD = await request('room_d', `/api/matches/state/${started.matchId}`);
   assert.equal(stateA.gameState.players.length, 4);
   assert.equal(stateD.gameState.players.length, 4);
   assert.equal(stateA.gameState.waitingForPlayers, false);
