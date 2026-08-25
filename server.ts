@@ -85,6 +85,11 @@ const MAX_MATCH_PLAYERS = 4;
 const MATCHMAKING_TIMEOUT_MS = 75_000;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 2;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
+// Telegram legitimately backgrounds a Mini App while the user picks a chat
+// for an invite. A room lifetime must therefore be independent of an SSE
+// socket's lifetime. Hosts can still cancel explicitly; inactive lobbies are
+// reclaimed by this durable TTL instead of a disconnect timer.
+const PRIVATE_ROOM_WAITING_TTL_MS = 30 * 60_000;
 
 const ALLOWED_ORIGINS = [
   'https://redoapp.org',
@@ -580,6 +585,7 @@ interface PrivateRoom {
   gameType?: 'uno' | 'poker' | 'blackjack';
   players: QueuePlayer[];
   createdAt: number;
+  lastActivityAt?: number;
   status: 'waiting' | 'ready' | 'started';
   matchId?: string;
 }
@@ -637,7 +643,6 @@ let pastTournaments: TournamentData[] = [];
 
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
-const privateRoomCleanupTimers = new Map<string, NodeJS.Timeout>();
 const queueSubscribers = new Map<string, Set<Response>>();
 const lastSsePayloadByResponse = new WeakMap<Response, Map<string, string>>();
 const realtimeTraffic = {
@@ -2030,7 +2035,9 @@ function buildBootstrapProfileResponse(user: UserState) {
        match.gameType === 'blackjack' ? match.blackjackGameState?.stage === 'match_ended' :
        match.gameState.phase === 'game_over')
     );
-    const isUnstartedExpired = match && !match.playStartedAt && (Date.now() - match.createdAt > 60_000);
+    // A private host can be in Telegram's share picker for several minutes.
+    // Only the public connection lobby has a short unstarted deadline.
+    const isUnstartedExpired = match?.mode === 'pvp' && !match.playStartedAt && (Date.now() - match.createdAt > 60_000);
     const isStale = match && ((Date.now() - (match.playStartedAt || match.createdAt || 0) > 5 * 60 * 1000) || isUnstartedExpired);
     if (match && !isGameOver && !isStale) {
       markMatchPlayerConnected(match, user.userId);
@@ -7880,6 +7887,29 @@ function sendPrivateRoomCreateSuccess(req: Request, res: Response, payload: Reco
   return res.json(payload);
 }
 
+function expireInactivePrivateRooms(now = Date.now()) {
+  for (const [roomCode, room] of privateRooms.entries()) {
+    if (room.status !== 'waiting' || now - (room.lastActivityAt || room.createdAt) < PRIVATE_ROOM_WAITING_TTL_MS) continue;
+    const match = room.matchId ? activeMatches.get(room.matchId) : null;
+    room.players.forEach((player) => {
+      refundPrivateRoomReservation(player, roomCode, 'Private Room Expiry Release');
+      if (activeMatchByUser.get(player.userId) === room.matchId) activeMatchByUser.delete(player.userId);
+    });
+    if (room.matchId) {
+      broadcastMatchCancelled(room.matchId, 'The private room expired after inactivity.');
+      activeMatches.delete(room.matchId);
+    }
+    const subscribers = privateRoomSubscribers.get(roomCode);
+    subscribers?.forEach((response) => {
+      sendSse(response, 'private-room-cancelled', { roomCode, reason: 'The private room expired after inactivity.' });
+      response.end();
+    });
+    privateRoomSubscribers.delete(roomCode);
+    privateRooms.delete(roomCode);
+    schedulePersist({ deleteRoomCode: roomCode, deleteMatchId: room.matchId });
+  }
+}
+
 function sendPrivateRoomJoinSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   if (input?.responseMode === 'iframe') {
@@ -8038,6 +8068,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     gameType,
     players: [hostPlayer],
     createdAt: Date.now(),
+    lastActivityAt: Date.now(),
     status: 'waiting',
     matchId,
   });
@@ -8183,6 +8214,7 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     });
   }
   room.players.push(newPlayer);
+  room.lastActivityAt = Date.now();
 
   if (match) {
     // Replace the first placeholder in match.players
@@ -8289,6 +8321,7 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
   }
 
   startPrivateRoomMatchHelper(room, match);
+  room.lastActivityAt = Date.now();
 
   privateRooms.set(room.roomCode, room);
   schedulePersist({ roomCode: room.roomCode, matchId: room.matchId || undefined });
@@ -8524,7 +8557,10 @@ app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
   const normalizedCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
   const room = privateRooms.get(normalizedCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
   if (!room) {
-    return res.status(200).json({ status: 'completed', message: 'Private room has concluded.' });
+    // A missing code is not proof that a game concluded. Treating it as one
+    // made a transient reload or an expired share show a false financial/game
+    // outcome to the player.
+    return res.status(404).json({ status: 'not_found', error: 'Private room was not found or has expired.' });
   }
   if (room.matchId) {
     const match = activeMatches.get(room.matchId);
@@ -8558,20 +8594,9 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   const userId = getPrivateRoomUserId(req, req.query);
   res.locals.userId = userId;
 
-  // Clear cleanup timer for this room/player if they reconnected
-  if (room.hostUserId === userId) {
-    const hostTimer = privateRoomCleanupTimers.get(roomCode);
-    if (hostTimer) {
-      clearTimeout(hostTimer);
-      privateRoomCleanupTimers.delete(roomCode);
-    }
-  } else {
-    const playerTimerKey = `${roomCode}_${userId}`;
-    const playerTimer = privateRoomCleanupTimers.get(playerTimerKey);
-    if (playerTimer) {
-      clearTimeout(playerTimer);
-      privateRoomCleanupTimers.delete(playerTimerKey);
-    }
+  if (Date.now() - (room.lastActivityAt || room.createdAt) > 30_000) {
+    room.lastActivityAt = Date.now();
+    schedulePersist({ roomCode });
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -8582,109 +8607,9 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   subscribeToChannel(privateRoomSubscribers, roomCode, res);
   sendSse(res, 'private-room', buildPrivateRoomPayload(room));
 
-  res.on('close', () => {
-    const currentRoom = privateRooms.get(roomCode);
-    if (currentRoom && currentRoom.status === 'waiting') {
-      const activeSubs = privateRoomSubscribers.get(roomCode);
-      const isStillConnected = !!activeSubs && Array.from(activeSubs).some(
-        (sub) => sub.locals.userId === userId && sub !== res
-      );
-
-      if (!isStillConnected) {
-        const playerInRoom = currentRoom.players.find((p) => p.userId === userId);
-        if (playerInRoom) {
-          if (currentRoom.hostUserId === userId) {
-            // Schedule disbanding after 60 seconds
-            if (!privateRoomCleanupTimers.has(roomCode)) {
-              const timer = setTimeout(() => {
-                const roomToDisband = privateRooms.get(roomCode);
-                if (roomToDisband && roomToDisband.status === 'waiting') {
-                  const matchToCancel = roomToDisband.matchId
-                    ? activeMatches.get(roomToDisband.matchId)
-                    : null;
-                  if (matchToCancel?.costsCommitted) {
-                    roomToDisband.players.forEach((player) => {
-                      if (player.costsCommitted === undefined) player.costsCommitted = true;
-                    });
-                  }
-                  roomToDisband.players.forEach(p => {
-                    refundPrivateRoomReservation(p, roomCode, 'Private Room Host Leave Release');
-                    if (activeMatchByUser.get(p.userId) === roomToDisband.matchId) {
-                      activeMatchByUser.delete(p.userId);
-                    }
-                  });
-                  if (roomToDisband.matchId) {
-                    broadcastMatchCancelled(roomToDisband.matchId, 'The waiting room expired.');
-                    activeMatches.delete(roomToDisband.matchId);
-                  }
-                  privateRooms.delete(roomCode);
-                  privateRoomCleanupTimers.delete(roomCode);
-                  schedulePersist({
-                    deleteRoomCode: roomCode,
-                    deleteMatchId: roomToDisband.matchId,
-                  });
-                  broadcastPrivateRoom(roomCode);
-                }
-              }, 60000); // 60 seconds grace period
-              privateRoomCleanupTimers.set(roomCode, timer);
-            }
-          } else {
-            // Schedule player boot after 60 seconds
-            const playerTimerKey = `${roomCode}_${userId}`;
-            if (!privateRoomCleanupTimers.has(playerTimerKey)) {
-              const timer = setTimeout(() => {
-                const roomToUpdate = privateRooms.get(roomCode);
-                if (roomToUpdate && roomToUpdate.status === 'waiting') {
-                  const playerToBoot = roomToUpdate.players.find(p => p.userId === userId);
-                  if (playerToBoot) {
-                    const matchToUpdate = roomToUpdate.matchId
-                      ? activeMatches.get(roomToUpdate.matchId)
-                      : null;
-                    if (matchToUpdate?.costsCommitted && playerToBoot.costsCommitted === undefined) {
-                      playerToBoot.costsCommitted = true;
-                    }
-                    roomToUpdate.players = roomToUpdate.players.filter(p => p.userId !== userId);
-                    refundPrivateRoomReservation(playerToBoot, roomCode, 'Private Room Leave Release');
-                    activeMatchByUser.delete(userId);
-                    if (matchToUpdate) {
-                      const playerIndex = matchToUpdate.players.findIndex((player) => player.userId === userId);
-                      if (playerIndex >= 0) {
-                        const placeholderUserId = `waiting_for_player_${playerIndex}_${Date.now()}`;
-                        matchToUpdate.players[playerIndex] = {
-                          userId: placeholderUserId,
-                          username: 'Waiting...',
-                          avatarId: 'koala',
-                          stake: roomToUpdate.stake,
-                          mode: 'private',
-                          joinedAt: Date.now(),
-                          costsCommitted: false,
-                        };
-                        const statePlayer = matchToUpdate.gameState.players.find((player) => player.userId === userId);
-                        if (statePlayer) {
-                          statePlayer.userId = placeholderUserId;
-                          statePlayer.username = 'Waiting...';
-                          statePlayer.avatarId = 'koala';
-                        }
-                        matchToUpdate.playStartedAt = null;
-                        matchToUpdate.gameState.turnStartedAt = undefined;
-                        matchToUpdate.costsCommitted = false;
-                        roomToUpdate.status = 'waiting';
-                      }
-                    }
-                    schedulePersist({ roomCode, matchId: roomToUpdate.matchId });
-                    broadcastPrivateRoom(roomCode);
-                    if (roomToUpdate.matchId) broadcastMatch(roomToUpdate.matchId);
-                  }
-                }
-                privateRoomCleanupTimers.delete(playerTimerKey);
-              }, 60000);
-              privateRoomCleanupTimers.set(playerTimerKey, timer);
-            }
-          }
-        }
-      }
-    }
-  });
+  // Socket close is intentionally not a leave signal: Telegram closes it
+  // whenever Invite Friend opens the chat picker. Explicit leave/cancel and
+  // the waiting-room TTL own membership cleanup instead.
 });
 
 function sendMatchStateSuccess(req: Request, res: Response, payload: Record<string, unknown>) {
@@ -9200,6 +9125,7 @@ setInterval(() => {
 
 setInterval(() => {
   runMatchmakingTick();
+  expireInactivePrivateRooms();
 }, 1000);
 
 // Keep long-lived streams healthy with a tiny event instead of forcing clients

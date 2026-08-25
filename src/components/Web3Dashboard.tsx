@@ -1685,6 +1685,13 @@ export function Web3Dashboard({
       return;
     }
 
+    const resolvedRoomCode = overrideRoomCode || result.roomCode || privateRoomCode;
+    if (resolvedRoomCode) {
+      setPrivateRoomCode(resolvedRoomCode);
+      setPrivateJoinCode(resolvedRoomCode);
+      setGeneratedLink(buildPrivateRoomSharePayload(resolvedRoomCode, result.gameType || pvpGameTab).telegramLink);
+    }
+
     const count = result.playersCount || result.players?.length || 1;
     setPrivateRoomPlayersCount(count);
     if (result.hostUserId) {
@@ -1706,7 +1713,6 @@ export function Web3Dashboard({
       const resolvedStake = result.stake !== undefined ? Number(result.stake) : privateRoomStake;
       // Bug #4 fix: use overrideRoomCode first (passed explicitly by caller to avoid
       // stale closure), then fall back to state and then server response.
-      const resolvedRoomCode = overrideRoomCode || privateRoomCode || result.roomCode;
       try {
         localStorage.setItem('redoapp_active_match', JSON.stringify({
           matchId: result.matchId,
@@ -2727,7 +2733,27 @@ export function Web3Dashboard({
         (match as any).blackjackGameState?.waitingForPlayers
       );
       if (hasPlaceholders || isUnstartedPrivate) {
-        // Unstarted waiting room: do not auto-launch into game table
+        // Telegram reloads the complete WebApp after the chat picker closes.
+        // Restore the server-owned lobby instead of silently returning to the
+        // main menu and making the host create/share a second room.
+        if (match.mode === 'private' && (match as any).roomCode) {
+          const roomCode = String((match as any).roomCode);
+          const players = (match.players || []).filter((player: any) => !String(player.userId || '').startsWith('waiting_for_player_'));
+          const targetPlayers = Math.min(4, Math.max(2, Number(match.players?.length) || 2)) as 2 | 3 | 4;
+          setCurrentTab('pvp');
+          setPvpSubMode('private');
+          applyPrivateRoomState({
+            status: 'waiting',
+            roomCode,
+            matchId: match.matchId,
+            stake: match.stake,
+            gameType: (match as any).gameType || 'uno',
+            targetPlayers,
+            playersCount: players.length,
+            hostUserId: players[0]?.userId,
+            players,
+          }, roomCode);
+        }
         return;
       }
       if (recoveredActiveMatchRef.current === match.matchId) return;
@@ -2769,7 +2795,7 @@ export function Web3Dashboard({
         }
       }
     }
-  }, [activeProfile?.activeMatch, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, openPublicMatch]);
+  }, [activeProfile?.activeMatch, currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, openPublicMatch, applyPrivateRoomState]);
 
   // Reloading Telegram must not lose a queue or a match that the server still
   // owns. Recover it before the user can submit another join request.

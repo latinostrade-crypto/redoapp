@@ -70,6 +70,12 @@ try {
   assert.equal(created.status, 'waiting');
   assert.match(created.telegramLink, /startapp=room_uno_ABCD1234$/);
 
+  // A full Telegram WebApp reload must be able to reconstruct the waiting
+  // lobby from the server, rather than forcing the host to create it again.
+  const hostProfile = await request('room_host', '/api/me');
+  assert.equal(hostProfile.activeMatch?.status, 'waiting');
+  assert.equal(hostProfile.activeMatch?.roomCode, 'ABCD1234');
+
   // Simulates a committed create whose HTTP response was lost. The replay must
   // preserve the existing room instead of deleting its match or occupants.
   const replayed = await request('room_host', '/api/private-rooms/create', {
@@ -84,6 +90,9 @@ try {
   const second = await join('room_b', 'B', 'fox', 'room_uno_ABCD1234');
   assert.equal(second.status, 'waiting');
   assert.equal(second.playersCount, 2);
+
+  const stillWaiting = await request('room_host', '/api/private-rooms/status/ABCD1234');
+  assert.equal(stillWaiting.status, 'waiting');
 
   const duplicate = await join('room_b', 'B', 'fox');
   assert.equal(duplicate.playersCount, 2, 'reconnecting player must not occupy another seat');
