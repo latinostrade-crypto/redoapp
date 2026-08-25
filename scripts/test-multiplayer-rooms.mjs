@@ -136,8 +136,9 @@ try {
   assert.equal(third.status, 'waiting');
   assert.equal(third.playersCount, 3);
   const fourth = await join('room_d', 'D', 'panda');
-  assert.equal(fourth.status, 'waiting');
+  assert.equal(fourth.status, 'started', 'filling the room must take both clients straight to the table');
   assert.equal(fourth.playersCount, 4);
+  assert.ok(fourth.matchId, 'the completing guest receives the canonical match id');
 
   const started = await request('room_host', '/api/private-rooms/start', {
     method: 'POST', body: JSON.stringify({ roomCode: created.roomCode }),
@@ -185,6 +186,8 @@ try {
   assert.deepEqual(raceResponses.map((response) => response.status).sort(), [200, 400]);
   const raceSnapshot = await request('room_race_host', `/api/private-rooms/status/${racingRoom.roomCode}`);
   assert.equal(raceSnapshot.playersCount, 2, 'the final-seat race leaves exactly two confirmed players');
+  assert.equal(raceSnapshot.status, 'started', 'a 2-player invite starts automatically once the guest is seated');
+  assert.ok(raceSnapshot.matchId, 'host recovery exposes the same auto-started table');
   assert.ok(raceSnapshot.version > racingRoom.version, 'the winning join publishes a newer snapshot');
 
   console.log('Multiplayer private-room checks passed.');

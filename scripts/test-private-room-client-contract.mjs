@@ -18,6 +18,7 @@ assert.match(source, /PRIVATE_STAKE_OPTIONS\.includes\(overrideStake as PrivateS
 // A status result may recover only the requester's own already-joined seat.
 assert.match(source, /privateRoomHasPlayer\(statusRes, currentUserId\)/);
 assert.match(source, /privateRoomHasPlayer\(statusRes, effectiveUserId\)/);
+assert.match(source, /A lost join response is recovered through room status\/iframe below\.[\s\S]*retryOnNetworkError: false,[\s\S]*timeoutMs: 12_000/);
 
 // Public queue recovery shares the same WebView connection pool. It must not
 // re-run on every render or private-room creation will fail with a network

@@ -1935,7 +1935,11 @@ export function Web3Dashboard({
     };
     return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
-      retryOnNetworkError: true,
+      // A lost join response is recovered through room status/iframe below.
+      // Do not occupy the Telegram WebView connection pool with the generic
+      // long retry loop while the user sees “Joining private table”.
+      retryOnNetworkError: false,
+      timeoutMs: 12_000,
       body: JSON.stringify({ ...joinPayload, userId: currentUserId }),
     }).then((result) => {
       initialLaunchRoomCodeRef.current = '';
@@ -2029,7 +2033,8 @@ export function Web3Dashboard({
     };
     apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
-      retryOnNetworkError: true,
+      retryOnNetworkError: false,
+      timeoutMs: 12_000,
       body: JSON.stringify({ ...joinPayload, userId: effectiveUserId }),
     }).then((result) => {
       applyPrivateRoomJoin(result, code);

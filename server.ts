@@ -8350,10 +8350,6 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   room.players.push(newPlayer);
   touchPrivateRoom(room);
 
-  // A private lobby is host-controlled. Starting on the last join raced the
-  // lobby UI and left late clients hydrating a game they had not accepted yet.
-  // /start atomically commits every participant's costs and creates the hand.
-
   try {
     await persistStateNow();
   } catch (error) {
@@ -8362,7 +8358,42 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     console.error('private-room join persistence failed', { userId, roomCode: room.roomCode, error: error instanceof Error ? error.message : String(error) });
     return res.status(503).json({ error: 'Joining the room is waiting for durable storage. Please retry safely.' });
   }
-  broadcastPrivateRoom(room.roomCode);
+
+  // Filling the advertised private room starts one canonical match. This is
+  // especially important for a 2-player invite: the guest must enter the
+  // table immediately and the host must receive the same started snapshot.
+  if (room.players.length === room.targetPlayers) {
+    room.status = 'starting';
+    touchPrivateRoom(room);
+    broadcastPrivateRoom(room.roomCode);
+
+    if (!commitPrivateRoomCosts(room, room.players)) {
+      room.status = 'waiting';
+      touchPrivateRoom(room);
+      broadcastPrivateRoom(room.roomCode);
+      return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
+    }
+
+    const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const startedMatch = activateMatch(matchId, 'private', [...room.players], room.stake, room.gameType || 'uno');
+    room.matchId = startedMatch.matchId;
+    startPrivateRoomMatchHelper(room, startedMatch);
+    touchPrivateRoom(room);
+    schedulePersist({ matchId: room.matchId });
+    try {
+      await persistStateNow();
+    } catch (error) {
+      // The match remains canonical in memory and a lost response recovers
+      // through the participant-only status endpoint.
+      console.error('private-room auto-start persistence failed', { userId, roomCode: room.roomCode, matchId: room.matchId, error: error instanceof Error ? error.message : String(error) });
+      return res.status(503).json({ error: 'Private table is being recovered. Retry safely.' });
+    }
+    console.info('private-room auto-started', { userId, roomCode: room.roomCode, matchId: room.matchId, players: room.players.length });
+    broadcastMatch(startedMatch.matchId);
+    broadcastPrivateRoom(room.roomCode);
+  } else {
+    broadcastPrivateRoom(room.roomCode);
+  }
 
   return sendPrivateRoomJoinSuccess(req, res, {
     success: true,
