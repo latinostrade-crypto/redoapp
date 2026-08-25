@@ -597,6 +597,8 @@ type PrivateRoomResponse = {
   heldTickets?: number;
   canStart?: boolean;
   joinable?: boolean;
+  /** Server-owned sequence number. Reject stale SSE/poll responses. */
+  version?: number;
 };
 type PendingPrivateRoomCreate = {
   createRequestId: string;
@@ -1234,6 +1236,7 @@ export function Web3Dashboard({
   const matchmakingStateRef = useRef(matchmakingState);
   const createRequestCounterRef = useRef(0);
   const privateRoomCreateInFlightRef = useRef(false);
+  const privateRoomVersionRef = useRef<Record<string, number>>({});
   const pendingPrivateRoomCreateRecoveredRef = useRef('');
   const autoResumedDepositRef = useRef('');
   const withdrawalRefreshInFlightRef = useRef(false);
@@ -1586,6 +1589,7 @@ export function Web3Dashboard({
     setPrivateRoomStatus('idle');
     setPrivateRoomCreateState('idle');
     setPrivateRoomError('');
+    privateRoomVersionRef.current = {};
   }, []);
 
   useEffect(() => {
@@ -1618,6 +1622,16 @@ export function Web3Dashboard({
     }
 
     const resolvedRoomCode = overrideRoomCode || result.roomCode || privateRoomCode;
+    const incomingVersion = Number(result.version);
+    const knownVersion = resolvedRoomCode ? privateRoomVersionRef.current[resolvedRoomCode] : undefined;
+    // Polling and SSE are independent transports. An older REST response must
+    // never replace a newer lobby state (for example, hide a just-joined seat).
+    if (resolvedRoomCode && Number.isFinite(incomingVersion) && knownVersion !== undefined && incomingVersion < knownVersion) {
+      return;
+    }
+    if (resolvedRoomCode && Number.isFinite(incomingVersion)) {
+      privateRoomVersionRef.current[resolvedRoomCode] = incomingVersion;
+    }
     if (resolvedRoomCode) {
       setPrivateRoomCode(resolvedRoomCode);
       setPrivateJoinCode(resolvedRoomCode);
@@ -2049,7 +2063,7 @@ export function Web3Dashboard({
       const timeout = window.setTimeout(() => {
         cleanup();
         reject(new Error('Private room bridge timed out.'));
-      }, 12_000);
+      }, 8_000);
       const cleanup = () => {
         window.clearTimeout(timeout);
         window.removeEventListener('message', onMessage);
@@ -2140,14 +2154,16 @@ export function Web3Dashboard({
     try {
       return await apiRequest<PrivateRoomResponse>(
         `/api/private-rooms/create-status/${encodeURIComponent(operation.createRequestId)}`,
-        { timeoutMs: 6_000, retryOnNetworkError: true, networkAttempts: 2 },
+        // Recovery is a bounded read. Retrying it through the generic Render
+        // wake-up loop used to leave the Create button disabled for minutes.
+        { timeoutMs: 4_000, retryOnNetworkError: false },
       );
     } catch {
       // Compatibility recovery for a server deployed before create-status.
       try {
         const room = await apiRequest<PrivateRoomResponse>(
           `/api/private-rooms/status/${encodeURIComponent(operation.requestedRoomCode)}`,
-          { timeoutMs: 5_000, retryOnNetworkError: true, networkAttempts: 2 },
+          { timeoutMs: 4_000, retryOnNetworkError: false },
         );
         return room.hostUserId === operation.userId ? room : null;
       } catch {
@@ -2174,6 +2190,16 @@ export function Web3Dashboard({
       return;
     }
     if (privateRoomCreateInFlightRef.current) return;
+    let verifiedUserId = currentUserId;
+    try {
+      // `authReady` means sync was initiated; this definitive read catches an
+      // expired or missing session before a non-idempotent-looking UI action.
+      const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000, retryOnNetworkError: false });
+      verifiedUserId = me.userId || verifiedUserId;
+    } catch (error) {
+      setPrivateRoomError('Your game session is not ready. Reopen the Mini App and try again.');
+      return;
+    }
     try {
       localStorage.removeItem('redoapp_active_match');
       sessionStorage.removeItem('redoapp_user_left_match');
@@ -2195,7 +2221,7 @@ export function Web3Dashboard({
     setPrivateRoomError('');
 
     const operation: PendingPrivateRoomCreate = {
-      userId: currentUserId,
+      userId: verifiedUserId,
       username: userName,
       avatarId: selectedAvatar,
       walletAddress: rawAddress || null,
@@ -2220,36 +2246,62 @@ export function Web3Dashboard({
     try {
       const direct = await apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
         method: 'POST',
-        retryOnNetworkError: true,
-        networkAttempts: 2,
-        timeoutMs: 15_000,
+        retryOnNetworkError: false,
+        timeoutMs: 12_000,
         body: JSON.stringify(operation),
       });
       applyCreatedRoom(direct);
       return;
     } catch (directError) {
+      if (!isTransientApiError(directError)) {
+        clearPendingPrivateRoomCreate();
+        setPrivateRoomStatus('idle');
+        setPrivateRoomCreateState('error');
+        setPrivateRoomError(cleanErrorMessage(directError, 'private-room'));
+        return;
+      }
       setPrivateRoomCreateState('recovering');
       const recovered = await reconcilePrivateRoomCreate(operation);
       if (recovered) {
         applyCreatedRoom(recovered);
         return;
       }
-      // The bridge is a last compatibility fallback, not the only recovery
-      // path. It shares the same idempotency key and has a hard deadline.
+      // Retry the identical idempotency key once after the status check. This
+      // covers a cold server that accepted neither request without waiting in
+      // the generic 65-second retry loop.
       try {
-        const bridged = await createPrivateRoomViaBridge(operation);
-        applyCreatedRoom(bridged);
+        const replay = await apiRequest<PrivateRoomResponse>('/api/private-rooms/create', {
+          method: 'POST',
+          retryOnNetworkError: false,
+          timeoutMs: 10_000,
+          body: JSON.stringify(operation),
+        });
+        applyCreatedRoom(replay);
         return;
-      } catch (bridgeError) {
-        const afterBridge = await reconcilePrivateRoomCreate(operation);
-        if (afterBridge) {
-          applyCreatedRoom(afterBridge);
+      } catch (replayError) {
+        const afterReplay = await reconcilePrivateRoomCreate(operation);
+        if (afterReplay) {
+          applyCreatedRoom(afterReplay);
           return;
         }
-        setPrivateRoomStatus('idle');
-        setPrivateRoomCreateState('error');
-        setGeneratedLink('');
-        setPrivateRoomError(cleanErrorMessage(bridgeError || directError, 'private-room'));
+        // The iframe transport avoids a failed CORS preflight in some older
+        // Telegram WebViews. It is a final, explicitly time-bounded fallback.
+        try {
+          const bridged = await createPrivateRoomViaBridge(operation);
+          applyCreatedRoom(bridged);
+          return;
+        } catch (bridgeError) {
+          const afterBridge = await reconcilePrivateRoomCreate(operation);
+          if (afterBridge) {
+            applyCreatedRoom(afterBridge);
+            return;
+          }
+          clearPendingPrivateRoomCreate();
+          setPrivateRoomStatus('idle');
+          setPrivateRoomCreateState('error');
+          setGeneratedLink('');
+          setPrivateRoomError(cleanErrorMessage(bridgeError || replayError || directError, 'private-room'));
+        }
       }
     } finally {
       if (privateRoomCreateInFlightRef.current) privateRoomCreateInFlightRef.current = false;
@@ -2261,7 +2313,8 @@ export function Web3Dashboard({
   useEffect(() => {
     if (!authReady) return;
     const pending = readPendingPrivateRoomCreate();
-    if (!pending || !isSameUser(pending.userId, currentUserId)) return;
+    const authenticatedUserId = activeProfile?.userId || currentUserId;
+    if (!pending || !isSameUser(pending.userId, authenticatedUserId)) return;
     if (Date.now() - pending.createdAt > 15 * 60_000) {
       clearPendingPrivateRoomCreate();
       return;
@@ -2289,7 +2342,7 @@ export function Web3Dashboard({
   // Recovery is intentionally keyed only by authenticated identity; the
   // persisted operation supplies all immutable create parameters.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady, currentUserId]);
+  }, [authReady, currentUserId, activeProfile?.userId]);
 
   const cancelWaitingPrivateRoom = async () => {
     if (privateRoomCanceling || !privateRoomCode) return;
@@ -6089,6 +6142,8 @@ export function Web3Dashboard({
                             ? 'Creating Room...'
                             : privateRoomCreateState === 'recovering'
                             ? 'Recovering Room...'
+                            : privateRoomCreateState === 'error'
+                            ? 'Retry / Recover Room'
                             : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
                         </button>
                       </div>

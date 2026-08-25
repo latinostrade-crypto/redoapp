@@ -69,7 +69,11 @@ try {
   assert.equal(created.roomCode, 'ABCD1234');
   assert.equal(created.status, 'waiting');
   assert.equal(created.matchId, null, 'waiting rooms must not create placeholder matches');
+  assert.equal(created.version, 1, 'new lobbies begin with a server snapshot version');
   assert.match(created.telegramLink, /startapp=room_uno_ABCD1234$/);
+
+  const unauthenticatedStatus = await fetch(`${baseUrl}/api/private-rooms/status/ABCD1234`);
+  assert.equal(unauthenticatedStatus.status, 401, 'private room reads must not silently fall back to an invented identity');
 
   // A committed POST can lose its response in a Telegram WebView. The client
   // must reconcile the idempotency key rather than create another room.
@@ -117,6 +121,7 @@ try {
   const second = await join('room_b', 'B', 'fox', 'room_uno_ABCD1234');
   assert.equal(second.status, 'waiting');
   assert.equal(second.playersCount, 2);
+  assert.ok(second.version > created.version, 'joining advances the authoritative lobby version');
 
   const stillWaiting = await request('room_host', '/api/private-rooms/status/ABCD1234');
   assert.equal(stillWaiting.status, 'waiting');
@@ -154,6 +159,29 @@ try {
   assert.equal(stateA.gameState.players.length, 4);
   assert.equal(stateD.gameState.players.length, 4);
   assert.equal(stateA.gameState.waitingForPlayers, false);
+
+  // Two guests racing for the final seat must produce exactly one winner;
+  // neither response may fabricate a third participant.
+  const racingRoom = await request('room_race_host', '/api/private-rooms/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...player('Race Host', 'rabbit'),
+      stake: 0,
+      targetPlayers: 2,
+      requestedRoomCode: 'RACE2026',
+      createRequestId: 'room-race-001',
+    }),
+  });
+  const raceJoin = (userId, username) => fetch(`${baseUrl}/api/private-rooms/join`, {
+    method: 'POST',
+    headers: { 'x-user-id': userId, 'content-type': 'application/json' },
+    body: JSON.stringify({ roomCode: racingRoom.roomCode, ...player(username, 'fox') }),
+  });
+  const raceResponses = await Promise.all([raceJoin('room_race_a', 'Race A'), raceJoin('room_race_b', 'Race B')]);
+  assert.deepEqual(raceResponses.map((response) => response.status).sort(), [200, 400]);
+  const raceSnapshot = await request('room_race_host', `/api/private-rooms/status/${racingRoom.roomCode}`);
+  assert.equal(raceSnapshot.playersCount, 2, 'the final-seat race leaves exactly two confirmed players');
+  assert.ok(raceSnapshot.version > racingRoom.version, 'the winning join publishes a newer snapshot');
 
   console.log('Multiplayer private-room checks passed.');
 } finally {

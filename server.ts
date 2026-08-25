@@ -598,6 +598,8 @@ interface PrivateRoom {
   // player count and makes the start transition atomic.
   status: 'waiting' | 'starting' | 'started';
   matchId?: string;
+  /** Monotonic lobby snapshot version; REST and SSE can arrive out of order. */
+  version?: number;
 }
 
 interface MatchmakingStatusPayload {
@@ -2612,10 +2614,16 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
     req.authUserId = session.userId;
     return next();
   }
-  const fallbackId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || (req.body?.userId as string);
-  if (fallbackId && typeof fallbackId === 'string' && fallbackId.trim()) {
-    req.authUserId = fallbackId.trim();
-    return next();
+  const host = req.hostname || '';
+  const isLocalOrLan = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.') || host.endsWith('.local');
+  // Header/body identities exist solely for the isolated development server.
+  // Accepting them in production lets any caller impersonate a room host.
+  if (isLocalOrLan) {
+    const fallbackId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || (req.body?.userId as string);
+    if (fallbackId && typeof fallbackId === 'string' && fallbackId.trim()) {
+      req.authUserId = fallbackId.trim();
+      return next();
+    }
   }
   if (telegramInitData) {
     return res.status(401).json({ error: 'Telegram authentication is invalid or expired.' });
@@ -5846,7 +5854,17 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
     hostUserId: room.hostUserId,
     canStart: room.status === 'waiting' && room.players.length >= MIN_MATCH_PLAYERS,
     joinable: room.status === 'waiting' && room.players.length < room.targetPlayers,
+    version: room.version || 1,
   };
+}
+
+function touchPrivateRoom(room: PrivateRoom, now = Date.now(), advanceVersion = true) {
+  room.lastActivityAt = now;
+  // Rooms persisted before snapshot versioning are presented as v1, so their
+  // first mutation must become v2 rather than collide with that initial view.
+  if (advanceVersion) room.version = (room.version || 1) + 1;
+  privateRooms.set(room.roomCode, room);
+  schedulePersist({ roomCode: room.roomCode });
 }
 
 function broadcastPrivateRoom(roomCode: string) {
@@ -8026,7 +8044,7 @@ function sendPrivateRoomJoinSuccess(req: Request, res: Response, payload: Record
   return res.json(payload);
 }
 
-function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
+async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   const { username, avatarId, stake, targetPlayers, walletAddress, createRequestId, requestedRoomCode, gameType: rawGameType } = input as {
     username: string;
@@ -8091,8 +8109,9 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
           playersCount: existingRoom.players.length,
           players: existingRoom.players,
           hostUserId: existingRoom.hostUserId,
-          canStart: existingRoom.status === 'waiting' && existingRoom.players.length >= MIN_MATCH_PLAYERS,
-          joinable: existingRoom.status === 'waiting' && existingRoom.players.length < existingRoom.targetPlayers,
+        canStart: existingRoom.status === 'waiting' && existingRoom.players.length >= MIN_MATCH_PLAYERS,
+        joinable: existingRoom.status === 'waiting' && existingRoom.players.length < existingRoom.targetPlayers,
+        version: existingRoom.version || 1,
         availableTickets: existingUser.availableTickets,
         heldTickets: existingUser.heldTickets,
         energy: getEnergyState(existingUser),
@@ -8119,6 +8138,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
       hostUserId: existingWaitingRoom.hostUserId,
       canStart: existingWaitingRoom.players.length >= MIN_MATCH_PLAYERS,
       joinable: existingWaitingRoom.players.length < existingWaitingRoom.targetPlayers,
+      version: existingWaitingRoom.version || 1,
       availableTickets: existingUser.availableTickets,
       heldTickets: existingUser.heldTickets,
       energy: getEnergyState(existingUser),
@@ -8152,8 +8172,19 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     status: 'waiting',
+    version: 1,
   });
   schedulePersist({ roomCode });
+  try {
+    // Do not tell a user the room exists until it survives a process restart.
+    await persistStateNow();
+  } catch (error) {
+    privateRooms.delete(roomCode);
+    schedulePersist({ deleteRoomCode: roomCode });
+    console.error('private-room create persistence failed', { requestId: normalizedRequestId, userId, roomCode, error: error instanceof Error ? error.message : String(error) });
+    return res.status(503).json({ error: 'Room creation is waiting for durable storage. Please retry safely.' });
+  }
+  console.info('private-room created', { requestId: normalizedRequestId, userId, roomCode, stake: stakeAmount, targetPlayers: targetPlayersCount });
   broadcastPrivateRoom(roomCode);
 
   return sendPrivateRoomCreateSuccess(req, res, {
@@ -8170,6 +8201,7 @@ function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response) {
     hostUserId: userId,
     canStart: false,
     joinable: targetPlayersCount > 1,
+    version: 1,
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
@@ -8193,13 +8225,13 @@ function startPrivateRoomMatchHelper(room: PrivateRoom, match: ActiveMatch) {
   });
 }
 
-app.post('/api/private-rooms/create', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
-app.get('/api/private-rooms/create-beacon', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
+app.post('/api/private-rooms/create', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
+app.get('/api/private-rooms/create-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
 
 // A committed POST response can be lost when Telegram suspends a WebView.
 // The client reconciles the idempotency key through this authenticated read
 // before it ever attempts another create.
-app.get('/api/private-rooms/create-status/:createRequestId', optionalAuth, (req: AuthenticatedRequest, res) => {
+app.get('/api/private-rooms/create-status/:createRequestId', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getPrivateRoomUserId(req, req.query as Record<string, unknown>);
   const createRequestId = String(req.params.createRequestId || '').trim().slice(0, 100);
   if (!userId || !createRequestId) {
@@ -8220,7 +8252,7 @@ app.get('/api/private-rooms/create-status/:createRequestId', optionalAuth, (req:
 
 const joinFailuresMap = new Map<string, { count: number; lockedUntil: number }>();
 
-function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
+async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
   const { roomCode, username, avatarId, walletAddress } = input as {
     roomCode: string;
@@ -8280,6 +8312,7 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
       availableTickets: user.availableTickets,
       heldTickets: user.heldTickets,
       energy: getEnergyState(user),
+      version: room.version || 1,
     });
   }
 
@@ -8311,14 +8344,20 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   };
 
   room.players.push(newPlayer);
-  room.lastActivityAt = Date.now();
+  touchPrivateRoom(room);
 
   // A private lobby is host-controlled. Starting on the last join raced the
   // lobby UI and left late clients hydrating a game they had not accepted yet.
   // /start atomically commits every participant's costs and creates the hand.
 
-  privateRooms.set(room.roomCode, room);
-  schedulePersist({ roomCode: room.roomCode });
+  try {
+    await persistStateNow();
+  } catch (error) {
+    room.players = room.players.filter((player) => !isSameUser(player.userId, userId));
+    touchPrivateRoom(room);
+    console.error('private-room join persistence failed', { userId, roomCode: room.roomCode, error: error instanceof Error ? error.message : String(error) });
+    return res.status(503).json({ error: 'Joining the room is waiting for durable storage. Please retry safely.' });
+  }
   broadcastPrivateRoom(room.roomCode);
 
   return sendPrivateRoomJoinSuccess(req, res, {
@@ -8335,13 +8374,14 @@ function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     energy: getEnergyState(user),
+    version: room.version || 1,
   });
 }
 
-app.post('/api/private-rooms/join', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
-app.get('/api/private-rooms/join-beacon', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
+app.post('/api/private-rooms/join', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
+app.get('/api/private-rooms/join-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
 
-app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000, 'user'), (req: AuthenticatedRequest, res) => {
+app.post('/api/private-rooms/start', requireAuth, rateLimitMiddleware(10, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
   const { roomCode } = req.body as { roomCode: string; userId?: string };
   const userId = getPrivateRoomUserId(req, req.body as Record<string, unknown>);
   if (!userId) {
@@ -8378,6 +8418,7 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
         hostUserId: room.hostUserId,
         stake: room.stake,
         gameType: room.gameType || 'uno',
+        version: room.version || 1,
       });
     }
     return res.status(409).json({ error: 'Private room start is being recovered. Please retry.' });
@@ -8388,12 +8429,12 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
   }
 
   room.status = 'starting';
-  privateRooms.set(room.roomCode, room);
+  touchPrivateRoom(room);
   broadcastPrivateRoom(room.roomCode);
 
   if (!commitPrivateRoomCosts(room, room.players)) {
     room.status = 'waiting';
-    privateRooms.set(room.roomCode, room);
+    touchPrivateRoom(room);
     broadcastPrivateRoom(room.roomCode);
     return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
   }
@@ -8402,10 +8443,17 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
   const match = activateMatch(matchId, 'private', [...room.players], room.stake, room.gameType || 'uno');
   room.matchId = match.matchId;
   startPrivateRoomMatchHelper(room, match);
-  room.lastActivityAt = Date.now();
-
-  privateRooms.set(room.roomCode, room);
-  schedulePersist({ roomCode: room.roomCode, matchId: room.matchId || undefined });
+  touchPrivateRoom(room);
+  schedulePersist({ matchId: room.matchId || undefined });
+  try {
+    await persistStateNow();
+  } catch (error) {
+    // Keep the one canonical in-memory match intact; clients can reconcile
+    // the idempotent start result instead of ever receiving a fake reset.
+    console.error('private-room start persistence failed', { userId, roomCode: room.roomCode, matchId: room.matchId, error: error instanceof Error ? error.message : String(error) });
+    return res.status(503).json({ error: 'Match start is waiting for durable storage. Retry safely.' });
+  }
+  console.info('private-room started', { userId, roomCode: room.roomCode, matchId: room.matchId, players: room.players.length });
   broadcastMatch(match.matchId);
   broadcastPrivateRoom(room.roomCode);
 
@@ -8420,6 +8468,7 @@ app.post('/api/private-rooms/start', optionalAuth, rateLimitMiddleware(10, 60000
     hostUserId: room.hostUserId,
     stake: room.stake,
     gameType: room.gameType || 'uno',
+    version: room.version || 1,
   });
 });
 
@@ -8480,9 +8529,9 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
     }
 
     refundPrivateRoomReservation(leavingPlayer, room.roomCode, 'Private Room Leave Refund');
-    room.players = room.players.filter((player) => player.userId !== userId);
+    room.players = room.players.filter((player) => !isSameUser(player.userId, userId));
     activeMatchByUser.delete(userId);
-    schedulePersist({ roomCode: room.roomCode });
+    touchPrivateRoom(room);
     broadcastPrivateRoom(room.roomCode);
     await persistStateNow();
     return res.json({ success: true, left: true });
@@ -8605,7 +8654,7 @@ app.post('/api/matches/leave-unstarted', requireAuth, async (req: AuthenticatedR
   return res.json({ success: true, alreadyLeft: true });
 });
 
-app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
+app.get('/api/private-rooms/status/:roomCode', requireAuth, (req, res) => {
   const normalizedCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
   const room = privateRooms.get(normalizedCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
   if (!room) {
@@ -8621,23 +8670,10 @@ app.get('/api/private-rooms/status/:roomCode', optionalAuth, (req, res) => {
     }
   }
 
-  return res.json({
-    roomCode: room.roomCode,
-    telegramLink: buildTelegramMiniAppLink(room.gameType ? `room_${room.gameType}_${room.roomCode}` : `room_${room.roomCode}`),
-    stake: room.stake,
-    targetPlayers: room.targetPlayers,
-    status: room.status,
-    playersCount: room.players.length,
-    minPlayers: MIN_MATCH_PLAYERS,
-    maxPlayers: MAX_MATCH_PLAYERS,
-    players: room.players,
-    matchId: room.matchId || null,
-    gameType: room.gameType || 'uno',
-    hostUserId: room.hostUserId,
-  });
+  return res.json(buildPrivateRoomPayload(room));
 });
 
-app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
+app.get('/api/private-rooms/stream/:roomCode', requireAuth, (req, res) => {
   const roomCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
   const room = privateRooms.get(roomCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
   if (!room) {
@@ -8647,8 +8683,7 @@ app.get('/api/private-rooms/stream/:roomCode', optionalAuth, (req, res) => {
   res.locals.userId = userId;
 
   if (Date.now() - (room.lastActivityAt || room.createdAt) > 30_000) {
-    room.lastActivityAt = Date.now();
-    schedulePersist({ roomCode });
+    touchPrivateRoom(room, Date.now(), false);
   }
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -9203,6 +9238,15 @@ setInterval(() => {
   });
   responses.forEach((response) => {
     sendSse(response, 'heartbeat', { t: Date.now() }, false);
+  });
+  // An open private-room stream means its participants are still at the
+  // lobby. Do not expire a live room merely because nobody joined recently.
+  const now = Date.now();
+  privateRoomSubscribers.forEach((subscribers, roomCode) => {
+    const room = privateRooms.get(roomCode);
+    if (room && subscribers.size > 0 && now - (room.lastActivityAt || room.createdAt) >= 60_000) {
+      touchPrivateRoom(room, now, false);
+    }
   });
 }, 15_000);
 
