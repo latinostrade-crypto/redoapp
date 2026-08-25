@@ -5878,7 +5878,10 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
     matchId: room.matchId || null,
     gameType: room.gameType || 'uno',
     hostUserId: room.hostUserId,
-    canStart: room.status === 'waiting' && room.players.length >= MIN_MATCH_PLAYERS,
+    // Private rooms start automatically, and only after every advertised seat
+    // is occupied.  Keep this field for older clients without authorizing a
+    // partial manual start.
+    canStart: room.status === 'waiting' && room.players.length === room.targetPlayers,
     joinable: room.status === 'waiting' && room.players.length < room.targetPlayers,
     version: room.version || 1,
   };
@@ -5918,7 +5921,7 @@ function broadcastMatchCancelled(matchId: string, reason: string) {
 function refundPrivateRoomReservation(player: QueuePlayer, roomCode: string, reason: string) {
   if (!player.costsCommitted) return;
   const user = getUser(player.userId);
-  if (player.stake > 0) {
+  if (player.stake > 0 && (player.costsCommitted === 'held' || player.costsCommitted === true)) {
     user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
     user.availableTickets = round2(user.availableTickets + player.stake);
     createLedgerEntry(user, {
@@ -5928,24 +5931,49 @@ function refundPrivateRoomReservation(player: QueuePlayer, roomCode: string, rea
       type: 'stake_release',
       amount: player.stake,
     });
-    rewardEnergy(
-      user,
-      1,
-      'Private Room Energy Refund',
-      `private-room-energy-refund:${roomCode}:${player.userId}`,
-    );
+    if (player.costsCommitted === true) {
+      rewardEnergy(
+        user,
+        1,
+        'Private Room Energy Refund',
+        `private-room-energy-refund:${roomCode}:${player.userId}`,
+      );
+    }
   }
   player.costsCommitted = false;
   schedulePersist({ userId: player.userId });
+}
+
+// A private-room seat is a real reservation. Holding the stake while the
+// lobby is waiting prevents the last seat from making a full room impossible
+// to start because an earlier player spent their balance elsewhere.
+function reservePrivateRoomSeat(room: PrivateRoom, player: QueuePlayer) {
+  if (room.stake <= 0 || player.costsCommitted === 'held' || player.costsCommitted === true) return true;
+  const user = getUser(player.userId);
+  recalculateEnergy(user);
+  if (user.availableTickets < room.stake || user.energy < 1) return false;
+  user.availableTickets = round2(user.availableTickets - room.stake);
+  user.heldTickets = round2(user.heldTickets + room.stake);
+  createLedgerEntry(user, {
+    id: `private-room-hold:${room.roomCode}:${player.userId}`,
+    event: 'Private Room Seat Hold',
+    value: `-${room.stake.toFixed(2)} TKT`,
+    type: 'stake_hold',
+    amount: -room.stake,
+  });
+  player.costsCommitted = 'held';
+  schedulePersist({ userId: user.userId });
+  return true;
 }
 
 function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
   const entries = players
     .filter((player) => player.costsCommitted !== true)
     .map((player) => ({ player, user: getUser(player.userId) }));
-  for (const { user } of entries) {
+  for (const { player, user } of entries) {
     recalculateEnergy(user);
-    if (room.stake > 0 && (user.availableTickets < room.stake || user.energy < 1)) {
+    const needsTicketHold = player.costsCommitted !== 'held';
+    if (room.stake > 0 && ((needsTicketHold && user.availableTickets < room.stake) || user.energy < 1)) {
       return false;
     }
   }
@@ -5953,14 +5981,16 @@ function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
     if (room.stake > 0) {
       spendEnergy(user, 1, 'Private Room Energy');
       updateQuestProgress(user.userId, 'spend_energy', 1);
-      user.availableTickets = round2(user.availableTickets - room.stake);
-      user.heldTickets = round2(user.heldTickets + room.stake);
-      createLedgerEntry(user, {
-        event: 'Private Room Hold',
-        value: `-${room.stake.toFixed(2)} TKT`,
-        type: 'stake_hold',
-        amount: -room.stake,
-      });
+      if (player.costsCommitted !== 'held') {
+        user.availableTickets = round2(user.availableTickets - room.stake);
+        user.heldTickets = round2(user.heldTickets + room.stake);
+        createLedgerEntry(user, {
+          event: 'Private Room Hold',
+          value: `-${room.stake.toFixed(2)} TKT`,
+          type: 'stake_hold',
+          amount: -room.stake,
+        });
+      }
     }
     player.costsCommitted = true;
     schedulePersist({ userId: user.userId });
@@ -8143,7 +8173,7 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
           playersCount: existingRoom.players.length,
           players: existingRoom.players,
           hostUserId: existingRoom.hostUserId,
-        canStart: existingRoom.status === 'waiting' && existingRoom.players.length >= MIN_MATCH_PLAYERS,
+        canStart: existingRoom.status === 'waiting' && existingRoom.players.length === existingRoom.targetPlayers,
         joinable: existingRoom.status === 'waiting' && existingRoom.players.length < existingRoom.targetPlayers,
         version: existingRoom.version || 1,
         availableTickets: existingUser.availableTickets,
@@ -8170,7 +8200,7 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
       playersCount: existingWaitingRoom.players.length,
       players: existingWaitingRoom.players,
       hostUserId: existingWaitingRoom.hostUserId,
-      canStart: existingWaitingRoom.players.length >= MIN_MATCH_PLAYERS,
+      canStart: existingWaitingRoom.players.length === existingWaitingRoom.targetPlayers,
       joinable: existingWaitingRoom.players.length < existingWaitingRoom.targetPlayers,
       version: existingWaitingRoom.version || 1,
       availableTickets: existingUser.availableTickets,
@@ -8195,7 +8225,7 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
     } while (privateRooms.has(roomCode));
   }
 
-  privateRooms.set(roomCode, {
+  const newRoom: PrivateRoom = {
     roomCode,
     createRequestId: normalizedRequestId || undefined,
     stake: stakeAmount,
@@ -8207,12 +8237,17 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
     lastActivityAt: Date.now(),
     status: 'waiting',
     version: 1,
-  });
+  };
+  if (!reservePrivateRoomSeat(newRoom, hostPlayer)) {
+    return res.status(400).json({ error: 'Insufficient available tickets or energy for private room stake.' });
+  }
+  privateRooms.set(roomCode, newRoom);
   schedulePersist({ roomCode });
   try {
     // Do not tell a user the room exists until it survives a process restart.
     await persistStateNow();
   } catch (error) {
+    refundPrivateRoomReservation(hostPlayer, roomCode, 'Private Room Create Rollback');
     privateRooms.delete(roomCode);
     schedulePersist({ deleteRoomCode: roomCode });
     console.error('private-room create persistence failed', { requestId: normalizedRequestId, userId, roomCode, error: error instanceof Error ? error.message : String(error) });
@@ -8377,6 +8412,10 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     costsCommitted: false,
   };
 
+  if (!reservePrivateRoomSeat(room, newPlayer)) {
+    return res.status(400).json({ error: 'Insufficient available tickets or energy for this private room.' });
+  }
+
   room.players.push(newPlayer);
   touchPrivateRoom(room);
 
@@ -8384,43 +8423,19 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
     await persistStateNow();
   } catch (error) {
     room.players = room.players.filter((player) => !isSameUser(player.userId, userId));
+    refundPrivateRoomReservation(newPlayer, room.roomCode, 'Private Room Join Rollback');
     touchPrivateRoom(room);
     console.error('private-room join persistence failed', { userId, roomCode: room.roomCode, error: error instanceof Error ? error.message : String(error) });
     return res.status(503).json({ error: 'Joining the room is waiting for durable storage. Please retry safely.' });
   }
 
   // Filling the advertised private room starts one canonical match. This is
-  // especially important for a 2-player invite: the guest must enter the
-  // table immediately and the host must receive the same started snapshot.
+  // true for every capacity: 2/2, 3/3 and 4/4 behave identically.
   if (room.players.length === room.targetPlayers) {
-    room.status = 'starting';
-    touchPrivateRoom(room);
-    broadcastPrivateRoom(room.roomCode);
-
-    if (!commitPrivateRoomCosts(room, room.players)) {
-      room.status = 'waiting';
-      touchPrivateRoom(room);
-      broadcastPrivateRoom(room.roomCode);
-      return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
+    const started = await startPrivateRoomWhenFull(room, 'join');
+    if (!started.ok) {
+      return res.status(started.status === 'started' ? 503 : 409).json({ error: started.error });
     }
-
-    const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const startedMatch = activateMatch(matchId, 'private', [...room.players], room.stake, room.gameType || 'uno');
-    room.matchId = startedMatch.matchId;
-    startPrivateRoomMatchHelper(room, startedMatch);
-    touchPrivateRoom(room);
-    schedulePersist({ matchId: room.matchId });
-    try {
-      await persistStateNow();
-    } catch (error) {
-      // The match remains canonical in memory and a lost response recovers
-      // through the participant-only status endpoint.
-      console.error('private-room auto-start persistence failed', { userId, roomCode: room.roomCode, matchId: room.matchId, error: error instanceof Error ? error.message : String(error) });
-      return res.status(503).json({ error: 'Private table is being recovered. Retry safely.' });
-    }
-    console.info('private-room auto-started', { userId, roomCode: room.roomCode, matchId: room.matchId, players: room.players.length });
-    broadcastMatch(startedMatch.matchId);
-    broadcastPrivateRoom(room.roomCode);
   } else {
     broadcastPrivateRoom(room.roomCode);
   }
@@ -8443,6 +8458,58 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   });
 }
 
+type PrivateRoomStartResult = {
+  ok: boolean;
+  status: PrivateRoom['status'];
+  match?: ActiveMatch;
+  error?: string;
+};
+
+// There is exactly one transition from a waiting private lobby to a live
+// table. Both the completing join and the legacy recovery endpoint call this
+// routine, so 2/3/4-seat rooms cannot diverge into separate start rules.
+async function startPrivateRoomWhenFull(room: PrivateRoom, source: 'join' | 'recovery'): Promise<PrivateRoomStartResult> {
+  if (room.status === 'started' && room.matchId) {
+    const existingMatch = activeMatches.get(room.matchId);
+    if (existingMatch) return { ok: true, status: 'started', match: existingMatch };
+    return { ok: false, status: 'started', error: 'Private room start is being recovered. Please retry.' };
+  }
+  if (room.status !== 'waiting') {
+    return { ok: false, status: room.status, error: 'Private room is already starting.' };
+  }
+  if (room.players.length !== room.targetPlayers) {
+    return { ok: false, status: 'waiting', error: `Private room will start automatically when all ${room.targetPlayers} players are seated.` };
+  }
+
+  room.status = 'starting';
+  touchPrivateRoom(room);
+  broadcastPrivateRoom(room.roomCode);
+
+  if (!commitPrivateRoomCosts(room, room.players)) {
+    room.status = 'waiting';
+    touchPrivateRoom(room);
+    broadcastPrivateRoom(room.roomCode);
+    return { ok: false, status: 'waiting', error: 'A player no longer has enough energy to start this room.' };
+  }
+
+  const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const match = activateMatch(matchId, 'private', [...room.players], room.stake, room.gameType || 'uno');
+  room.matchId = match.matchId;
+  startPrivateRoomMatchHelper(room, match);
+  touchPrivateRoom(room);
+  schedulePersist({ matchId: room.matchId });
+  try {
+    await persistStateNow();
+  } catch (error) {
+    console.error('private-room start persistence failed', { source, roomCode: room.roomCode, matchId: room.matchId, error: error instanceof Error ? error.message : String(error) });
+    return { ok: false, status: 'started', error: 'Private table is being recovered. Retry safely.' };
+  }
+  console.info('private-room auto-started', { source, roomCode: room.roomCode, matchId: room.matchId, players: room.players.length });
+  broadcastMatch(match.matchId);
+  broadcastPrivateRoom(room.roomCode);
+  return { ok: true, status: 'started', match };
+}
+
 app.post('/api/private-rooms/join', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
 app.get('/api/private-rooms/join-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
 
@@ -8463,70 +8530,18 @@ app.post('/api/private-rooms/start', requireAuth, rateLimitMiddleware(10, 60000,
     return res.status(403).json({ error: 'Only the room creator can start the match.' });
   }
 
-  if (room.players.length < 2) {
-    return res.status(400).json({ error: 'At least 2 players are required to start.' });
+  // This endpoint remains only as an idempotent recovery path for older
+  // clients. It never permits a host to start a partially filled 3/4 table.
+  const started = await startPrivateRoomWhenFull(room, 'recovery');
+  if (!started.ok) {
+    return res.status(started.status === 'started' ? 503 : 409).json({ error: started.error });
   }
-
-  // Start is idempotent. A Telegram retry must return the original table and
-  // never shuffle a new hand or charge the same participants twice.
-  if (room.status === 'started' && room.matchId) {
-    const existingMatch = activeMatches.get(room.matchId);
-    if (existingMatch) {
-      return res.json({
-        success: true,
-        roomCode: room.roomCode,
-        status: 'started',
-        matchId: existingMatch.matchId,
-        playersCount: room.players.length,
-        targetPlayers: room.targetPlayers,
-        players: room.players,
-        hostUserId: room.hostUserId,
-        stake: room.stake,
-        gameType: room.gameType || 'uno',
-        version: room.version || 1,
-      });
-    }
-    return res.status(409).json({ error: 'Private room start is being recovered. Please retry.' });
-  }
-
-  if (room.status !== 'waiting') {
-    return res.status(409).json({ error: 'Private room is already starting.' });
-  }
-
-  room.status = 'starting';
-  touchPrivateRoom(room);
-  broadcastPrivateRoom(room.roomCode);
-
-  if (!commitPrivateRoomCosts(room, room.players)) {
-    room.status = 'waiting';
-    touchPrivateRoom(room);
-    broadcastPrivateRoom(room.roomCode);
-    return res.status(409).json({ error: 'A player no longer has enough tickets or energy to start this room.' });
-  }
-
-  const matchId = `match-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const match = activateMatch(matchId, 'private', [...room.players], room.stake, room.gameType || 'uno');
-  room.matchId = match.matchId;
-  startPrivateRoomMatchHelper(room, match);
-  touchPrivateRoom(room);
-  schedulePersist({ matchId: room.matchId || undefined });
-  try {
-    await persistStateNow();
-  } catch (error) {
-    // Keep the one canonical in-memory match intact; clients can reconcile
-    // the idempotent start result instead of ever receiving a fake reset.
-    console.error('private-room start persistence failed', { userId, roomCode: room.roomCode, matchId: room.matchId, error: error instanceof Error ? error.message : String(error) });
-    return res.status(503).json({ error: 'Match start is waiting for durable storage. Retry safely.' });
-  }
-  console.info('private-room started', { userId, roomCode: room.roomCode, matchId: room.matchId, players: room.players.length });
-  broadcastMatch(match.matchId);
-  broadcastPrivateRoom(room.roomCode);
 
   return res.json({
     success: true,
     roomCode: room.roomCode,
     status: 'started',
-    matchId: room.matchId,
+    matchId: started.match?.matchId || room.matchId,
     playersCount: room.players.length,
     targetPlayers: room.targetPlayers,
     players: room.players,

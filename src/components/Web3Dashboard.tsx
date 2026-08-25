@@ -1716,29 +1716,6 @@ export function Web3Dashboard({
     applyPrivateRoomState(result, result.roomCode || roomCodeToUse);
   };
 
-  const handleStartPrivateRoomMatch = useCallback(async () => {
-    const code = privateRoomCode || privateJoinCode;
-    if (!code) return;
-    sound.playShuffle();
-    try {
-      const res = await apiRequest<{ success: boolean; status: string; matchId?: string; playersCount?: number; gameType?: 'uno' | 'poker' | 'blackjack' }>('/api/private-rooms/start', {
-        method: 'POST',
-        body: JSON.stringify({
-          roomCode: code,
-          userId: currentUserId,
-        }),
-      });
-      if (res.status === 'started' && res.matchId) {
-        // Bug #4 fix: pass code explicitly to avoid stale closure in applyPrivateRoomState
-        applyPrivateRoomState(res as any, code);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to start match.';
-      setPrivateRoomError(message);
-      alert(message);
-    }
-  }, [privateRoomCode, privateJoinCode, currentUserId, applyPrivateRoomState]);
-
   const renderPrivateWaitingRoomLobby = (gameTitle: string) => {
     const room = privateRoomSnapshot;
     const resolvedCode = room?.roomCode || privateRoomCode || privateJoinCode;
@@ -1746,6 +1723,7 @@ export function Web3Dashboard({
     const roomPlayerCount = room ? roomPlayers.length : privateRoomPlayersCount;
     const roomTargetPlayers = room?.targetPlayers || privateRoomTargetPlayers;
     const roomIsStarting = room?.status === 'starting';
+    const remainingSeats = Math.max(0, roomTargetPlayers - roomPlayerCount);
     const isCurrentPlayerHost = Boolean(
       currentUserId && (
         (room?.hostUserId || privateRoomHostUserId) === currentUserId
@@ -1773,30 +1751,23 @@ export function Web3Dashboard({
 
         {/* Status Alert Banner */}
         <div className={`p-2 rounded border text-[8px] font-mono leading-relaxed ${
-          isCurrentPlayerHost
-            ? (room?.canStart ?? roomPlayerCount >= 2
-                ? 'bg-[#00ff66]/10 border-[#00ff66]/40 text-[#00ff66]' 
-                : 'bg-[#ffcc00]/10 border-[#ffcc00]/40 text-[#ffcc00] animate-pulse')
-            : 'bg-[#00d2ff]/10 border-[#00d2ff]/40 text-[#00d2ff] animate-pulse'
+          roomIsStarting
+            ? 'bg-[#00d2ff]/10 border-[#00d2ff]/40 text-[#00d2ff]'
+            : isCurrentPlayerHost
+              ? 'bg-[#ffcc00]/10 border-[#ffcc00]/40 text-[#ffcc00] animate-pulse'
+              : 'bg-[#00d2ff]/10 border-[#00d2ff]/40 text-[#00d2ff] animate-pulse'
         }`}>
           {roomIsStarting ? (
             <div className="flex items-center gap-1.5 font-bold"><span>⏳</span><span>Locking seats and preparing the table…</span></div>
           ) : isCurrentPlayerHost ? (
-            (room?.canStart ?? roomPlayerCount >= 2) ? (
-              <div className="flex items-center gap-1.5 font-bold">
-                <span>✨</span>
-                <span>{roomPlayerCount} players seated. Start when ready.</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 font-bold">
-                <span>⏳</span>
-                <span>Waiting for friends to join... Share the invite link below! (Min 2 players to start)</span>
-              </div>
-            )
+            <div className="flex items-center gap-1.5 font-bold">
+              <span>⏳</span>
+              <span>Waiting for {remainingSeats} more {remainingSeats === 1 ? 'player' : 'players'} — the table starts automatically when full.</span>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5 font-bold">
               <span>⏳</span>
-              <span>Connected to Room #{resolvedCode}! Waiting for Host to start the match...</span>
+              <span>Connected to Room #{resolvedCode}! The table starts automatically when all seats are filled.</span>
             </div>
           )}
         </div>
@@ -1877,28 +1848,14 @@ export function Web3Dashboard({
           })}
         </div>
 
-        {/* Host Action or Guest Waiting Banner */}
+        {/* Every private table starts automatically at its selected capacity. */}
         {roomIsStarting ? (
           <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase">
             ⏳ Starting table…
           </div>
-        ) : isCurrentPlayerHost ? (
-          (room?.canStart ?? roomPlayerCount >= 2) ? (
-            <button
-              type="button"
-              onClick={handleStartPrivateRoomMatch}
-              className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black text-[10px] font-black uppercase pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer active:translate-y-0.5"
-            >
-              START {gameTitle.toUpperCase()} MATCH ({roomPlayerCount} PLAYERS) ➔
-            </button>
-          ) : (
-            <div className="w-full py-2.5 bg-slate-900/80 text-[#ffcc00] border border-slate-800 text-[8.5px] font-mono text-center uppercase animate-pulse">
-              ⏳ Waiting for at least 1 more player to start...
-            </div>
-          )
         ) : (
           <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase animate-pulse">
-            ⏳ Waiting for Host to start the table...
+            ⏳ Waiting for {remainingSeats} more {remainingSeats === 1 ? 'player' : 'players'} — auto-start when room is full.
           </div>
         )}
 

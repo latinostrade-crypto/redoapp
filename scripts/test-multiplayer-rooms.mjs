@@ -20,6 +20,7 @@ const server = spawn(process.execPath, [tsxCli, path.join(root, 'server.ts')], {
     SUPABASE_URL: '',
     SUPABASE_SERVICE_ROLE_KEY: '',
     APP_SESSION_SECRET: 'multiplayer-rooms-test-secret-that-is-long-enough',
+    ADMIN_API_KEY: 'isolated-multiplayer-test-admin-key',
     RUNTIME_STATE_DIR: runtimeDir,
   },
   stdio: 'ignore',
@@ -129,6 +130,13 @@ try {
 
   const stillWaiting = await request('room_host', '/api/private-rooms/status/ABCD1234');
   assert.equal(stillWaiting.status, 'waiting');
+  assert.equal(stillWaiting.canStart, false, 'a 4-seat room must not expose a partial manual start');
+  const partialStart = await fetch(`${baseUrl}/api/private-rooms/start`, {
+    method: 'POST',
+    headers: { 'x-user-id': 'room_host', 'content-type': 'application/json' },
+    body: JSON.stringify({ roomCode: created.roomCode }),
+  });
+  assert.equal(partialStart.status, 409, 'the legacy start endpoint must reject 2/4 rooms');
 
   const duplicate = await join('room_b', 'B', 'fox');
   assert.equal(duplicate.playersCount, 2, 'reconnecting player must not occupy another seat');
@@ -164,6 +172,55 @@ try {
   assert.equal(stateA.gameState.players.length, 4);
   assert.equal(stateD.gameState.players.length, 4);
   assert.equal(stateA.gameState.waitingForPlayers, false);
+
+  // A 3-seat room follows the same contract: 2/3 stays in the lobby and the
+  // third confirmed participant starts exactly one shared table.
+  const threeRoom = await request('three_host', '/api/private-rooms/create', {
+    method: 'POST', body: JSON.stringify({
+      ...player('Three Host', 'rabbit'), stake: 0, targetPlayers: 3,
+      requestedRoomCode: 'THREE333', createRequestId: 'three-room-001',
+    }),
+  });
+  const threeSecond = await join('three_b', 'Three B', 'fox', threeRoom.roomCode);
+  assert.equal(threeSecond.status, 'waiting');
+  assert.equal(threeSecond.playersCount, 2);
+  const threePartialStart = await fetch(`${baseUrl}/api/private-rooms/start`, {
+    method: 'POST', headers: { 'x-user-id': 'three_host', 'content-type': 'application/json' },
+    body: JSON.stringify({ roomCode: threeRoom.roomCode }),
+  });
+  assert.equal(threePartialStart.status, 409, 'a 3-seat room must not start at 2/3');
+  const threeFinal = await join('three_c', 'Three C', 'bear', threeRoom.roomCode);
+  assert.equal(threeFinal.status, 'started');
+  assert.equal(threeFinal.playersCount, 3);
+  assert.ok(threeFinal.matchId);
+  const threeHostRecovery = await request('three_host', `/api/private-rooms/status/${threeRoom.roomCode}`);
+  const threeGuestRecovery = await request('three_b', `/api/private-rooms/status/${threeRoom.roomCode}`);
+  assert.equal(threeHostRecovery.matchId, threeFinal.matchId, 'host recovery opens the same 3-player table');
+  assert.equal(threeGuestRecovery.matchId, threeFinal.matchId, 'earlier guests recover the same 3-player table');
+
+  // Paid seats are reserved as they are occupied. A lobby that is full must
+  // not become unstartable because an early guest spends the advertised stake.
+  for (const userId of ['paid_host', 'paid_b']) {
+    await request(userId, '/api/admin/users/adjust-balance', {
+      method: 'POST',
+      headers: { 'x-admin-key': 'isolated-multiplayer-test-admin-key' },
+      body: JSON.stringify({ targetUserId: userId, amount: 1, mode: 'set', reason: 'isolated private-room reservation test' }),
+    });
+  }
+  const paidRoom = await request('paid_host', '/api/private-rooms/create', {
+    method: 'POST', body: JSON.stringify({
+      ...player('Paid Host', 'rabbit'), stake: 0.3, targetPlayers: 3,
+      requestedRoomCode: 'PAID3333', createRequestId: 'paid-room-001',
+    }),
+  });
+  assert.equal(paidRoom.heldTickets, 0.3, 'host stake is held while waiting');
+  const paidGuest = await join('paid_b', 'Paid B', 'fox', paidRoom.roomCode);
+  assert.equal(paidGuest.heldTickets, 0.3, 'guest stake is held while waiting');
+  await request('paid_b', '/api/matches/leave-unstarted', {
+    method: 'POST', body: JSON.stringify({ roomCode: paidRoom.roomCode }),
+  });
+  const paidGuestAfterLeave = await request('paid_b', '/api/me');
+  assert.equal(paidGuestAfterLeave.heldTickets, 0, 'leaving a waiting room releases the held stake');
 
   // Two guests racing for the final seat must produce exactly one winner;
   // neither response may fabricate a third participant.
