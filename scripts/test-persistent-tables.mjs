@@ -70,6 +70,10 @@ try {
   });
   assert.equal(rejoin.joined, true, 'a released seat must be reusable by the same player');
   await request('persistent_table_user', '/api/casino/leave-table', { method: 'POST', body: JSON.stringify({ tableId, idempotencyKey: 'persistent-table-free-leave-2' }) });
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const recoveredEmptyTable = await request('table_spectator', `/api/matches/state/${tableId}`);
+  assert.equal(recoveredEmptyTable.blackjackGameState.players.length, 2, 'an empty table must return to bot ambience, not retain a departed player');
+  assert.ok(recoveredEmptyTable.blackjackGameState.players.every((player) => player.isAi), 'empty-table recovery must remove stale human seats');
 
   const pokerTableId = 'table-poker-free-1';
   await request('poker_table_user_one', `/api/casino/open-table/${pokerTableId}`, { method: 'POST' });
@@ -107,6 +111,32 @@ try {
   });
   assert.equal(staleAction.status, 409, 'a delayed action must not apply to a later table state');
 
+  // A regression in the stage transition used to leave Poker visually stuck
+  // after the flop. Drive both human seats through every betting street using
+  // only server-authoritative snapshots and confirm that each street advances.
+  let pokerState = actionResult.pokerGameState;
+  async function completePokerStreet(expectedStage, nextStage) {
+    for (let turn = 0; turn < 8 && pokerState.stage === expectedStage; turn += 1) {
+      const current = pokerState.players[pokerState.currentPlayerIndex];
+      assert.ok(current?.userId, `${expectedStage} must expose an actionable current player`);
+      const nextAction = current.currentBet < pokerState.currentBet ? 'call' : 'check';
+      const result = await request(current.userId, '/api/matches/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          matchId: pokerTableId,
+          action: nextAction,
+          expectedStateVersion: pokerState.stateVersion,
+        }),
+      });
+      pokerState = result.pokerGameState;
+    }
+    assert.equal(pokerState.stage, nextStage, `Poker must advance from ${expectedStage} to ${nextStage}`);
+  }
+  await completePokerStreet('preflop', 'flop');
+  await completePokerStreet('flop', 'turn');
+  await completePokerStreet('turn', 'river');
+  await completePokerStreet('river', 'ended');
+
   const concurrentTableId = 'table-blackjack-free-2';
   await request('seat_race_one', `/api/casino/open-table/${concurrentTableId}`, { method: 'POST' });
   const concurrentJoins = await Promise.all([
@@ -114,6 +144,27 @@ try {
     request('seat_race_two', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId: concurrentTableId, chips: 100, idempotencyKey: 'seat-race-two' }) }),
   ]);
   assert.equal(concurrentJoins.filter((entry) => entry.joined).length, 2, 'simultaneous human joins must be serialized without a phantom wait');
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  let blackjackState = (await request('seat_race_one', `/api/matches/state/${concurrentTableId}`)).blackjackGameState;
+  assert.equal(blackjackState.stage, 'player_turn', 'two seated blackjack players must start a live hand');
+  for (let turn = 0; turn < 3 && blackjackState.stage === 'player_turn'; turn += 1) {
+    const current = blackjackState.players[blackjackState.currentPlayerIndex];
+    const actionResult = await request(current.userId, '/api/matches/action', {
+      method: 'POST',
+      body: JSON.stringify({
+        matchId: concurrentTableId,
+        action: 'stand',
+        expectedStateVersion: blackjackState.stateVersion,
+      }),
+    });
+    blackjackState = actionResult.blackjackGameState;
+  }
+  const roundDeadline = Date.now() + 6_000;
+  while (Date.now() < roundDeadline && blackjackState.stage !== 'round_ended') {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    blackjackState = (await request('seat_race_one', `/api/matches/state/${concurrentTableId}`)).blackjackGameState;
+  }
+  assert.equal(blackjackState.stage, 'round_ended', 'a blackjack hand must finish after all seated players stand');
   console.log('Persistent table checks passed.');
 } finally {
   if (!server.killed) server.kill('SIGTERM');

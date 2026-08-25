@@ -9354,7 +9354,7 @@ setInterval(() => {
       const hasExpiredHuman = tablePlayers.some((player: any) =>
         !player.isAi && !String(player.userId).startsWith('bot_')
       );
-      if (!hasConnectedHuman && hasExpiredHuman && resetEmptyCasinoTableToBotAmbience(match)) {
+      if (!hasConnectedHuman && (hasExpiredHuman || tablePlayers.length === 0) && resetEmptyCasinoTableToBotAmbience(match)) {
         continue;
       }
     }
