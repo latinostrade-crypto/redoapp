@@ -1237,6 +1237,8 @@ export function Web3Dashboard({
   const publicMatchLaunchTimerRef = useRef<number | null>(null);
   const publicJoinAttemptRef = useRef(0);
   const publicJoinStartedAtRef = useRef(0);
+  const publicQueueRecoveryRef = useRef('');
+  const openPublicMatchRef = useRef<((result: PublicQueueStatus, fallbackStake: number, launchNow?: boolean) => boolean) | null>(null);
   const matchmakingStateRef = useRef(matchmakingState);
   const createRequestCounterRef = useRef(0);
   const privateRoomCreateInFlightRef = useRef(false);
@@ -1334,6 +1336,12 @@ export function Web3Dashboard({
       return false;
     }
   }, [currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, pvpGameTab, tournamentData?.matches]);
+
+  // Effects that poll/recover matchmaking must not restart merely because a
+  // parent supplied a fresh callback identity during a render.
+  useEffect(() => {
+    openPublicMatchRef.current = openPublicMatch;
+  }, [openPublicMatch]);
 
   useEffect(() => () => {
     if (publicMatchLaunchTimerRef.current !== null) {
@@ -2763,6 +2771,12 @@ export function Web3Dashboard({
   // owns. Recover it before the user can submit another join request.
   useEffect(() => {
     if (!authReady || matchmakingState !== 'idle' || activeProfile?.activeMatch) return;
+    // A status read is a recovery probe, not a render-time data source. The
+    // previous callback dependency could re-run this effect thousands of
+    // times, exhausting the WebView connection pool and blocking private APIs.
+    const recoveryKey = `${currentUserId}:${activeProfile?.activeMatch?.matchId || 'none'}`;
+    if (publicQueueRecoveryRef.current === recoveryKey) return;
+    publicQueueRecoveryRef.current = recoveryKey;
     apiRequest<PublicQueueStatus>('/api/matchmaker/status', { timeoutMs: 8_000 })
       .then((result) => {
         const recoveredStake = Number(result.stake ?? result.players?.[0]?.stake ?? 0);
@@ -2789,10 +2803,10 @@ export function Web3Dashboard({
           return;
         }
         if (result.status === 'ready' && result.matchId) {
-          openPublicMatch(result, recoveredStake);
+          openPublicMatchRef.current?.(result, recoveredStake);
         }
       }).catch(() => undefined);
-  }, [authReady, matchmakingState, activeProfile?.activeMatch, openPublicMatch]);
+  }, [authReady, matchmakingState, currentUserId, activeProfile?.activeMatch?.matchId]);
 
   const fetchFullProfile = () => {
     if (fullProfileLoading || !getSessionToken()) {
@@ -3705,7 +3719,7 @@ export function Web3Dashboard({
         });
       }
       if (result.status === 'ready' && result.matchId) {
-        openPublicMatch(result, selectedStake);
+        openPublicMatchRef.current?.(result, selectedStake);
       }
       if (result.status === 'expired') {
         // Ignore a stored failure from an older attempt if its status request
@@ -3752,9 +3766,10 @@ export function Web3Dashboard({
       if (statusRequestInFlight) return;
       statusRequestInFlight = true;
       apiRequest<PublicQueueStatus>('/api/matchmaker/status', {
-        timeoutMs: 8_000,
-        retryOnNetworkError: true,
-        networkAttempts: 2,
+        // Queue polling must remain cheap and finite. A generic retry waits
+        // for the backend wake-up and can overlap a new render/effect cycle.
+        timeoutMs: 5_000,
+        retryOnNetworkError: false,
       })
         .then(handleQueueStatus)
         .catch(() => undefined)
@@ -3764,7 +3779,7 @@ export function Web3Dashboard({
     };
 
     requestQueueStatus();
-    const activeSearchPollTimer = window.setInterval(requestQueueStatus, 1_500);
+    const activeSearchPollTimer = window.setInterval(requestQueueStatus, 5_000);
     const handleResume = () => requestQueueStatus();
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') requestQueueStatus();
@@ -3781,7 +3796,7 @@ export function Web3Dashboard({
       window.removeEventListener('pageshow', handleResume);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [publicMatchmakingActive, openPublicMatch, selectedStake]);
+  }, [publicMatchmakingActive, selectedStake]);
 
   useEffect(() => {
     const targetMatchId = initialLaunchTournamentMatchIdRef.current;

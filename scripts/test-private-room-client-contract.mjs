@@ -19,4 +19,12 @@ assert.match(source, /PRIVATE_STAKE_OPTIONS\.includes\(overrideStake as PrivateS
 assert.match(source, /privateRoomHasPlayer\(statusRes, currentUserId\)/);
 assert.match(source, /privateRoomHasPlayer\(statusRes, effectiveUserId\)/);
 
+// Public queue recovery shares the same WebView connection pool. It must not
+// re-run on every render or private-room creation will fail with a network
+// error after the browser has exhausted its sockets.
+assert.match(source, /const publicQueueRecoveryRef = useRef\(''\)/);
+assert.match(source, /if \(publicQueueRecoveryRef\.current === recoveryKey\) return/);
+assert.match(source, /window\.setInterval\(requestQueueStatus, 5_000\)/);
+assert.match(source, /timeoutMs: 5_000,\s*retryOnNetworkError: false/);
+
 console.log('Private room client contract checks passed.');
