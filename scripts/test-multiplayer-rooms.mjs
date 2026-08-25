@@ -74,6 +74,10 @@ try {
 
   const unauthenticatedStatus = await fetch(`${baseUrl}/api/private-rooms/status/ABCD1234`);
   assert.equal(unauthenticatedStatus.status, 401, 'private room reads must not silently fall back to an invented identity');
+  const outsiderStatus = await fetch(`${baseUrl}/api/private-rooms/status/ABCD1234`, {
+    headers: { 'x-user-id': 'room_outsider' },
+  });
+  assert.equal(outsiderStatus.status, 403, 'a room code alone must not expose a private lobby');
 
   // A committed POST can lose its response in a Telegram WebView. The client
   // must reconcile the idempotency key rather than create another room.

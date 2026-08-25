@@ -5858,6 +5858,10 @@ function buildPrivateRoomPayload(room: PrivateRoom) {
   };
 }
 
+function isPrivateRoomParticipant(room: PrivateRoom, userId: string) {
+  return room.players.some((player) => isSameUser(player.userId, userId));
+}
+
 function touchPrivateRoom(room: PrivateRoom, now = Date.now(), advanceVersion = true) {
   room.lastActivityAt = now;
   // Rooms persisted before snapshot versioning are presented as v1, so their
@@ -8663,6 +8667,10 @@ app.get('/api/private-rooms/status/:roomCode', requireAuth, (req, res) => {
     // outcome to the player.
     return res.status(404).json({ status: 'not_found', error: 'Private room was not found or has expired.' });
   }
+  const userId = getAuthenticatedUserId(req as AuthenticatedRequest);
+  if (!isPrivateRoomParticipant(room, userId)) {
+    return res.status(403).json({ error: 'Join this private room before reading its lobby state.' });
+  }
   if (room.matchId) {
     const match = activeMatches.get(room.matchId);
     if (match && (match.settled || match.gameState?.phase === 'game_over' || match.pokerGameState?.stage === 'match_ended' || match.blackjackGameState?.stage === 'match_ended')) {
@@ -8680,6 +8688,9 @@ app.get('/api/private-rooms/stream/:roomCode', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'Private room not found.' });
   }
   const userId = getPrivateRoomUserId(req, req.query);
+  if (!userId || !isPrivateRoomParticipant(room, userId)) {
+    return res.status(403).json({ error: 'Join this private room before opening its live lobby stream.' });
+  }
   res.locals.userId = userId;
 
   if (Date.now() - (room.lastActivityAt || room.createdAt) > 30_000) {

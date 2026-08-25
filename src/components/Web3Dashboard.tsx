@@ -612,6 +612,10 @@ type PendingPrivateRoomCreate = {
   gameType: 'uno' | 'poker' | 'blackjack';
   createdAt: number;
 };
+
+function privateRoomHasPlayer(room: Pick<PrivateRoomResponse, 'players'> | null | undefined, userId: string) {
+  return Boolean(userId && room?.players?.some((player) => isSameUser(player.userId, userId)));
+}
 type ReferralPageResponse = {
   invites: ReferralInvite[];
   nextCursor: string | null;
@@ -1933,7 +1937,7 @@ export function Web3Dashboard({
       initialLaunchRoomCodeRef.current = '';
       try {
         const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(roomCodeToUse), { timeoutMs: 4000 });
-        if (statusRes && (statusRes.status === 'started' || statusRes.status === 'waiting' || (statusRes.players && statusRes.players.some((p) => p.userId === currentUserId)))) {
+        if (privateRoomHasPlayer(statusRes, currentUserId)) {
           applyPrivateRoomJoin(statusRes, roomCodeToUse);
           return true;
         }
@@ -2024,7 +2028,7 @@ export function Web3Dashboard({
     }).catch(async (error) => {
       try {
         const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(code), { timeoutMs: 4000 });
-        if (statusRes && (statusRes.status === 'started' || statusRes.status === 'waiting' || statusRes.players?.some((p) => p.userId === effectiveUserId))) {
+        if (privateRoomHasPlayer(statusRes, effectiveUserId)) {
           applyPrivateRoomJoin(statusRes, code);
           return;
         }
@@ -2172,13 +2176,19 @@ export function Web3Dashboard({
     }
   };
 
-  const createPrivateRoom = async (overrideStake?: PrivateStakeOption, overrideTargetPlayers?: 2 | 3 | 4) => {
+  const createPrivateRoom = async (overrideStake?: unknown, overrideTargetPlayers?: unknown) => {
     if (!authReady) {
       setPrivateRoomError('Session is still syncing with the backend. Try again in a moment.');
       return;
     }
-    const effectiveStake = overrideStake !== undefined ? overrideStake : privateRoomStake;
-    const effectiveTargetPlayers = overrideTargetPlayers !== undefined ? overrideTargetPlayers : privateRoomTargetPlayers;
+    // React passes a MouseEvent to a bare onClick handler. Never let an event
+    // become part of the persisted/API payload (it contains a circular Fiber).
+    const effectiveStake = typeof overrideStake === 'number' && PRIVATE_STAKE_OPTIONS.includes(overrideStake as PrivateStakeOption)
+      ? overrideStake as PrivateStakeOption
+      : privateRoomStake;
+    const effectiveTargetPlayers = overrideTargetPlayers === 2 || overrideTargetPlayers === 3 || overrideTargetPlayers === 4
+      ? overrideTargetPlayers
+      : privateRoomTargetPlayers;
     if (effectiveStake > 0 && !walletConnected && !isLocalNetwork) {
       connectWallet();
       return;
@@ -2197,7 +2207,7 @@ export function Web3Dashboard({
       const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000, retryOnNetworkError: false });
       verifiedUserId = me.userId || verifiedUserId;
     } catch (error) {
-      setPrivateRoomError('Your game session is not ready. Reopen the Mini App and try again.');
+      setPrivateRoomError(cleanErrorMessage(error, 'private-room') || 'Could not verify your game session. Try again.');
       return;
     }
     try {
@@ -2213,7 +2223,7 @@ export function Web3Dashboard({
     // The waiting table appears only from the server's confirmed snapshot.
     setCurrentTab('pvp');
     setPvpSubMode('private');
-    setPrivateRoomTargetPlayers(effectiveTargetPlayers as 2 | 3 | 4);
+    setPrivateRoomTargetPlayers(effectiveTargetPlayers);
     setPrivateRoomSnapshot(null);
     setPrivateRoomStatus('idle');
     setPrivateRoomCreateState('creating');
@@ -3018,6 +3028,9 @@ export function Web3Dashboard({
       }),
     }).then(async (synced) => {
       if (cancelled) return;
+      if (!synced.sessionToken) {
+        throw new Error('The game server did not issue a session.');
+      }
       setSessionToken(synced.sessionToken);
       if (telegramInitData) {
         localStorage.setItem('redoapp_current_user_id', synced.userId);
@@ -3033,28 +3046,33 @@ export function Web3Dashboard({
       });
       setGoldenTickets(synced.availableTickets);
       setHeldTickets(synced.heldTickets);
-      // The authoritative sync is enough to unlock the UI. Profile and ledger
-      // hydration are optional follow-ups and must not block room actions.
+      // A successful sync alone is not enough: a stale token, a deployment
+      // with a different session secret, or an auth proxy can still reject
+      // mutations. Verify the token before enabling private-room actions.
+      const authenticatedProfile = await apiRequest<PlayerProfile>('/api/me', {
+        timeoutMs: 10_000,
+        retryOnNetworkError: false,
+      });
+      if (cancelled) return;
+      if (!authenticatedProfile?.userId) {
+        throw new Error('The game session could not be verified.');
+      }
+      const normalizedProfile = normalizeProfile(authenticatedProfile);
+      setFullProfile(normalizedProfile);
+      setProfile((prev) => normalizedProfile ?? prev);
+      setGoldenTickets(authenticatedProfile.availableTickets);
+      setHeldTickets(authenticatedProfile.heldTickets);
       setBootstrapState('ready');
-      const followUps = await Promise.allSettled([
-        apiRequest<{ transactions: any[] }>('/api/tickets/ledger'),
-        (synced.sessionToken || telegramInitData)
-          ? apiRequest<PlayerProfile>('/api/me')
-          : Promise.resolve(null),
-      ]);
+      // Ledger hydration is optional and cannot make an authenticated room
+      // flow look unavailable after the session has been verified.
+      const ledgerResult = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger')
+        .then((value) => ({ status: 'fulfilled' as const, value }))
+        .catch(() => ({ status: 'rejected' as const }));
 
       if (cancelled) return;
 
-      const [ledgerResult, profileResult] = followUps;
       if (ledgerResult.status === 'fulfilled') {
         setTransactions(ledgerResult.value.transactions);
-      }
-      if (profileResult.status === 'fulfilled' && profileResult.value) {
-        const normalized = normalizeProfile(profileResult.value);
-        setFullProfile(normalized);
-        setProfile((prev) => normalized ?? prev);
-        setGoldenTickets(profileResult.value.availableTickets);
-        setHeldTickets(profileResult.value.heldTickets);
       }
     }).catch((error) => {
       if (cancelled) return;
@@ -6132,7 +6150,7 @@ export function Web3Dashboard({
 
                         <button
                           type="button"
-                          onClick={createPrivateRoom}
+                          onClick={() => { void createPrivateRoom(); }}
                           disabled={!authReady || privateRoomCreateState === 'creating' || privateRoomCreateState === 'recovering'}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
