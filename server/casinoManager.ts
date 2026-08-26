@@ -22,6 +22,7 @@ const BOT_ROSTER = [
   ['bot_table_bear', 'Bear Ace', 'bear'],
   ['bot_table_fox', 'Fox River', 'fox'],
 ] as const;
+const TABLE_PRESENCE_GRACE_MS = 3 * 60_000;
 
 /** Permanent table catalogue with lazily allocated game runtimes. */
 export class CasinoManager {
@@ -196,7 +197,7 @@ export class CasinoManager {
       } else {
         existing.isConnected = true;
         existing.lastSeenAt = Date.now();
-        existing.presenceExpiresAt = Date.now() + 60_000;
+        existing.presenceExpiresAt = Date.now() + TABLE_PRESENCE_GRACE_MS;
         this.updateCounts(table);
         return { table, joined: false, alreadySeated: true };
       }
@@ -211,7 +212,7 @@ export class CasinoManager {
     const joinedPlayer = state.players.find((player: any) => player.userId === userId);
     if (joinedPlayer) {
       joinedPlayer.lastSeenAt = Date.now();
-      joinedPlayer.presenceExpiresAt = Date.now() + 60_000;
+      joinedPlayer.presenceExpiresAt = Date.now() + TABLE_PRESENCE_GRACE_MS;
     }
     table.lastActivityAt = Date.now();
     this.updateCounts(table);

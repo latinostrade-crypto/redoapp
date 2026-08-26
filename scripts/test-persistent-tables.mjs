@@ -95,6 +95,14 @@ try {
   assert.equal(afterSecondSeat.pokerGameState.stage, 'preflop', 'the human hand must start through the authoritative tick');
   assert.ok(afterSecondSeat.pokerGameState.stateVersion > afterFirstSeat.pokerGameState.stateVersion,
     'human join/start transitions must have a newer authoritative snapshot version');
+  const passiveRevision = afterSecondSeat.pokerGameState.stateVersion;
+  await Promise.all(Array.from({ length: 8 }, (_, index) => request(
+    index % 2 ? 'poker_table_user_one' : 'poker_table_user_two',
+    `/api/matches/state/${pokerTableId}`,
+  )));
+  const afterPassiveReads = await request('poker_table_user_one', `/api/matches/state/${pokerTableId}`);
+  assert.equal(afterPassiveReads.pokerGameState.stateVersion, passiveRevision,
+    'read-only polling must not invalidate a player action by advancing the table revision');
   const activePlayer = afterSecondSeat.pokerGameState.players[afterSecondSeat.pokerGameState.currentPlayerIndex];
   const action = activePlayer.currentBet < afterSecondSeat.pokerGameState.currentBet ? 'call' : 'check';
   const actionResult = await request(activePlayer.userId, '/api/matches/action', {
@@ -139,6 +147,13 @@ try {
   await completePokerStreet('flop', 'turn');
   await completePokerStreet('turn', 'river');
   await completePokerStreet('river', 'ended');
+  assert.ok(pokerState.nextRoundStartsAt, 'a persistent poker result must publish the server next-hand deadline');
+  const pokerNextHandDeadline = Date.now() + 7_000;
+  while (Date.now() < pokerNextHandDeadline && pokerState.stage !== 'preflop') {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    pokerState = (await request('poker_table_user_one', `/api/matches/state/${pokerTableId}`)).pokerGameState;
+  }
+  assert.equal(pokerState.stage, 'preflop', 'persistent poker must start the next hand without a client tap or reload');
 
   const concurrentTableId = 'table-blackjack-free-2';
   await request('seat_race_one', `/api/casino/open-table/${concurrentTableId}`, { method: 'POST' });
@@ -147,8 +162,12 @@ try {
     request('seat_race_two', '/api/casino/join-table', { method: 'POST', body: JSON.stringify({ tableId: concurrentTableId, chips: 100, idempotencyKey: 'seat-race-two' }) }),
   ]);
   assert.equal(concurrentJoins.filter((entry) => entry.joined).length, 2, 'simultaneous human joins must be serialized without a phantom wait');
-  await new Promise((resolve) => setTimeout(resolve, 1_200));
   let blackjackState = (await request('seat_race_one', `/api/matches/state/${concurrentTableId}`)).blackjackGameState;
+  const blackjackInitialDeadline = Date.now() + 7_000;
+  while (Date.now() < blackjackInitialDeadline && blackjackState.stage !== 'player_turn') {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    blackjackState = (await request('seat_race_one', `/api/matches/state/${concurrentTableId}`)).blackjackGameState;
+  }
   assert.equal(blackjackState.stage, 'player_turn', 'two seated blackjack players must start a live hand');
   for (let turn = 0; turn < 3 && blackjackState.stage === 'player_turn'; turn += 1) {
     const current = blackjackState.players[blackjackState.currentPlayerIndex];
@@ -168,6 +187,13 @@ try {
     blackjackState = (await request('seat_race_one', `/api/matches/state/${concurrentTableId}`)).blackjackGameState;
   }
   assert.equal(blackjackState.stage, 'round_ended', 'a blackjack hand must finish after all seated players stand');
+  assert.ok(blackjackState.nextRoundStartsAt, 'blackjack round results must expose a server-authoritative next-hand deadline');
+  const blackjackNextHandDeadline = Date.now() + 7_000;
+  while (Date.now() < blackjackNextHandDeadline && blackjackState.stage !== 'player_turn') {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    blackjackState = (await request('seat_race_one', `/api/matches/state/${concurrentTableId}`)).blackjackGameState;
+  }
+  assert.equal(blackjackState.stage, 'player_turn', 'persistent blackjack must automatically deal the next hand after the visible countdown');
   console.log('Persistent table checks passed.');
 } finally {
   if (!server.killed) server.kill('SIGTERM');

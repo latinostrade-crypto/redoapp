@@ -168,7 +168,7 @@ begin
     where table_id = p_table_id and user_id = p_user_id and state in ('reserved', 'seated', 'afk', 'leaving')
   ) then
     update public.casino_table_seats
-      set state = 'seated', presence_expires_at = now() + interval '60 seconds'
+      set state = 'seated', presence_expires_at = now() + interval '3 minutes'
       where table_id = p_table_id and user_id = p_user_id;
     v_result := jsonb_build_object('joined', false, 'alreadySeated', true, 'buyInAmount', 0);
     insert into public.casino_chip_ledger (idempotency_key, user_id, table_id, event, request_result)
@@ -204,7 +204,7 @@ begin
 
   update public.app_state set payload = v_user where id = 'user:' || p_user_id;
   insert into public.casino_table_seats (table_id, user_id, seat_number, state, chips, presence_expires_at)
-    values (p_table_id, p_user_id, v_seat_number, 'seated', p_buy_in, now() + interval '60 seconds')
+    values (p_table_id, p_user_id, v_seat_number, 'seated', p_buy_in, now() + interval '3 minutes')
   on conflict (table_id, user_id) do update set
     seat_number = excluded.seat_number,
     state = 'seated',
@@ -234,7 +234,7 @@ security definer
 set search_path = public
 as $$
   update public.casino_table_seats
-  set state = 'seated', presence_expires_at = now() + interval '60 seconds'
+  set state = 'seated', presence_expires_at = now() + interval '3 minutes'
   where table_id = p_table_id and user_id = p_user_id
     and state in ('reserved', 'seated', 'afk', 'leaving')
   returning presence_expires_at;

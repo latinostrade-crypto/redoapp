@@ -85,6 +85,11 @@ export function usePokerGame(options?: {
   const settledRef = useRef<boolean>(false);
   const remoteStateVersionRef = useRef(0);
   const remoteStateMatchIdRef = useRef('');
+  const remoteSyncInFlightRef = useRef<Promise<void> | null>(null);
+  const lastRemoteEventAtRef = useRef(0);
+  const lastStreamRecoveryAtRef = useRef(0);
+  const recoveredPersistentSeatRef = useRef('');
+  const remoteActionInFlightRef = useRef(false);
 
   // A delayed polling response must never repaint an earlier turn over an
   // SSE update that already contains the opponent's action.
@@ -131,16 +136,18 @@ export function usePokerGame(options?: {
    */
   const syncRemoteMatchState = useCallback(async (matchIdToSync = remoteMatchId) => {
     if (!matchIdToSync) return;
-    try {
+    if (remoteSyncInFlightRef.current) return remoteSyncInFlightRef.current;
+    const sync = (async () => {
+      try {
       const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
         `/api/matches/state/${encodeURIComponent(matchIdToSync)}`,
-        { retryOnNetworkError: true, networkAttempts: 2 }
+        { retryOnNetworkError: true, networkAttempts: 1, timeoutMs: 12_000 }
       );
       const state = result.pokerGameState || result.gameState;
       if (state) {
         applyRemoteState(state);
       }
-    } catch (err) {
+      } catch (err) {
       const msg = err instanceof Error ? err.message : String(err || '');
       if (msg.includes('404') || msg.includes('not found') || msg.includes('concluded') || msg.includes('cancelled')) {
         try { localStorage.removeItem('redoapp_active_match'); } catch {}
@@ -149,8 +156,32 @@ export function usePokerGame(options?: {
           options.onMatchCancelled();
         }
       }
+      }
+    })();
+    remoteSyncInFlightRef.current = sync;
+    try { await sync; } finally {
+      if (remoteSyncInFlightRef.current === sync) remoteSyncInFlightRef.current = null;
     }
   }, [remoteMatchId, options, applyRemoteState]);
+
+  const sendRemotePokerAction = useCallback(async (action: 'fold' | 'check' | 'call' | 'raise' | 'next_hand', amount?: number) => {
+    if (!remoteMatchId || remoteActionInFlightRef.current) return;
+    remoteActionInFlightRef.current = true;
+    try {
+      const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>('/api/matches/action', {
+        method: 'POST',
+        timeoutMs: 12_000,
+        body: JSON.stringify({ matchId: remoteMatchId, action, ...(amount === undefined ? {} : { amount }), expectedStateVersion: gameState.stateVersion }),
+      });
+      const state = result.pokerGameState || result.gameState;
+      if (state) applyRemoteState(state);
+    } catch (err) {
+      console.error(`Poker ${action} action error`, err);
+      void syncRemoteMatchState();
+    } finally {
+      remoteActionInFlightRef.current = false;
+    }
+  }, [applyRemoteState, gameState.stateVersion, remoteMatchId, syncRemoteMatchState]);
 
   /**
    * Start a new Texas Hold'em Poker Session
@@ -491,24 +522,7 @@ export function usePokerGame(options?: {
     sound.playPop();
 
     if (remoteMatchId) {
-      try {
-        const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'fold',
-              expectedStateVersion: gameState.stateVersion,
-            }),
-          }
-        );
-        const state = result.pokerGameState || result.gameState;
-        if (state) applyRemoteState(state);
-      } catch (err) {
-        console.error('Poker fold action error', err);
-        syncRemoteMatchState();
-      }
+      await sendRemotePokerAction('fold');
       return;
     }
 
@@ -522,7 +536,7 @@ export function usePokerGame(options?: {
       setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
       return { ...prev, players: updatedPlayers };
     });
-  }, [addLog, checkRoundCompletion, remoteMatchId, syncRemoteMatchState]);
+  }, [addLog, checkRoundCompletion, remoteMatchId, sendRemotePokerAction]);
 
   /**
    * Action: CHECK / CALL
@@ -534,24 +548,7 @@ export function usePokerGame(options?: {
       const human = gameState.players.find((p) => p.id === 'player');
       const needed = human ? gameState.currentBet - human.currentBet : 0;
       const action = needed <= 0 ? 'check' : 'call';
-      try {
-        const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action,
-              expectedStateVersion: gameState.stateVersion,
-            }),
-          }
-        );
-        const state = result.pokerGameState || result.gameState;
-        if (state) applyRemoteState(state);
-      } catch (err) {
-        console.error('Poker call/check action error', err);
-        syncRemoteMatchState();
-      }
+      await sendRemotePokerAction(action);
       return;
     }
 
@@ -595,7 +592,7 @@ export function usePokerGame(options?: {
       setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
       return { ...prev, pot: nextPot, players: updatedPlayers };
     });
-  }, [addLog, checkRoundCompletion, gameState.currentBet, gameState.players, remoteMatchId, syncRemoteMatchState]);
+  }, [addLog, checkRoundCompletion, gameState.currentBet, gameState.players, remoteMatchId, sendRemotePokerAction]);
 
   /**
    * Action: RAISE
@@ -605,25 +602,7 @@ export function usePokerGame(options?: {
       sound.playPop();
 
       if (remoteMatchId) {
-        try {
-          const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
-            '/api/matches/action',
-            {
-              method: 'POST',
-              body: JSON.stringify({
-                matchId: remoteMatchId,
-                action: 'raise',
-                amount: raiseToAmount,
-                expectedStateVersion: gameState.stateVersion,
-              }),
-            }
-          );
-          const state = result.pokerGameState || result.gameState;
-          if (state) applyRemoteState(state);
-        } catch (err) {
-          console.error('Poker raise action error', err);
-          syncRemoteMatchState();
-        }
+        await sendRemotePokerAction('raise', raiseToAmount);
         return;
       }
 
@@ -667,7 +646,7 @@ export function usePokerGame(options?: {
         };
       });
     },
-    [addLog, checkRoundCompletion, remoteMatchId, syncRemoteMatchState]
+    [addLog, checkRoundCompletion, remoteMatchId, sendRemotePokerAction]
   );
 
   /**
@@ -679,24 +658,7 @@ export function usePokerGame(options?: {
     isAdvancingRef.current = false;
 
     if (remoteMatchId) {
-      try {
-        const result = await apiRequest<{ pokerGameState?: PokerGameState; gameState?: PokerGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'next_hand',
-              expectedStateVersion: gameState.stateVersion,
-            }),
-          }
-        );
-        const state = result.pokerGameState || result.gameState;
-        if (state) applyRemoteState(state);
-      } catch (err) {
-        console.error('Poker next_hand action error', err);
-        syncRemoteMatchState();
-      }
+      await sendRemotePokerAction('next_hand');
       return;
     }
 
@@ -831,7 +793,7 @@ export function usePokerGame(options?: {
         isDealing: true,
       };
     });
-  }, [options, remoteMatchId, syncRemoteMatchState]);
+  }, [options, remoteMatchId, sendRemotePokerAction]);
 
   // SSE Stream Listener for Online Multiplayer
   useEffect(() => {
@@ -848,6 +810,7 @@ export function usePokerGame(options?: {
         const payload = JSON.parse((event as MessageEvent).data);
         const pkState: PokerGameState = payload.pokerGameState || payload.gameState;
         if (pkState) {
+          lastRemoteEventAtRef.current = Date.now();
           if (!applyRemoteState(pkState)) return;
 
           if ((pkState.stage === 'match_ended' || pkState.isMatchOver) && !settledRef.current) {
@@ -888,8 +851,13 @@ export function usePokerGame(options?: {
       }
     });
 
+    stream.addEventListener('heartbeat', () => { lastRemoteEventAtRef.current = Date.now(); });
     stream.onerror = () => {
-      syncRemoteMatchState(remoteMatchId);
+      const now = Date.now();
+      if (now - lastStreamRecoveryAtRef.current >= 5_000) {
+        lastStreamRecoveryAtRef.current = now;
+        void syncRemoteMatchState(remoteMatchId);
+      }
     };
 
     return () => {
@@ -906,14 +874,31 @@ export function usePokerGame(options?: {
       return;
     }
 
-    const isLocalTurn = gameState.currentPlayerIndex === 0;
-    const pollIntervalMs = gameState.waitingForPlayers || !isLocalTurn ? 1200 : 2000;
+    const pollIntervalMs = gameState.waitingForPlayers ? 3_000 : 4_000;
     const interval = window.setInterval(() => {
-      syncRemoteMatchState(remoteMatchId);
+      if (Date.now() - lastRemoteEventAtRef.current >= 6_000) void syncRemoteMatchState(remoteMatchId);
     }, pollIntervalMs);
 
     return () => window.clearInterval(interval);
   }, [gameState.isMatchOver, gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
+
+  // Restore a durable seat before presenting the spectator buy-in UI after a
+  // Telegram reload. This reconciliation is idempotent and never charges.
+  useEffect(() => {
+    if (!remoteMatchId?.startsWith('table-') || recoveredPersistentSeatRef.current === remoteMatchId) return;
+    recoveredPersistentSeatRef.current = remoteMatchId;
+    apiRequest<{ seated: boolean }>(`/api/casino/my-seat/${encodeURIComponent(remoteMatchId)}`, { timeoutMs: 12_000 })
+      .then(() => syncRemoteMatchState(remoteMatchId))
+      .catch(() => undefined);
+  }, [remoteMatchId, syncRemoteMatchState]);
+
+  useEffect(() => {
+    if (!remoteMatchId || !['preflop', 'flop', 'turn', 'river'].includes(gameState.stage)) return;
+    const update = () => setTurnTimeLeft(Math.max(0, Math.ceil(((gameState.turnStartedAt || Date.now()) + TURN_TIME_LIMIT_SEC * 1000 - Date.now()) / 1000)));
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [gameState.stage, gameState.turnStartedAt, remoteMatchId]);
 
   // The buy-in dialog completes before the next polling interval. Refresh the
   // authoritative table state immediately so the user sees their seat at once.
@@ -1043,7 +1028,7 @@ export function usePokerGame(options?: {
       try {
         const parsed = JSON.parse(raw);
         if (parsed.gameType === 'poker' && parsed.matchId) {
-          if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
+          if (!String(parsed.matchId).startsWith('table-') && parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
             localStorage.removeItem('redoapp_active_match');
             return;
           }

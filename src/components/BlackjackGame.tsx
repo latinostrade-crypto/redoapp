@@ -264,18 +264,21 @@ export function BlackjackGame({
       return;
     }
 
-    const timer = setInterval(() => {
-      setNextHandCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          if (gameState.mode === 'offline') {
+    const update = () => {
+      if (gameState.nextRoundStartsAt) {
+        setNextHandCountdown(Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000)));
+      } else if (gameState.mode === 'offline') {
+        setNextHandCountdown((prev) => {
+          if (prev <= 1) {
             onNextHand();
+            return 0;
           }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+          return prev - 1;
+        });
+      }
+    };
+    update();
+    const timer = setInterval(update, gameState.nextRoundStartsAt ? 250 : 1000);
 
     return () => clearInterval(timer);
   }, [gameState.stage, gameState.nextRoundStartsAt, gameState.mode, onNextHand]);
@@ -610,6 +613,12 @@ export function BlackjackGame({
                     <Play className="w-3 h-3 fill-black text-black" />
                     <span>NEXT HAND ({nextHandCountdown}S)</span>
                   </button>
+                )}
+
+                {gameState.mode !== 'offline' && gameState.stage === 'round_ended' && (
+                  <div className="w-full py-1.5 bg-cyan-950/60 border border-cyan-400/60 text-cyan-200 font-black text-[8px] uppercase rounded">
+                    {gameState.nextRoundStartsAt ? `NEXT HAND STARTS IN ${nextHandCountdown}S` : 'WAITING FOR AN OPPONENT TO START THE NEXT HAND'}
+                  </div>
                 )}
 
                 <button

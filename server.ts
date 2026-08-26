@@ -47,6 +47,11 @@ const SUPABASE_STATE_ROW_ID = process.env.SUPABASE_STATE_ROW_ID || 'runtime-stat
 const SUPABASE_PAGE_SIZE = 1000;
 const CASINO_RUNTIME_ROW_PREFIX = 'casino-runtime:';
 const CASINO_RUNTIME_IDLE_MS = 60_000;
+// Telegram can suspend a foreground WebView briefly while the user receives
+// a notification or switches chats. A valid seat must survive that normal
+// interruption; HTTP state reads renew this in-memory lease without causing
+// a database write or a gameplay snapshot broadcast.
+const CASINO_PRESENCE_GRACE_MS = 3 * 60_000;
 // Enable only after supabase/persistent_tables.sql has been applied. Keeping
 // the switch explicit makes a rolling deployment safe: old production data
 // continues to use the compatible app_state path until the schema is ready.
@@ -1162,6 +1167,10 @@ async function loadCasinoRuntimeSnapshots() {
  * point at an older object than casinoManager's authoritative runtime.
  */
 function discardPersistedCasinoMatchWrappers() {
+  // The local development fallback persists one process snapshot rather than
+  // the dedicated casino-runtime rows.  In that mode the wrapper *is* the
+  // durable source of truth and must not be discarded during a restart.
+  if (!supabaseAdmin) return;
   activeMatches.forEach((match, matchId) => {
     if (match.creatorUserId !== 'casino' && !matchId.startsWith('table-')) return;
     activeMatches.delete(matchId);
@@ -1320,6 +1329,26 @@ function checkpointCasinoRuntimeInBackground(tableId: string, reason: string) {
   void persistCasinoRuntime(tableId).catch((error) => {
     console.error(`Casino runtime checkpoint failed (${reason})`, { tableId, error });
   });
+}
+
+/**
+ * A casino revision represents a logical game transition only. Presence
+ * heartbeats and REST reads must never advance it, otherwise two WebViews
+ * can invalidate each other's pending action without either player acting.
+ */
+function publishCasinoTransition(match: ActiveMatch, reason: string) {
+  if (match.creatorUserId !== 'casino') {
+    broadcastMatch(match.matchId);
+    return;
+  }
+  match.stateVersion = Math.max(1, (match.stateVersion || 0) + 1);
+  casinoRuntimeStateVersions.set(match.matchId, match.stateVersion);
+  // The production path has ordered, dedicated runtime snapshots.  Local
+  // development uses the legacy state file, so retain the current wrapper
+  // there as the durable runtime checkpoint as well.
+  if (!supabaseAdmin) schedulePersist({ matchId: match.matchId });
+  checkpointCasinoRuntimeInBackground(match.matchId, reason);
+  broadcastMatch(match.matchId);
 }
 
 function createEmptyLevelStats(): ReferralLevelStats {
@@ -3538,7 +3567,8 @@ function startServerDealerTurn(match: ActiveMatch) {
   bj.dealer.status = dEval.isBusted ? 'busted' : 'playing';
 
   schedulePersist({ matchId: match.matchId });
-  broadcastMatch(match.matchId);
+  if (match.creatorUserId === 'casino') publishCasinoTransition(match, 'blackjack-dealer-turn');
+  else broadcastMatch(match.matchId);
 
   // Step 1: Wait 1200ms after flipping the hole card before drawing additional cards
   setTimeout(() => {
@@ -3565,7 +3595,8 @@ function stepServerDealerDraw(match: ActiveMatch) {
 
     bj.logs = [createServerLog(`🃏 Dealer draws a card (Score: ${dEval.score})`, 'draw'), ...bj.logs].slice(0, 50);
     schedulePersist({ matchId: match.matchId });
-    broadcastMatch(match.matchId);
+    if (match.creatorUserId === 'casino') publishCasinoTransition(match, 'blackjack-dealer-draw');
+    else broadcastMatch(match.matchId);
 
     // Schedule next draw after 1100ms
     setTimeout(() => {
@@ -3670,7 +3701,8 @@ function finalizeServerDealerSequence(match: ActiveMatch) {
   }
 
   schedulePersist({ matchId: match.matchId });
-  broadcastMatch(match.matchId);
+  if (match.creatorUserId === 'casino') publishCasinoTransition(match, 'blackjack-round-finished');
+  else broadcastMatch(match.matchId);
 }
 
 function startNextBlackjackRound(match: ActiveMatch) {
@@ -5473,14 +5505,17 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
 
 function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
   ensureMatchLifecycle(match);
+  const now = Date.now();
+  const isPersistentCasinoTable = match.creatorUserId === 'casino';
   if (match.pokerGameState) {
     const pkPlayer = match.pokerGameState.players.find((entry) => isSameUser(entry.userId, userId));
     if (pkPlayer) {
       pkPlayer.isAi = false;
       pkPlayer.isConnected = true;
       pkPlayer.hasConnected = true;
-      pkPlayer.lastSeenAt = Date.now();
+      pkPlayer.lastSeenAt = now;
       pkPlayer.disconnectedAt = null;
+      if (isPersistentCasinoTable) (pkPlayer as any).presenceExpiresAt = now + CASINO_PRESENCE_GRACE_MS;
     }
   }
   if (match.blackjackGameState) {
@@ -5489,8 +5524,9 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
       bjPlayer.isAi = false;
       bjPlayer.isConnected = true;
       bjPlayer.hasConnected = true;
-      bjPlayer.lastSeenAt = Date.now();
+      bjPlayer.lastSeenAt = now;
       bjPlayer.disconnectedAt = null;
+      if (isPersistentCasinoTable) (bjPlayer as any).presenceExpiresAt = now + CASINO_PRESENCE_GRACE_MS;
     }
   }
   const qPlayer = match.players.find((entry) => isSameUser(entry.userId, userId));
@@ -5510,6 +5546,10 @@ function markMatchPlayerConnected(match: ActiveMatch, userId: string) {
     }
   }
   activeMatchByUser.set(userId, match.matchId);
+  // State reads and SSE reconnects are heartbeats for a permanent table, not
+  // game transitions. Broadcasting here previously made every 1.2s polling
+  // request increment the revision and checkpoint Supabase.
+  if (isPersistentCasinoTable) return;
   schedulePersist({ matchId: match.matchId });
   const started = maybeStartPublicMatch(match);
   if (!started) {
@@ -6002,16 +6042,6 @@ function broadcastMatch(matchId: string) {
   const activeMatch = getActiveMatchOrCasino(matchId);
   const subscribers = matchSubscribers.get(matchId);
   if (!activeMatch) return;
-  // SSE and fallback polling may be delivered out of order.  A permanent
-  // table therefore advances a server-owned snapshot version on each push.
-  if (activeMatch.creatorUserId === 'casino') {
-    activeMatch.stateVersion = (activeMatch.stateVersion || 0) + 1;
-    casinoRuntimeStateVersions.set(matchId, activeMatch.stateVersion);
-    // Do not make a player's request wait for storage, but checkpoint every
-    // observable casino transition. This closes the window in which Render
-    // can restart after a broadcast yet before the five-second checkpoint.
-    checkpointCasinoRuntimeInBackground(matchId, 'state-broadcast');
-  }
   if (!subscribers) return;
   subscribers.forEach((response) => {
     const userId = response.locals.userId as string | undefined;
@@ -9012,7 +9042,11 @@ app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, r
         throw new Error('Unsupported action.');
       }
 
-      broadcastMatch(matchId);
+      if (activeMatch.creatorUserId === 'casino') {
+        publishCasinoTransition(activeMatch, 'player-action');
+      } else {
+        broadcastMatch(matchId);
+      }
       return { success: true, ...buildPerspectiveState(activeMatch, userId) };
     });
     return res.json(result);
@@ -9354,10 +9388,7 @@ function recoverCasinoTickFailure(match: ActiveMatch, error: unknown) {
     match.blackjackGameState.nextRoundStartsAt = null;
     match.blackjackGameState.turnStartedAt = Date.now();
   }
-  broadcastMatch(match.matchId);
-  void persistCasinoRuntime(match.matchId).catch((persistError) => {
-    console.error(`Failed to persist recovered casino table ${match.matchId}`, persistError);
-  });
+  publishCasinoTransition(match, 'tick-recovery');
 }
 
 function resetEmptyCasinoTableToBotAmbience(match: ActiveMatch) {
@@ -9368,14 +9399,12 @@ function resetEmptyCasinoTableToBotAmbience(match: ActiveMatch) {
   } else {
     match.blackjackGameState = table.engine.state as unknown as ServerBlackjackGameState;
   }
-  match.stateVersion = (match.stateVersion || 0) + 1;
-  casinoRuntimeStateVersions.set(match.matchId, match.stateVersion);
-  checkpointCasinoRuntimeInBackground(match.matchId, 'empty-table-bot-reset');
-  broadcastMatch(match.matchId);
+  publishCasinoTransition(match, 'empty-table-bot-reset');
   return true;
 }
 
 setInterval(() => {
+  try {
   const now = Date.now();
   const allMatchesToTick = Array.from(activeMatches.values());
   for (const match of allMatchesToTick) {
@@ -9407,8 +9436,11 @@ setInterval(() => {
     if (match.gameType === 'poker' && match.pokerGameState) {
       const pk = match.pokerGameState;
       if (match.creatorUserId === 'casino' && pk.stage === 'idle') {
-        startNextPokerRound(match);
-        broadcastMatch(matchId);
+        const humanCount = pk.players.filter((player) => !player.isAi && !player.userId.startsWith('bot_') && player.isConnected !== false).length;
+        if (humanCount >= 2) {
+          startNextPokerRound(match);
+          publishCasinoTransition(match, 'poker-hand-started');
+        }
         continue;
       }
       if (pk.stage === 'match_ended') {
@@ -9428,7 +9460,7 @@ setInterval(() => {
       if (pk.stage === 'ended') {
         if (pk.nextRoundStartsAt && now >= pk.nextRoundStartsAt) {
           startNextPokerRound(match);
-          broadcastMatch(matchId);
+          publishCasinoTransition(match, 'poker-next-hand');
           schedulePersist({ matchId });
         }
         continue;
@@ -9454,7 +9486,8 @@ setInterval(() => {
               } else {
                 applyPokerAction(match, currPlayer.userId, 'fold');
               }
-              broadcastMatch(matchId);
+              if (match.creatorUserId === 'casino') publishCasinoTransition(match, 'poker-timeout');
+              else broadcastMatch(matchId);
               schedulePersist({ matchId });
             } catch (error) {
               if (match.creatorUserId === 'casino') recoverCasinoTickFailure(match, error);
@@ -9480,8 +9513,13 @@ setInterval(() => {
       if (match.creatorUserId === 'casino' && bj.stage === 'round_ended') {
         const humanCount = bj.players.filter((p) => !p.isAi && !p.userId.startsWith('bot_') && p.isConnected !== false).length;
         if (humanCount >= 2) {
-          startNextBlackjackRound(match);
-          broadcastMatch(matchId);
+          if (!bj.nextRoundStartsAt) {
+            bj.nextRoundStartsAt = now + 5_000;
+            publishCasinoTransition(match, 'blackjack-next-hand-scheduled');
+          } else if (now >= bj.nextRoundStartsAt) {
+            startNextBlackjackRound(match);
+            publishCasinoTransition(match, 'blackjack-next-hand');
+          }
         }
         continue;
       }
@@ -9502,7 +9540,8 @@ setInterval(() => {
       if (bj.stage === 'round_ended') {
         if (bj.nextRoundStartsAt && now >= bj.nextRoundStartsAt) {
           startNextBlackjackRound(match);
-          broadcastMatch(matchId);
+          if (match.creatorUserId === 'casino') publishCasinoTransition(match, 'blackjack-next-hand');
+          else broadcastMatch(matchId);
           schedulePersist({ matchId });
         }
         continue;
@@ -9525,7 +9564,8 @@ setInterval(() => {
               } else {
                 applyBlackjackAction(match, currPlayer.userId, 'stand');
               }
-              broadcastMatch(matchId);
+              if (match.creatorUserId === 'casino') publishCasinoTransition(match, 'blackjack-timeout');
+              else broadcastMatch(matchId);
               schedulePersist({ matchId });
             } catch (error) {
               if (match.creatorUserId === 'casino') recoverCasinoTickFailure(match, error);
@@ -9668,6 +9708,10 @@ setInterval(() => {
     // clean, bot-only ambience runtime on demand.
     activeMatches.delete(tableId);
   });
+  } catch (error) {
+    // Never let one malformed recovered table terminate the Render process.
+    console.error('Casino/game tick failed without crashing the server', error);
+  }
 }, 1000);
 
 // A bounded checkpoint protects a live hand from deploy/restart without
@@ -9686,6 +9730,11 @@ async function flushAndExit(signal: string) {
       clearTimeout(persistTimer);
       persistTimer = null;
     }
+    // A graceful Render shutdown must not race a newer casino checkpoint with
+    // a stale one.  Wait for every per-table ordered write before the final
+    // generic-state flush; this is also what makes a live hand recoverable
+    // after a deploy or an automatic instance restart.
+    await Promise.allSettled(Array.from(casinoRuntimePersistTails.values()));
     await persistStateNow();
   } catch (error) {
     console.error(`Failed to flush runtime state on ${signal}`, error);
@@ -9808,8 +9857,7 @@ app.post('/api/casino/table-heartbeat', requireAuth, async (req: AuthenticatedRe
       if (CASINO_TABLES_DB_MODE && !persistedExpiry) throw Object.assign(new Error('User seat is no longer active'), { statusCode: 403 });
       player.isConnected = true;
       player.lastSeenAt = Date.now();
-      player.presenceExpiresAt = Date.now() + 60_000;
-      checkpointCasinoRuntimeInBackground(tableId, 'heartbeat');
+      player.presenceExpiresAt = Date.now() + CASINO_PRESENCE_GRACE_MS;
       return { success: true, presenceExpiresAt: player.presenceExpiresAt };
     });
     return res.json(payload);
@@ -9837,8 +9885,8 @@ app.get('/api/casino/my-seat/:tableId', requireAuth, async (req: AuthenticatedRe
         const user = getUser(userId);
         const username = (user.telegramUsername || user.telegramFirstName || 'Player').replace(/^@/, '');
         casinoManager.joinTable(tableId, userId, username, 'cat', durableSeat.chips);
-        checkpointCasinoRuntimeInBackground(tableId, 'seat-reconcile');
-        broadcastMatch(tableId);
+        const activeMatch = getActiveMatchOrCasino(tableId);
+        if (activeMatch) publishCasinoTransition(activeMatch, 'seat-reconcile');
       }
       const seated = Boolean(durableSeat || runtimePlayer);
       return { success: true, tableId, seated, chips: durableSeat?.chips || Math.max(0, Number(runtimePlayer?.chips) || 0) };
@@ -9885,9 +9933,9 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
           createLedgerEntry(user, { id: `free-table-energy:${tableId}:${userId}:${Date.now()}`, event: 'Free Table Entry', value: '-2 Energy', type: 'reward', amount: -2 });
         }
         if (shouldChargeLocalEnvelope) schedulePersist({ userId });
-        checkpointCasinoRuntimeInBackground(tableId, 'join-table');
       }
-      broadcastMatch(tableId);
+      const activeMatch = getActiveMatchOrCasino(tableId);
+      if (activeMatch) publishCasinoTransition(activeMatch, result.joined ? 'seat-joined' : 'seat-reconnected');
       return { success: true, message: result.alreadySeated ? 'Already seated' : 'Joined table', tableId, joined: result.joined, buyInAmount };
     });
     return res.json(payload);
@@ -9936,7 +9984,8 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
           });
         }
         schedulePersist({ userId });
-        broadcastMatch(tableId);
+        const activeMatch = getActiveMatchOrCasino(tableId);
+        if (activeMatch) publishCasinoTransition(activeMatch, 'seat-left');
         await persistCasinoRuntime(tableId);
       }
       return { success: true, message: 'Left table' };

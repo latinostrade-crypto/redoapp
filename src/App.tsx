@@ -68,7 +68,7 @@ export default function App() {
       const activeMatchRaw = localStorage.getItem('redoapp_active_match');
       if (activeMatchRaw) {
         const parsed = JSON.parse(activeMatchRaw);
-        if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
+        if (!String(parsed.matchId || '').startsWith('table-') && parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
           localStorage.removeItem('redoapp_active_match');
           return 'uno';
         }

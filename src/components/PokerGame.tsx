@@ -293,20 +293,24 @@ export function PokerGame({
       setNextHandCountdown(6);
       return;
     }
-
-    const timer = setInterval(() => {
-      setNextHandCountdown((prev) => {
+    const update = () => {
+      if (gameState.nextRoundStartsAt) {
+        setNextHandCountdown(Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000)));
+      } else if (gameState.mode === 'offline' && onNextHand) {
+        setNextHandCountdown((prev) => {
           if (prev <= 1) {
-            clearInterval(timer);
-          if (gameState.mode === 'offline' && onNextHand) onNextHand();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+            onNextHand();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }
+    };
+    update();
+    const timer = setInterval(update, gameState.nextRoundStartsAt ? 250 : 1000);
 
     return () => clearInterval(timer);
-  }, [gameState.stage, gameState.mode, onNextHand]);
+  }, [gameState.stage, gameState.mode, gameState.nextRoundStartsAt, onNextHand]);
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
@@ -913,6 +917,11 @@ export function PokerGame({
             >
               NEXT HAND ➔
             </button>
+          )}
+          {gameState.mode !== 'offline' && (
+            <div className="w-full py-2 bg-cyan-950/60 border border-cyan-400/60 text-cyan-200 text-center font-black text-[9px] uppercase rounded">
+              {gameState.nextRoundStartsAt ? `NEXT HAND STARTS IN ${nextHandCountdown}S` : 'WAITING FOR AN OPPONENT TO START THE NEXT HAND'}
+            </div>
           )}
         </div>
       )}

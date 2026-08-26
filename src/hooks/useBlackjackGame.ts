@@ -93,6 +93,11 @@ export function useBlackjackGame(options?: {
   const settledRef = useRef<boolean>(false);
   const remoteStateVersionRef = useRef(0);
   const remoteStateMatchIdRef = useRef('');
+  const remoteSyncInFlightRef = useRef<Promise<void> | null>(null);
+  const lastRemoteEventAtRef = useRef(0);
+  const lastStreamRecoveryAtRef = useRef(0);
+  const recoveredPersistentSeatRef = useRef('');
+  const remoteActionInFlightRef = useRef(false);
 
   const applyRemoteState = useCallback((state: BlackjackGameState) => {
     const incomingMatchId = state.matchId || state.tableId || '';
@@ -118,16 +123,18 @@ export function useBlackjackGame(options?: {
    */
   const syncRemoteMatchState = useCallback(async (matchIdToSync = remoteMatchId) => {
     if (!matchIdToSync) return;
-    try {
+    if (remoteSyncInFlightRef.current) return remoteSyncInFlightRef.current;
+    const sync = (async () => {
+      try {
       const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
         `/api/matches/state/${encodeURIComponent(matchIdToSync)}`,
-        { retryOnNetworkError: true, networkAttempts: 2 }
+        { retryOnNetworkError: true, networkAttempts: 1, timeoutMs: 12_000 }
       );
       const state = result.blackjackGameState || result.gameState;
       if (state) {
         applyRemoteState(state);
       }
-    } catch (err) {
+      } catch (err) {
       const msg = err instanceof Error ? err.message : String(err || '');
       if (msg.includes('404') || msg.includes('not found') || msg.includes('concluded') || msg.includes('cancelled')) {
         try { localStorage.removeItem('redoapp_active_match'); } catch {}
@@ -136,8 +143,32 @@ export function useBlackjackGame(options?: {
           options.onMatchCancelled();
         }
       }
+      }
+    })();
+    remoteSyncInFlightRef.current = sync;
+    try { await sync; } finally {
+      if (remoteSyncInFlightRef.current === sync) remoteSyncInFlightRef.current = null;
     }
   }, [remoteMatchId, options, applyRemoteState]);
+
+  const sendRemoteBlackjackAction = useCallback(async (action: 'hit' | 'stand' | 'double' | 'next_hand' | 'place_bet', amount?: number) => {
+    if (!remoteMatchId || remoteActionInFlightRef.current) return;
+    remoteActionInFlightRef.current = true;
+    try {
+      const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>('/api/matches/action', {
+        method: 'POST',
+        timeoutMs: 12_000,
+        body: JSON.stringify({ matchId: remoteMatchId, action, ...(amount === undefined ? {} : { amount }), expectedStateVersion: gameState.stateVersion }),
+      });
+      const state = result.blackjackGameState || result.gameState;
+      if (state) applyRemoteState(state);
+    } catch (err) {
+      console.error(`Blackjack ${action} action error`, err);
+      void syncRemoteMatchState();
+    } finally {
+      remoteActionInFlightRef.current = false;
+    }
+  }, [applyRemoteState, gameState.stateVersion, remoteMatchId, syncRemoteMatchState]);
 
   /**
    * Advance to the next player's turn or start Dealer turn if all finished (Offline Mode)
@@ -423,27 +454,10 @@ export function useBlackjackGame(options?: {
       setSelectedBet(amount);
 
       if (remoteMatchId) {
-        try {
-          const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
-            '/api/matches/action',
-            {
-              method: 'POST',
-              body: JSON.stringify({
-                matchId: remoteMatchId,
-                action: 'place_bet',
-                amount,
-              }),
-            }
-          );
-          const state = result.blackjackGameState || result.gameState;
-          if (state) applyRemoteState(state);
-        } catch (err) {
-          console.error('Blackjack place_bet error', err);
-          syncRemoteMatchState();
-        }
+        await sendRemoteBlackjackAction('place_bet', amount);
       }
     },
-    [remoteMatchId, syncRemoteMatchState]
+    [remoteMatchId, sendRemoteBlackjackAction]
   );
 
   /**
@@ -581,24 +595,7 @@ export function useBlackjackGame(options?: {
     sound.playPop();
 
     if (remoteMatchId) {
-      try {
-        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'hit',
-              expectedStateVersion: gameState.stateVersion,
-            }),
-          }
-        );
-        const state = result.blackjackGameState || result.gameState;
-        if (state) applyRemoteState(state);
-      } catch (err) {
-        console.error('Blackjack hit action error', err);
-        syncRemoteMatchState();
-      }
+      await sendRemoteBlackjackAction('hit');
       return;
     }
 
@@ -636,7 +633,7 @@ export function useBlackjackGame(options?: {
       }));
       setTurnTimeLeft(TURN_DURATION_SEC);
     }
-  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, syncRemoteMatchState]);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, sendRemoteBlackjackAction]);
 
   /**
    * Action: STAND (Finish turn)
@@ -645,24 +642,7 @@ export function useBlackjackGame(options?: {
     sound.playPop();
 
     if (remoteMatchId) {
-      try {
-        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'stand',
-              expectedStateVersion: gameState.stateVersion,
-            }),
-          }
-        );
-        const state = result.blackjackGameState || result.gameState;
-        if (state) applyRemoteState(state);
-      } catch (err) {
-        console.error('Blackjack stand action error', err);
-        syncRemoteMatchState();
-      }
+      await sendRemoteBlackjackAction('stand');
       return;
     }
 
@@ -679,7 +659,7 @@ export function useBlackjackGame(options?: {
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
     advanceToNextTurn(nextPlayers, currIdx + 1);
-  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, syncRemoteMatchState]);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, sendRemoteBlackjackAction]);
 
   /**
    * Action: DOUBLE DOWN (Double bet with remaining chips, draw 1 card, stand)
@@ -688,24 +668,7 @@ export function useBlackjackGame(options?: {
     sound.playPop();
 
     if (remoteMatchId) {
-      try {
-        const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
-          '/api/matches/action',
-          {
-            method: 'POST',
-            body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'double',
-              expectedStateVersion: gameState.stateVersion,
-            }),
-          }
-        );
-        const state = result.blackjackGameState || result.gameState;
-        if (state) applyRemoteState(state);
-      } catch (err) {
-        console.error('Blackjack double action error', err);
-        syncRemoteMatchState();
-      }
+      await sendRemoteBlackjackAction('double');
       return;
     }
 
@@ -736,7 +699,7 @@ export function useBlackjackGame(options?: {
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
     advanceToNextTurn(nextPlayers, currIdx + 1);
-  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, syncRemoteMatchState]);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, sendRemoteBlackjackAction]);
 
   /**
    * Start next round keeping chips intact
@@ -747,25 +710,7 @@ export function useBlackjackGame(options?: {
       const nextBet = betForNextHand || selectedBet;
 
       if (remoteMatchId) {
-        try {
-          const result = await apiRequest<{ blackjackGameState?: BlackjackGameState; gameState?: BlackjackGameState }>(
-            '/api/matches/action',
-            {
-              method: 'POST',
-              body: JSON.stringify({
-              matchId: remoteMatchId,
-              action: 'next_hand',
-              amount: nextBet,
-              expectedStateVersion: gameState.stateVersion,
-              }),
-            }
-          );
-          const state = result.blackjackGameState || result.gameState;
-          if (state) applyRemoteState(state);
-        } catch (err) {
-          console.error('Blackjack next_hand action error', err);
-          syncRemoteMatchState();
-        }
+        await sendRemoteBlackjackAction('next_hand', nextBet);
         return;
       }
 
@@ -773,7 +718,7 @@ export function useBlackjackGame(options?: {
       const nextHandNum = gameState.currentHand + 1;
       dealNewRoundCards(gameState.players, gameState.dealer, gameState.mode, gameState.stake, gameState.tableId, gameState.matchId, nextHandNum, nextBet);
     },
-    [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.tableId, gameState.stake, remoteMatchId, selectedBet, syncRemoteMatchState]
+    [dealNewRoundCards, gameState.currentHand, gameState.dealer, gameState.matchId, gameState.mode, gameState.players, gameState.tableId, gameState.stake, remoteMatchId, selectedBet, sendRemoteBlackjackAction]
   );
 
   // SSE Stream Listener for Online Multiplayer
@@ -791,6 +736,7 @@ export function useBlackjackGame(options?: {
         const payload = JSON.parse((event as MessageEvent).data);
         const bjState: BlackjackGameState = payload.blackjackGameState || payload.gameState;
         if (bjState) {
+          lastRemoteEventAtRef.current = Date.now();
           if (!applyRemoteState(bjState)) return;
 
           if (bjState.stage === 'match_ended' && !settledRef.current) {
@@ -826,8 +772,13 @@ export function useBlackjackGame(options?: {
       }
     });
 
+    stream.addEventListener('heartbeat', () => { lastRemoteEventAtRef.current = Date.now(); });
     stream.onerror = () => {
-      syncRemoteMatchState(remoteMatchId);
+      const now = Date.now();
+      if (now - lastStreamRecoveryAtRef.current >= 5_000) {
+        lastStreamRecoveryAtRef.current = now;
+        void syncRemoteMatchState(remoteMatchId);
+      }
     };
 
     return () => {
@@ -844,14 +795,21 @@ export function useBlackjackGame(options?: {
       return;
     }
 
-    const isLocalTurn = gameState.currentPlayerIndex === 0;
-    const pollIntervalMs = gameState.waitingForPlayers || !isLocalTurn ? 1200 : 2000;
+    const pollIntervalMs = gameState.waitingForPlayers ? 3_000 : 4_000;
     const interval = window.setInterval(() => {
-      syncRemoteMatchState(remoteMatchId);
+      if (Date.now() - lastRemoteEventAtRef.current >= 6_000) void syncRemoteMatchState(remoteMatchId);
     }, pollIntervalMs);
 
     return () => window.clearInterval(interval);
   }, [gameState.stage, gameState.waitingForPlayers, gameState.currentPlayerIndex, remoteMatchId, syncRemoteMatchState]);
+
+  useEffect(() => {
+    if (!remoteMatchId?.startsWith('table-') || recoveredPersistentSeatRef.current === remoteMatchId) return;
+    recoveredPersistentSeatRef.current = remoteMatchId;
+    apiRequest<{ seated: boolean }>(`/api/casino/my-seat/${encodeURIComponent(remoteMatchId)}`, { timeoutMs: 12_000 })
+      .then(() => syncRemoteMatchState(remoteMatchId))
+      .catch(() => undefined);
+  }, [remoteMatchId, syncRemoteMatchState]);
 
   // Seat confirmation should feel immediate; do not make the user wait for
   // the normal multiplayer poll before replacing spectator state.
@@ -897,21 +855,26 @@ export function useBlackjackGame(options?: {
     return () => clearTimeout(timer);
   }, [gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, playerHit, playerStand, remoteMatchId]);
 
-  // Turn Countdown Timer (Offline and Local Tick)
+  // Count down from the server timestamp. In online mode this must never
+  // recycle from zero to fifteen: that made a stale snapshot look like a live
+  // opponent turn forever.
   useEffect(() => {
     if (gameState.stage !== 'player_turn' || gameState.isDealing) return;
-
-    const timer = setInterval(() => {
-      setTurnTimeLeft((prev) => {
-        if (prev <= 1) {
-          if (!remoteMatchId) {
+    const update = () => {
+      if (remoteMatchId) {
+        setTurnTimeLeft(Math.max(0, Math.ceil(((gameState.turnStartedAt || Date.now()) + TURN_DURATION_SEC * 1000 - Date.now()) / 1000)));
+      } else {
+        setTurnTimeLeft((prev) => {
+          if (prev <= 1) {
             playerStand();
+            return TURN_DURATION_SEC;
           }
-          return TURN_DURATION_SEC;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+          return prev - 1;
+        });
+      }
+    };
+    update();
+    const timer = setInterval(update, remoteMatchId ? 250 : 1000);
 
     return () => clearInterval(timer);
   }, [gameState.stage, gameState.isDealing, playerStand, remoteMatchId]);
@@ -923,7 +886,7 @@ export function useBlackjackGame(options?: {
       try {
         const parsed = JSON.parse(raw);
         if (parsed.gameType === 'blackjack' && parsed.matchId) {
-          if (parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
+          if (!String(parsed.matchId).startsWith('table-') && parsed.createdAt && Date.now() - Number(parsed.createdAt) > 15 * 60 * 1000) {
             localStorage.removeItem('redoapp_active_match');
             return;
           }
