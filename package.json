@@ -10,6 +10,7 @@
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "test:traffic": "node scripts/check-traffic-budget.mjs",
+    "test:ticket-accounting": "node scripts/test-ticket-accounting.mjs",
     "test:pvp-handoff": "node scripts/test-pvp-handoff.mjs",
     "test:multiplayer-rooms": "node scripts/test-multiplayer-rooms.mjs",
     "test:private-room-client": "node scripts/test-private-room-client-contract.mjs",

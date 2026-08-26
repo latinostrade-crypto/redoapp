@@ -458,10 +458,16 @@ This survives normal restarts, but it is not a replacement for a managed externa
 - Take automated daily backups and rehearse a restore to a separate project
   before admitting paid users. Keep a dated export of the ticket ledger and
   referral-payout audit.
-- `app_state` is currently a JSONB persistence envelope, not a normalized
-  transactional ledger. For the next scale step, migrate balances, ledger
-  entries, matches, deposits, withdrawals, referrals, and notification outbox
-  records to separate tables with unique constraints and explicit ownership.
+- `app_state` remains a JSONB projection for compatibility, but ticket balance
+  snapshots are persisted through `ticket_persist_user_snapshot`: an
+  optimistic-revision RPC that posts the matching immutable double-entry
+  transaction in the same database transaction. `ticket_profile_reconciliation`,
+  `ticket_account_reconciliation`, and `ticket_transaction_reconciliation`
+  must all remain empty; the backend checks them at startup and every 15
+  minutes. Apply the ticket migrations in date order before deploying code
+  that uses this bridge.
+- Matches, deposits, withdrawals, referrals, and notification outbox records
+  should still be normalized fully before horizontal scale.
 - Do not use the local JSON fallback for production balances, tickets, or
   payouts.
 
@@ -707,11 +713,12 @@ links:
    match state by changing a URL, body field, or stream parameter.
 8. Supabase persistence is verified after a controlled backend restart.
 
-Automate these flows before opening the beta beyond trusted testers. Prioritize
-server tests for ticket ledger invariants, deposit uniqueness, settlement,
-referral payout, withdrawal state transitions, and auth/authorization; add a
-small Telegram-browser E2E smoke suite for launch, wallet return, room links,
-and reconnect.
+Automate these flows before opening the beta beyond trusted testers. The
+repository includes `npm run test:ticket-accounting` as an architecture gate
+for the atomic ticket bridge; retain it alongside server tests for deposit
+uniqueness, settlement, referral payout, withdrawal state transitions, and
+auth/authorization. Add a small Telegram-browser E2E smoke suite for launch,
+wallet return, room links, and reconnect.
 
 ## Completed
 

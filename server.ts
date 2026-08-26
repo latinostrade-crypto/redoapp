@@ -446,6 +446,9 @@ interface UserState {
   walletAddress?: string;
   availableTickets: number;
   heldTickets: number;
+  // Monotonic optimistic-concurrency revision for the durable balance
+  // projection. It is server-owned and validated in Postgres.
+  ticketStateRevision?: number;
   casinoChips: number;
   practiceChips: number;
   xp: number;
@@ -870,6 +873,7 @@ const dirtyDepositVersions = new Map<string, number>();
 const dirtyWithdrawalVersions = new Map<string, number>();
 const dirtyReferralPayouts = new Set<string>();
 const dirtyReferralPayoutVersions = new Map<string, number>();
+const userPersistInFlight = new Set<string>();
 let persistInFlight: Promise<void> | null = null;
 
 function markDirty(dirty: Set<string>, versions: Map<string, number>, id: string) {
@@ -953,16 +957,46 @@ async function persistStateNow() {
   return persistInFlight;
 }
 
+async function persistDirtyUsers() {
+  const ids = Array.from(dirtyUsers);
+  for (const userId of ids) {
+    const persistedVersion = dirtyUserVersions.get(userId) || 0;
+    const user = users.get(userId);
+    if (!user) {
+      acknowledgeDirty(dirtyUsers, dirtyUserVersions, userId, persistedVersion);
+      continue;
+    }
+
+    // One user snapshot becomes one atomic database transaction: the
+    // ledger entry and the UI projection cannot be acknowledged separately.
+    const nextRevision = Math.max(1, Math.trunc(user.ticketStateRevision || 0));
+    const payload: PersistedUserState = {
+      ...user,
+      ticketStateRevision: nextRevision,
+      questProgress: questProgressByUser.get(userId) || [],
+    };
+    userPersistInFlight.add(userId);
+    try {
+      const { error } = await supabaseAdmin!
+        .rpc('ticket_persist_user_snapshot', {
+          p_user_id: userId,
+          p_payload: payload,
+          p_expected_revision: nextRevision - 1,
+          p_next_revision: nextRevision,
+        });
+      if (error) throw new Error(`Atomic ticket snapshot failed for ${userId}: ${error.message}`);
+    } finally {
+      userPersistInFlight.delete(userId);
+    }
+    acknowledgeDirty(dirtyUsers, dirtyUserVersions, userId, persistedVersion);
+  }
+}
+
 async function persistStateNowInternal() {
   if (supabaseAdmin) {
     try {
       // 1. Persist dirty users
-      await persistDirtyRows<PersistedUserState>(dirtyUsers, dirtyUserVersions, 'user:', (userId) => {
-        const user = users.get(userId);
-        return user
-          ? { ...user, questProgress: questProgressByUser.get(userId) || [] }
-          : undefined;
-      });
+      await persistDirtyUsers();
 
       // 2. Persist dirty matches
       await persistDirtyRows(dirtyMatches, dirtyMatchVersions, 'match:', (matchId) => activeMatches.get(matchId));
@@ -1032,7 +1066,15 @@ function schedulePersist(opts?: {
   deleteRoomCode?: string;
 }) {
   if (opts) {
-    if (opts.userId) markDirty(dirtyUsers, dirtyUserVersions, opts.userId);
+    if (opts.userId) {
+      const user = users.get(opts.userId);
+      if (user && (!dirtyUsers.has(opts.userId) || userPersistInFlight.has(opts.userId))) {
+        // Coalesce mutations before a write, but allocate a new revision when
+        // one lands while that write is in flight.
+        user.ticketStateRevision = Math.max(0, Math.trunc(user.ticketStateRevision || 0)) + 1;
+      }
+      markDirty(dirtyUsers, dirtyUserVersions, opts.userId);
+    }
     if (opts.matchId) markDirty(dirtyMatches, dirtyMatchVersions, opts.matchId);
     if (opts.roomCode) markDirty(dirtyPrivateRooms, dirtyPrivateRoomVersions, opts.roomCode);
     if (opts.depositId) markDirty(dirtyDeposits, dirtyDepositVersions, opts.depositId);
@@ -1802,6 +1844,9 @@ function hydrateUser(user: UserState, reconcileHolds = true): boolean {
 
   setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(0, round2(user.availableTickets)) : 0);
   setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? Math.max(0, round2(user.heldTickets)) : 0);
+  setIfChanged('ticketStateRevision', Number.isSafeInteger(user.ticketStateRevision) && (user.ticketStateRevision || 0) >= 0
+    ? user.ticketStateRevision
+    : 0);
   setIfChanged('casinoChips', Number.isFinite(user.casinoChips) ? Math.max(0, round2(user.casinoChips)) : 0);
   setIfChanged('practiceChips', Number.isFinite(user.practiceChips) ? Math.max(0, round2(user.practiceChips)) : 0);
   setIfChanged('xp', Number.isFinite(user.xp) ? user.xp : 0);
@@ -3006,6 +3051,21 @@ function createLedgerEntry(user: UserState, entry: LedgerEntryInput) {
 
 function round2(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+// Financial values cross the server boundary only as exact centi-TKT. Keep
+// all legacy decimal conversion at this boundary; internal balance updates
+// are then rounded from a known integer representation.
+function parseTicketUnits(value: unknown, allowZero = false): number | null {
+  const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) return null;
+  const [whole, fraction = ''] = raw.split('.');
+  const units = Number(whole) * 100 + Number((fraction + '00').slice(0, 2));
+  return Number.isSafeInteger(units) && (allowZero ? units >= 0 : units > 0) ? units : null;
+}
+
+function ticketAmountFromUnits(units: number) {
+  return units / 100;
 }
 
 function createWithdrawalOperatorToken(action: 'complete' | 'reject', requestId: string) {
@@ -6919,7 +6979,11 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
   const normalizedGameType: 'uno' | 'poker' | 'blackjack' =
     gameType === 'poker' || gameType === 'blackjack' ? gameType : 'uno';
   const minutes = Number(startInMinutes) || 60;
-  const ticketCost = Math.max(0, Number(entryTicketCost) || 0);
+  const ticketCostUnits = parseTicketUnits(entryTicketCost ?? 0, true);
+  if (ticketCostUnits === null) {
+    return res.status(400).json({ error: 'Tournament entry fee must use at most two decimal places.' });
+  }
+  const ticketCost = ticketAmountFromUnits(ticketCostUnits);
   const targetWins = Number(winsRequired) === 2 ? 2 : 1;
 
   const defaultTitle = normalizedGameType === 'poker'
@@ -7375,44 +7439,34 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
+  // Production corrections must use evidence-ready cases. Keep this narrow
+  // developer-only seeding route so isolated gameplay tests retain their
+  // existing public contract without opening a production bypass.
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(410).json({
+      error: 'Direct balance adjustment is retired. Create and review a ticket reconciliation case instead.',
+    });
+  }
   const { targetUserId, username: targetUsername, amount, mode, reason } = req.body || {};
-  let user: UserState | undefined;
-  if (targetUsername) {
-    user = findUserByUsernameOrId(targetUsername);
-  } else if (targetUserId) {
-    user = findUserByUsernameOrId(targetUserId) || getUser(String(targetUserId).trim());
-  } else {
-    user = requesterUser;
-  }
-
-  const delta = Number(amount);
-  if (!user || !Number.isFinite(delta)) {
-    return res.status(400).json({ error: 'Adjustment requires a valid target user and numeric amount.' });
-  }
-
-  if (mode === 'set') {
-    user.availableTickets = round2(Math.max(0, delta));
-  } else {
-    user.availableTickets = round2(Math.max(0, user.availableTickets + delta));
-  }
-
+  const user = targetUsername
+    ? findUserByUsernameOrId(targetUsername)
+    : targetUserId ? findUserByUsernameOrId(targetUserId) || getUser(String(targetUserId).trim()) : requesterUser;
+  const units = parseTicketUnits(amount, true);
+  if (!user || units === null) return res.status(400).json({ error: 'Adjustment requires an exact centi-TKT amount.' });
+  const nextAmount = mode === 'set'
+    ? ticketAmountFromUnits(units)
+    : round2(Math.max(0, user.availableTickets + ticketAmountFromUnits(units)));
+  user.availableTickets = nextAmount;
   createLedgerEntry(user, {
-    event: reason ? `Admin Adjustment: ${reason}` : 'Admin Ticket Adjustment',
-    value: `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} TKT`,
-    type: delta >= 0 ? 'reward' : 'fund_burn',
-    amount: delta,
+    id: `dev-adjustment:${Date.now()}:${user.userId}`,
+    event: reason ? `Development Adjustment: ${reason}` : 'Development Ticket Adjustment',
+    value: `${nextAmount.toFixed(2)} TKT`,
+    type: 'reward',
+    amount: nextAmount,
   });
-
   schedulePersist({ userId: user.userId });
   await persistStateNow();
-
-  return res.json({
-    success: true,
-    userId: user.userId,
-    telegramUsername: user.telegramUsername || null,
-    availableTickets: user.availableTickets,
-    heldTickets: user.heldTickets,
-  });
+  return res.json({ success: true, userId: user.userId, availableTickets: user.availableTickets, heldTickets: user.heldTickets });
 });
 
 app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
@@ -9951,9 +10005,9 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
 app.post('/api/casino/exchange', requireAuth, (req: AuthenticatedRequest, res) => {
   const userId = getAuthenticatedUserId(req);
   const { direction, amount } = req.body;
-  if (!amount || amount <= 0 || typeof amount !== 'number') {
-    return res.status(400).json({ error: 'Invalid amount' });
-  }
+  const amountUnits = parseTicketUnits(amount);
+  if (amountUnits === null) return res.status(400).json({ error: 'Amount must be a positive TKT value with at most two decimals.' });
+  const exactAmount = ticketAmountFromUnits(amountUnits);
 
   const user = getUser(userId);
   
@@ -9961,18 +10015,18 @@ app.post('/api/casino/exchange', requireAuth, (req: AuthenticatedRequest, res) =
   const RATIO = 100;
 
   if (direction === 'tkt_to_chips') {
-    if (user.availableTickets < amount) {
+    if (user.availableTickets < exactAmount) {
       return res.status(400).json({ error: 'Not enough tickets.' });
     }
-    user.availableTickets = round2(user.availableTickets - amount);
-    user.casinoChips = round2(user.casinoChips + (amount * RATIO));
+    user.availableTickets = round2(user.availableTickets - exactAmount);
+    user.casinoChips = round2(user.casinoChips + (exactAmount * RATIO));
   } else if (direction === 'chips_to_tkt') {
-    const chipCost = amount * RATIO;
+    const chipCost = exactAmount * RATIO;
     if (user.casinoChips < chipCost) {
       return res.status(400).json({ error: 'Not enough casino chips.' });
     }
     user.casinoChips = round2(user.casinoChips - chipCost);
-    user.availableTickets = round2(user.availableTickets + amount);
+    user.availableTickets = round2(user.availableTickets + exactAmount);
   } else {
     return res.status(400).json({ error: 'Invalid exchange direction' });
   }
@@ -10001,6 +10055,34 @@ function assertProductionBootstrapConfiguration() {
   }
 }
 
+let lastTicketAuditFingerprint = '';
+async function auditTicketAccounting() {
+  if (!supabaseAdmin) return;
+  const [profileResult, accountResult, transactionResult] = await Promise.all([
+    supabaseAdmin.from('ticket_profile_reconciliation').select('user_id').limit(25),
+    supabaseAdmin.from('ticket_account_reconciliation').select('account_id').limit(25),
+    supabaseAdmin.from('ticket_transaction_reconciliation').select('transaction_id').limit(25),
+  ]);
+  const errors = [profileResult.error, accountResult.error, transactionResult.error].filter(Boolean);
+  if (errors.length) throw new Error(`Ticket audit query failed: ${errors.map((error) => error!.message).join('; ')}`);
+  const profileCount = profileResult.data?.length || 0;
+  const accountCount = accountResult.data?.length || 0;
+  const transactionCount = transactionResult.data?.length || 0;
+  const fingerprint = `${profileCount}:${accountCount}:${transactionCount}`;
+  if (fingerprint === '0:0:0') {
+    lastTicketAuditFingerprint = '';
+    return;
+  }
+  const message = `⚠️ Ticket reconciliation alert: profile=${profileCount}, accounts=${accountCount}, transactions=${transactionCount}. Financial writes are fail-closed until reviewed.`;
+  console.error(message);
+  if (fingerprint !== lastTicketAuditFingerprint && WITHDRAWAL_OPERATOR_CHAT_ID > 0) {
+    queueTelegramMessage('ticket-reconciliation-alert', WITHDRAWAL_OPERATOR_CHAT_ID, message, undefined, {
+      dedupeKey: `ticket-reconciliation-alert:${fingerprint}`,
+    });
+    lastTicketAuditFingerprint = fingerprint;
+  }
+}
+
 async function bootstrap() {
   assertProductionBootstrapConfiguration();
   // Render's local filesystem is ephemeral. Starting production without the
@@ -10010,6 +10092,17 @@ async function bootstrap() {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in production.');
   }
   await loadPersistedState();
+  try {
+    await auditTicketAccounting();
+  } catch (error) {
+    // A missing financial-audit view means migration drift. Do not conceal it:
+    // the deployment stays observable and every subsequent profile write fails
+    // through the atomic RPC rather than falling back to an unsafe upsert.
+    console.error('Initial ticket accounting audit failed', error);
+  }
+  setInterval(() => {
+    auditTicketAccounting().catch((error) => console.error('Ticket accounting audit failed', error));
+  }, 15 * 60_000).unref();
   try {
     await loadCasinoRuntimeSnapshots();
   } catch (error) {

@@ -94,7 +94,7 @@ interface TonVerificationResult {
 }
 
 interface TicketingDeps {
-  createLedgerEntry: (user: UserStateLike, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'>) => TicketLedgerEntry;
+  createLedgerEntry: (user: UserStateLike, entry: Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'> & Partial<Pick<TicketLedgerEntry, 'id' | 'createdAt'>>) => TicketLedgerEntry;
   depositIntents: Map<string, DepositIntent>;
   getUser: (userId: string, walletAddress?: string) => UserStateLike;
   requireAdmin: (req: Request, res: Response, next: NextFunction) => void;
@@ -652,26 +652,29 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   }
 
   function finalizeConfirmedIntent(intent: DepositIntent, verification: TonVerificationResult | null) {
-    if (intent.status === 'confirmed') {
-      return deps.getUser(intent.userId, intent.walletAddress);
-    }
-
+    const user = deps.getUser(intent.userId, intent.walletAddress);
+    const creditLedgerId = `deposit-credit:${intent.id}`;
+    const alreadyCredited = user.transactions.some((entry) => entry.id === creditLedgerId);
     intent.status = 'confirmed';
     intent.normalizedMessageHash = verification?.normalizedMessageHash || intent.normalizedMessageHash;
     intent.txHash = verification?.txHash || intent.txHash;
     intent.paymentMessageHash = verification?.paymentMessageHash || intent.paymentMessageHash;
     intent.lastVerificationError = null;
     intent.lastVerificationAt = Date.now();
+    if (!alreadyCredited) {
+      user.availableTickets = deps.round2(user.availableTickets + intent.ticketAmount);
+      deps.createLedgerEntry(user, {
+        id: creditLedgerId,
+        event: 'Deposit Confirmed',
+        value: `+${intent.ticketAmount.toFixed(2)} TKT`,
+        type: 'purchase',
+        amount: intent.ticketAmount,
+      });
+    }
+    // Persist both records. If a process stops after only one durable write,
+    // the deterministic ledger marker makes the next confirmation recover
+    // the missing side without crediting the same payment twice.
     deps.schedulePersist({ depositId: intent.id, userId: intent.userId });
-
-    const user = deps.getUser(intent.userId, intent.walletAddress);
-    user.availableTickets = deps.round2(user.availableTickets + intent.ticketAmount);
-    deps.createLedgerEntry(user, {
-      event: 'Deposit Confirmed',
-      value: `+${intent.ticketAmount.toFixed(2)} TKT`,
-      type: 'purchase',
-      amount: intent.ticketAmount,
-    });
     return user;
   }
 
@@ -1029,6 +1032,30 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (!user.walletAddress) {
         user.walletAddress = normalizedWalletAddress;
       }
+      // Recover the request record if a restart happened after the atomic
+      // profile debit was saved but before withdrawal:<id> was flushed.
+      if (normalizedRequestId) {
+        const reservation = user.transactions.find((entry) => entry.id === `withdraw-request:${normalizedRequestId}`);
+        if (reservation) {
+          if (reservation.amount !== -amount) {
+            return res.status(409).json({ error: 'Withdrawal request key conflicts with an existing reservation.' });
+          }
+          const recovered: WithdrawalRequest = {
+            id: normalizedRequestId,
+            userId,
+            walletAddress: normalizedWalletAddress,
+            ticketAmount: amount,
+            tonAmount: deps.round2(amount * config.ticketPriceTon),
+            status: 'pending',
+            createdAt: reservation.createdAt,
+          };
+          recovered.payoutComment = buildWithdrawalPayoutComment(recovered.id);
+          recovered.operatorTransferLink = buildTonkeeperTransferLink(recovered.walletAddress, recovered.tonAmount, recovered.payoutComment);
+          deps.withdrawalRequests.set(recovered.id, recovered);
+          deps.schedulePersist({ withdrawalId: recovered.id });
+          return res.json({ success: true, requestId: recovered.id, status: recovered.status, tonAmount: recovered.tonAmount, replayed: true });
+        }
+      }
       if (user.availableTickets < amount) {
         return res.status(400).json({ error: 'Insufficient available tickets.' });
       }
@@ -1059,6 +1086,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       deps.withdrawalRequests.set(request.id, request);
       deps.schedulePersist({ withdrawalId: request.id, userId: user.userId });
       deps.createLedgerEntry(user, {
+        id: `withdraw-request:${request.id}`,
         event: 'Withdrawal Requested',
         value: `-${amount.toFixed(2)} TKT`,
         type: 'withdraw_pending',
