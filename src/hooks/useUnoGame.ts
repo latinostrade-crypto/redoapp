@@ -88,15 +88,12 @@ export function useUnoGame() {
   // Ticket, transaction and game mode states
   const [gameMode, setGameMode] = useState<'offline' | 'pvp' | 'private'>('offline');
   const [activeStake, setActiveStake] = useState<number>(0);
-  const [goldenTickets, setGoldenTickets] = useState<number>(() => {
-    const saved = localStorage.getItem('uno_golden_tickets');
-    return saved ? parseFloat(saved) : 0;
-  });
-  const [transactions, setTransactions] = useState<any[]>(() => {
-    const saved = localStorage.getItem('yo_transactions');
-    if (saved) return JSON.parse(saved);
-    return [];
-  });
+  // Ticket balances and financial activity are never restored from browser
+  // storage.  They are server-authoritative and are hydrated after auth.
+  // Keeping a cached balance here previously showed a stale account balance
+  // before the first API response (especially on shared Telegram devices).
+  const [goldenTickets, setGoldenTickets] = useState<number>(0);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [turnTimeLeft, setTurnTimeLeft] = useState<number>(10);
   const remoteMatchIdRef = useRef<string | null>(null);
   const remoteUserIdRef = useRef<string | null>(null);
@@ -104,14 +101,6 @@ export function useUnoGame() {
   const remoteMatchStreamRef = useRef<EventSource | null>(null);
   const remoteMatchStreamLastEventAtRef = useRef(0);
   const syncRetryCountRef = useRef(0);
-
-  useEffect(() => {
-    localStorage.setItem('uno_golden_tickets', goldenTickets.toString());
-  }, [goldenTickets]);
-
-  useEffect(() => {
-    localStorage.setItem('yo_transactions', JSON.stringify(transactions));
-  }, [transactions]);
 
   // Reference to timing timers for clear cleanup
   const aiTurnTimeoutRef = useRef<NodeJS.Timeout | null>(null);

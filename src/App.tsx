@@ -92,8 +92,10 @@ export default function App() {
     onSettlement: (payout, won) => {
       if (won && payout > 0) {
         sound.playVictory();
-        setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
       }
+      // Settlement is performed by the server. Never apply a client-side
+      // payout on top of the next server snapshot.
+      window.dispatchEvent(new CustomEvent('redoapp:balance-refresh'));
     },
     onMatchCancelled: () => {
       try { localStorage.removeItem('redoapp_active_match'); } catch {}
@@ -118,8 +120,8 @@ export default function App() {
     onSettlement: (payout, won, push) => {
       if ((won || push) && payout > 0) {
         if (won) sound.playVictory();
-        setGoldenTickets((prev) => Math.round((prev + payout) * 100) / 100);
       }
+      window.dispatchEvent(new CustomEvent('redoapp:balance-refresh'));
     },
     onMatchCancelled: () => {
       try { localStorage.removeItem('redoapp_active_match'); } catch {}

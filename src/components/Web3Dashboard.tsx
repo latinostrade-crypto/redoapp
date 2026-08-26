@@ -1430,13 +1430,9 @@ export function Web3Dashboard({
         { timeoutMs: 30_000, retryOnNetworkError: true },
       );
       const activeRequest = result.request?.status === 'pending' ? { ...result.request, status: 'pending' as const } : null;
-      // The backend reserves pending tickets immediately to prevent double
-      // spending. Keep the visible balance unchanged until the operator makes
-      // the final decision; a completion then deducts it and a rejection leaves
-      // it unchanged.
-      setGoldenTickets(activeRequest
-        ? Math.round((result.availableTickets + activeRequest.ticketAmount) * 100) / 100
-        : result.availableTickets);
+      // `availableTickets` is already the authoritative spendable balance.
+      // A pending withdrawal is reserved and must not be added back for UI.
+      setGoldenTickets(result.availableTickets);
       setTransactions(result.transactions);
       setPendingWithdrawal(activeRequest);
       if (result.request?.status === 'pending') {
@@ -1474,6 +1470,22 @@ export function Web3Dashboard({
     if (!authReady) return;
     refreshPendingWithdrawal().catch(() => undefined);
   }, [authReady, refreshPendingWithdrawal]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    const refreshAuthoritativeBalance = () => {
+      void Promise.all([
+        apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance', { timeoutMs: 15_000 }),
+        apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { timeoutMs: 15_000 }),
+      ]).then(([balance, ledger]) => {
+        setGoldenTickets(balance.availableTickets);
+        setHeldTickets(balance.heldTickets);
+        setTransactions(ledger.transactions);
+      }).catch(() => undefined);
+    };
+    window.addEventListener('redoapp:balance-refresh', refreshAuthoritativeBalance);
+    return () => window.removeEventListener('redoapp:balance-refresh', refreshAuthoritativeBalance);
+  }, [authReady]);
 
   useEffect(() => {
     if (!authReady || !pendingWithdrawal) return;

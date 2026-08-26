@@ -215,6 +215,19 @@ function normalizeWalletAddress(value: string) {
   return String(value || '').trim();
 }
 
+/**
+ * The legacy API still exposes decimal TKT values, but accepts only exact
+ * centi-TKT values.  This prevents `Number`/rounding mismatches where the
+ * recorded ticket amount and the TON transfer amount were derived from
+ * different floating-point inputs.
+ */
+function parseTicketAmount(value: unknown): number | null {
+  const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
+  if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) return null;
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 function buildTonkeeperTransferLink(walletAddress: string, tonAmount: number, comment: string) {
   const nanoAmount = Math.round(tonAmount * 1_000_000_000);
   const params = new URLSearchParams({
@@ -864,12 +877,12 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
       const { walletAddress, ticketAmount } = input;
       const userId = getRequestUserId(req);
-      const amount = Number(ticketAmount);
-      if (!userId || typeof walletAddress !== 'string' || !walletAddress || !Number.isFinite(amount) || amount <= 0) {
+      const amount = parseTicketAmount(ticketAmount);
+      if (!userId || typeof walletAddress !== 'string' || !walletAddress || amount === null) {
         return sendDepositIntentResponse(req, res, 400, { error: 'Deposit requires userId, walletAddress and a positive ticket amount.' });
       }
       deps.getUser(userId, walletAddress);
-      const roundedTicketAmount = deps.round2(amount);
+      const roundedTicketAmount = amount;
       const reusableIntent = Array.from(deps.depositIntents.values()).find((entry) => (
         entry.userId === userId
         && entry.walletAddress === walletAddress
@@ -899,7 +912,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         userId,
         walletAddress,
         ticketAmount: roundedTicketAmount,
-        tonAmount: deps.round2(amount * config.ticketPriceTon),
+        tonAmount: deps.round2(roundedTicketAmount * config.ticketPriceTon),
         status: 'pending',
         createdAt: Date.now(),
         lastVerificationError: null,
@@ -980,9 +993,9 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       if (!normalizedWalletAddress) {
         return res.status(400).json({ error: 'Withdrawal wallet address is required.' });
       }
-      const amount = Number(ticketAmount);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        return res.status(400).json({ error: 'Withdrawal amount must be greater than 0.' });
+      const amount = parseTicketAmount(ticketAmount);
+      if (amount === null) {
+        return res.status(400).json({ error: 'Withdrawal amount must be a positive value with no more than two decimal places.' });
       }
       if (amount < config.minWithdrawTickets) {
         return res.status(400).json({ error: `Minimum withdrawal is ${config.minWithdrawTickets} tickets.` });

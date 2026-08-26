@@ -65,7 +65,6 @@ const REDIS_CACHE_NAMESPACE = process.env.REDIS_CACHE_NAMESPACE || 'redoapp:v1';
 // Explicit one-time production migration requested on 2026-07-14. The marker
 // is stored in Supabase, so restarts and future deploys cannot repeat it.
 const REFERRAL_RESET_MIGRATION_ID = 'referrals-reset-2026-07-14';
-const BALANCE_REPAIR_MIGRATION_ID = 'balance-repair-v3-2026-08-17';
 // Tests and one-off local diagnostics can isolate persistence without changing
 // the application working directory or touching the normal runtime snapshot.
 const DATA_DIR = path.resolve(process.env.RUNTIME_STATE_DIR || process.cwd(), 'data');
@@ -1495,7 +1494,10 @@ function applySnapshot(snapshot: PersistedState) {
   telegramNotifications.splice(0, telegramNotifications.length);
 
   snapshot.users?.forEach((user) => {
-    hydrateUser(user);
+    // Holds can only be reconciled after matches, queue and private rooms have
+    // been restored.  Doing it here made every held stake look orphaned on a
+    // cold start and returned live stakes to available balance.
+    hydrateUser(user, false);
     users.set(user.userId, user);
   });
   snapshot.depositIntents?.forEach((intent) => depositIntents.set(intent.id, intent));
@@ -1508,6 +1510,9 @@ function applySnapshot(snapshot: PersistedState) {
   snapshot.referralPayouts?.forEach((payout) => referralPayouts.set(payout.id, payout));
   snapshot.telegramNotifications?.forEach((entry) => appendTelegramNotification(entry));
   pastTournaments = snapshot.pastTournaments || [];
+  users.forEach((user) => {
+    if (reconcileStuckUserBalances(user)) schedulePersist({ userId: user.userId });
+  });
   rebuildReferralStats();
 }
 
@@ -1563,7 +1568,9 @@ async function loadPersistedState() {
       usersData.forEach((row) => {
         const persistedUser = row.payload as PersistedUserState;
         const user = persistedUser as UserState;
-        hydrateUser(user);
+        // Do not reconcile held funds until all durable match/room/queue rows
+        // have been loaded below.
+        hydrateUser(user, false);
         users.set(user.userId, user);
         if (Array.isArray(persistedUser.questProgress)) {
           questProgressByUser.set(user.userId, persistedUser.questProgress);
@@ -1731,66 +1738,6 @@ function findUserByUsernameOrId(query?: string | null): UserState | undefined {
   return undefined;
 }
 
-async function applyOneTimeBalanceRepair() {
-  if (!supabaseAdmin) return;
-
-  const markerId = `maintenance:${BALANCE_REPAIR_MIGRATION_ID}`;
-  const { data, error } = await supabaseAdmin
-    .from(SUPABASE_STATE_TABLE)
-    .select('id,payload')
-    .eq('id', markerId)
-    .maybeSingle();
-
-  if (error) {
-    console.error(`Could not check balance repair marker: ${error.message}`);
-    return;
-  }
-  if (data) {
-    return;
-  }
-
-  // 1. Repair @ebitey: deposited 0.60 TKT, played 6 games (3 wins @ 0.3 = +1.73 TKT, 3 losses @ 0.3 = -0.90 TKT -> net 1.43 TKT)
-  const ebiteyUser = findUserByUsernameOrId('ebitey');
-  if (ebiteyUser) {
-    const oldBal = ebiteyUser.availableTickets;
-    ebiteyUser.availableTickets = 1.43;
-    ebiteyUser.heldTickets = 0;
-    createLedgerEntry(ebiteyUser, {
-      id: `balance-repair-ebitey-${Date.now()}`,
-      event: 'Balance Recalculation (3W/3L @ 0.3 + 0.6 Dep)',
-      value: `1.43 TKT`,
-      type: 'reward',
-      amount: round2(1.43 - oldBal),
-    });
-    schedulePersist({ userId: ebiteyUser.userId });
-    console.log(`[Balance Repair] Corrected @ebitey balance: was ${oldBal} TKT -> now 1.43 TKT.`);
-  }
-
-  // 2. Repair admin @allin_gram: restore admin test balance
-  const adminUser = findUserByUsernameOrId('allin_gram');
-  if (adminUser) {
-    const oldBal = adminUser.availableTickets;
-    adminUser.availableTickets = Math.max(100, oldBal);
-    adminUser.heldTickets = 0;
-    createLedgerEntry(adminUser, {
-      id: `balance-repair-admin-${Date.now()}`,
-      event: 'Admin Balance Restoration',
-      value: `+100.00 TKT`,
-      type: 'reward',
-      amount: 100,
-    });
-    schedulePersist({ userId: adminUser.userId });
-    console.log(`[Balance Repair] Restored @allin_gram balance: was ${oldBal} TKT -> now ${adminUser.availableTickets} TKT.`);
-  }
-
-  await persistStateNow();
-  await upsertStateRow(markerId, {
-    appliedAt: Date.now(),
-    migration: BALANCE_REPAIR_MIGRATION_ID,
-  });
-  console.log(`[Balance Repair] Applied ${BALANCE_REPAIR_MIGRATION_ID}.`);
-}
-
 function getUser(userId: string, walletAddress?: string): UserState {
   const existing = users.get(userId);
   if (existing) {
@@ -1844,7 +1791,7 @@ function createUniqueReferralCode(ownerUserId?: string) {
   return crypto.randomBytes(5).toString('hex').toUpperCase();
 }
 
-function hydrateUser(user: UserState): boolean {
+function hydrateUser(user: UserState, reconcileHolds = true): boolean {
   let changed = false;
   const setIfChanged = <K extends keyof UserState>(key: K, value: UserState[K]) => {
     if (user[key] !== value) {
@@ -1933,7 +1880,7 @@ function hydrateUser(user: UserState): boolean {
       changed = true;
     }
   }
-  if (reconcileStuckUserBalances(user)) {
+  if (reconcileHolds && reconcileStuckUserBalances(user)) {
     changed = true;
   }
   return changed;
@@ -3048,7 +2995,11 @@ function createLedgerEntry(user: UserState, entry: LedgerEntryInput) {
     userId: user.userId,
     ...entry,
   };
-  user.transactions = [ledgerEntry, ...user.transactions].slice(0, 50);
+  // A financial idempotency marker must never disappear merely because a
+  // player has a busy history. The normalized SQL ledger migration is the
+  // permanent source going forward; until it is enabled, preserve every
+  // legacy entry rather than rotating away evidence and replay protection.
+  user.transactions = [ledgerEntry, ...user.transactions];
   schedulePersist({ userId: user.userId });
   return ledgerEntry;
 }
@@ -10070,7 +10021,9 @@ async function bootstrap() {
     console.error('Casino table persistence is unavailable at bootstrap; casino writes are disabled', error);
   }
   await applyOneTimeReferralReset();
-  await applyOneTimeBalanceRepair();
+  // Never mutate a user's financial balance from a hard-coded deployment
+  // repair. Any verified correction must be an explicit, auditable
+  // compensating ledger transaction reviewed by an operator.
   ticketingService.reconcilePendingWithdrawals();
   try {
     await ticketingService.recheckPendingWithdrawals();
