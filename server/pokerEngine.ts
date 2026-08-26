@@ -1,5 +1,6 @@
 import { evaluate7CardHand } from '../src/utils/pokerEvaluator';
 import { PokerCard, PokerSuit } from '../src/types/poker';
+import { randomInt } from 'node:crypto';
 
 export type ServerPokerStage = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended';
 
@@ -8,6 +9,8 @@ export interface ServerPokerPlayer {
   username: string;
   avatarId: string;
   chips: number;
+  /** Original bankroll for this seat; used to settle a cash-game profit on exit. */
+  tableBuyInChips?: number;
   currentBet: number;
   totalMatchInvested: number;
   holeCards: PokerCard[];
@@ -53,7 +56,7 @@ export function createShuffledDeck(): PokerCard[] {
     }
   }
   for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = randomInt(0, i + 1);
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
   return deck;
@@ -103,6 +106,7 @@ export class PokerEngine {
       username,
       avatarId,
       chips,
+      tableBuyInChips: isAi ? 0 : chips,
       currentBet: 0,
       totalMatchInvested: 0,
       holeCards: [],

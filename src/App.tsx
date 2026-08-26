@@ -211,9 +211,14 @@ export default function App() {
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     if (currentMatchId?.startsWith('table-')) {
+      const idempotencyKey = `casino-leave:${currentMatchId}:${crypto.randomUUID()}`;
       apiRequest('/api/casino/leave-table', {
         method: 'POST',
-        body: JSON.stringify({ tableId: currentMatchId }),
+        retryOnNetworkError: true,
+        networkAttempts: 2,
+        body: JSON.stringify({ tableId: currentMatchId, idempotencyKey }),
+      }).then(() => {
+        window.dispatchEvent(new CustomEvent('redoapp:balance-refresh'));
       }).catch(() => {});
     } else if (currentMatchId) {
       apiRequest('/api/matches/leave-unstarted', {
@@ -244,9 +249,14 @@ export default function App() {
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
     if (currentMatchId?.startsWith('table-')) {
+      const idempotencyKey = `casino-leave:${currentMatchId}:${crypto.randomUUID()}`;
       apiRequest('/api/casino/leave-table', {
         method: 'POST',
-        body: JSON.stringify({ tableId: currentMatchId }),
+        retryOnNetworkError: true,
+        networkAttempts: 2,
+        body: JSON.stringify({ tableId: currentMatchId, idempotencyKey }),
+      }).then(() => {
+        window.dispatchEvent(new CustomEvent('redoapp:balance-refresh'));
       }).catch(() => {});
     } else if (currentMatchId) {
       apiRequest('/api/matches/leave-unstarted', {

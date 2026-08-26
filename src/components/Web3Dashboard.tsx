@@ -1392,7 +1392,10 @@ export function Web3Dashboard({
   );
   const referralStats = fullProfile?.referrals;
   const referralTicketEarnings = transactions
-    .filter((tx: any) => tx.type === 'referral_bonus' && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
+    .filter((tx: any) => tx.type === 'referral_bonus' && /TKT\b/i.test(String(tx.value || '')) && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
+    .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
+  const pokerReferralChipEarnings = transactions
+    .filter((tx: any) => tx.type === 'referral_bonus' && /CHIPS\b/i.test(String(tx.value || '')) && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
     .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
   const tgProfileName = activeProfile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = activeProfile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
@@ -1477,10 +1480,14 @@ export function Web3Dashboard({
       void Promise.all([
         apiRequest<{ availableTickets: number; heldTickets: number }>('/api/tickets/balance', { timeoutMs: 15_000 }),
         apiRequest<{ transactions: any[] }>('/api/tickets/ledger', { timeoutMs: 15_000 }),
-      ]).then(([balance, ledger]) => {
+        apiRequest<PlayerProfile>('/api/me', { timeoutMs: 15_000 }),
+      ]).then(([balance, ledger, me]) => {
         setGoldenTickets(balance.availableTickets);
         setHeldTickets(balance.heldTickets);
         setTransactions(ledger.transactions);
+        const normalized = normalizeProfile(me);
+        setProfile(normalized);
+        setFullProfile((previous) => normalized ? { ...previous, ...normalized } : normalized);
       }).catch(() => undefined);
     };
     window.addEventListener('redoapp:balance-refresh', refreshAuthoritativeBalance);
@@ -4198,6 +4205,10 @@ export function Web3Dashboard({
                       <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
                         <span className="text-slate-400 uppercase">Referral TKT Earnings</span>
                         <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
+                      </div>
+                      <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
+                        <span className="text-slate-400 uppercase">Poker Referral Chips</span>
+                        <span className="font-black text-[#ffcc00]">{pokerReferralChipEarnings.toFixed(0)} CHIPS</span>
                       </div>
                       
                       {activeProfile?.referralLink ? (

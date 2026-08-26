@@ -88,8 +88,18 @@ export function usePokerGame(options?: {
   const remoteSyncInFlightRef = useRef<Promise<void> | null>(null);
   const lastRemoteEventAtRef = useRef(0);
   const lastStreamRecoveryAtRef = useRef(0);
+  const remoteStreamRetryTimerRef = useRef<number | null>(null);
+  const remoteStreamRetryAttemptRef = useRef(0);
   const recoveredPersistentSeatRef = useRef('');
   const remoteActionInFlightRef = useRef(false);
+  const optionsRef = useRef(options);
+
+  // Callbacks are often passed as inline functions by the game shell.  Keeping
+  // the current callbacks in a ref prevents an incoming state update from
+  // tearing down and recreating the EventSource on every render.
+  useEffect(() => {
+    optionsRef.current = options;
+  }, [options]);
 
   // A delayed polling response must never repaint an earlier turn over an
   // SSE update that already contains the opponent's action.
@@ -152,9 +162,7 @@ export function usePokerGame(options?: {
       if (msg.includes('404') || msg.includes('not found') || msg.includes('concluded') || msg.includes('cancelled')) {
         try { localStorage.removeItem('redoapp_active_match'); } catch {}
         setRemoteMatchId(null);
-        if (options?.onMatchCancelled) {
-          options.onMatchCancelled();
-        }
+        optionsRef.current?.onMatchCancelled?.();
       }
       }
     })();
@@ -162,7 +170,7 @@ export function usePokerGame(options?: {
     try { await sync; } finally {
       if (remoteSyncInFlightRef.current === sync) remoteSyncInFlightRef.current = null;
     }
-  }, [remoteMatchId, options, applyRemoteState]);
+  }, [remoteMatchId, applyRemoteState]);
 
   const sendRemotePokerAction = useCallback(async (action: 'fold' | 'check' | 'call' | 'raise' | 'next_hand', amount?: number) => {
     if (!remoteMatchId || remoteActionInFlightRef.current) return;
@@ -309,7 +317,7 @@ export function usePokerGame(options?: {
         stage: 'preflop',
         pot: initialPot,
         currentBet: BIG_BLIND,
-        minRaise: BIG_BLIND * 2,
+        minRaise: BIG_BLIND,
         communityCards: [],
         players: allPlayers,
         dealerIndex: dealerIdx,
@@ -615,6 +623,9 @@ export function usePokerGame(options?: {
         const actualBet = Math.min(player.chips, additionalNeeded);
         const isAllIn = actualBet >= player.chips;
         const newCurrentBet = player.currentBet + actualBet;
+        const raiseIncrement = newCurrentBet - prev.currentBet;
+        if (raiseIncrement <= 0 || (raiseIncrement < prev.minRaise && !isAllIn)) return prev;
+        const isFullRaise = raiseIncrement >= prev.minRaise;
 
         const updatedPlayers = prev.players.map((p, idx) =>
           idx === currIdx
@@ -629,7 +640,9 @@ export function usePokerGame(options?: {
               }
             : {
                 ...p,
-                hasActedThisStage: p.folded || p.isAllIn || p.eliminated,
+                // A short all-in can be called, but it must not reopen betting
+                // for players who have already acted on this street.
+                hasActedThisStage: isFullRaise ? (p.folded || p.isAllIn || p.eliminated) : p.hasActedThisStage,
               }
         );
 
@@ -641,7 +654,7 @@ export function usePokerGame(options?: {
           ...prev,
           pot: nextPot,
           currentBet: newCurrentBet,
-          minRaise: newCurrentBet + Math.max(BIG_BLIND, newCurrentBet - prev.currentBet),
+          minRaise: isFullRaise ? raiseIncrement : prev.minRaise,
           players: updatedPlayers,
         };
       });
@@ -778,7 +791,7 @@ export function usePokerGame(options?: {
         stage: 'preflop',
         pot: sbPost + bbPost,
         currentBet: Math.max(sbPost, bbPost),
-        minRaise: Math.max(sbPost, bbPost) * 2,
+        minRaise: BIG_BLIND,
         communityCards: [],
         players: nextPlayers,
         dealerIndex: nextDealerIdx,
@@ -802,71 +815,99 @@ export function usePokerGame(options?: {
     }
 
     remoteMatchStreamRef.current?.close();
-    const stream = new EventSource(buildAuthenticatedUrl(`/api/matches/stream/${encodeURIComponent(remoteMatchId)}`));
-    remoteMatchStreamRef.current = stream;
+    if (remoteStreamRetryTimerRef.current !== null) {
+      window.clearTimeout(remoteStreamRetryTimerRef.current);
+      remoteStreamRetryTimerRef.current = null;
+    }
 
-    stream.addEventListener('match-state', (event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent).data);
-        const pkState: PokerGameState = payload.pokerGameState || payload.gameState;
-        if (pkState) {
-          lastRemoteEventAtRef.current = Date.now();
-          if (!applyRemoteState(pkState)) return;
+    let disposed = false;
+    let activeStream: EventSource | null = null;
+    const connect = () => {
+      if (disposed) return;
 
-          if ((pkState.stage === 'match_ended' || pkState.isMatchOver) && !settledRef.current) {
-            settledRef.current = true;
-            const humanPlayer = pkState.players.find((p) => p.id === 'player');
-            const isHumanWinner = Boolean(
-              humanPlayer && (
-                pkState.matchWinnerName === humanPlayer.name ||
-                pkState.winnerIds?.includes(humanPlayer.id)
-              )
-            );
-            if (isHumanWinner) {
-              sound.playVictory();
-              options?.onSettlement?.(pkState.winningPayout || 0, true);
-            } else {
-              options?.onSettlement?.(0, false);
+      const stream = new EventSource(buildAuthenticatedUrl(`/api/matches/stream/${encodeURIComponent(remoteMatchId)}`));
+      activeStream = stream;
+      remoteMatchStreamRef.current = stream;
+
+      stream.addEventListener('match-state', (event) => {
+        try {
+          const payload = JSON.parse((event as MessageEvent).data);
+          const pkState: PokerGameState = payload.pokerGameState || payload.gameState;
+          if (pkState) {
+            remoteStreamRetryAttemptRef.current = 0;
+            lastRemoteEventAtRef.current = Date.now();
+            if (!applyRemoteState(pkState)) return;
+
+            if ((pkState.stage === 'match_ended' || pkState.isMatchOver) && !settledRef.current) {
+              settledRef.current = true;
+              const humanPlayer = pkState.players.find((p) => p.id === 'player');
+              const isHumanWinner = Boolean(
+                humanPlayer && (
+                  pkState.matchWinnerName === humanPlayer.name ||
+                  pkState.winnerIds?.includes(humanPlayer.id)
+                )
+              );
+              if (isHumanWinner) {
+                sound.playVictory();
+                optionsRef.current?.onSettlement?.(pkState.winningPayout || 0, true);
+              } else {
+                optionsRef.current?.onSettlement?.(0, false);
+              }
             }
           }
+        } catch (err) {
+          console.error('SSE match-state parse error', err);
         }
-      } catch (err) {
-        console.error('SSE match-state parse error', err);
-      }
-    });
+      });
 
-    stream.addEventListener('match-cancelled', () => {
-      stream.close();
-      try { localStorage.removeItem('redoapp_active_match'); } catch {}
-      setRemoteMatchId(null);
-      setGameState((prev) => ({
-        ...prev,
-        stage: 'idle',
-        players: [],
-        winnerIds: [],
-        logs: [],
-      }));
-      if (options?.onMatchCancelled) {
-        options.onMatchCancelled();
-      }
-    });
+      stream.addEventListener('match-cancelled', () => {
+        stream.close();
+        try { localStorage.removeItem('redoapp_active_match'); } catch {}
+        setRemoteMatchId(null);
+        setGameState((prev) => ({
+          ...prev,
+          stage: 'idle',
+          players: [],
+          winnerIds: [],
+          logs: [],
+        }));
+        optionsRef.current?.onMatchCancelled?.();
+      });
 
-    stream.addEventListener('heartbeat', () => { lastRemoteEventAtRef.current = Date.now(); });
-    stream.onerror = () => {
-      const now = Date.now();
-      if (now - lastStreamRecoveryAtRef.current >= 5_000) {
-        lastStreamRecoveryAtRef.current = now;
-        void syncRemoteMatchState(remoteMatchId);
-      }
+      stream.addEventListener('heartbeat', () => {
+        remoteStreamRetryAttemptRef.current = 0;
+        lastRemoteEventAtRef.current = Date.now();
+      });
+      stream.onerror = () => {
+        if (disposed || activeStream !== stream) return;
+        stream.close();
+        if (remoteMatchStreamRef.current === stream) remoteMatchStreamRef.current = null;
+
+        const now = Date.now();
+        if (now - lastStreamRecoveryAtRef.current >= 5_000) {
+          lastStreamRecoveryAtRef.current = now;
+          void syncRemoteMatchState(remoteMatchId);
+        }
+        const delayMs = Math.min(15_000, 2_000 * 2 ** remoteStreamRetryAttemptRef.current);
+        remoteStreamRetryAttemptRef.current = Math.min(remoteStreamRetryAttemptRef.current + 1, 3);
+        remoteStreamRetryTimerRef.current = window.setTimeout(connect, delayMs);
+      };
     };
 
+    connect();
+
     return () => {
-      stream.close();
-      if (remoteMatchStreamRef.current === stream) {
+      disposed = true;
+      if (remoteStreamRetryTimerRef.current !== null) {
+        window.clearTimeout(remoteStreamRetryTimerRef.current);
+        remoteStreamRetryTimerRef.current = null;
+      }
+      activeStream?.close();
+      if (remoteMatchStreamRef.current === activeStream) {
         remoteMatchStreamRef.current = null;
       }
     };
-  }, [options, remoteMatchId, syncRemoteMatchState, applyRemoteState]);
+  }, [remoteMatchId, syncRemoteMatchState, applyRemoteState]);
 
   // Continuous Polling during Online Match Setup and Gameplay
   useEffect(() => {
@@ -1048,6 +1089,11 @@ export function usePokerGame(options?: {
   const resetPokerSession = useCallback(() => {
     remoteMatchStreamRef.current?.close();
     remoteMatchStreamRef.current = null;
+    if (remoteStreamRetryTimerRef.current !== null) {
+      window.clearTimeout(remoteStreamRetryTimerRef.current);
+      remoteStreamRetryTimerRef.current = null;
+    }
+    remoteStreamRetryAttemptRef.current = 0;
     clearDealingTimeouts();
     setRemoteMatchId(null);
     setGameState({

@@ -53,10 +53,14 @@ export class CasinoManager {
 
   private updateCounts(table: CasinoTable) {
     const players = (table.engine as any)?.state?.players || [];
-    table.playersCount = players.length;
-    table.humanPlayersCount = players.filter((player: any) =>
-      !player.isAi && !String(player.userId).startsWith('bot_') && player.isConnected !== false
-    ).length;
+    const seatedHumans = players.filter((player: any) =>
+      !player.isAi && !String(player.userId).startsWith('bot_')
+    );
+    // The lobby must never count ambience bots as occupied chairs. Keep an
+    // AFK player's paid seat in playersCount while showing connected humans
+    // separately, so a "0/10" table cannot reject a new buy-in as full.
+    table.playersCount = seatedHumans.length;
+    table.humanPlayersCount = seatedHumans.filter((player: any) => player.isConnected !== false).length;
   }
 
   /**
@@ -230,11 +234,19 @@ export class CasinoManager {
     return { chips, mode: table.mode };
   }
 
-  public getLeaveQuote(tableId: string, userId: string): { chips: number; mode: CasinoTableMode } | null {
+  public getLeaveQuote(tableId: string, userId: string): { chips: number; buyInChips: number | null; mode: CasinoTableMode } | null {
     const table = this.tables.get(tableId);
     if (!table?.engine) return null;
     const player = (table.engine as any).state.players.find((entry: any) => entry.userId === userId);
-    return player && !player.isAi ? { chips: Math.max(0, Math.floor(Number(player.chips) || 0)), mode: table.mode } : null;
+    return player && !player.isAi ? {
+      chips: Math.max(0, Math.floor(Number(player.chips) || 0)),
+      // Older checkpoints predate tableBuyInChips. Mark them unknown instead
+      // of treating the entire stack as profit during a referral cash-out.
+      buyInChips: Number.isFinite(Number(player.tableBuyInChips))
+        ? Math.max(0, Math.floor(Number(player.tableBuyInChips)))
+        : null,
+      mode: table.mode,
+    } : null;
   }
 
   public releaseDormantRuntimes(now = Date.now(), idleMs = 60_000): string[] {

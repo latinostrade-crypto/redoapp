@@ -50,6 +50,8 @@ try {
       `table-${gameType}-${mode}-1`,
       `table-${gameType}-${mode}-2`,
     ]);
+    assert.ok(result.tables.every((table) => table.playersCount === 0 && table.humanPlayersCount === 0),
+      'ambient bots must not appear as occupied lobby seats');
   }
   const invalidFilter = await fetch(`${baseUrl}/api/casino/tables?gameType=uno&mode=public`);
   assert.equal(invalidFilter.status, 400, 'catalogue endpoint must reject unsupported filters');
@@ -64,6 +66,12 @@ try {
   const heartbeat = await request('persistent_table_user', '/api/casino/table-heartbeat', { method: 'POST', body: JSON.stringify({ tableId }) });
   assert.ok(heartbeat.presenceExpiresAt > Date.now());
   await request('persistent_table_user', '/api/casino/leave-table', { method: 'POST', body: JSON.stringify({ tableId, idempotencyKey: 'persistent-table-free-leave-1' }) });
+  const repeatedLeave = await request('persistent_table_user', '/api/casino/leave-table', {
+    method: 'POST', body: JSON.stringify({ tableId, idempotencyKey: 'persistent-table-free-leave-1' }),
+  });
+  assert.equal(repeatedLeave.success, true, 'a lost leave response must be safely replayable with the same idempotency key');
+  const releasedSeat = await request('persistent_table_user', `/api/casino/my-seat/${tableId}`);
+  assert.equal(releasedSeat.seated, false, 'a replayed leave must not recreate the released seat');
   const rejoin = await request('persistent_table_user', '/api/casino/join-table', {
     method: 'POST',
     body: JSON.stringify({ tableId, chips: 100, idempotencyKey: 'persistent-table-free-entry-2' }),
@@ -89,6 +97,10 @@ try {
   await request('poker_table_user_two', '/api/casino/join-table', {
     method: 'POST', body: JSON.stringify({ tableId: pokerTableId, chips: 100, idempotencyKey: 'poker-human-entry-2' }),
   });
+  const pokerLobby = await (await fetch(`${baseUrl}/api/casino/tables?gameType=poker&mode=free`)).json();
+  const pokerLobbyTable = pokerLobby.tables.find((table) => table.id === pokerTableId);
+  assert.equal(pokerLobbyTable.playersCount, 2, 'lobby seat count includes seated humans, not ambience bots');
+  assert.equal(pokerLobbyTable.humanPlayersCount, 2, 'lobby exposes live connected human count separately');
   await new Promise((resolve) => setTimeout(resolve, 1_200));
   const afterSecondSeat = await request('poker_table_user_one', `/api/matches/state/${pokerTableId}`);
   assert.equal(afterSecondSeat.pokerGameState.players.length, 2, 'two humans must occupy the human-only table');
@@ -104,6 +116,17 @@ try {
   assert.equal(afterPassiveReads.pokerGameState.stateVersion, passiveRevision,
     'read-only polling must not invalidate a player action by advancing the table revision');
   const activePlayer = afterSecondSeat.pokerGameState.players[afterSecondSeat.pokerGameState.currentPlayerIndex];
+  const tooSmallRaise = await fetch(`${baseUrl}/api/matches/action`, {
+    method: 'POST',
+    headers: { 'x-user-id': activePlayer.userId, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      matchId: pokerTableId,
+      action: 'raise',
+      amount: afterSecondSeat.pokerGameState.currentBet + 1,
+      expectedStateVersion: afterSecondSeat.pokerGameState.stateVersion,
+    }),
+  });
+  assert.equal(tooSmallRaise.status, 400, 'a non-all-in raise below the minimum increment must be rejected');
   const action = activePlayer.currentBet < afterSecondSeat.pokerGameState.currentBet ? 'call' : 'check';
   const actionResult = await request(activePlayer.userId, '/api/matches/action', {
     method: 'POST',

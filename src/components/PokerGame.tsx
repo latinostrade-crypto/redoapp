@@ -272,9 +272,13 @@ export function PokerGame({
 
   // Live hand rank evaluation for human player
   const humanHandEval = React.useMemo(() => {
+    // A spectator is intentionally given masked hole cards by the server.
+    // Never evaluate those rank-0 placeholders or leak a nonsensical hand
+    // label such as "Pair of undefineds" into the table UI.
+    if (isSpectator) return null;
     if (!humanPlayer || !humanPlayer.holeCards || humanPlayer.holeCards.length < 2) return null;
     return evaluate7CardHand([...humanPlayer.holeCards, ...gameState.communityCards]);
-  }, [humanPlayer, gameState.communityCards]);
+  }, [isSpectator, humanPlayer, gameState.communityCards]);
 
   const toggleMute = () => {
     const isNowMuted = sound.toggleMute();
@@ -369,6 +373,11 @@ export function PokerGame({
               <span>{gameState.pot}</span>
             </div>
           </motion.div>
+          {(gameState.sidePots?.length || 0) > 1 && (
+            <span className="mt-0.5 rounded bg-black/70 px-1.5 py-0.5 text-[7px] font-bold text-amber-200">
+              {gameState.sidePots!.map((sidePot, index) => `${index === 0 ? 'MAIN' : `SIDE ${index}`}: ${sidePot.amount}`).join(' · ')}
+            </span>
+          )}
           {gameState.stage !== 'idle' && gameState.stage !== 'ended' && (
             <span className="text-[7.5px] font-black text-emerald-400 uppercase mt-0.5 tracking-widest bg-black/70 px-2 py-0.2 rounded border border-emerald-500/30">
               {gameState.stage === 'preflop'
@@ -732,7 +741,7 @@ export function PokerGame({
             {/* Quick Multiplier Presets */}
             <div className="grid grid-cols-5 gap-1">
               {[
-                { label: '+2 MIN', amt: gameState.currentBet + gameState.bigBlindAmount },
+                { label: `+${gameState.minRaise} MIN`, amt: gameState.currentBet + gameState.minRaise },
                 { label: '+5', amt: gameState.currentBet + 5 },
                 { label: '+10', amt: gameState.currentBet + 10 },
                 { label: 'POT', amt: Math.max(gameState.currentBet + gameState.bigBlindAmount, gameState.pot) },
@@ -759,7 +768,7 @@ export function PokerGame({
                 onClick={() => {
                   sound.playPop();
                   setCustomRaiseAmount((prev) =>
-                    Math.max(gameState.currentBet + gameState.bigBlindAmount, prev - 1)
+                    Math.max(gameState.currentBet + gameState.minRaise, prev - 1)
                   );
                 }}
                 className="w-7 h-7 bg-black border border-amber-400/50 text-white rounded flex items-center justify-center font-black active:scale-90"
@@ -769,7 +778,7 @@ export function PokerGame({
 
               <input
                 type="range"
-                min={gameState.currentBet + gameState.bigBlindAmount}
+                min={gameState.currentBet + gameState.minRaise}
                 max={humanPlayer.chips + humanPlayer.currentBet}
                 step={1}
                 value={customRaiseAmount}
@@ -869,7 +878,7 @@ export function PokerGame({
               disabled={!canCallOrCheck || humanPlayer.chips <= callNeeded}
               onClick={() => {
                 sound.playPop();
-                setCustomRaiseAmount(gameState.currentBet + gameState.bigBlindAmount);
+                setCustomRaiseAmount(gameState.currentBet + gameState.minRaise);
                 setShowRaisePanel(true);
               }}
               className="py-2.5 bg-[#ffcc00]/20 border border-[#ffcc00] text-[#ffcc00] font-black text-[9px] uppercase rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[44px] flex items-center justify-center gap-1 cursor-pointer"

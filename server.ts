@@ -10,6 +10,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createTicketingService, type DepositIntent, type TicketLedgerEntry, type WithdrawalRequest } from './server/tickets';
 import { distributePlayersIntoTables, type TournamentData, type TournamentParticipant, type TournamentMatch } from './server/tournaments';
+import { buildPokerSidePots, calculatePokerPotAwards } from './server/pokerPots';
+import { calculatePokerCashoutReferralShares } from './server/pokerCashout';
 
 
 dotenv.config();
@@ -377,6 +379,7 @@ interface ServerPokerPlayer {
   lastSeenAt?: number | null;
   disconnectedAt?: number | null;
   chips: number;
+  tableBuyInChips?: number;
   currentBet: number;
   totalMatchInvested: number;
   holeCards: ServerPokerCard[];
@@ -393,6 +396,9 @@ interface ServerPokerGameState {
   deck: ServerPokerCard[];
   stage: 'idle' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended' | 'match_ended';
   pot: number;
+  /** Every amount is an integer chip value. Pots are rebuilt at showdown
+   * from totalMatchInvested so folded/all-in contributions stay accounted. */
+  sidePots?: Array<{ amount: number; eligibleUserIds: string[] }>;
   currentBet: number;
   minRaise: number;
   communityCards: ServerPokerCard[];
@@ -1174,6 +1180,24 @@ async function loadSupabaseRowsByPrefix(prefix: string): Promise<SupabaseStateRo
 // normalized persistent_tables.sql migration is deployed. Runtime snapshots
 // are still durable across a Render restart today, and the migration moves
 // the same payload into casino_table_runtime without a client-facing change.
+async function verifyCasinoDatabaseContract() {
+  if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return;
+  // This intentionally targets a catalogue id that can never exist. A new
+  // five-argument RPC reaches the controlled "Table not found" exception;
+  // an old migration instead fails PostgREST function resolution. That lets
+  // production reject casino writes before any cash-out is attempted.
+  const { error } = await supabaseAdmin.rpc('casino_leave_table_seat', {
+    p_table_id: '__casino_contract_probe__',
+    p_user_id: '__casino_contract_probe__',
+    p_cash_out: 0,
+    p_idempotency_key: 'casino-contract-probe-v2',
+    p_referral_payouts: [],
+  });
+  if (!error || !/Table not found/i.test(error.message || '')) {
+    throw new Error(`Casino database migration v2 is required: ${error?.message || 'unexpected contract probe response'}`);
+  }
+}
+
 async function loadCasinoRuntimeSnapshots() {
   if (!supabaseAdmin) return;
   if (CASINO_TABLES_DB_MODE) {
@@ -1186,6 +1210,7 @@ async function loadCasinoRuntimeSnapshots() {
       casinoManager.restoreRuntime(row.table_id, row.state, Date.parse(row.updated_at) || Date.now());
       casinoRuntimeStateVersions.set(row.table_id, Math.max(1, Number(row.revision) || 1));
     });
+    await verifyCasinoDatabaseContract();
     discardPersistedCasinoMatchWrappers();
     casinoTablesDatabaseReady = true;
     return;
@@ -1336,7 +1361,13 @@ async function heartbeatCasinoSeatInDatabase(tableId: string, userId: string) {
   return data as string | null;
 }
 
-async function leaveCasinoSeatInDatabase(tableId: string, userId: string, chips: number, idempotencyKey: string) {
+async function leaveCasinoSeatInDatabase(
+  tableId: string,
+  userId: string,
+  chips: number,
+  idempotencyKey: string,
+  referralPayouts: Array<{ recipientUserId: string; level: 1 | 2; amount: number }> = [],
+) {
   if (!CASINO_TABLES_DB_MODE || !supabaseAdmin) return null;
   if (!casinoTablesDatabaseReady) throw casinoDatabaseUnavailableError();
   const { data, error } = await withCasinoDatabaseDeadline(supabaseAdmin.rpc('casino_leave_table_seat', {
@@ -1344,9 +1375,10 @@ async function leaveCasinoSeatInDatabase(tableId: string, userId: string, chips:
     p_user_id: userId,
     p_cash_out: chips,
     p_idempotency_key: idempotencyKey,
+    p_referral_payouts: referralPayouts,
   }), 'seat release');
   if (error) throw new Error(`Could not leave table: ${error.message}`);
-  return data as { released: boolean; chips: number };
+  return data as { released: boolean; chips: number; referralChips?: number };
 }
 
 type DurableCasinoSeat = { state: string; chips: number; presence_expires_at: string | null };
@@ -3027,6 +3059,59 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number, matchId:
   };
 }
 
+/**
+ * Cash poker settles when a player cashes out, not when an endless table
+ * changes hands. Referral shares therefore apply only to positive realised
+ * profit and are deducted from that profit before chips return to the player.
+ * Ledger IDs are based on the leave idempotency key, so a lost HTTP response
+ * cannot credit an inviter twice.
+ */
+function getCasinoPokerCashoutReferralEntitlements(user: UserState, grossProfit: number) {
+  if (grossProfit <= 0 || !user.referredByUserId) return [] as Array<{ recipient: UserState; level: 1 | 2; amount: number }>;
+  const recipients = new Map<string, UserState>();
+  const candidates: Array<{ userId: string; level: 1 | 2 }> = [];
+  const inviterL1 = users.get(user.referredByUserId);
+  if (!inviterL1 || inviterL1.userId === user.userId) return [];
+  recipients.set(inviterL1.userId, inviterL1);
+  candidates.push({ userId: inviterL1.userId, level: 1 });
+  const inviterL2 = inviterL1.referredByUserId ? users.get(inviterL1.referredByUserId) : null;
+  if (inviterL2 && inviterL2.userId !== user.userId && inviterL2.userId !== inviterL1.userId) {
+    recipients.set(inviterL2.userId, inviterL2);
+    candidates.push({ userId: inviterL2.userId, level: 2 });
+  }
+  return calculatePokerCashoutReferralShares(grossProfit, candidates)
+    .map((share) => {
+      const recipient = recipients.get(share.userId);
+      return recipient ? { recipient, level: share.level, amount: share.amount } : null;
+    })
+    .filter((entry): entry is { recipient: UserState; level: 1 | 2; amount: number } => entry !== null);
+}
+
+function applyCasinoPokerCashoutReferralBonus(user: UserState, grossProfit: number, cashoutId: string) {
+  const entitlements = getCasinoPokerCashoutReferralEntitlements(user, grossProfit);
+  for (const { recipient, level, amount } of entitlements) {
+    const ledgerId = `casino-poker-referral:${cashoutId}:l${level}:${recipient.userId}`;
+    const alreadyCredited = user.transactions.some((entry) => entry.id === ledgerId)
+      || recipient.transactions.some((entry) => entry.id === ledgerId);
+    if (alreadyCredited) continue;
+    recipient.casinoChips = round2(recipient.casinoChips + amount);
+    createLedgerEntry(recipient, {
+      id: ledgerId,
+      event: `L${level} Poker Cash-out Referral Bonus`,
+      value: `+${amount} CHIPS`,
+      type: 'referral_bonus',
+      amount,
+    });
+    schedulePersist({ userId: recipient.userId });
+    queueTelegramNotification(
+      recipient,
+      `L${level} poker referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} realised a poker profit. You received +${amount} chips.`,
+      { dedupeKey: `${ledgerId}:notice` },
+    );
+  }
+  return { totalBonus: Math.min(grossProfit, entitlements.reduce((sum, entry) => sum + entry.amount, 0)) };
+}
+
 type LedgerEntryInput = Omit<TicketLedgerEntry, 'id' | 'createdAt' | 'userId'> & Partial<Pick<TicketLedgerEntry, 'id' | 'createdAt'>>;
 
 function createLedgerEntry(user: UserState, entry: LedgerEntryInput) {
@@ -4019,7 +4104,7 @@ function generateServerPokerDeck(): ServerPokerCard[] {
   for (const suit of suits) {
     for (let rank = 2; rank <= 14; rank++) {
       deck.push({
-        id: `pk_${suit}_${rank}_${Math.random().toString(36).slice(2, 6)}`,
+        id: `pk_${suit}_${rank}_${crypto.randomUUID()}`,
         suit,
         rank,
       });
@@ -4275,7 +4360,10 @@ function createInitialPokerMatchState(players: QueuePlayer[], stake: number): Se
     stage: 'preflop',
     pot,
     currentBet: BIG_BLIND,
-    minRaise: BIG_BLIND * 2,
+    // Increment above the current bet required for a full raise.  Keeping an
+    // increment (rather than a target total) makes min-raise validation
+    // unambiguous after a multi-way raise.
+    minRaise: BIG_BLIND,
     communityCards: [],
     players: serverPlayers,
     dealerIndex: dealerIdx,
@@ -4323,6 +4411,49 @@ function checkPokerMatchChampion(match: ActiveMatch) {
   } else {
     pk.nextRoundStartsAt = Date.now() + 5000;
   }
+}
+
+/** Awards each main/side pot independently, including deterministic odd chips. */
+function awardPokerShowdownPots(pk: ServerPokerGameState, active: ServerPokerPlayer[]) {
+  const sidePots = buildPokerSidePots(pk.players);
+  pk.sidePots = sidePots;
+  const winners = new Map<string, ServerPokerPlayer>();
+  let headlineBestFive: ServerPokerCard[] = [];
+  let headlineDescription = '';
+  const summaries: string[] = [];
+
+  for (const pot of sidePots) {
+    const awards = calculatePokerPotAwards(
+      pot,
+      active.map((player) => ({
+        userId: player.userId,
+        handScore: player.handScore || 0,
+        seatIndex: pk.players.indexOf(player),
+      })),
+      pk.dealerIndex,
+      pk.players.length,
+    );
+    if (awards.winnerUserIds.length === 0) continue;
+    const potWinners = awards.winnerUserIds.map((userId) => active.find((player) => player.userId === userId)!);
+    potWinners.forEach((winner) => {
+      winner.chips += awards.awards.get(winner.userId) || 0;
+      winners.set(winner.userId, winner);
+    });
+    if (!headlineDescription) {
+      headlineDescription = potWinners[0].handDesc || 'Best hand';
+      headlineBestFive = potWinners[0].holeCards.length
+        ? evaluateServerPoker7CardHand([...potWinners[0].holeCards, ...pk.communityCards]).bestFive
+        : [];
+    }
+    summaries.push(`${potWinners.map((winner) => winner.username).join(' & ')} ${pot.amount}`);
+  }
+
+  return {
+    winners: [...winners.values()],
+    description: headlineDescription,
+    winningBestFive: headlineBestFive,
+    summary: summaries.join('; '),
+  };
 }
 
 function advancePokerStage(match: ActiveMatch) {
@@ -4373,34 +4504,16 @@ function advancePokerStage(match: ActiveMatch) {
   }
 
   if (pk.stage === 'showdown') {
-    let bestScore = -1;
-    let winners: ServerPokerPlayer[] = [];
-    let bestDesc = '';
-    let winningBestFive: ServerPokerCard[] = [];
-
     active.forEach((p) => {
       const evalRes = evaluateServerPoker7CardHand([...p.holeCards, ...pk.communityCards]);
       p.handScore = evalRes.score;
       p.handDesc = evalRes.description;
-      if (evalRes.score > bestScore) {
-        bestScore = evalRes.score;
-        winners = [p];
-        bestDesc = evalRes.description;
-        winningBestFive = evalRes.bestFive;
-      } else if (evalRes.score === bestScore) {
-        winners.push(p);
-      }
     });
 
-    const splitPot = Math.floor(pk.pot / winners.length);
-    winners.forEach((w) => {
-      w.chips += splitPot;
-    });
-
-    pk.winnerUserIds = winners.map((w) => w.userId);
-    pk.winningCardIds = winningBestFive.map((c) => c.id);
-    const winNames = winners.map((w) => w.username).join(' & ');
-    pk.winningHandDesc = `${winNames} won with ${bestDesc}! (${splitPot} chips each)`;
+    const result = awardPokerShowdownPots(pk, active);
+    pk.winnerUserIds = result.winners.map((winner) => winner.userId);
+    pk.winningCardIds = result.winningBestFive.map((card) => card.id);
+    pk.winningHandDesc = `${result.summary} won with ${result.description}!`;
     pk.logs = [createServerLog(pk.winningHandDesc, 'win'), ...pk.logs].slice(0, 50);
     pk.stage = 'ended';
 
@@ -4543,7 +4656,7 @@ function startNextPokerRound(match: ActiveMatch) {
 
   pk.pot = sbPost + bbPost;
   pk.currentBet = Math.max(sbPost, bbPost);
-  pk.minRaise = pk.currentBet * 2;
+  pk.minRaise = pk.bigBlindAmount;
   pk.communityCards = [];
   pk.winnerUserIds = [];
   pk.winningCardIds = [];
@@ -4624,6 +4737,11 @@ function applyPokerAction(match: ActiveMatch, userId: string, rawAction: string,
     const additionalNeeded = targetTotalBet - currPlayer.currentBet;
     const actualBet = Math.min(currPlayer.chips, additionalNeeded);
     const newCurrentBet = currPlayer.currentBet + actualBet;
+    const raiseIncrement = newCurrentBet - pk.currentBet;
+    const isAllIn = actualBet === currPlayer.chips;
+    if (raiseIncrement < pk.minRaise && !isAllIn) {
+      throw new Error(`Minimum raise is ${pk.minRaise} chips.`);
+    }
 
     currPlayer.chips -= actualBet;
     currPlayer.currentBet = newCurrentBet;
@@ -4637,13 +4755,16 @@ function applyPokerAction(match: ActiveMatch, userId: string, rawAction: string,
     currPlayer.hasActedThisStage = true;
     pk.pot += actualBet;
     pk.currentBet = newCurrentBet;
-    pk.minRaise = newCurrentBet + pk.bigBlindAmount;
-
-    pk.players.forEach((p, idx) => {
-      if (idx !== pk.currentPlayerIndex && !p.folded && !p.isAllIn && !p.eliminated) {
-        p.hasActedThisStage = false;
-      }
-    });
+    // A short all-in may be called, but does not reopen betting. Only a full
+    // raise resets opponents' action rights and establishes the next minimum.
+    if (raiseIncrement >= pk.minRaise) {
+      pk.minRaise = raiseIncrement;
+      pk.players.forEach((p, idx) => {
+        if (idx !== pk.currentPlayerIndex && !p.folded && !p.isAllIn && !p.eliminated) {
+          p.hasActedThisStage = false;
+        }
+      });
+    }
 
     pk.logs = [createServerLog(`${currPlayer.username} ${currPlayer.lastAction}`, 'bet'), ...pk.logs].slice(0, 50);
     advancePokerTurn(match);
@@ -4659,13 +4780,16 @@ function applyPokerAction(match: ActiveMatch, userId: string, rawAction: string,
     pk.pot += allInAmount;
 
     if (newCurrentBet > pk.currentBet) {
+      const raiseIncrement = newCurrentBet - pk.currentBet;
       pk.currentBet = newCurrentBet;
-      pk.minRaise = newCurrentBet + pk.bigBlindAmount;
-      pk.players.forEach((p, idx) => {
-        if (idx !== pk.currentPlayerIndex && !p.folded && !p.isAllIn && !p.eliminated) {
-          p.hasActedThisStage = false;
-        }
-      });
+      if (raiseIncrement >= pk.minRaise) {
+        pk.minRaise = raiseIncrement;
+        pk.players.forEach((p, idx) => {
+          if (idx !== pk.currentPlayerIndex && !p.folded && !p.isAllIn && !p.eliminated) {
+            p.hasActedThisStage = false;
+          }
+        });
+      }
     }
 
     pk.logs = [createServerLog(`${currPlayer.username} went ALL-IN (${allInAmount})`, 'bet'), ...pk.logs].slice(0, 50);
@@ -4818,6 +4942,13 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
     const pIdx = pk.players.findIndex((p) => isSameUser(p.userId, wId));
     return !isSpectator && isSameUser(wId, userId) ? 'player' : `opponent_${pIdx}`;
   });
+  const sidePots = (pk.sidePots || []).map((pot) => ({
+    amount: pot.amount,
+    eligiblePlayerIds: pot.eligibleUserIds.map((sidePotUserId) => {
+      const index = pk.players.findIndex((player) => isSameUser(player.userId, sidePotUserId));
+      return !isSpectator && isSameUser(sidePotUserId, userId) ? 'player' : `opponent_${index}`;
+    }),
+  }));
 
   const champion = pk.players.find((p) => p.userId === pk.matchChampionUserId);
   const turnTimeLeft = Math.max(0, Math.ceil((15_000 - (Date.now() - (pk.turnStartedAt || Date.now()))) / 1000));
@@ -4828,6 +4959,7 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
   const pokerGameState = {
     stage: pk.stage,
     pot: pk.pot,
+    sidePots,
     currentBet: pk.currentBet,
     minRaise: pk.minRaise,
     communityCards: pk.communityCards,
@@ -9893,6 +10025,12 @@ app.get('/api/casino/my-seat/:tableId', requireAuth, async (req: AuthenticatedRe
         const activeMatch = getActiveMatchOrCasino(tableId);
         if (activeMatch) publishCasinoTransition(activeMatch, 'seat-reconcile');
       }
+      if (durableSeat && runtimePlayer && !Number.isFinite(Number(runtimePlayer.tableBuyInChips))) {
+        // Older runtime snapshots did not retain the original bankroll. The
+        // durable seat is the authoritative buy-in and lets a later cash-out
+        // calculate realised profit without guessing.
+        runtimePlayer.tableBuyInChips = durableSeat.chips;
+      }
       const seated = Boolean(durableSeat || runtimePlayer);
       return { success: true, tableId, seated, chips: durableSeat?.chips || Math.max(0, Number(runtimePlayer?.chips) || 0) };
     });
@@ -9965,28 +10103,60 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
   try {
     const payload = await runCasinoTableMutation(tableId, async () => {
       const quote = casinoManager.getLeaveQuote(tableId, userId);
+      const leaveIdempotencyKey = typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
+        ? req.body.idempotencyKey
+        : `casino-leave:${tableId}:${userId}:${crypto.randomUUID()}`;
+      const user = getUser(userId);
+      const isPokerPublicTable = quote?.mode === 'public'
+        && quote.buyInChips !== null
+        && tableId.startsWith('table-poker-public-');
+      const grossProfit = isPokerPublicTable && quote
+        ? Math.max(0, quote.chips - quote.buyInChips)
+        : 0;
+      const referralEntitlements = isPokerPublicTable
+        ? getCasinoPokerCashoutReferralEntitlements(user, grossProfit)
+        : [];
+      const referralBonus = referralEntitlements.reduce((sum, entry) => sum + entry.amount, 0);
+      const cashOutChips = quote ? Math.max(0, quote.chips - referralBonus) : 0;
       if (quote && CASINO_TABLES_DB_MODE) {
-        await leaveCasinoSeatInDatabase(
+        const durableLeave = await leaveCasinoSeatInDatabase(
           tableId,
           userId,
-          quote.chips,
-          typeof req.body?.idempotencyKey === 'string' && /^[a-zA-Z0-9:_-]{8,160}$/.test(req.body.idempotencyKey)
-            ? req.body.idempotencyKey
-            : `casino-leave:${tableId}:${userId}:${crypto.randomUUID()}`,
+          cashOutChips,
+          leaveIdempotencyKey,
+          referralEntitlements.map((entry) => ({
+            recipientUserId: entry.recipient.userId,
+            level: entry.level,
+            amount: entry.amount,
+          })),
         );
+        // The Postgres RPC is the financial source of truth in database mode.
+        // Never credit an in-memory profile when its durable seat could not be
+        // released, or a stale runtime snapshot could mint a second cash-out.
+        if (!durableLeave?.released) {
+          throw Object.assign(new Error('Your durable table seat was not found. Please refresh the table before leaving.'), {
+            statusCode: 409,
+            code: 'casino_seat_not_found',
+          });
+        }
       }
       const result = casinoManager.leaveTable(tableId, userId);
       if (result) {
-        const user = getUser(userId);
+        if (isPokerPublicTable && grossProfit > 0) {
+          applyCasinoPokerCashoutReferralBonus(user, grossProfit, leaveIdempotencyKey);
+        }
         if (result.mode === 'public') {
-          user.casinoChips = round2(user.casinoChips + result.chips);
+          user.casinoChips = round2(user.casinoChips + cashOutChips);
           createLedgerEntry(user, {
-            id: `casino-cash-out:${tableId}:${userId}:${Date.now()}`,
+            id: `casino-cash-out:${leaveIdempotencyKey}`,
             event: 'Public Table Cash-out',
-            value: `+${result.chips} CHIPS`,
+            value: `+${cashOutChips} CHIPS`,
             type: 'match_refund',
-            amount: result.chips,
+            amount: cashOutChips,
           });
+          if (grossProfit > 0) {
+            maybeActivateReferral(user, `casino-poker:${leaveIdempotencyKey}`);
+          }
         }
         schedulePersist({ userId });
         const activeMatch = getActiveMatchOrCasino(tableId);
