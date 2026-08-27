@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
 import {
   Wallet,
@@ -139,6 +139,7 @@ function normalizeProfile(profile: Partial<PlayerProfile> | null | undefined): P
     lastDailyCheckin: profile.lastDailyCheckin ?? null,
     lootboxClaimedAt: profile.lootboxClaimedAt ?? null,
     lootboxAvailable: profile.lootboxAvailable ?? false,
+    tournamentBracelets: Number(profile.tournamentBracelets) || 0,
     activeMatch: profile.activeMatch ?? null,
   };
 }
@@ -715,6 +716,7 @@ export function Web3Dashboard({
   resetStats,
   onSpectateMatch,
 }: Web3DashboardProps) {
+  const prefersReducedMotion = useReducedMotion();
   const initialLaunchRoomParsedRef = useRef<{ code: string; gameType?: 'uno' | 'poker' | 'blackjack' }>({ code: '' });
   if (!initialLaunchRoomParsedRef.current.code) {
     const startApp = getTelegramStartParam();
@@ -1221,6 +1223,7 @@ export function Web3Dashboard({
     return () => clearTimeout(timer);
   }, [showPromoModal, dismissPromoModal]);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
+  const [vaultCardChoice, setVaultCardChoice] = useState<number | null>(null);
   const [lootboxClaimMessage, setLootboxClaimMessage] = useState('');
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
@@ -1385,11 +1388,33 @@ export function Web3Dashboard({
   };
   const quests = fullProfile?.quests ?? [];
   const dailyQuests = quests.filter((quest) => quest.kind === 'daily');
+  const activeDailyQuests = dailyQuests.filter((quest) => !quest.completed);
+  const completedDailyQuests = dailyQuests.filter((quest) => quest.completed);
   const lootboxReady = Boolean(
     activeProfile?.lootboxAvailable
     && dailyQuests.length > 0
     && dailyQuests.every((quest) => quest.completed)
   );
+  const launchDailyQuest = (metric: import('../types').QuestView['metric']) => {
+    sound.playPop();
+    if (metric === 'daily_checkin') {
+      claimDailyReward();
+      return;
+    }
+    setCurrentTab('pvp');
+    if (metric === 'play_free_poker') {
+      setPvpGameTab('poker');
+      setPvpSubMode('free');
+      return;
+    }
+    if (metric === 'play_free_blackjack') {
+      setPvpGameTab('blackjack');
+      setPvpSubMode('free');
+      return;
+    }
+    setPvpGameTab('uno');
+    setPvpSubMode('public');
+  };
   const referralStats = fullProfile?.referrals;
   const referralTicketEarnings = transactions
     .filter((tx: any) => tx.type === 'referral_bonus' && /TKT\b/i.test(String(tx.value || '')) && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
@@ -3341,9 +3366,10 @@ export function Web3Dashboard({
     claimDailyXp();
   };
 
-  const openLootboxChest = async () => {
-    if (isOpeningLootbox) return;
+  const openLootboxChest = async (cardIndex: number) => {
+    if (isOpeningLootbox || vaultCardChoice !== null) return;
     sound.playShuffle();
+    setVaultCardChoice(cardIndex);
     setIsOpeningLootbox(true);
     setLootboxClaimMessage('Opening chest...');
     const claimId = typeof crypto.randomUUID === 'function'
@@ -3366,7 +3392,7 @@ export function Web3Dashboard({
         energy: any;
       }>('/api/quests/claim-lootbox', {
         method: 'POST',
-        body: JSON.stringify({ claimId }),
+        body: JSON.stringify({ claimId, cardIndex }),
         retryOnNetworkError: true,
         networkAttempts: 3,
         timeoutMs: 90_000,
@@ -3382,6 +3408,9 @@ export function Web3Dashboard({
         energy: result.energy ?? previous.energy,
         lootboxClaimedAt: result.claimedAt,
         lootboxAvailable: false,
+        tournamentBracelets: result.rewardType === 'bracelet'
+          ? (previous.tournamentBracelets || 0) + 1
+          : previous.tournamentBracelets,
       } : previous);
       setFullProfile((previous) => previous ? {
         ...previous,
@@ -3390,6 +3419,9 @@ export function Web3Dashboard({
         energy: result.energy ?? previous.energy,
         lootboxClaimedAt: result.claimedAt,
         lootboxAvailable: false,
+        tournamentBracelets: result.rewardType === 'bracelet'
+          ? (previous.tournamentBracelets || 0) + 1
+          : previous.tournamentBracelets,
       } : previous);
       setLootboxReward({
         type: result.rewardType,
@@ -3418,6 +3450,7 @@ export function Web3Dashboard({
       setLootboxClaimMessage('');
       fetchFullProfile().catch(() => undefined);
     } catch (error) {
+      setVaultCardChoice(null);
       // A final profile read reconciles the rare case where all response
       // attempts were lost after the backend committed the reward.
       try {
@@ -4298,7 +4331,10 @@ export function Web3Dashboard({
                 </div>
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
-                  <div className="text-[7px] uppercase font-bold text-slate-400 text-left">Quests</div>
+                  <div className="flex items-center justify-between gap-2 text-[7px] uppercase font-bold text-slate-400 text-left">
+                    <span>Daily Run · {completedDailyQuests.length}/6</span>
+                    {(activeProfile?.tournamentBracelets || 0) > 0 && <span className="text-[#ffcc00]">⌁ Bracelet ×{activeProfile?.tournamentBracelets}</span>}
+                  </div>
 
                   {false && (
                   <div className="border border-black bg-slate-950 p-2 text-left font-mono space-y-1.5">
@@ -4336,25 +4372,38 @@ export function Web3Dashboard({
                   )}
                   
                   {lootboxReady && (
-                    <div className="bg-[#1b122c] border-2 border-[#9b51e0] p-2 font-mono animate-pulse-soft">
-                      <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-slate-950 border border-black flex items-center justify-center text-xl select-none animate-bounce-subtle">
-                          🎁
+                    <div className="bg-[#171027] border-2 border-[#9b51e0] p-2 font-mono shadow-[3px_3px_0_#000]">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-left leading-tight">
+                          <span className="text-[9px] font-black text-[#ffcc00] uppercase">Daily Vault unlocked</span>
+                          <p className="text-[6.5px] text-slate-300 mt-0.5">Choose 1 of 6 cards. Rare TKT: 0.1% · Bracelet: 0.5%</p>
                         </div>
-                        <div className="text-left leading-none">
-                          <span className="text-[8px] font-black text-[#ffcc00] uppercase">CHEST READY!</span>
-                          <p className="text-[5.5px] text-slate-450 mt-0.5 leading-none">Open for bonus XP or Energy!</p>
-                        </div>
+                        <span className="text-lg leading-none">🗝️</span>
                       </div>
-                      <button
-                        type="button"
-                        disabled={isOpeningLootbox}
-                        onClick={openLootboxChest}
-                        className="px-2 py-1 bg-[#9b51e0] hover:bg-[#8540cc] text-white border border-black text-[7.5px] font-black uppercase pixel-btn-interactive"
-                      >
-                        {isOpeningLootbox ? 'OPENING...' : 'OPEN'}
-                      </button>
+                      <div className="grid grid-cols-6 gap-1 mt-2" aria-label="Choose a Daily Vault card">
+                        {Array.from({ length: 6 }, (_, cardIndex) => {
+                          const chosen = vaultCardChoice === cardIndex;
+                          return (
+                            <motion.button
+                              key={cardIndex}
+                              type="button"
+                              disabled={isOpeningLootbox || vaultCardChoice !== null}
+                              onClick={() => openLootboxChest(cardIndex)}
+                              aria-label={`Choose vault card ${cardIndex + 1}`}
+                              initial={prefersReducedMotion ? false : { opacity: 0, y: -24, rotate: (cardIndex - 2.5) * 4 }}
+                              animate={prefersReducedMotion
+                                ? undefined
+                                : chosen
+                                  ? { opacity: 1, y: -8, rotateY: 180, scale: 1.08 }
+                                  : { opacity: 1, y: 0, rotate: 0, scale: 1 }}
+                              transition={{ duration: prefersReducedMotion ? 0 : 0.28, delay: prefersReducedMotion ? 0 : cardIndex * 0.055, type: 'spring', stiffness: 300, damping: 19 }}
+                              style={{ transformStyle: 'preserve-3d' }}
+                              className={`aspect-[2/3] min-h-11 border-2 border-black text-[9px] font-black transition-transform pixel-btn-interactive ${chosen ? 'bg-[#ffcc00] text-black -translate-y-1' : 'bg-gradient-to-br from-[#00d2ff] via-[#243b78] to-[#9b51e0] text-white hover:-translate-y-1'}`}
+                            >
+                              {chosen && isOpeningLootbox ? '…' : 'REDO'}
+                            </motion.button>
+                          );
+                        })}
                       </div>
                       {lootboxClaimMessage && (
                         <p className={`mt-1 text-[6px] leading-tight ${lootboxClaimMessage.includes('[') ? 'text-[#ff6666]' : 'text-[#00d2ff]'}`}>
@@ -4364,24 +4413,87 @@ export function Web3Dashboard({
                     </div>
                   )}
 
-                  <div className="space-y-1 max-h-[90px] overflow-y-auto custom-scroll pr-0.5">
+                  {!lootboxReady && dailyQuests.length > 0 && (
+                    <div className="border-2 border-slate-800 bg-[#0d1020] p-2 font-mono overflow-hidden" aria-label="Locked Daily Vault">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-left leading-tight">
+                          <span className="text-[8px] font-black text-slate-300 uppercase">Daily Vault</span>
+                          <p className="text-[6.5px] text-slate-500 mt-0.5">Complete all 6 missions to choose a card.</p>
+                        </div>
+                        <span className="text-base opacity-50">🔒</span>
+                      </div>
+                      <div className="grid grid-cols-6 gap-1 mt-2 opacity-45" aria-hidden="true">
+                        {Array.from({ length: 6 }, (_, index) => (
+                          <div key={index} className="aspect-[2/3] min-h-8 border border-slate-700 bg-slate-900 flex items-center justify-center text-[6px] text-slate-500">?</div>
+                        ))}
+                      </div>
+                      <div className="mt-1 h-1.5 bg-black border border-slate-800 overflow-hidden">
+                        <div className="h-full bg-[#9b51e0] transition-[width] duration-500" style={{ width: `${(completedDailyQuests.length / 6) * 100}%` }} />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-1.5 max-h-[260px] overflow-y-auto custom-scroll pr-0.5">
                     {fullProfileLoading && !fullProfile ? (
                       <div className="text-[7.5px] text-slate-500 text-left">Loading quests...</div>
                     ) : quests.length === 0 ? (
                       <div className="text-[7.5px] text-slate-500 text-left">No quests loaded.</div>
                     ) : (
-                      quests.map((quest) => (
-                        <div key={quest.id} className="border border-black bg-slate-950 p-1.5 text-left font-mono">
+                      <>
+                        {activeDailyQuests.length > 0 && (
+                          <div className="text-[6.5px] font-black uppercase text-slate-500 tracking-wider">Today&apos;s missions</div>
+                        )}
+                        {activeDailyQuests.map((quest) => (
+                        <motion.div
+                          key={quest.id}
+                          layout
+                          initial={false}
+                          animate={quest.completed ? { scale: [1, 1.015, 1] } : { scale: 1 }}
+                          transition={{ duration: 0.28 }}
+                          className={`border-2 border-black p-2 text-left font-mono ${quest.completed ? 'bg-[#07301f]' : 'bg-slate-950'}`}
+                        >
                           <div className="flex justify-between items-center gap-2 text-[7.5px]">
                             <span className="font-black text-slate-100 truncate max-w-[180px]">{quest.title}</span>
                             <span className={quest.claimed ? 'text-[#00ff66]' : quest.completed ? 'text-[#ffcc00]' : 'text-slate-400'}>
-                              {quest.progress}/{quest.target}
+                              {quest.completed ? '✓ COMPLETE' : `${quest.progress}/${quest.target}`}
                             </span>
                           </div>
                           <div className="text-[6.5px] text-slate-500 mt-0.5 leading-tight">{quest.description}</div>
-                          <div className="text-[6.5px] mt-0.5 text-[#00d2ff]">+{quest.rewardXp} XP / +{formatEnergyValue(quest.rewardEnergy)}</div>
-                        </div>
-                      ))
+                          <div className="mt-1 flex items-center justify-between gap-2">
+                            <div className="text-[6.5px] text-[#00d2ff]">+{quest.rewardXp} XP / +{formatEnergyValue(quest.rewardEnergy)}</div>
+                            {!quest.completed && (
+                              <button
+                                type="button"
+                                onClick={() => launchDailyQuest(quest.metric)}
+                                className="min-h-6 px-2 bg-[#00d2ff] text-black border border-black text-[6.5px] font-black uppercase pixel-btn-interactive"
+                              >
+                                {quest.metric === 'daily_checkin' ? 'Claim' : 'Play'}
+                              </button>
+                            )}
+                          </div>
+                        </motion.div>
+                        ))}
+                        {completedDailyQuests.length > 0 && (
+                          <div className="pt-1 text-[6.5px] font-black uppercase text-[#00ff66] tracking-wider">Completed today · {completedDailyQuests.length}</div>
+                        )}
+                        {completedDailyQuests.map((quest) => (
+                          <motion.div
+                            key={quest.id}
+                            layout
+                            initial={false}
+                            animate={{ scale: [1, 1.015, 1] }}
+                            transition={{ duration: 0.28 }}
+                            className="border-2 border-black bg-[#07301f] p-2 text-left font-mono"
+                          >
+                            <div className="flex justify-between items-center gap-2 text-[7.5px]">
+                              <span className="font-black text-slate-100 truncate max-w-[180px]">{quest.title}</span>
+                              <span className="text-[#00ff66]">✓ COMPLETE</span>
+                            </div>
+                            <div className="text-[6.5px] text-[#8dffaf]/70 mt-0.5 leading-tight">{quest.description}</div>
+                            <div className="text-[6.5px] mt-1 text-[#00d2ff]">+{quest.rewardXp} XP / +{formatEnergyValue(quest.rewardEnergy)}</div>
+                          </motion.div>
+                        ))}
+                      </>
                     )}
                   </div>
                 </div>
@@ -6667,13 +6779,19 @@ export function Web3Dashboard({
                 REWARD OPENED
               </div>
 
-              <div className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#ffcc00] relative overflow-hidden text-2xl animate-bounce mt-2">
-                {lootboxReward.type === 'jackpot' ? '👑' : lootboxReward.type === 'energy' ? '⚡' : '⭐'}
-              </div>
+              <motion.div
+                initial={prefersReducedMotion ? false : { rotateY: 90, scale: 0.82 }}
+                animate={prefersReducedMotion ? undefined : { rotateY: 0, scale: [0.82, 1.1, 1] }}
+                transition={{ duration: prefersReducedMotion ? 0 : 0.48, ease: 'easeOut' }}
+                style={{ transformStyle: 'preserve-3d' }}
+                className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#ffcc00] relative overflow-hidden text-2xl animate-bounce mt-2"
+              >
+                {lootboxReward.type === 'bracelet' ? '⌁' : lootboxReward.type === 'tickets' ? '🎟️' : '⚡'}
+              </motion.div>
 
               <div className="space-y-2">
                 <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wider">
-                  {lootboxReward.type === 'jackpot' ? '👑 JACKPOT CHEST! 👑' : 'Lootbox Rewards'}
+                  {lootboxReward.type === 'bracelet' ? 'Tournament Bracelet' : lootboxReward.type === 'tickets' ? 'Rare TKT Drop!' : 'Daily Vault Reward'}
                 </h3>
                 <p className="text-[9px] min-[370px]:text-[10px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
                   {lootboxReward.message}
@@ -6686,6 +6804,7 @@ export function Web3Dashboard({
                   onClick={() => {
                     sound.playPop();
                     setLootboxReward(null);
+                    setVaultCardChoice(null);
                   }}
                   className="w-full py-2.5 bg-[#ffcc00] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
                 >

@@ -117,7 +117,7 @@ export interface QuestView {
   title: string;
   description: string;
   kind: 'daily' | 'weekly';
-  metric: 'play_online' | 'play_private' | 'win_any' | 'spend_energy' | 'invite_referral';
+  metric: 'play_online' | 'play_private' | 'win_any' | 'spend_energy' | 'invite_referral' | 'daily_checkin' | 'play_free_uno' | 'play_free_poker' | 'play_free_blackjack';
   target: number;
   rewardXp: number;
   rewardEnergy: number;
@@ -183,6 +183,7 @@ export interface PlayerProfile {
   } | null;
   lootboxClaimedAt?: number | null;
   lootboxAvailable?: boolean;
+  tournamentBracelets?: number;
   activeMatch?: {
     matchId: string;
     mode: 'pvp' | 'private';

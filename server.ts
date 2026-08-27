@@ -12,6 +12,7 @@ import { createTicketingService, type DepositIntent, type TicketLedgerEntry, typ
 import { distributePlayersIntoTables, type TournamentData, type TournamentParticipant, type TournamentMatch } from './server/tournaments';
 import { buildPokerSidePots, calculatePokerPotAwards } from './server/pokerPots';
 import { calculatePokerCashoutReferralShares } from './server/pokerCashout';
+import { rollDailyVaultReward } from './server/dailyVault';
 
 
 dotenv.config();
@@ -444,7 +445,8 @@ interface ServerPokerGameState {
 interface LootboxClaimRecord {
   claimId: string;
   claimedAt: number;
-  rewardType: 'xp' | 'energy' | 'jackpot';
+  cardIndex?: number;
+  rewardType: 'tickets' | 'energy' | 'bracelet';
   rewardTickets: number;
   rewardEnergy: number;
   rewardXp: number;
@@ -497,6 +499,7 @@ interface UserState {
   lastDailyCheckin?: DailyCheckinRecord | null;
   lootboxClaimedAt?: number | null;
   lastLootboxClaim?: LootboxClaimRecord | null;
+  tournamentBracelets?: number;
   matchmakingFailureAt?: number | null;
   matchmakingFailureReason?: 'timeout' | null;
 }
@@ -506,7 +509,7 @@ interface QuestDefinition {
   title: string;
   description: string;
   kind: 'daily' | 'weekly';
-  metric: 'play_online' | 'play_private' | 'win_any' | 'spend_energy' | 'invite_referral';
+  metric: 'play_online' | 'play_private' | 'win_any' | 'spend_energy' | 'invite_referral' | 'daily_checkin' | 'play_free_uno' | 'play_free_poker' | 'play_free_blackjack';
   target: number;
   rewardXp: number;
   rewardEnergy: number;
@@ -886,47 +889,56 @@ function buildTelegramMiniAppLink(startParam: string) {
   return `https://t.me/${TELEGRAM_BOT_USERNAME}/${TELEGRAM_APP_SHORT_NAME}?startapp=${encodeURIComponent(startParam)}`;
 }
 
-const QUEST_DEFINITIONS: QuestDefinition[] = [
+const DAILY_CORE_QUESTS: QuestDefinition[] = [
   {
     id: 'daily_online_1',
-    title: 'Public Queue',
-    description: 'Play 1 online queue match.',
+    title: 'UNO Arena',
+    description: 'Finish 1 free UNO arena match.',
     kind: 'daily',
-    metric: 'play_online',
+    metric: 'play_free_uno',
     target: 1,
     rewardXp: 25,
     rewardEnergy: 1,
   },
   {
-    id: 'daily_private_1',
-    title: 'Private Room',
-    description: 'Play 1 private room match.',
+    id: 'daily_free_poker_1',
+    title: 'Poker Warm-up',
+    description: 'Take a seat at a free Poker table.',
     kind: 'daily',
-    metric: 'play_private',
+    metric: 'play_free_poker',
     target: 1,
     rewardXp: 25,
     rewardEnergy: 1,
   },
   {
-    id: 'daily_win_1',
-    title: 'Win Once',
-    description: 'Win any 1 match.',
+    id: 'daily_free_blackjack_1',
+    title: 'Blackjack Warm-up',
+    description: 'Take a seat at a free Blackjack table.',
     kind: 'daily',
-    metric: 'win_any',
+    metric: 'play_free_blackjack',
     target: 1,
     rewardXp: 40,
     rewardEnergy: 1,
   },
   {
-    id: 'daily_spend_energy_3',
-    title: 'Burn Energy',
-    description: 'Spend 3 energy.',
+    id: 'daily_checkin_1',
+    title: 'Daily Signal',
+    description: 'Collect today\'s check-in reward.',
     kind: 'daily',
-    metric: 'spend_energy',
-    target: 3,
-    rewardXp: 30,
-    rewardEnergy: 0,
+    metric: 'daily_checkin',
+    target: 1,
+    rewardXp: 20,
+    rewardEnergy: 1,
   },
+];
+
+const DAILY_ROTATING_QUESTS: QuestDefinition[] = [
+  { id: 'daily_spend_energy_3', title: 'Energy Sprint', description: 'Spend 3 energy.', kind: 'daily', metric: 'spend_energy', target: 3, rewardXp: 30, rewardEnergy: 0 },
+  { id: 'daily_win_1', title: 'Take the Crown', description: 'Win any 1 match.', kind: 'daily', metric: 'win_any', target: 1, rewardXp: 40, rewardEnergy: 1 },
+  { id: 'daily_online_bonus_1', title: 'Arena Encore', description: 'Finish 1 more UNO arena match.', kind: 'daily', metric: 'play_online', target: 1, rewardXp: 25, rewardEnergy: 1 },
+];
+
+const WEEKLY_QUESTS: QuestDefinition[] = [
   {
     id: 'weekly_invite_1',
     title: 'First Referral',
@@ -938,6 +950,15 @@ const QUEST_DEFINITIONS: QuestDefinition[] = [
     rewardEnergy: 2,
   },
 ];
+
+function getQuestDefinitions(now = Date.now()): QuestDefinition[] {
+  // The two optional quests rotate deterministically per UTC day. This avoids
+  // client-controlled randomness while keeping each day's run fresh.
+  const dayIndex = Math.floor(getStartOfUtcDay(now) / 86_400_000);
+  const first = dayIndex % DAILY_ROTATING_QUESTS.length;
+  const second = (first + 1) % DAILY_ROTATING_QUESTS.length;
+  return [...DAILY_CORE_QUESTS, DAILY_ROTATING_QUESTS[first], DAILY_ROTATING_QUESTS[second], ...WEEKLY_QUESTS];
+}
 
 function buildPersistedState(): PersistedState {
   return {
@@ -2156,7 +2177,7 @@ function getEnergyState(user: UserState) {
 
 function getDailyQuestCompletion(userId: string, now = Date.now()) {
   const todayStart = getStartOfUtcDay(now);
-  const dailyQuests = QUEST_DEFINITIONS.filter((quest) => quest.kind === 'daily');
+  const dailyQuests = getQuestDefinitions(now).filter((quest) => quest.kind === 'daily');
   const progressList = getQuestProgress(userId);
   const completed = dailyQuests.filter((quest) => {
     const progress = progressList.find((entry) => entry.questId === quest.id);
@@ -2299,6 +2320,7 @@ function buildBootstrapProfileResponse(user: UserState) {
     lastDailyCheckin: user.lastDailyCheckin || null,
     lootboxClaimedAt: user.lootboxClaimedAt || null,
     lootboxAvailable: isLootboxAvailable(user),
+    tournamentBracelets: user.tournamentBracelets || 0,
     activeMatch: activeMatchInfo,
   };
 }
@@ -2433,7 +2455,7 @@ function getQuestProgress(userId: string) {
 function updateQuestProgress(userId: string, metric: QuestDefinition['metric'], delta = 1) {
   const now = Date.now();
   const questProgress = getQuestProgress(userId);
-  for (const quest of QUEST_DEFINITIONS.filter((entry) => entry.metric === metric)) {
+  for (const quest of getQuestDefinitions(now).filter((entry) => entry.metric === metric)) {
     const resetBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
     let progress = questProgress.find((entry) => entry.questId === quest.id);
     if (!progress) {
@@ -2456,7 +2478,7 @@ function claimCompletedQuests(user: UserState) {
   const progressList = getQuestProgress(user.userId);
   const claimed: string[] = [];
   const now = Date.now();
-  for (const quest of QUEST_DEFINITIONS) {
+  for (const quest of getQuestDefinitions(now)) {
     const progress = progressList.find((entry) => entry.questId === quest.id);
     const currentBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
     const progressBoundary = progress
@@ -2486,7 +2508,7 @@ function buildQuestView(userId: string) {
   const progressList = getQuestProgress(userId);
   const now = Date.now();
   const progressMap = new Map(progressList.map((entry) => [entry.questId, entry]));
-  return QUEST_DEFINITIONS.map((quest) => {
+  return getQuestDefinitions(now).map((quest) => {
     const progress = progressMap.get(quest.id);
     const boundary = progress ? (quest.kind === 'daily' ? getStartOfUtcDay(progress.updatedAt) : getStartOfUtcWeek(progress.updatedAt)) : null;
     const currentBoundary = quest.kind === 'daily' ? getStartOfUtcDay(now) : getStartOfUtcWeek(now);
@@ -4257,6 +4279,7 @@ function settleBlackjackMatch(activeMatch: ActiveMatch) {
 
       if (activeMatch.mode === 'pvp') {
         updateQuestProgress(user.userId, 'play_online', 1);
+        if (activeMatch.stake === 0) updateQuestProgress(user.userId, 'play_free_uno', 1);
       } else {
         updateQuestProgress(user.userId, 'play_private', 1);
       }
@@ -5106,6 +5129,7 @@ function settlePokerMatch(activeMatch: ActiveMatch) {
 
       if (activeMatch.mode === 'pvp') {
         updateQuestProgress(user.userId, 'play_online', 1);
+        if (activeMatch.stake === 0) updateQuestProgress(user.userId, 'play_free_uno', 1);
       } else {
         updateQuestProgress(user.userId, 'play_private', 1);
       }
@@ -6788,6 +6812,7 @@ function handleDailyCheckin(req: AuthenticatedRequest, res: Response) {
     rewardEnergy(user, DAILY_ENERGY_REWARD, 'Daily Energy Refill');
   }
 
+  updateQuestProgress(user.userId, 'daily_checkin', 1);
   updateQuestProgress(user.userId, 'spend_energy', 0);
   const claimedQuestIds = claimCompletedQuests(user);
 
@@ -6904,7 +6929,7 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
       alreadyClaimed: true,
       claimId: requestedClaimId || `legacy-${user.userId}-${todayStart}`,
       claimedAt: user.lootboxClaimedAt,
-      rewardType: 'xp',
+      rewardType: 'energy',
       rewardTickets: 0,
       rewardEnergy: 0,
       rewardXp: 0,
@@ -6924,37 +6949,54 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
     });
   }
 
-  const roll = Math.random();
-  let rewardType: 'xp' | 'energy' | 'jackpot' = 'xp';
+  const requestedCardIndex = Number(req.body?.cardIndex);
+  if (!Number.isInteger(requestedCardIndex) || requestedCardIndex < 0 || requestedCardIndex > 5) {
+    return res.status(400).json({ error: 'Choose one card from the Daily Vault.' });
+  }
+
+  // The outcome is rolled and persisted on the server before the client plays
+  // its flip animation. A retry returns this exact claim rather than another roll.
+  const dailyVaultReward = rollDailyVaultReward();
+  const rewardType = dailyVaultReward.type;
+  const rewardTicketsAmount = dailyVaultReward.tickets;
   let rewardXpAmount = 0;
-  let rewardEnergyAmount = 0;
+  const rewardEnergyAmount = dailyVaultReward.energy;
   let message = '';
 
-  if (roll < 0.60) {
-    rewardType = 'xp';
-    rewardXpAmount = Math.floor(50 + Math.random() * 101);
-    rewardXp(user, rewardXpAmount, 'Daily Lootbox XP Reward');
-    message = `🎁 You opened today's lootbox and found +${rewardXpAmount} XP!`;
-  } else if (roll < 0.95) {
-    rewardType = 'energy';
-    rewardEnergyAmount = Math.floor(2 + Math.random() * 5);
-    rewardEnergyAmount = Math.max(2, Math.min(6, rewardEnergyAmount));
-    rewardEnergy(user, rewardEnergyAmount, 'Daily Lootbox Energy Reward');
-    message = `🎁 You opened today's lootbox and found +${rewardEnergyAmount} Energy!`;
+  if (rewardType === 'tickets') {
+    user.availableTickets = round2(user.availableTickets + rewardTicketsAmount);
+    createLedgerEntry(user, {
+      id: `daily-vault-ticket:${user.userId}:${todayStart}`,
+      event: 'Daily Vault — Rare TKT',
+      value: `+${rewardTicketsAmount.toFixed(2)} TKT`,
+      type: 'reward',
+      amount: rewardTicketsAmount,
+    });
+    message = `RARE DROP! +${rewardTicketsAmount.toFixed(2)} TKT added to your balance.`;
+  } else if (rewardType === 'bracelet') {
+    user.tournamentBracelets = (user.tournamentBracelets || 0) + 1;
+    createLedgerEntry(user, {
+      id: `daily-vault-bracelet:${user.userId}:${todayStart}`,
+      event: 'Daily Vault — Tournament Bracelet',
+      value: '+1 Tournament Bracelet',
+      type: 'reward',
+      amount: 0,
+    });
+    message = 'ULTRA RARE! Tournament Bracelet added to your collection.';
+  } else if (rewardEnergyAmount === 5) {
+    rewardEnergy(user, rewardEnergyAmount, 'Daily Vault — Energy Boost');
+    message = 'Energy boost! +5 Energy added.';
   } else {
-    rewardType = 'jackpot';
-    rewardXpAmount = 300;
-    rewardEnergyAmount = 10;
-    rewardXp(user, rewardXpAmount, 'Daily Lootbox JACKPOT XP Reward');
-    rewardEnergy(user, rewardEnergyAmount, 'Daily Lootbox JACKPOT Energy Reward');
-    message = `🎉 JACKPOT! You opened today's lootbox and found +300 XP and +10 Energy!`;
+    rewardEnergy(user, rewardEnergyAmount, 'Daily Vault — Energy Refill');
+    message = 'Nice! +2 Energy added.';
   }
 
   const claim: LootboxClaimRecord = {
     claimId: requestedClaimId || `lootbox-${user.userId}-${todayStart}`,
     claimedAt: now,
+    cardIndex: requestedCardIndex,
     rewardType,
-    rewardTickets: 0,
+    rewardTickets: rewardTicketsAmount,
     rewardEnergy: rewardEnergyAmount,
     rewardXp: rewardXpAmount,
     message,
@@ -9630,6 +9672,7 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
       }
       if (activeMatch.mode === 'pvp') {
         updateQuestProgress(user.userId, 'play_online', 1);
+        if (activeMatch.stake === 0) updateQuestProgress(user.userId, 'play_free_uno', 1);
       } else {
         updateQuestProgress(user.userId, 'play_private', 1);
       }
@@ -10317,6 +10360,7 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
         } else if (shouldChargeLocalEnvelope) {
           user.energy -= 2;
           updateQuestProgress(user.userId, 'spend_energy', 2);
+          updateQuestProgress(user.userId, tableId.startsWith('table-blackjack-') ? 'play_free_blackjack' : 'play_free_poker', 1);
           createLedgerEntry(user, { id: `free-table-energy:${tableId}:${userId}:${Date.now()}`, event: 'Free Table Entry', value: '-2 Energy', type: 'reward', amount: -2 });
         }
         if (shouldChargeLocalEnvelope) schedulePersist({ userId });
