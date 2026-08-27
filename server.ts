@@ -772,6 +772,76 @@ async function runRedisCommand<T>(command: Array<string | number>): Promise<T | 
   }
 }
 
+// The process-local limiter below remains the fast first line of defence. For
+// money and room lifecycle actions, this Redis counter adds a shared budget
+// across Render instances and survives a cold start. A Redis outage must not
+// make the Mini App unavailable, so the local limiter remains the fallback.
+const redisSharedRateLimitEnabled = redisCacheEnabled && process.env.RATE_LIMIT_REDIS_ENABLED !== 'false';
+const RATE_LIMIT_REDIS_PREFIX = `${REDIS_CACHE_NAMESPACE}:rate-limit`;
+const REDIS_RATE_LIMIT_SCRIPT = [
+  'local current = redis.call("INCR", KEYS[1])',
+  'if current == 1 then redis.call("PEXPIRE", KEYS[1], ARGV[1]) end',
+  'return { current, redis.call("PTTL", KEYS[1]) }',
+].join('; ');
+
+function redisRateLimitKey(localKey: string) {
+  // Hashing keeps user identifiers and source IPs out of Redis key names and
+  // the provider's operational views while retaining a stable counter.
+  return `${RATE_LIMIT_REDIS_PREFIX}:${cacheKeyPart(localKey)}`;
+}
+
+function resolveRateLimitIdentity(req: Request) {
+  let authenticatedUserId = (req as AuthenticatedRequest).authUserId;
+  if (authenticatedUserId) return authenticatedUserId;
+  try {
+    const telegramInitData = extractTelegramInitData(req);
+    const auth = verifyTelegramInitData(telegramInitData);
+    if (auth) {
+      authenticatedUserId = `tg:${auth.id}`;
+    } else {
+      const session = verifySessionToken(extractSessionToken(req));
+      if (session) authenticatedUserId = session.userId;
+    }
+    if (authenticatedUserId) (req as AuthenticatedRequest).authUserId = authenticatedUserId;
+  } catch {
+    // Invalid credentials are handled by the route's auth middleware.
+  }
+  return authenticatedUserId;
+}
+
+function resolveRateLimitKey(req: Request, scope: RateLimitScope) {
+  const authenticatedUserId = resolveRateLimitIdentity(req);
+  const effectiveScope = authenticatedUserId ? 'user' : scope;
+  const subject = effectiveScope === 'user' && authenticatedUserId
+    ? `user:${authenticatedUserId}`
+    : `ip:${req.ip || 'global'}`;
+  // Keep independent endpoint budgets. Read-side ticket polling must never
+  // consume the budget for a user-initiated deposit or withdrawal.
+  const routeKey = `${req.method}:${req.baseUrl}${req.path}`;
+  return `${effectiveScope}:${subject}:${routeKey}`;
+}
+
+function distributedRateLimitMiddleware(limit: number, windowMs: number, scope: RateLimitScope = 'ip') {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    if (!redisSharedRateLimitEnabled || !isRedisCacheAvailable()) return next();
+    const result = await runRedisCommand<unknown>([
+      'EVAL',
+      REDIS_RATE_LIMIT_SCRIPT,
+      1,
+      redisRateLimitKey(resolveRateLimitKey(req, scope)),
+      windowMs,
+    ]);
+    if (!Array.isArray(result) || typeof result[0] !== 'number') return next();
+    const current = result[0];
+    const remainingMs = typeof result[1] === 'number' ? result[1] : windowMs;
+    if (current > limit) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil(remainingMs / 1000))));
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+    next();
+  };
+}
+
 async function getCachedJson<T>(key: string): Promise<T | null> {
   const serialized = await runRedisCommand<string>(['GET', key]);
   if (!serialized) {
@@ -6579,7 +6649,7 @@ app.get('/api/admin/referrals/payouts.csv', requireAdmin, (req, res) => {
   return res.send(`\uFEFF${header.map(csvCell).join(',')}\n${rows.join('\n')}\n`);
 });
 
-app.post('/api/users/sync', async (req, res) => {
+app.post('/api/users/sync', distributedRateLimitMiddleware(20, 60_000, 'ip'), async (req, res) => {
   const { walletAddress, telegramInitData, startParam } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string; startParam?: string };
   const resolved = resolveCanonicalUserId(req.body, req);
   // An unauthenticated production browser may receive a fresh anonymous
@@ -7241,7 +7311,7 @@ app.get('/api/tournaments/current', (req, res) => {
   });
 });
 
-app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000, 'user'), (req, res) => {
+app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), (req, res) => {
   const userId = (req as AuthenticatedRequest).authUserId!;
   const user = users.get(userId);
   if (!user) return res.status(404).json({ error: 'User not found.' });
@@ -7303,7 +7373,7 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
   return res.json({ success: true, registered: true, tournament: { ...currentTournament, isRegistered: true }, availableTickets: user.availableTickets });
 });
 
-app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60000, 'user'), (req, res) => {
+app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60000, 'user'), distributedRateLimitMiddleware(5, 60_000, 'user'), (req, res) => {
   const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
@@ -7374,7 +7444,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
   return res.json({ success: true, tournament: currentTournament });
 });
 
-app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60000, 'user'), async (req, res) => {
+app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60000, 'user'), distributedRateLimitMiddleware(3, 60_000, 'user'), async (req, res) => {
   const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
@@ -7435,7 +7505,7 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
   });
 });
 
-app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req, res) => {
+app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 60000, 'user'), distributedRateLimitMiddleware(5, 60_000, 'user'), async (req, res) => {
   const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
@@ -7611,11 +7681,11 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
 });
 
 
-app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'));
+app.use('/api/tickets', requireAuth, rateLimitMiddleware(30, 60000, 'user'), distributedRateLimitMiddleware(30, 60_000, 'user'));
 
 ticketingService.registerRoutes(app);
 
-app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
+app.get('/api/admin/withdrawals/:requestId/complete', distributedRateLimitMiddleware(10, 60_000, 'ip'), async (req, res) => {
   const requestId = String(req.params.requestId || '');
   if (!verifyWithdrawalOperatorToken('complete', requestId, req.query.token)) {
     return res.status(403).send('Invalid or expired withdrawal operator link.');
@@ -7654,7 +7724,7 @@ app.get('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
   return res.send(`Withdrawal ${request.id} marked completed. Sent ${request.tonAmount.toFixed(2)} TON to ${request.walletAddress}.`);
 });
 
-app.get('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
+app.get('/api/admin/withdrawals/:requestId/reject', distributedRateLimitMiddleware(10, 60_000, 'ip'), async (req, res) => {
   const requestId = String(req.params.requestId || '');
   if (!verifyWithdrawalOperatorToken('reject', requestId, req.query.token)) {
     return res.status(403).send('Invalid or expired withdrawal operator link.');
@@ -7688,7 +7758,7 @@ app.get('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
   return res.send(`Withdrawal ${request.id} rejected and ${request.ticketAmount.toFixed(2)} TKT refunded.`);
 });
 
-app.post('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
+app.post('/api/admin/withdrawals/:requestId/complete', distributedRateLimitMiddleware(10, 60_000, 'ip'), async (req, res) => {
   const requestId = String(req.params.requestId || '');
   if (!verifyWithdrawalOperatorToken('complete', requestId, req.body?.token)) return res.status(403).send('Invalid or expired withdrawal operator link.');
   const request = withdrawalRequests.get(requestId);
@@ -7705,7 +7775,7 @@ app.post('/api/admin/withdrawals/:requestId/complete', async (req, res) => {
   return res.send(`Withdrawal ${request.id} verified on-chain and marked completed.`);
 });
 
-app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
+app.post('/api/admin/withdrawals/:requestId/reject', distributedRateLimitMiddleware(10, 60_000, 'ip'), async (req, res) => {
   const requestId = String(req.params.requestId || '');
   if (!consumeWithdrawalOperatorToken('reject', requestId, req.body?.token)) return res.status(403).send('Invalid or expired withdrawal operator link.');
   const request = withdrawalRequests.get(requestId);
@@ -7749,7 +7819,7 @@ app.get('/api/admin/users/lookup', requireAuth, rateLimitMiddleware(20, 60000, '
   });
 });
 
-app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), async (req: AuthenticatedRequest, res) => {
   const requesterUser = users.get(getAuthenticatedUserId(req));
   const isAdmin = hasAdminAccess(req);
 
@@ -7787,7 +7857,7 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
   return res.json({ success: true, userId: user.userId, availableTickets: user.availableTickets, heldTickets: user.heldTickets });
 });
 
-app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 60000, 'user'), distributedRateLimitMiddleware(5, 60_000, 'user'), async (req: AuthenticatedRequest, res) => {
   const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
@@ -7799,7 +7869,7 @@ app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 6
   return res.json({ success: true, reconciledCount: count });
 });
 
-app.post('/api/admin/users/restore-balances', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+app.post('/api/admin/users/restore-balances', requireAuth, rateLimitMiddleware(5, 60000, 'user'), distributedRateLimitMiddleware(5, 60_000, 'user'), async (req: AuthenticatedRequest, res) => {
   const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
@@ -8635,8 +8705,8 @@ function startPrivateRoomMatchHelper(room: PrivateRoom, match: ActiveMatch) {
   });
 }
 
-app.post('/api/private-rooms/create', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
-app.get('/api/private-rooms/create-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomCreate);
+app.post('/api/private-rooms/create', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), handlePrivateRoomCreate);
+app.get('/api/private-rooms/create-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), handlePrivateRoomCreate);
 
 // A committed POST response can be lost when Telegram suspends a WebView.
 // The client reconciles the idempotency key through this authenticated read
@@ -8851,10 +8921,10 @@ async function startPrivateRoomWhenFull(room: PrivateRoom, source: 'join' | 'rec
   return { ok: true, status: 'started', match };
 }
 
-app.post('/api/private-rooms/join', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
-app.get('/api/private-rooms/join-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), handlePrivateRoomJoin);
+app.post('/api/private-rooms/join', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), handlePrivateRoomJoin);
+app.get('/api/private-rooms/join-beacon', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), handlePrivateRoomJoin);
 
-app.post('/api/private-rooms/start', requireAuth, rateLimitMiddleware(10, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
+app.post('/api/private-rooms/start', requireAuth, rateLimitMiddleware(10, 60000, 'user'), distributedRateLimitMiddleware(10, 60_000, 'user'), async (req: AuthenticatedRequest, res) => {
   const { roomCode } = req.body as { roomCode: string; userId?: string };
   const userId = getPrivateRoomUserId(req, req.body as Record<string, unknown>);
   if (!userId) {

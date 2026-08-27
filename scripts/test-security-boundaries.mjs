@@ -25,6 +25,11 @@ assert.match(server, /authenticated\.authSource === 'telegram' && authenticated\
 assert.doesNotMatch(server, /requesterId === `tg:\$\{WITHDRAWAL_OPERATOR_CHAT_ID\}`/, 'Telegram IDs must not grant administrator authority');
 assert.doesNotMatch(server, /userId === `tg:\$\{WITHDRAWAL_OPERATOR_CHAT_ID\}`/, 'Telegram IDs must not grant administrator authority');
 assert.match(server, /app\.get\('\/api\/debug\/users', restrictProductionDebug/, 'production diagnostics must require administrator access');
+assert.match(server, /const redisSharedRateLimitEnabled = redisCacheEnabled/, 'shared rate limits must be opt-in only when Redis is configured');
+assert.match(server, /function distributedRateLimitMiddleware\(/, 'sensitive production routes must support a shared Redis rate limit');
+assert.match(server, /'EVAL',\s*REDIS_RATE_LIMIT_SCRIPT/, 'shared rate-limit increments must be atomic');
+assert.match(server, /app\.post\('\/api\/users\/sync', distributedRateLimitMiddleware\(20, 60_000, 'ip'\)/, 'public session bootstrap must have a shared-IP limit');
+assert.match(server, /app\.use\('\/api\/tickets', requireAuth, rateLimitMiddleware\(30, 60000, 'user'\), distributedRateLimitMiddleware\(30, 60_000, 'user'\)\)/, 'ticket routes must have a shared per-user limit');
 
 // Do not retain a money-app bearer token across browser restarts.
 assert.match(apiClient, /sessionStorage\.setItem\('redoapp_tab_session_token', token\)/, 'session token must be tab-scoped');
