@@ -2687,6 +2687,7 @@ async function performTelegramNotificationFlush() {
         body: JSON.stringify({
           chat_id: item.telegramChatId,
           text: item.message,
+          parse_mode: 'HTML',
           disable_web_page_preview: true,
           ...(item.replyMarkup ? { reply_markup: item.replyMarkup } : {}),
         }),
@@ -5869,6 +5870,71 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
   schedulePersist({ deleteMatchId: match.matchId });
 }
 
+function prepareTournamentConnectionLobby(match: ActiveMatch) {
+  // A bracket table is not live merely because its server state was created.
+  // Each human must reach the table, or become a shadow player when the
+  // connection deadline expires.  Keeping every game-state representation in
+  // sync prevents Poker from treating an absent player as online forever.
+  match.playStartedAt = null;
+  match.connectionDeadlineAt = Date.now() + 30_000;
+  match.gameState.turnStartedAt = undefined;
+  match.gameState.players.forEach((player) => {
+    if (!player.isAi) {
+      player.hasConnected = false;
+      player.isConnected = false;
+      player.lastSeenAt = undefined;
+      player.disconnectedAt = null;
+    }
+  });
+  match.pokerGameState?.players.forEach((player) => {
+    if (!player.isAi) {
+      player.hasConnected = false;
+      player.isConnected = false;
+      player.lastSeenAt = undefined;
+      player.disconnectedAt = null;
+    }
+  });
+  match.blackjackGameState?.players.forEach((player) => {
+    if (!player.isAi) {
+      player.hasConnected = false;
+      player.isConnected = false;
+      player.lastSeenAt = undefined;
+      player.disconnectedAt = null;
+    }
+  });
+  if (match.pokerGameState) match.pokerGameState.turnStartedAt = undefined;
+  if (match.blackjackGameState) match.blackjackGameState.turnStartedAt = undefined;
+}
+
+function refreshPokerTournamentPresence(match: ActiveMatch, now: number) {
+  if (!match.matchId.startsWith('tourn-') || !match.pokerGameState) return;
+  const subscribers = matchSubscribers.get(match.matchId);
+  const hasLiveStream = (userId: string) => Boolean(subscribers && Array.from(subscribers).some(
+    (response) => isSameUser(response.locals.userId, userId)
+  ));
+  let changed = false;
+  match.pokerGameState.players.forEach((player) => {
+    if (player.isAi || player.userId.startsWith('bot_')) return;
+    const connected = hasLiveStream(player.userId)
+      || Boolean(player.lastSeenAt && now - player.lastSeenAt < 20_000);
+    if (player.isConnected === connected) return;
+    player.isConnected = connected;
+    player.disconnectedAt = connected ? null : now;
+    changed = true;
+    match.pokerGameState!.logs = [
+      createServerLog(
+        connected ? `🔌 ${player.username} reconnected.` : `🔌 ${player.username} is now in shadow mode.`,
+        'info',
+      ),
+      ...match.pokerGameState!.logs,
+    ].slice(0, 50);
+  });
+  if (changed) {
+    schedulePersist({ matchId: match.matchId });
+    broadcastMatch(match.matchId);
+  }
+}
+
 function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   ensureMatchLifecycle(match);
   if (match.mode !== 'pvp' || match.playStartedAt) return true;
@@ -5907,6 +5973,20 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
   if (deadlineReached && !allConnected) {
     if (isTournament) {
       match.gameState.players.forEach((player) => {
+        if (!player.hasConnected) {
+          player.isAi = false;
+          player.isConnected = false;
+          player.disconnectedAt = now;
+        }
+      });
+      match.pokerGameState?.players.forEach((player) => {
+        if (!player.hasConnected) {
+          player.isAi = false;
+          player.isConnected = false;
+          player.disconnectedAt = now;
+        }
+      });
+      match.blackjackGameState?.players.forEach((player) => {
         if (!player.hasConnected) {
           player.isAi = false;
           player.isConnected = false;
@@ -5984,6 +6064,10 @@ function maybeStartPublicMatch(match: ActiveMatch, now = Date.now()) {
     return false;
   }
   match.playStartedAt = now;
+  if (isTournament && currentTournament?.status === 'in_progress') {
+    const tournamentMatch = currentTournament.matches.find((entry) => entry.matchId === match.matchId);
+    if (tournamentMatch) tournamentMatch.status = 'in_progress';
+  }
   match.gameState.turnStartedAt = now;
   if (match.blackjackGameState) {
     match.blackjackGameState.turnStartedAt = now;
@@ -7158,7 +7242,7 @@ function evaluateTournamentProgression() {
       tableIndex: idx + 1,
       playerIds: tablePlayers,
       winnerId: null,
-      status: 'in_progress',
+      status: 'pending',
       waitingTimerEndAt,
     };
     currentTournament!.matches.push(newMatch);
@@ -7196,8 +7280,7 @@ function evaluateTournamentProgression() {
       pokerGameState: gameType === 'poker' ? createInitialPokerMatchState(queuePlayers, 0) : undefined,
     };
 
-    if (activeMatch.blackjackGameState) activeMatch.blackjackGameState.turnStartedAt = Date.now();
-    if (activeMatch.pokerGameState) activeMatch.pokerGameState.turnStartedAt = Date.now();
+    prepareTournamentConnectionLobby(activeMatch);
 
     activeMatches.set(matchId, activeMatch);
 
@@ -7285,8 +7368,7 @@ function processTournamentTick() {
         pokerGameState: gameType === 'poker' ? createInitialPokerMatchState(queuePlayers, 0) : undefined,
       };
 
-      if (activeMatch.blackjackGameState) activeMatch.blackjackGameState.turnStartedAt = Date.now();
-      if (activeMatch.pokerGameState) activeMatch.pokerGameState.turnStartedAt = Date.now();
+      prepareTournamentConnectionLobby(activeMatch);
 
       activeMatches.set(matchId, activeMatch);
 
@@ -7313,7 +7395,7 @@ function processTournamentTick() {
         tableIndex: idx + 1,
         playerIds: tablePlayers,
         winnerId: null,
-        status: 'in_progress' as const,
+        status: 'pending' as const,
       };
     });
 
@@ -9478,11 +9560,22 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
       if (match) {
         if (match.creatorUserId !== 'casino') {
           const player = match.gameState.players.find(p => isSameUser(p.userId, userId));
+          const pokerPlayer = match.pokerGameState?.players.find(p => isSameUser(p.userId, userId));
           const hasFreshHeartbeat = !!player?.lastSeenAt && Date.now() - player.lastSeenAt < 10_000;
           if (player && player.isConnected !== false && !hasFreshHeartbeat) {
             player.isConnected = false;
             player.disconnectedAt = Date.now();
             match.gameState.logs = [createServerLog(`🔌 ${player.username} disconnected.`, 'info'), ...match.gameState.logs].slice(0, 50);
+            schedulePersist({ matchId });
+            broadcastMatch(matchId);
+          }
+          if (pokerPlayer && pokerPlayer.isConnected !== false && !hasFreshHeartbeat) {
+            pokerPlayer.isConnected = false;
+            pokerPlayer.disconnectedAt = Date.now();
+            match.pokerGameState!.logs = [
+              createServerLog(`🔌 ${pokerPlayer.username} is now in shadow mode.`, 'info'),
+              ...match.pokerGameState!.logs,
+            ].slice(0, 50);
             schedulePersist({ matchId });
             broadcastMatch(matchId);
           }
@@ -9513,6 +9606,13 @@ app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, r
       if (activeMatch.creatorUserId === 'casino' && Number.isFinite(expectedStateVersion)
         && Number(expectedStateVersion) !== (activeMatch.stateVersion || 0)) {
         const error: any = new Error('Table state changed. Refreshing the current turn.');
+        error.statusCode = 409;
+        error.currentState = buildPerspectiveState(activeMatch, userId);
+        throw error;
+      }
+      markMatchPlayerConnected(activeMatch, userId);
+      if (activeMatch.matchId.startsWith('tourn-') && !activeMatch.playStartedAt) {
+        const error: any = new Error('Tournament table is waiting for players to connect.');
         error.statusCode = 409;
         error.currentState = buildPerspectiveState(activeMatch, userId);
         throw error;
@@ -9946,6 +10046,8 @@ setInterval(() => {
       if (!match.playStartedAt) {
         continue;
       }
+
+      refreshPokerTournamentPresence(match, now);
 
       // Check auto-next-hand for ended stage
       if (pk.stage === 'ended') {
