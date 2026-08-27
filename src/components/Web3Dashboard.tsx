@@ -18,7 +18,7 @@ import {
 import { sound } from '../utils/sound';
 import { Avatar } from './Avatars';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
-import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal, isSameUser } from '../utils/api';
+import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setBridgeToken, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal, isSameUser } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -3013,6 +3013,7 @@ export function Web3Dashboard({
     apiRequest<BootstrapProfile & {
       telegramInitDataValid: boolean;
       sessionToken: string | null;
+      bridgeToken: string | null;
     }>('/api/users/sync', {
       method: 'POST',
       retryOnNetworkError: true,
@@ -3029,6 +3030,7 @@ export function Web3Dashboard({
         throw new Error('The game server did not issue a session.');
       }
       setSessionToken(synced.sessionToken);
+      setBridgeToken(synced.bridgeToken);
       if (telegramInitData) {
         localStorage.setItem('redoapp_current_user_id', synced.userId);
       } else {

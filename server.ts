@@ -111,29 +111,35 @@ const ALLOWED_ORIGINS = [
   'https://redoapp.onrender.com',
   'https://redoapp-backend.onrender.com',
   'https://yoapp-backend.onrender.com',
+  'https://t.me',
+  'https://web.telegram.org',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ];
 
+function isAllowedCorsOrigin(origin: string | undefined) {
+  // Native Telegram WebViews can send no Origin or the literal "null". The
+  // API uses explicit bearer headers rather than cookies, so this exception
+  // does not authorize a cross-site ambient session.
+  if (!origin || origin === 'null' || ALLOWED_ORIGINS.includes(origin)) return true;
+  if (process.env.NODE_ENV === 'production') return false;
+
+  try {
+    const hostname = new URL(origin).hostname;
+    return hostname === 'localhost' || hostname === '127.0.0.1'
+      || hostname.startsWith('192.168.') || hostname.startsWith('10.')
+      || hostname.startsWith('172.') || hostname.endsWith('.local');
+  } catch {
+    return false;
+  }
+}
+
 // Authentication is token-based and the API does not use cookies.
-// Reflecting verified origins or null (Telegram iOS WebViews) protects against arbitrary cross-origin site calls.
+// Production accepts only the explicitly configured web origins and Telegram's
+// origin-less WebViews; substring/suffix checks would trust attacker domains.
 app.use(cors({
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    if (
-      !origin ||
-      origin === 'null' ||
-      ALLOWED_ORIGINS.includes(origin) ||
-      origin.includes('localhost') ||
-      origin.includes('127.0.0.1') ||
-      origin.includes('192.168.') ||
-      origin.includes('10.') ||
-      origin.includes('172.') ||
-      origin.includes('.local') ||
-      origin.endsWith('.onrender.com') ||
-      origin.endsWith('.redoapp.org') ||
-      origin.endsWith('.redoapp.website') ||
-      origin.startsWith('https://t.me')
-    ) {
+    if (isAllowedCorsOrigin(origin)) {
       return callback(null, true);
     }
     callback(new Error('CORS request blocked by origin security policy.'));
@@ -261,6 +267,7 @@ function validatePayload(body: any, schema: Record<string, string>) {
 
 interface AuthenticatedRequest extends Request {
   authUserId?: string;
+  authSource?: 'telegram' | 'session' | 'development';
 }
 
 type MatchMode = 'pvp' | 'private';
@@ -2626,6 +2633,12 @@ interface SessionTokenPayload {
   issuedAt: number;
 }
 
+interface BridgeTokenPayload {
+  userId: string;
+  expiresAt: number;
+  purpose: 'telegram-webview-bridge';
+}
+
 function createSessionToken(userId: string) {
   const payload: SessionTokenPayload = {
     userId,
@@ -2658,6 +2671,56 @@ function verifySessionToken(token: string | null | undefined): SessionTokenPaylo
   }
 }
 
+function createBridgeToken(userId: string) {
+  const payload: BridgeTokenPayload = {
+    userId,
+    expiresAt: Date.now() + 15 * 60 * 1000,
+    purpose: 'telegram-webview-bridge',
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const signature = crypto.createHmac('sha256', APP_SESSION_SECRET).update(`bridge.${encodedPayload}`).digest('base64url');
+  return `${encodedPayload}.${signature}`;
+}
+
+function verifyBridgeToken(token: string | null | undefined): BridgeTokenPayload | null {
+  if (!token) return null;
+  const [encodedPayload, providedSignature] = token.split('.');
+  if (!encodedPayload || !providedSignature) return null;
+  const expectedSignature = crypto.createHmac('sha256', APP_SESSION_SECRET).update(`bridge.${encodedPayload}`).digest('base64url');
+  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+  const providedBuffer = Buffer.from(providedSignature, 'utf8');
+  if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8')) as BridgeTokenPayload;
+    return payload.purpose === 'telegram-webview-bridge' && payload.userId && Number.isFinite(payload.expiresAt) && payload.expiresAt > Date.now()
+      ? payload
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+// EventSource and a few Telegram WebView recovery bridges cannot attach an
+// Authorization header. Query credentials are therefore accepted only on this
+// narrow, GET-only allowlist; they are never a general API bearer mechanism.
+function isQueryCredentialBridgeRequest(req: Request) {
+  if (req.method !== 'GET') return false;
+  const path = req.path;
+  return path === '/api/xp/daily-checkin-status'
+    || path === '/api/xp/daily-checkin-beacon'
+    || path === '/api/tickets/deposit-intent-beacon'
+    || path === '/api/private-rooms/create-beacon'
+    || path === '/api/private-rooms/join-beacon'
+    || path === '/api/matchmaker/join-beacon'
+    || path === '/api/matchmaker/status-beacon'
+    || path === '/api/matchmaker/wait-beacon'
+    || path === '/api/matchmaker/watch'
+    || path.startsWith('/api/matches/stream/')
+    || path.startsWith('/api/matches/state-beacon/')
+    || path.startsWith('/api/matchmaker/match-state/')
+    || path.startsWith('/api/private-rooms/stream/');
+}
+
 function extractSessionToken(req: Request) {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
@@ -2667,9 +2730,6 @@ function extractSessionToken(req: Request) {
   if (typeof xSessionToken === 'string') {
     return xSessionToken;
   }
-  if (typeof req.query.sessionToken === 'string') {
-    return req.query.sessionToken;
-  }
   return null;
 }
 
@@ -2677,9 +2737,6 @@ function extractTelegramInitData(req: Request) {
   const headerValue = req.headers['x-telegram-init-data'];
   if (typeof headerValue === 'string' && headerValue) {
     return headerValue;
-  }
-  if (typeof req.query.telegramInitData === 'string' && req.query.telegramInitData) {
-    return req.query.telegramInitData;
   }
   const body = req.body as { telegramInitData?: string } | undefined;
   if (typeof body?.telegramInitData === 'string' && body.telegramInitData) {
@@ -2696,6 +2753,7 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
   const auth = verifyTelegramInitData(telegramInitData);
   if (auth) {
     req.authUserId = `tg:${auth.id}`;
+    req.authSource = 'telegram';
     const user = getUser(req.authUserId);
     applyTelegramAuth(user, auth);
     return next();
@@ -2704,16 +2762,26 @@ function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunctio
   const session = verifySessionToken(sessionToken);
   if (session) {
     req.authUserId = session.userId;
+    req.authSource = 'session';
     return next();
+  }
+  if (isQueryCredentialBridgeRequest(req) && typeof req.query.bridgeToken === 'string') {
+    const bridge = verifyBridgeToken(req.query.bridgeToken);
+    if (bridge) {
+      req.authUserId = bridge.userId;
+      req.authSource = 'session';
+      return next();
+    }
   }
   const host = req.hostname || '';
   const isLocalOrLan = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.') || host.endsWith('.local');
   // Header/body identities exist solely for the isolated development server.
   // Accepting them in production lets any caller impersonate a room host.
-  if (isLocalOrLan) {
+  if (process.env.NODE_ENV !== 'production' && isLocalOrLan) {
     const fallbackId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || (req.body?.userId as string);
     if (fallbackId && typeof fallbackId === 'string' && fallbackId.trim()) {
       req.authUserId = fallbackId.trim();
+      req.authSource = 'development';
       return next();
     }
   }
@@ -2728,6 +2796,7 @@ function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFuncti
   const auth = verifyTelegramInitData(telegramInitData);
   if (auth) {
     req.authUserId = `tg:${auth.id}`;
+    req.authSource = 'telegram';
     const user = getUser(req.authUserId);
     applyTelegramAuth(user, auth);
     return next();
@@ -2736,27 +2805,50 @@ function optionalAuth(req: AuthenticatedRequest, res: Response, next: NextFuncti
   const session = verifySessionToken(sessionToken);
   if (session) {
     req.authUserId = session.userId;
+    req.authSource = 'session';
     return next();
   }
   const host = req.hostname || '';
   const isLocalOrLan = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.') || host.endsWith('.local');
-  if (isLocalOrLan) {
+  if (process.env.NODE_ENV !== 'production' && isLocalOrLan) {
     const fallbackId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || (req.body?.userId as string);
     if (fallbackId && typeof fallbackId === 'string' && fallbackId.trim()) {
       req.authUserId = fallbackId.trim();
+      req.authSource = 'development';
       return next();
     }
   }
   return next();
 }
 
+function hasAdminApiKey(req: Request) {
+  return Boolean(ADMIN_API_KEY) && (
+    req.headers['x-admin-api-key'] === ADMIN_API_KEY ||
+    req.headers['x-admin-key'] === ADMIN_API_KEY
+  );
+}
+
+function hasAdminAccess(req: Request) {
+  const authenticated = req as AuthenticatedRequest;
+  // The operator's Telegram ID is authority only when it was established by
+  // a fresh, server-verified Telegram initData signature; a bearer token or
+  // a client-provided profile field never grants the role.
+  return hasAdminApiKey(req)
+    || (authenticated.authSource === 'telegram' && authenticated.authUserId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}`);
+}
+
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!ADMIN_API_KEY) {
     return res.status(503).json({ error: 'Admin API key is not configured.' });
   }
-  if (req.headers['x-admin-api-key'] !== ADMIN_API_KEY) {
+  if (!hasAdminApiKey(req)) {
     return res.status(403).json({ error: 'Admin authorization required.' });
   }
+  next();
+}
+
+function restrictProductionDebug(req: Request, res: Response, next: NextFunction) {
+  if (process.env.NODE_ENV === 'production') return requireAdmin(req, res, next);
   next();
 }
 
@@ -2816,7 +2908,14 @@ function resolveCanonicalUserId(
       };
     }
   }
-  const fallbackUserId = body.userId || (req ? (req.headers['x-user-id'] as string) : '') || '';
+  const host = req?.hostname || '';
+  const isLocalOrLan = host === 'localhost' || host === '127.0.0.1' || host === '::1'
+    || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.') || host.endsWith('.local');
+  // Identity fields from a browser are never authentication. Keep the legacy
+  // fallback only for local development and isolated integration tests.
+  const fallbackUserId = process.env.NODE_ENV !== 'production' && isLocalOrLan
+    ? body.userId || (req ? (req.headers['x-user-id'] as string) : '') || ''
+    : '';
   return {
     userId: fallbackUserId,
     auth: null,
@@ -6360,7 +6459,7 @@ app.get('/api/admin/health', requireAdmin, (req, res) => {
   res.json(buildOperationalHealthStatus());
 });
 
-app.get('/api/debug/matchmaker', (_req, res) => {
+app.get('/api/debug/matchmaker', restrictProductionDebug, (_req, res) => {
   const now = Date.now();
   for (const [matchId, match] of activeMatches.entries()) {
     const isUnstartedExpired = match.mode === 'pvp' && !match.playStartedAt && (now - match.createdAt > 65_000);
@@ -6402,7 +6501,7 @@ app.get('/api/debug/matchmaker', (_req, res) => {
   });
 });
 
-app.get('/api/debug/users', (req, res) => {
+app.get('/api/debug/users', restrictProductionDebug, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const q = typeof req.query.q === 'string' ? req.query.q.toLowerCase().trim() : '';
   let userList = Array.from(users.values())
@@ -6483,17 +6582,18 @@ app.get('/api/admin/referrals/payouts.csv', requireAdmin, (req, res) => {
 app.post('/api/users/sync', async (req, res) => {
   const { walletAddress, telegramInitData, startParam } = req.body as { userId?: string; walletAddress?: string; telegramInitData?: string; startParam?: string };
   const resolved = resolveCanonicalUserId(req.body, req);
-  if (!resolved.userId) {
-    return res.status(400).json({ error: 'Missing userId.' });
-  }
-  const canIssueSessionToken = !!resolved.auth || resolved.isSessionFallback || resolved.userId.startsWith('guest:') || resolved.userId.startsWith('guest_') || Boolean(resolved.userId);
-  const user = getUser(resolved.userId, walletAddress);
+  // An unauthenticated production browser may receive a fresh anonymous
+  // account, but it may never choose the account identity itself.
+  const userId = resolved.userId || `guest:${crypto.randomUUID()}`;
+  const canIssueSessionToken = Boolean(resolved.auth || resolved.isSessionFallback || userId.startsWith('guest:'));
+  const user = getUser(userId, walletAddress);
   if (resolved.auth) {
     applyTelegramAuth(user, resolved.auth);
   }
   // In production the referral parameter is part of Telegram's signed
   // initData. Do not let a client replace it with an arbitrary inviter code.
-  const trustedStartParam = resolved.auth?.start_param || startParam || undefined;
+  const trustedStartParam = resolved.auth?.start_param
+    || (process.env.NODE_ENV !== 'production' ? startParam || undefined : undefined);
   assignReferralIfNeeded(user, trustedStartParam);
   try {
     // The referral edge must be durable before the Mini App treats the sync
@@ -6505,6 +6605,7 @@ app.post('/api/users/sync', async (req, res) => {
   return res.json({
     telegramInitDataValid: !!resolved.auth,
     sessionToken: canIssueSessionToken ? createSessionToken(user.userId) : null,
+    bridgeToken: canIssueSessionToken ? createBridgeToken(user.userId) : null,
     ...buildBootstrapProfileResponse(user),
   });
 });
@@ -7203,12 +7304,7 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
 });
 
 app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60000, 'user'), (req, res) => {
-  const userId = (req as AuthenticatedRequest).authUserId!;
-  const user = users.get(userId);
-  const username = (user?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });
@@ -7279,12 +7375,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
 });
 
 app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60000, 'user'), async (req, res) => {
-  const userId = (req as AuthenticatedRequest).authUserId!;
-  const user = users.get(userId);
-  const username = (user?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });
@@ -7345,16 +7436,14 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
 });
 
 app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req, res) => {
-  const userId = (req as AuthenticatedRequest).authUserId!;
-  const user = users.get(userId);
-  const username = (user?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    userId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });
   }
+
+  const userId = (req as AuthenticatedRequest).authUserId!;
+  const user = users.get(userId);
 
   const { title, description, gameType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired, playerCount } = req.body || {};
 
@@ -7631,13 +7720,7 @@ app.post('/api/admin/withdrawals/:requestId/reject', async (req, res) => {
 });
 
 app.get('/api/admin/users/lookup', requireAuth, rateLimitMiddleware(20, 60000, 'user'), (req: AuthenticatedRequest, res) => {
-  const requesterId = getAuthenticatedUserId(req);
-  const requesterUser = users.get(requesterId);
-  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
-    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });
@@ -7667,13 +7750,8 @@ app.get('/api/admin/users/lookup', requireAuth, rateLimitMiddleware(20, 60000, '
 });
 
 app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
-  const requesterId = getAuthenticatedUserId(req);
-  const requesterUser = users.get(requesterId);
-  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
-    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const requesterUser = users.get(getAuthenticatedUserId(req));
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });
@@ -7710,13 +7788,7 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
 });
 
 app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
-  const requesterId = getAuthenticatedUserId(req);
-  const requesterUser = users.get(requesterId);
-  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
-    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });
@@ -7728,13 +7800,7 @@ app.post('/api/admin/referrals/reconcile', requireAuth, rateLimitMiddleware(5, 6
 });
 
 app.post('/api/admin/users/restore-balances', requireAuth, rateLimitMiddleware(5, 60000, 'user'), async (req: AuthenticatedRequest, res) => {
-  const requesterId = getAuthenticatedUserId(req);
-  const requesterUser = users.get(requesterId);
-  const username = (requesterUser?.telegramUsername || '').replace(/^@/, '').toLowerCase();
-  const isAdmin = (ADMIN_API_KEY && req.headers['x-admin-key'] === ADMIN_API_KEY) ||
-    (ADMIN_API_KEY && req.headers['x-admin-api-key'] === ADMIN_API_KEY) ||
-    requesterId === `tg:${WITHDRAWAL_OPERATOR_CHAT_ID}` ||
-    username === 'allin_gram';
+  const isAdmin = hasAdminAccess(req);
 
   if (!isAdmin) {
     return res.status(403).json({ error: 'Admin access required.' });

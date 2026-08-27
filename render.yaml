@@ -19,6 +19,18 @@ services:
       - key: VITE_TELEGRAM_APP_SHORT_NAME
         value: app
     headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "base-uri 'self'; object-src 'none'"
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=(), payment=()
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
       - path: /
         name: Cache-Control
         value: no-cache, no-store, must-revalidate

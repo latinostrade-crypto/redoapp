@@ -20,6 +20,8 @@
     "test:blackjack-rules": "tsx scripts/test-blackjack-rules.ts",
     "test:poker-side-pots": "tsx scripts/test-poker-side-pots.ts",
     "test:poker-cashout-referrals": "tsx scripts/test-poker-cashout-referrals.ts",
+    "test:security-boundaries": "node scripts/test-security-boundaries.mjs",
+    "test:production-auth": "node scripts/test-production-auth.mjs",
     "verify:poker-cashout-production": "node scripts/verify-poker-cashout-production.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

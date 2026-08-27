@@ -10,6 +10,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (
   isLocal && typeof window !== 'undefined' ? `http://${window.location.hostname}:10000` : 'https://yoapp-backend.onrender.com'
 );
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
+const BRIDGE_TOKEN_STORAGE_KEY = 'redoapp_tab_bridge_token';
 // Render documents an approximately one-minute wake-up for idle free services.
 const API_REQUEST_TIMEOUT_MS = 90000;
 const API_TRACE_EVENT = 'redoapp:api-trace';
@@ -76,8 +77,11 @@ export function getSessionToken() {
   if (typeof window !== 'undefined') {
     const tabToken = sessionStorage.getItem('redoapp_tab_session_token');
     if (tabToken) return tabToken;
+    // Do not revive legacy persistent bearer tokens. A page reload obtains a
+    // fresh session through signed Telegram initData or an existing tab token.
+    localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
   }
-  return localStorage.getItem(SESSION_TOKEN_STORAGE_KEY) || '';
+  return '';
 }
 
 export function getTelegramInitData() {
@@ -90,12 +94,22 @@ export function setSessionToken(token: string | null | undefined) {
       sessionStorage.removeItem('redoapp_tab_session_token');
     }
     localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+    sessionStorage.removeItem(BRIDGE_TOKEN_STORAGE_KEY);
     return;
   }
   if (typeof window !== 'undefined') {
     sessionStorage.setItem('redoapp_tab_session_token', token);
   }
-  localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, token);
+  // Bearer credentials must not survive browser restarts in localStorage.
+  localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+}
+
+export function setBridgeToken(token: string | null | undefined) {
+  if (!token) {
+    sessionStorage.removeItem(BRIDGE_TOKEN_STORAGE_KEY);
+    return;
+  }
+  sessionStorage.setItem(BRIDGE_TOKEN_STORAGE_KEY, token);
 }
 
 export function normalizeUserIdentifier(value: unknown): string {
@@ -124,8 +138,7 @@ export function buildAuthHeaders(init?: HeadersInit) {
 }
 
 export function buildAuthenticatedUrl(path: string, extraParams?: URLSearchParams | Record<string, string>) {
-  const token = getSessionToken();
-  const telegramInitData = getTelegramInitData();
+  const bridgeToken = sessionStorage.getItem(BRIDGE_TOKEN_STORAGE_KEY) || '';
   const storedUserId = typeof window !== 'undefined'
     ? (sessionStorage.getItem('redoapp_tab_guest_id') || localStorage.getItem('redoapp_current_user_id') || localStorage.getItem('redoapp_guest_user_id') || '')
     : '';
@@ -139,8 +152,7 @@ export function buildAuthenticatedUrl(path: string, extraParams?: URLSearchParam
       });
     }
   }
-  if (telegramInitData && !params.has('telegramInitData')) params.set('telegramInitData', telegramInitData);
-  if (token && !params.has('sessionToken')) params.set('sessionToken', token);
+  if (bridgeToken && !params.has('bridgeToken')) params.set('bridgeToken', bridgeToken);
   if (storedUserId && !params.has('userId')) params.set('userId', storedUserId);
   const isAbsolute = path.startsWith('http://') || path.startsWith('https://');
   const isSameOriginRewrite = path.startsWith('/match-api/');
@@ -186,9 +198,10 @@ function refreshApiSession(signal?: AbortSignal) {
       signal,
     });
     if (!response.ok) return false;
-    const synced = await response.json() as { userId?: string; sessionToken?: string | null };
+    const synced = await response.json() as { userId?: string; sessionToken?: string | null; bridgeToken?: string | null };
     if (!synced.sessionToken) return false;
     setSessionToken(synced.sessionToken);
+    setBridgeToken(synced.bridgeToken);
     if (synced.userId) localStorage.setItem('redoapp_current_user_id', synced.userId);
     return true;
   })().catch(() => false).finally(() => {
@@ -421,4 +434,3 @@ export function cleanErrorMessage(error: unknown, context?: 'bootstrap' | 'match
   
   return cleanMsg || 'Matchmaking request failed. Please try again.';
 }
-
