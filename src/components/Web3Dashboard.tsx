@@ -392,9 +392,15 @@ function createDepositIntentViaBridge(payload: { walletAddress: string; ticketAm
 }
 
 function parseRoomStartParam(rawParam?: string, searchParam?: string): { code: string; gameType?: 'uno' | 'poker' | 'blackjack' } {
-  let raw = (searchParam || rawParam || '').trim();
+  const explicitRoomCode = searchParam?.trim();
+  let raw = (explicitRoomCode || rawParam || '').trim();
   if (!raw) return { code: '' };
-  if (raw.toLowerCase().startsWith('room_')) {
+  const hasRoomPrefix = raw.toLowerCase().startsWith('room_');
+  // Telegram start parameters also carry referrals, tournaments and table
+  // invitations. Only room_* is a private-room launch; a bare code is allowed
+  // exclusively through the explicit ?room= compatibility parameter.
+  if (!explicitRoomCode && !hasRoomPrefix) return { code: '' };
+  if (hasRoomPrefix) {
     raw = raw.slice(5);
   }
   let gameType: 'uno' | 'poker' | 'blackjack' | undefined;
