@@ -114,6 +114,9 @@ export default function App() {
     playerHit: handleBlackjackHit,
     playerStand: handleBlackjackStand,
     playerDoubleDown: handleBlackjackDoubleDown,
+    playerSplit: handleBlackjackSplit,
+    playerSurrender: handleBlackjackSurrender,
+    playerInsurance: handleBlackjackInsurance,
     nextHand: handleNextBlackjackHand,
     resetSession: resetBlackjackSession,
   } = useBlackjackGame({
@@ -796,6 +799,9 @@ export default function App() {
             onHit={handleBlackjackHit}
             onStand={handleBlackjackStand}
             onDoubleDown={handleBlackjackDoubleDown}
+            onSplit={handleBlackjackSplit}
+            onSurrender={handleBlackjackSurrender}
+            onInsurance={handleBlackjackInsurance}
             onNextHand={handleNextBlackjackHand}
             onReturnToLobby={handleReturnFromBlackjack}
           />

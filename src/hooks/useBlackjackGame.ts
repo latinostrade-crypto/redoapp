@@ -151,7 +151,7 @@ export function useBlackjackGame(options?: {
     }
   }, [remoteMatchId, options, applyRemoteState]);
 
-  const sendRemoteBlackjackAction = useCallback(async (action: 'hit' | 'stand' | 'double' | 'next_hand' | 'place_bet', amount?: number) => {
+  const sendRemoteBlackjackAction = useCallback(async (action: 'hit' | 'stand' | 'double' | 'split' | 'surrender' | 'insurance' | 'next_hand' | 'place_bet', amount?: number) => {
     if (!remoteMatchId || remoteActionInFlightRef.current) return;
     remoteActionInFlightRef.current = true;
     try {
@@ -216,7 +216,7 @@ export function useBlackjackGame(options?: {
       const drawNextDealerCard = () => {
         const activePlayers = currentPlayers.filter((p) => !p.eliminated);
         const anyPlayerStanding = activePlayers.some((p) => !p.isBusted);
-        if (anyPlayerStanding && dealerEval.score < 17 && deck.length > 0) {
+        if (anyPlayerStanding && (dealerEval.score < 17 || (dealerEval.score === 17 && dealerEval.isSoft)) && deck.length > 0) {
           const nextCard = deck.pop()!;
           currentDealerCards.push(nextCard);
           dealerEval = evaluateBlackjackHand(currentDealerCards);
@@ -244,29 +244,30 @@ export function useBlackjackGame(options?: {
             let finalChips = p.chips;
             let profit = 0;
 
-            if (p.isBusted) {
-              wonRound = false;
-              profit = -p.bet;
-            } else if (dealerEval.isBusted) {
-              wonRound = true;
-              profit = p.hasBlackjack ? Math.round(p.bet * 1.5) : p.bet;
-              finalChips += (p.bet + profit);
-            } else if (p.hasBlackjack && !dealerEval.hasBlackjack) {
-              wonRound = true;
-              profit = Math.round(p.bet * 1.5);
-              finalChips += (p.bet + profit);
-            } else if (p.score > dealerEval.score) {
-              wonRound = true;
-              profit = p.bet;
-              finalChips += (p.bet + profit);
-            } else if (p.score === dealerEval.score) {
-              wonRound = false;
-              profit = 0;
-              finalChips += p.bet;
-            } else {
-              wonRound = false;
-              profit = -p.bet;
+            const settleHand = (cards: BlackjackCard[], bet: number, status: BlackjackPlayer['status'], natural: boolean) => {
+              const hand = evaluateBlackjackHand(cards);
+              if (status === 'surrendered' || hand.isBusted) return { profit: -bet / (status === 'surrendered' ? 2 : 1), won: false, returned: 0 };
+              if (dealerEval.hasBlackjack && natural) return { profit: 0, won: false, returned: bet };
+              if (dealerEval.hasBlackjack) return { profit: -bet, won: false, returned: 0 };
+              if (natural) return { profit: bet * 1.5, won: true, returned: bet * 2.5 };
+              if (dealerEval.isBusted || hand.score > dealerEval.score) return { profit: bet, won: true, returned: bet * 2 };
+              if (hand.score === dealerEval.score) return { profit: 0, won: false, returned: bet };
+              return { profit: -bet, won: false, returned: 0 };
+            };
+            const primary = settleHand(p.cards, p.bet, p.status, p.hasBlackjack);
+            const split = p.hasSplit && p.splitCards && p.splitBet !== undefined
+              ? settleHand(p.splitCards, p.splitBet, p.splitStatus || 'stood', false)
+              : { profit: 0, won: false, returned: 0 };
+            let insuranceProfit = 0;
+            let insuranceReturn = 0;
+            if (p.isInsured) {
+              const insuranceBet = p.insuranceBet || p.bet / 2;
+              if (dealerEval.hasBlackjack) { insuranceProfit = insuranceBet * 2; insuranceReturn = insuranceBet * 3; }
+              else insuranceProfit = -insuranceBet;
             }
+            wonRound = primary.won || split.won;
+            profit = primary.profit + split.profit + insuranceProfit;
+            finalChips += primary.returned + split.returned + insuranceReturn;
 
             const isOut = finalChips <= 0;
             return {
@@ -394,6 +395,14 @@ export function useBlackjackGame(options?: {
           isBusted: false,
           hasBlackjack: pEval.hasBlackjack,
           status: pEval.hasBlackjack ? ('blackjack' as const) : ('playing' as const),
+          hasSplit: false,
+          splitCards: undefined,
+          splitBet: undefined,
+          splitScore: undefined,
+          splitStatus: undefined,
+          activeHand: 1,
+          isInsured: false,
+          insuranceBet: undefined,
         };
       });
 
@@ -608,23 +617,33 @@ export function useBlackjackGame(options?: {
     const newCard = deck.pop();
     if (!newCard) return;
 
-    const updatedCards = [...currPlayer.cards, newCard];
+    const activeHand = currPlayer.activeHand || 1;
+    const activeCards = activeHand === 2 ? (currPlayer.splitCards || []) : currPlayer.cards;
+    const updatedCards = [...activeCards, newCard];
     const playerEval = evaluateBlackjackHand(updatedCards);
 
     const updatedPlayer: BlackjackPlayer = {
       ...currPlayer,
-      cards: updatedCards,
-      score: playerEval.score,
-      isSoft: playerEval.isSoft,
-      isBusted: playerEval.isBusted,
-      status: playerEval.isBusted ? 'busted' : 'playing',
+      ...(activeHand === 1 ? {
+        cards: updatedCards, score: playerEval.score, isSoft: playerEval.isSoft,
+        isBusted: playerEval.isBusted, status: playerEval.isBusted ? 'busted' as const : 'playing' as const,
+      } : {
+        splitCards: updatedCards, splitScore: playerEval.score, splitIsSoft: playerEval.isSoft,
+        splitIsBusted: playerEval.isBusted, splitStatus: playerEval.isBusted ? 'busted' as const : 'playing' as const,
+      }),
     };
 
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
 
     if (playerEval.isBusted || playerEval.score === 21) {
-      advanceToNextTurn(nextPlayers, currIdx + 1);
+      if (activeHand === 1 && updatedPlayer.hasSplit && updatedPlayer.splitStatus === 'playing') {
+        nextPlayers[currIdx] = { ...updatedPlayer, status: playerEval.isBusted ? 'busted' : 'stood', activeHand: 2 };
+        setGameState((prev) => ({ ...prev, players: nextPlayers, turnTimeLeft: TURN_DURATION_SEC }));
+        setTurnTimeLeft(TURN_DURATION_SEC);
+      } else {
+        advanceToNextTurn(nextPlayers, currIdx + 1);
+      }
     } else {
       setGameState((prev) => ({
         ...prev,
@@ -651,14 +670,20 @@ export function useBlackjackGame(options?: {
     const currPlayer = gameState.players[currIdx];
     if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.eliminated) return;
 
-    const updatedPlayer: BlackjackPlayer = {
-      ...currPlayer,
-      status: 'stood',
-    };
+    const activeHand = currPlayer.activeHand || 1;
+    const updatedPlayer: BlackjackPlayer = activeHand === 1
+      ? { ...currPlayer, status: 'stood' }
+      : { ...currPlayer, splitStatus: 'stood' };
 
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
-    advanceToNextTurn(nextPlayers, currIdx + 1);
+    if (activeHand === 1 && updatedPlayer.hasSplit && updatedPlayer.splitStatus === 'playing') {
+      nextPlayers[currIdx] = { ...updatedPlayer, activeHand: 2 };
+      setGameState((prev) => ({ ...prev, players: nextPlayers, turnTimeLeft: TURN_DURATION_SEC }));
+      setTurnTimeLeft(TURN_DURATION_SEC);
+    } else {
+      advanceToNextTurn(nextPlayers, currIdx + 1);
+    }
   }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, sendRemoteBlackjackAction]);
 
   /**
@@ -675,31 +700,109 @@ export function useBlackjackGame(options?: {
     // Offline mode
     const currIdx = gameState.currentPlayerIndex;
     const currPlayer = gameState.players[currIdx];
-    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || currPlayer.cards.length !== 2 || currPlayer.eliminated) return;
+    const activeHand = currPlayer?.activeHand || 1;
+    const activeCards = activeHand === 2 ? (currPlayer?.splitCards || []) : (currPlayer?.cards || []);
+    const activeBet = activeHand === 2 ? (currPlayer?.splitBet || 0) : (currPlayer?.bet || 0);
+    if (!currPlayer || gameState.stage !== 'player_turn' || gameState.isDealing || activeCards.length !== 2 || currPlayer.eliminated || currPlayer.chips < activeBet) return;
 
-    const additionalBet = Math.min(currPlayer.bet, currPlayer.chips);
+    const additionalBet = activeBet;
     const deck = deckRef.current;
     const newCard = deck.pop();
     if (!newCard) return;
 
-    const updatedCards = [...currPlayer.cards, newCard];
+    const updatedCards = [...activeCards, newCard];
     const playerEval = evaluateBlackjackHand(updatedCards);
 
     const updatedPlayer: BlackjackPlayer = {
       ...currPlayer,
       chips: currPlayer.chips - additionalBet,
-      bet: currPlayer.bet + additionalBet,
-      cards: updatedCards,
-      score: playerEval.score,
-      isSoft: playerEval.isSoft,
-      isBusted: playerEval.isBusted,
-      status: playerEval.isBusted ? 'busted' : 'stood',
+      ...(activeHand === 1 ? {
+        bet: currPlayer.bet + additionalBet, cards: updatedCards, score: playerEval.score,
+        isSoft: playerEval.isSoft, isBusted: playerEval.isBusted, status: playerEval.isBusted ? 'busted' as const : 'stood' as const,
+      } : {
+        splitBet: (currPlayer.splitBet || 0) + additionalBet, splitCards: updatedCards,
+        splitScore: playerEval.score, splitIsSoft: playerEval.isSoft, splitIsBusted: playerEval.isBusted,
+        splitStatus: playerEval.isBusted ? 'busted' as const : 'stood' as const,
+      }),
     };
 
     const nextPlayers = [...gameState.players];
     nextPlayers[currIdx] = updatedPlayer;
-    advanceToNextTurn(nextPlayers, currIdx + 1);
+    if (activeHand === 1 && updatedPlayer.hasSplit && updatedPlayer.splitStatus === 'playing') {
+      nextPlayers[currIdx] = { ...updatedPlayer, activeHand: 2 };
+      setGameState((prev) => ({ ...prev, players: nextPlayers, turnTimeLeft: TURN_DURATION_SEC }));
+      setTurnTimeLeft(TURN_DURATION_SEC);
+    } else {
+      advanceToNextTurn(nextPlayers, currIdx + 1);
+    }
   }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId, sendRemoteBlackjackAction]);
+
+  const playerSplit = useCallback(async () => {
+    if (remoteMatchId) {
+      await sendRemoteBlackjackAction('split');
+      return;
+    }
+    const index = gameState.currentPlayerIndex;
+    const player = gameState.players[index];
+    if (!player || player.hasSplit || player.cards.length !== 2 || player.cards[0].rank !== player.cards[1].rank || player.chips < player.bet) return;
+    const first = deckRef.current.pop();
+    const second = deckRef.current.pop();
+    if (!first || !second) return;
+    const primaryCards = [player.cards[0], first];
+    const splitCards = [player.cards[1], second];
+    const primary = evaluateBlackjackHand(primaryCards);
+    const split = evaluateBlackjackHand(splitCards);
+    const isAces = player.cards[0].rank === 14;
+    const primaryDone = isAces || primary.score === 21;
+    const splitDone = isAces || split.score === 21;
+    const players = [...gameState.players];
+    players[index] = {
+      ...player, chips: player.chips - player.bet, cards: primaryCards, score: primary.score,
+      isSoft: primary.isSoft, isBusted: primary.isBusted, hasBlackjack: false, status: primaryDone ? 'stood' : 'playing',
+      hasSplit: true, splitCards, splitBet: player.bet, splitScore: split.score,
+      splitIsSoft: split.isSoft, splitIsBusted: split.isBusted, splitHasBlackjack: false,
+      splitStatus: splitDone ? 'stood' : 'playing', activeHand: primaryDone && !splitDone ? 2 : 1,
+    };
+    if (primaryDone && splitDone) advanceToNextTurn(players, index + 1);
+    else setGameState((previous) => ({ ...previous, players, pot: previous.pot + player.bet, turnTimeLeft: TURN_DURATION_SEC }));
+    setTurnTimeLeft(TURN_DURATION_SEC);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.players, remoteMatchId, sendRemoteBlackjackAction]);
+
+  const playerSurrender = useCallback(async () => {
+    if (remoteMatchId) {
+      await sendRemoteBlackjackAction('surrender');
+      return;
+    }
+    const index = gameState.currentPlayerIndex;
+    const player = gameState.players[index];
+    const activeHand = player?.activeHand || 1;
+    const activeCards = activeHand === 2 ? (player?.splitCards || []) : (player?.cards || []);
+    const activeBet = activeHand === 2 ? (player?.splitBet || 0) : (player?.bet || 0);
+    if (!player || activeCards.length !== 2 || player.eliminated) return;
+    const players = [...gameState.players];
+    const updated = activeHand === 1
+      ? { ...player, status: 'surrendered' as const, surrendered: true, chips: player.chips + activeBet / 2 }
+      : { ...player, splitStatus: 'surrendered' as const, chips: player.chips + activeBet / 2 };
+    players[index] = updated;
+    if (activeHand === 1 && updated.hasSplit && updated.splitStatus === 'playing') {
+      players[index] = { ...updated, activeHand: 2 };
+      setGameState((previous) => ({ ...previous, players, turnTimeLeft: TURN_DURATION_SEC }));
+      setTurnTimeLeft(TURN_DURATION_SEC);
+    } else advanceToNextTurn(players, index + 1);
+  }, [advanceToNextTurn, gameState.currentPlayerIndex, gameState.players, remoteMatchId, sendRemoteBlackjackAction]);
+
+  const playerInsurance = useCallback(async () => {
+    if (remoteMatchId) {
+      await sendRemoteBlackjackAction('insurance');
+      return;
+    }
+    const index = gameState.currentPlayerIndex;
+    const player = gameState.players[index];
+    if (!player || player.isInsured || gameState.dealer.cards[0]?.rank !== 14 || player.chips < player.bet / 2) return;
+    const players = [...gameState.players];
+    players[index] = { ...player, isInsured: true, insuranceBet: player.bet / 2, chips: player.chips - player.bet / 2 };
+    setGameState((previous) => ({ ...previous, players }));
+  }, [gameState.currentPlayerIndex, gameState.dealer.cards, gameState.players, remoteMatchId, sendRemoteBlackjackAction]);
 
   /**
    * Start next round keeping chips intact
@@ -938,6 +1041,9 @@ export function useBlackjackGame(options?: {
     playerHit,
     playerStand,
     playerDoubleDown,
+    playerSplit,
+    playerSurrender,
+    playerInsurance,
     nextHand,
     resetSession,
   };

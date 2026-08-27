@@ -217,6 +217,9 @@ export class CasinoManager {
     if (joinedPlayer) {
       joinedPlayer.lastSeenAt = Date.now();
       joinedPlayer.presenceExpiresAt = Date.now() + TABLE_PRESENCE_GRACE_MS;
+      // Cash-out settlement uses this immutable seat value to calculate
+      // realised profit for both Poker and Blackjack referral shares.
+      joinedPlayer.tableBuyInChips = chips;
     }
     table.lastActivityAt = Date.now();
     this.updateCounts(table);

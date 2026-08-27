@@ -333,10 +333,23 @@ interface ServerBlackjackPlayer {
   isSoft: boolean;
   isBusted: boolean;
   hasBlackjack: boolean;
-  status: 'playing' | 'stood' | 'busted' | 'blackjack';
+  status: 'playing' | 'stood' | 'busted' | 'blackjack' | 'surrendered';
   wins: number;
   eliminated?: boolean;
   lastProfit?: number;
+  /** A split is represented as a second independently-settled hand. */
+  hasSplit?: boolean;
+  splitCards?: ServerBlackjackCard[];
+  splitBet?: number;
+  splitScore?: number;
+  splitIsSoft?: boolean;
+  splitIsBusted?: boolean;
+  splitHasBlackjack?: boolean;
+  splitStatus?: 'playing' | 'stood' | 'busted' | 'blackjack' | 'surrendered';
+  activeHand?: 1 | 2;
+  insuranceBet?: number;
+  isInsured?: boolean;
+  tableBuyInChips?: number;
 }
 
 interface ServerBlackjackGameState {
@@ -3060,13 +3073,13 @@ function applyReferralMatchBonus(user: UserState, payoutAmount: number, matchId:
 }
 
 /**
- * Cash poker settles when a player cashes out, not when an endless table
+ * Cash casino tables settle when a player cashes out, not when an endless table
  * changes hands. Referral shares therefore apply only to positive realised
  * profit and are deducted from that profit before chips return to the player.
  * Ledger IDs are based on the leave idempotency key, so a lost HTTP response
  * cannot credit an inviter twice.
  */
-function getCasinoPokerCashoutReferralEntitlements(user: UserState, grossProfit: number) {
+function getCasinoCashoutReferralEntitlements(user: UserState, grossProfit: number) {
   if (grossProfit <= 0 || !user.referredByUserId) return [] as Array<{ recipient: UserState; level: 1 | 2; amount: number }>;
   const recipients = new Map<string, UserState>();
   const candidates: Array<{ userId: string; level: 1 | 2 }> = [];
@@ -3087,17 +3100,17 @@ function getCasinoPokerCashoutReferralEntitlements(user: UserState, grossProfit:
     .filter((entry): entry is { recipient: UserState; level: 1 | 2; amount: number } => entry !== null);
 }
 
-function applyCasinoPokerCashoutReferralBonus(user: UserState, grossProfit: number, cashoutId: string) {
-  const entitlements = getCasinoPokerCashoutReferralEntitlements(user, grossProfit);
+function applyCasinoCashoutReferralBonus(user: UserState, grossProfit: number, cashoutId: string, gameType: 'poker' | 'blackjack') {
+  const entitlements = getCasinoCashoutReferralEntitlements(user, grossProfit);
   for (const { recipient, level, amount } of entitlements) {
-    const ledgerId = `casino-poker-referral:${cashoutId}:l${level}:${recipient.userId}`;
+    const ledgerId = `casino-${gameType}-referral:${cashoutId}:l${level}:${recipient.userId}`;
     const alreadyCredited = user.transactions.some((entry) => entry.id === ledgerId)
       || recipient.transactions.some((entry) => entry.id === ledgerId);
     if (alreadyCredited) continue;
     recipient.casinoChips = round2(recipient.casinoChips + amount);
     createLedgerEntry(recipient, {
       id: ledgerId,
-      event: `L${level} Poker Cash-out Referral Bonus`,
+      event: `L${level} ${gameType === 'blackjack' ? 'Blackjack' : 'Poker'} Cash-out Referral Bonus`,
       value: `+${amount} CHIPS`,
       type: 'referral_bonus',
       amount,
@@ -3105,7 +3118,7 @@ function applyCasinoPokerCashoutReferralBonus(user: UserState, grossProfit: numb
     schedulePersist({ userId: recipient.userId });
     queueTelegramNotification(
       recipient,
-      `L${level} poker referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} realised a poker profit. You received +${amount} chips.`,
+      `L${level} ${gameType} referral bonus: ${user.telegramUsername ? '@' + user.telegramUsername : user.userId} realised a ${gameType} profit. You received +${amount} chips.`,
       { dedupeKey: `${ledgerId}:notice` },
     );
   }
@@ -3579,6 +3592,10 @@ function createInitialBlackjackMatchState(players: QueuePlayer[], stake: number)
       status: evalResult.hasBlackjack ? ('blackjack' as const) : ('playing' as const),
       wins: 0,
       eliminated: false,
+      activeHand: 1,
+      insuranceBet: 0,
+      isInsured: false,
+      tableBuyInChips: 100,
     };
   });
 
@@ -3680,7 +3697,8 @@ function stepServerDealerDraw(match: ActiveMatch) {
   const anyStandingPlayer = activePlayers.some((p) => !p.isBusted);
   let dEval = evaluateServerBlackjackHand(bj.dealer.cards);
 
-  if (anyStandingPlayer && dEval.score < 17 && bj.shoe.length > 0) {
+  // One rule for every server-owned table: dealer hits soft 17 (H17).
+  if (anyStandingPlayer && (dEval.score < 17 || (dEval.score === 17 && dEval.isSoft)) && bj.shoe.length > 0) {
     const card = bj.shoe.pop()!;
     bj.dealer.cards.push(card);
     dEval = evaluateServerBlackjackHand(bj.dealer.cards);
@@ -3718,35 +3736,27 @@ function finalizeServerDealerSequence(match: ActiveMatch) {
   // Evaluate payouts & chips
   const roundWinners: ServerBlackjackPlayer[] = [];
   activePlayers.forEach((p) => {
-    let wonRound = false;
-    let profit = 0;
-    if (p.isBusted) {
-      wonRound = false;
-      profit = -p.bet;
-    } else if (dEval.isBusted) {
-      wonRound = true;
-      profit = p.hasBlackjack ? Math.round(p.bet * 1.5) : p.bet;
-      p.chips += (p.bet + profit);
-    } else if (p.hasBlackjack && !dEval.hasBlackjack) {
-      wonRound = true;
-      profit = Math.round(p.bet * 1.5);
-      p.chips += (p.bet + profit);
-    } else if (p.score > dEval.score) {
-      wonRound = true;
-      profit = p.bet;
-      p.chips += (p.bet + profit);
-    } else if (p.score === dEval.score) {
-      // Tie (push) - bet returned
-      wonRound = false;
-      profit = 0;
-      p.chips += p.bet;
-    } else {
-      wonRound = false;
-      profit = -p.bet;
+    const settleHand = (cards: ServerBlackjackCard[], bet: number, status: ServerBlackjackPlayer['status'], natural: boolean) => {
+      const hand = evaluateServerBlackjackHand(cards);
+      if (status === 'surrendered' || hand.isBusted) return { profit: -bet / (status === 'surrendered' ? 2 : 1), won: false };
+      if (dEval.hasBlackjack && natural) { p.chips += bet; return { profit: 0, won: false }; }
+      if (dEval.hasBlackjack) return { profit: -bet, won: false };
+      if (natural) { const profit = bet * 1.5; p.chips += bet + profit; return { profit, won: true }; }
+      if (dEval.isBusted || hand.score > dEval.score) { p.chips += bet * 2; return { profit: bet, won: true }; }
+      if (hand.score === dEval.score) { p.chips += bet; return { profit: 0, won: false }; }
+      return { profit: -bet, won: false };
+    };
+    const primary = settleHand(p.cards, p.bet, p.status, p.hasBlackjack);
+    const split = p.hasSplit && p.splitCards && p.splitBet !== undefined
+      ? settleHand(p.splitCards, p.splitBet, p.splitStatus || 'stood', false)
+      : { profit: 0, won: false };
+    let insuranceProfit = 0;
+    if (p.isInsured && p.insuranceBet) {
+      if (dEval.hasBlackjack) { p.chips += p.insuranceBet * 3; insuranceProfit = p.insuranceBet * 2; }
+      else insuranceProfit = -p.insuranceBet;
     }
-
-    p.lastProfit = profit;
-    if (wonRound) {
+    p.lastProfit = primary.profit + split.profit + insuranceProfit;
+    if (primary.won || split.won) {
       p.wins += 1;
       roundWinners.push(p);
     }
@@ -3853,6 +3863,17 @@ function startNextBlackjackRound(match: ActiveMatch) {
     p.isBusted = false;
     p.hasBlackjack = pEval.hasBlackjack;
     p.status = pEval.hasBlackjack ? 'blackjack' : 'playing';
+    p.hasSplit = false;
+    p.splitCards = undefined;
+    p.splitBet = undefined;
+    p.splitScore = undefined;
+    p.splitIsSoft = undefined;
+    p.splitIsBusted = undefined;
+    p.splitHasBlackjack = undefined;
+    p.splitStatus = undefined;
+    p.activeHand = 1;
+    p.insuranceBet = 0;
+    p.isInsured = false;
   });
 
   bj.pot = totalPot;
@@ -3932,53 +3953,93 @@ function applyBlackjackAction(match: ActiveMatch, userId: string, action: string
     throw new Error('It is not your turn.');
   }
 
-  if (action === 'blackjack_hit' || action === 'hit') {
+  const currentHand = blackjackHandView(currentPlayer);
+
+  if (action === 'blackjack_split' || action === 'split') {
+    if (currentPlayer.hasSplit || currentPlayer.activeHand === 2 || currentPlayer.cards.length !== 2 || currentPlayer.cards[0].rank !== currentPlayer.cards[1].rank) {
+      throw new Error('Split requires an unsplit pair of equal ranks.');
+    }
+    if (currentPlayer.chips < currentPlayer.bet) throw new Error('Not enough chips to split.');
+    if (bj.shoe.length < 2) bj.shoe = generateServerBlackjackShoe(4);
+    const [first, second] = currentPlayer.cards;
+    currentPlayer.chips -= currentPlayer.bet;
+    currentPlayer.hasSplit = true;
+    currentPlayer.splitBet = currentPlayer.bet;
+    currentPlayer.activeHand = 1;
+    const firstSplit = setBlackjackHandEvaluation(currentPlayer, 1, [first, bj.shoe.pop()!]);
+    const secondSplit = setBlackjackHandEvaluation(currentPlayer, 2, [second, bj.shoe.pop()!]);
+    // A 21 produced after a split is paid as an ordinary 21, never 3:2.
+    currentPlayer.hasBlackjack = false;
+    currentPlayer.splitHasBlackjack = false;
+    if (firstSplit.score === 21) currentPlayer.status = 'stood';
+    if (secondSplit.score === 21) currentPlayer.splitStatus = 'stood';
+    // Split aces receive one card each and must stand; no resplit is supported.
+    if (first.rank === 14) {
+      currentPlayer.status = 'stood';
+      currentPlayer.splitStatus = 'stood';
+      advanceBlackjackTurn(match);
+    } else if (currentPlayer.status !== 'playing') {
+      advanceBlackjackHandOrTurn(match, currentPlayer);
+    }
+    bj.pot += currentPlayer.splitBet;
+    bj.logs = [createServerLog(`${currentPlayer.username} splits a pair.`, 'action'), ...bj.logs].slice(0, 50);
+  } else if (action === 'blackjack_surrender' || action === 'surrender') {
+    if (currentHand.cards.length !== 2) throw new Error('Surrender is only allowed on the first two cards of a hand.');
+    if (currentHand.hand === 1) currentPlayer.status = 'surrendered';
+    else currentPlayer.splitStatus = 'surrendered';
+    currentPlayer.chips += currentHand.bet / 2;
+    bj.logs = [createServerLog(`${currentPlayer.username} surrenders hand ${currentHand.hand}.`, 'action'), ...bj.logs].slice(0, 50);
+    advanceBlackjackHandOrTurn(match, currentPlayer);
+  } else if (action === 'blackjack_insurance' || action === 'insurance') {
+    if (bj.dealer.cards[0]?.rank !== 14) throw new Error('Insurance is only available when the dealer shows an Ace.');
+    if (currentPlayer.isInsured || currentHand.hand !== 1 || currentHand.cards.length !== 2) throw new Error('Insurance is not available for this hand.');
+    const insuranceBet = currentPlayer.bet / 2;
+    if (currentPlayer.chips < insuranceBet) throw new Error('Not enough chips for insurance.');
+    currentPlayer.chips -= insuranceBet;
+    currentPlayer.insuranceBet = insuranceBet;
+    currentPlayer.isInsured = true;
+    bj.logs = [createServerLog(`${currentPlayer.username} takes insurance.`, 'action'), ...bj.logs].slice(0, 50);
+  } else if (action === 'blackjack_hit' || action === 'hit') {
     if (bj.shoe.length === 0) {
       bj.shoe = generateServerBlackjackShoe(4);
     }
     const card = bj.shoe.pop()!;
-    currentPlayer.cards.push(card);
-    const pEval = evaluateServerBlackjackHand(currentPlayer.cards);
-    currentPlayer.score = pEval.score;
-    currentPlayer.isSoft = pEval.isSoft;
-    currentPlayer.isBusted = pEval.isBusted;
+    const cards = [...currentHand.cards, card];
+    const pEval = setBlackjackHandEvaluation(currentPlayer, currentHand.hand, cards);
 
     bj.logs = [createServerLog(`${currentPlayer.username} hit and drew a card (score: ${pEval.score})`, 'draw'), ...bj.logs].slice(0, 50);
 
     if (pEval.isBusted) {
-      currentPlayer.status = 'busted';
+      if (currentHand.hand === 1) currentPlayer.status = 'busted'; else currentPlayer.splitStatus = 'busted';
       bj.logs = [createServerLog(`💥 ${currentPlayer.username} busted with ${pEval.score}!`, 'action'), ...bj.logs].slice(0, 50);
-      advanceBlackjackTurn(match);
+      advanceBlackjackHandOrTurn(match, currentPlayer);
     } else if (pEval.score === 21) {
-      currentPlayer.status = 'stood';
-      advanceBlackjackTurn(match);
+      if (currentHand.hand === 1) currentPlayer.status = 'stood'; else currentPlayer.splitStatus = 'stood';
+      advanceBlackjackHandOrTurn(match, currentPlayer);
     } else {
       bj.turnStartedAt = Date.now();
     }
   } else if (action === 'blackjack_stand' || action === 'stand') {
-    currentPlayer.status = 'stood';
-    bj.logs = [createServerLog(`${currentPlayer.username} stood at score ${currentPlayer.score}`, 'play'), ...bj.logs].slice(0, 50);
-    advanceBlackjackTurn(match);
+    if (currentHand.hand === 1) currentPlayer.status = 'stood'; else currentPlayer.splitStatus = 'stood';
+    bj.logs = [createServerLog(`${currentPlayer.username} stood at score ${currentHand.score}`, 'play'), ...bj.logs].slice(0, 50);
+    advanceBlackjackHandOrTurn(match, currentPlayer);
   } else if (action === 'blackjack_double' || action === 'double') {
-    if (currentPlayer.cards.length !== 2) {
+    if (currentHand.cards.length !== 2) {
       throw new Error('Double down is only allowed on the first 2 cards.');
     }
-    const additionalBet = Math.min(currentPlayer.bet, currentPlayer.chips);
+    if (currentPlayer.chips < currentHand.bet) throw new Error('Not enough chips to double down.');
+    const additionalBet = currentHand.bet;
     currentPlayer.chips -= additionalBet;
-    currentPlayer.bet += additionalBet;
+    if (currentHand.hand === 1) currentPlayer.bet += additionalBet; else currentPlayer.splitBet = (currentPlayer.splitBet || 0) + additionalBet;
     if (bj.shoe.length === 0) {
       bj.shoe = generateServerBlackjackShoe(4);
     }
     const card = bj.shoe.pop()!;
-    currentPlayer.cards.push(card);
-    const pEval = evaluateServerBlackjackHand(currentPlayer.cards);
-    currentPlayer.score = pEval.score;
-    currentPlayer.isSoft = pEval.isSoft;
-    currentPlayer.isBusted = pEval.isBusted;
-    currentPlayer.status = pEval.isBusted ? 'busted' : 'stood';
+    const evaluation = evaluateServerBlackjackHand([...currentHand.cards, card]);
+    const pEval = setBlackjackHandEvaluation(currentPlayer, currentHand.hand, [...currentHand.cards, card], evaluation.isBusted ? 'busted' : 'stood');
 
     bj.logs = [createServerLog(`${currentPlayer.username} doubled down to ${currentPlayer.bet} chips! (score: ${pEval.score})`, 'action'), ...bj.logs].slice(0, 50);
-    advanceBlackjackTurn(match);
+    advanceBlackjackHandOrTurn(match, currentPlayer);
   } else {
     throw new Error(`Unsupported blackjack action: ${action}`);
   }
@@ -4411,6 +4472,42 @@ function checkPokerMatchChampion(match: ActiveMatch) {
   } else {
     pk.nextRoundStartsAt = Date.now() + 5000;
   }
+}
+
+function blackjackHandView(player: ServerBlackjackPlayer) {
+  const second = player.activeHand === 2;
+  return second ? {
+    cards: player.splitCards || [], bet: player.splitBet || 0, score: player.splitScore || 0,
+    isSoft: Boolean(player.splitIsSoft), isBusted: Boolean(player.splitIsBusted),
+    hasBlackjack: Boolean(player.splitHasBlackjack), status: player.splitStatus || 'stood', hand: 2 as const,
+  } : {
+    cards: player.cards, bet: player.bet, score: player.score, isSoft: player.isSoft,
+    isBusted: player.isBusted, hasBlackjack: player.hasBlackjack, status: player.status, hand: 1 as const,
+  };
+}
+
+function setBlackjackHandEvaluation(player: ServerBlackjackPlayer, hand: 1 | 2, cards: ServerBlackjackCard[], status?: ServerBlackjackPlayer['status']) {
+  const value = evaluateServerBlackjackHand(cards);
+  if (hand === 1) {
+    player.cards = cards; player.score = value.score; player.isSoft = value.isSoft;
+    player.isBusted = value.isBusted; player.hasBlackjack = value.hasBlackjack;
+    player.status = status || (value.isBusted ? 'busted' : value.hasBlackjack ? 'blackjack' : 'playing');
+  } else {
+    player.splitCards = cards; player.splitScore = value.score; player.splitIsSoft = value.isSoft;
+    player.splitIsBusted = value.isBusted; player.splitHasBlackjack = false; // split 21 is not a natural blackjack
+    player.splitStatus = status || (value.isBusted ? 'busted' : 'playing');
+  }
+  return value;
+}
+
+function advanceBlackjackHandOrTurn(match: ActiveMatch, player: ServerBlackjackPlayer) {
+  if (player.activeHand === 1 && player.hasSplit && player.splitStatus === 'playing') {
+    player.activeHand = 2;
+    match.blackjackGameState!.turnStartedAt = Date.now();
+    return;
+  }
+  player.activeHand = 1;
+  advanceBlackjackTurn(match);
 }
 
 /** Awards each main/side pot independently, including deterministic odd chips. */
@@ -5058,6 +5155,17 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
       hasBlackjack: p.hasBlackjack,
       status: p.status,
       wins: p.wins,
+      hasSplit: Boolean(p.hasSplit),
+      splitCards: p.splitCards || [],
+      splitBet: p.splitBet || 0,
+      splitScore: p.splitScore || 0,
+      splitIsSoft: Boolean(p.splitIsSoft),
+      splitIsBusted: Boolean(p.splitIsBusted),
+      splitHasBlackjack: Boolean(p.splitHasBlackjack),
+      splitStatus: p.splitStatus,
+      activeHand: p.activeHand || 1,
+      isInsured: Boolean(p.isInsured),
+      insuranceBet: p.insuranceBet || 0,
       isAi: p.isAi,
       isConnected: p.isConnected !== false,
       disconnectedAt: p.disconnectedAt || null,
@@ -10107,14 +10215,18 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
         ? req.body.idempotencyKey
         : `casino-leave:${tableId}:${userId}:${crypto.randomUUID()}`;
       const user = getUser(userId);
-      const isPokerPublicTable = quote?.mode === 'public'
+      const casinoGameType = tableId.startsWith('table-blackjack-public-') ? 'blackjack' as const : 'poker' as const;
+      // Public Blackjack and Poker both realise profit only at cash-out.
+      // Referral shares must never be Poker-only: that would mint a Blackjack
+      // win without the configured inviter deductions.
+      const isCasinoPublicTable = quote?.mode === 'public'
         && quote.buyInChips !== null
-        && tableId.startsWith('table-poker-public-');
-      const grossProfit = isPokerPublicTable && quote
+        && /^table-(poker|blackjack)-public-/.test(tableId);
+      const grossProfit = isCasinoPublicTable && quote
         ? Math.max(0, quote.chips - quote.buyInChips)
         : 0;
-      const referralEntitlements = isPokerPublicTable
-        ? getCasinoPokerCashoutReferralEntitlements(user, grossProfit)
+      const referralEntitlements = isCasinoPublicTable
+        ? getCasinoCashoutReferralEntitlements(user, grossProfit)
         : [];
       const referralBonus = referralEntitlements.reduce((sum, entry) => sum + entry.amount, 0);
       const cashOutChips = quote ? Math.max(0, quote.chips - referralBonus) : 0;
@@ -10142,8 +10254,8 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
       }
       const result = casinoManager.leaveTable(tableId, userId);
       if (result) {
-        if (isPokerPublicTable && grossProfit > 0) {
-          applyCasinoPokerCashoutReferralBonus(user, grossProfit, leaveIdempotencyKey);
+        if (isCasinoPublicTable && grossProfit > 0) {
+          applyCasinoCashoutReferralBonus(user, grossProfit, leaveIdempotencyKey, casinoGameType);
         }
         if (result.mode === 'public') {
           user.casinoChips = round2(user.casinoChips + cashOutChips);
@@ -10155,7 +10267,7 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
             amount: cashOutChips,
           });
           if (grossProfit > 0) {
-            maybeActivateReferral(user, `casino-poker:${leaveIdempotencyKey}`);
+            maybeActivateReferral(user, `casino:${tableId}:${leaveIdempotencyKey}`);
           }
         }
         schedulePersist({ userId });

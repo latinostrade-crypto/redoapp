@@ -38,6 +38,9 @@ interface BlackjackGameProps {
   onHit: () => void;
   onStand: () => void;
   onDoubleDown: () => void;
+  onSplit: () => void;
+  onSurrender: () => void;
+  onInsurance: () => void;
   onNextHand: () => void;
   onReturnToLobby: () => void;
 }
@@ -122,6 +125,9 @@ export function BlackjackGame({
   onHit,
   onStand,
   onDoubleDown,
+  onSplit,
+  onSurrender,
+  onInsurance,
   onNextHand,
   onReturnToLobby,
 }: BlackjackGameProps) {
@@ -287,6 +293,9 @@ export function BlackjackGame({
   const isHumanActiveTurn = gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer?.id === 'player';
   const canPlay = isHumanActiveTurn && !activePlayer?.eliminated;
   const canDouble = canPlay && activePlayer && activePlayer.cards.length === 2 && activePlayer.chips >= activePlayer.bet;
+  const canSplit = canPlay && activePlayer && !activePlayer.hasSplit && activePlayer.activeHand !== 2 && activePlayer.cards.length === 2 && activePlayer.cards[0]?.rank === activePlayer.cards[1]?.rank && activePlayer.chips >= activePlayer.bet;
+  const canSurrender = canPlay && activePlayer && ((activePlayer.activeHand || 1) === 1) && activePlayer.cards.length === 2;
+  const canInsurance = canPlay && activePlayer && !activePlayer.isInsured && gameState.dealer.cards[0]?.rank === 14 && activePlayer.chips >= activePlayer.bet / 2;
 
   // Calculate chip leader
   const sortedByChips = [...gameState.players].sort((a, b) => (b.chips - a.chips) || (b.wins - a.wins));
@@ -310,7 +319,9 @@ export function BlackjackGame({
             {gameState.isPersistentTable ? 'LIVE TABLE' : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5}`}
           </span>
           <span className="text-[7.5px] font-black text-[#ffcc00] uppercase bg-black px-1.5 py-0.5 border border-black">
-            PRIZE: {gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT`}
+            {gameState.isPersistentTable
+              ? (gameState.stake === 0 ? 'FREE · 2 ENERGY ENTRY' : 'CASH TABLE · CASH OUT CHIPS')
+              : `PRIZE: ${gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT`}`}
           </span>
         </div>
 
@@ -500,7 +511,7 @@ export function BlackjackGame({
                   )}
 
                   {/* Cards */}
-                  <div className="flex -space-x-3 mb-1 shrink-0 min-h-[50px] items-center justify-center">
+                  <div className="flex flex-col mb-1 shrink-0 min-h-[50px] items-center justify-center gap-1">
                     {isEliminated ? (
                       <div className="text-[8px] font-black text-red-400 flex items-center gap-0.5 bg-black/80 px-1.5 py-1 rounded border border-red-900">
                         <Skull className="w-3 h-3" />
@@ -515,9 +526,16 @@ export function BlackjackGame({
                         Waiting for next hand...
                       </div>
                     ) : (
-                      playerCards.map((c, cIdx) => (
-                        <BlackjackCardView key={c.id || cIdx} card={c} />
-                      ))
+                      <>
+                        <div className="flex -space-x-3">
+                          {playerCards.map((c, cIdx) => <BlackjackCardView key={c.id || cIdx} card={c} />)}
+                        </div>
+                        {p.hasSplit && p.splitCards && (
+                          <div className={`flex -space-x-3 border-t pt-1 ${p.activeHand === 2 ? 'border-violet-400' : 'border-slate-700'}`}>
+                            {p.splitCards.map((c, cIdx) => <BlackjackCardView key={`split-${c.id || cIdx}`} card={c} />)}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
 
@@ -690,6 +708,32 @@ export function BlackjackGame({
                 <span>DOUBLE</span>
               </div>
               <span className="text-[6.5px] text-amber-300/80 font-normal mt-0.5">2x bet</span>
+            </button>
+          </div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              type="button"
+              disabled={!canSplit}
+              onClick={onSplit}
+              className="py-2 px-1 bg-violet-950/70 border border-violet-400/70 text-violet-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px]"
+            >
+              SPLIT <span className="block text-[6.5px] font-normal">pair → 2 hands</span>
+            </button>
+            <button
+              type="button"
+              disabled={!canSurrender}
+              onClick={onSurrender}
+              className="py-2 px-1 bg-slate-900 border border-slate-500 text-slate-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px]"
+            >
+              SURRENDER <span className="block text-[6.5px] font-normal">return 50%</span>
+            </button>
+            <button
+              type="button"
+              disabled={!canInsurance}
+              onClick={onInsurance}
+              className="py-2 px-1 bg-blue-950/70 border border-blue-400/70 text-blue-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px]"
+            >
+              INSURE <span className="block text-[6.5px] font-normal">dealer Ace</span>
             </button>
           </div>
         </div>

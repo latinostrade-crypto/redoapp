@@ -33,6 +33,7 @@ export interface BlackjackPlayer {
   wins: number;
   
   isInsured?: boolean;
+  insuranceBet?: number;
   surrendered?: boolean;
   
   hasSplit?: boolean;
