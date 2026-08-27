@@ -1224,6 +1224,7 @@ export function Web3Dashboard({
   }, [showPromoModal, dismissPromoModal]);
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
   const [vaultCardChoice, setVaultCardChoice] = useState<number | null>(null);
+  const [isDailyRunExpanded, setIsDailyRunExpanded] = useState(false);
   const [lootboxClaimMessage, setLootboxClaimMessage] = useState('');
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
@@ -1390,6 +1391,9 @@ export function Web3Dashboard({
   const dailyQuests = quests.filter((quest) => quest.kind === 'daily');
   const activeDailyQuests = dailyQuests.filter((quest) => !quest.completed);
   const completedDailyQuests = dailyQuests.filter((quest) => quest.completed);
+  const primaryDailyQuest = activeDailyQuests[0];
+  const queuedDailyQuests = activeDailyQuests.slice(1);
+  const visibleQueuedDailyQuests = isDailyRunExpanded ? queuedDailyQuests : queuedDailyQuests.slice(0, 2);
   const lootboxReady = Boolean(
     activeProfile?.lootboxAvailable
     && dailyQuests.length > 0
@@ -4331,10 +4335,18 @@ export function Web3Dashboard({
                 </div>
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
-                  <div className="flex items-center justify-between gap-2 text-[7px] uppercase font-bold text-slate-400 text-left">
-                    <span>Daily Run · {completedDailyQuests.length}/6</span>
-                    {(activeProfile?.tournamentBracelets || 0) > 0 && <span className="text-[#ffcc00]">⌁ Bracelet ×{activeProfile?.tournamentBracelets}</span>}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsDailyRunExpanded((expanded) => !expanded)}
+                    aria-expanded={isDailyRunExpanded}
+                    className="w-full min-h-7 flex items-center justify-between gap-2 text-[7px] uppercase font-bold text-slate-400 text-left pixel-btn-interactive"
+                  >
+                    <span>Daily Run · <strong className="text-[#00d2ff]">{completedDailyQuests.length}/6</strong></span>
+                    <span className="flex items-center gap-2">
+                      {(activeProfile?.tournamentBracelets || 0) > 0 && <span className="text-[#ffcc00]">⌁ ×{activeProfile?.tournamentBracelets}</span>}
+                      <span className="text-slate-200">{isDailyRunExpanded ? '⌃ Hide' : '⌄ Show all'}</span>
+                    </span>
+                  </button>
 
                   {false && (
                   <div className="border border-black bg-slate-950 p-2 text-left font-mono space-y-1.5">
@@ -4414,17 +4426,17 @@ export function Web3Dashboard({
                   )}
 
                   {!lootboxReady && dailyQuests.length > 0 && (
-                    <div className="border-2 border-slate-800 bg-[#0d1020] p-2 font-mono overflow-hidden" aria-label="Locked Daily Vault">
+                    <div className="border border-slate-800 bg-[#0d1020] px-2 py-1.5 font-mono overflow-hidden" aria-label="Locked Daily Vault">
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-left leading-tight">
                           <span className="text-[8px] font-black text-slate-300 uppercase">Daily Vault</span>
-                          <p className="text-[6.5px] text-slate-500 mt-0.5">Complete all 6 missions to choose a card.</p>
+                          <p className="text-[6.5px] text-slate-500 mt-0.5">{6 - completedDailyQuests.length} more missions → choose 1 card.</p>
                         </div>
                         <span className="text-base opacity-50">🔒</span>
                       </div>
-                      <div className="grid grid-cols-6 gap-1 mt-2 opacity-45" aria-hidden="true">
+                      <div className="grid grid-cols-6 gap-1 mt-1.5 opacity-45" aria-hidden="true">
                         {Array.from({ length: 6 }, (_, index) => (
-                          <div key={index} className="aspect-[2/3] min-h-8 border border-slate-700 bg-slate-900 flex items-center justify-center text-[6px] text-slate-500">?</div>
+                          <div key={index} className="h-5 border border-slate-700 bg-slate-900 flex items-center justify-center text-[6px] text-slate-500">?</div>
                         ))}
                       </div>
                       <div className="mt-1 h-1.5 bg-black border border-slate-800 overflow-hidden">
@@ -4433,65 +4445,43 @@ export function Web3Dashboard({
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 gap-1.5 max-h-[260px] overflow-y-auto custom-scroll pr-0.5">
+                  <div className="grid grid-cols-1 gap-1.5">
                     {fullProfileLoading && !fullProfile ? (
                       <div className="text-[7.5px] text-slate-500 text-left">Loading quests...</div>
                     ) : quests.length === 0 ? (
                       <div className="text-[7.5px] text-slate-500 text-left">No quests loaded.</div>
                     ) : (
                       <>
-                        {activeDailyQuests.length > 0 && (
-                          <div className="text-[6.5px] font-black uppercase text-slate-500 tracking-wider">Today&apos;s missions</div>
-                        )}
-                        {activeDailyQuests.map((quest) => (
-                        <motion.div
-                          key={quest.id}
-                          layout
-                          initial={false}
-                          animate={quest.completed ? { scale: [1, 1.015, 1] } : { scale: 1 }}
-                          transition={{ duration: 0.28 }}
-                          className={`border-2 border-black p-2 text-left font-mono ${quest.completed ? 'bg-[#07301f]' : 'bg-slate-950'}`}
-                        >
-                          <div className="flex justify-between items-center gap-2 text-[7.5px]">
-                            <span className="font-black text-slate-100 truncate max-w-[180px]">{quest.title}</span>
-                            <span className={quest.claimed ? 'text-[#00ff66]' : quest.completed ? 'text-[#ffcc00]' : 'text-slate-400'}>
-                              {quest.completed ? '✓ COMPLETE' : `${quest.progress}/${quest.target}`}
-                            </span>
-                          </div>
-                          <div className="text-[6.5px] text-slate-500 mt-0.5 leading-tight">{quest.description}</div>
-                          <div className="mt-1 flex items-center justify-between gap-2">
-                            <div className="text-[6.5px] text-[#00d2ff]">+{quest.rewardXp} XP / +{formatEnergyValue(quest.rewardEnergy)}</div>
-                            {!quest.completed && (
-                              <button
-                                type="button"
-                                onClick={() => launchDailyQuest(quest.metric)}
-                                className="min-h-6 px-2 bg-[#00d2ff] text-black border border-black text-[6.5px] font-black uppercase pixel-btn-interactive"
-                              >
-                                {quest.metric === 'daily_checkin' ? 'Claim' : 'Play'}
-                              </button>
-                            )}
-                          </div>
-                        </motion.div>
-                        ))}
-                        {completedDailyQuests.length > 0 && (
-                          <div className="pt-1 text-[6.5px] font-black uppercase text-[#00ff66] tracking-wider">Completed today · {completedDailyQuests.length}</div>
-                        )}
-                        {completedDailyQuests.map((quest) => (
+                        {primaryDailyQuest && (
                           <motion.div
-                            key={quest.id}
                             layout
                             initial={false}
-                            animate={{ scale: [1, 1.015, 1] }}
-                            transition={{ duration: 0.28 }}
-                            className="border-2 border-black bg-[#07301f] p-2 text-left font-mono"
+                            animate={prefersReducedMotion ? undefined : { scale: [1, 1.012, 1] }}
+                            transition={{ duration: 0.32 }}
+                            className="border-2 border-[#00d2ff] bg-[#071827] p-2 text-left font-mono shadow-[2px_2px_0_#000]"
                           >
-                            <div className="flex justify-between items-center gap-2 text-[7.5px]">
-                              <span className="font-black text-slate-100 truncate max-w-[180px]">{quest.title}</span>
-                              <span className="text-[#00ff66]">✓ COMPLETE</span>
+                            <div className="flex justify-between items-center gap-2 text-[6.5px] font-black uppercase text-[#00d2ff]"><span>Next mission</span><span>{primaryDailyQuest.progress}/{primaryDailyQuest.target}</span></div>
+                            <div className="mt-1 flex items-center justify-between gap-2">
+                              <div className="min-w-0"><div className="text-[9px] font-black text-white truncate">{primaryDailyQuest.title}</div><div className="text-[6.5px] text-slate-400 mt-0.5 leading-tight">{primaryDailyQuest.description}</div></div>
+                              <button type="button" onClick={() => launchDailyQuest(primaryDailyQuest.metric)} className="shrink-0 min-h-7 px-2.5 bg-[#00d2ff] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive">{primaryDailyQuest.metric === 'daily_checkin' ? 'Claim' : 'Play'}</button>
                             </div>
-                            <div className="text-[6.5px] text-[#8dffaf]/70 mt-0.5 leading-tight">{quest.description}</div>
-                            <div className="text-[6.5px] mt-1 text-[#00d2ff]">+{quest.rewardXp} XP / +{formatEnergyValue(quest.rewardEnergy)}</div>
+                            <div className="mt-1 text-[6.5px] text-[#8ceaff]">+{primaryDailyQuest.rewardXp} XP / +{formatEnergyValue(primaryDailyQuest.rewardEnergy)}</div>
                           </motion.div>
+                        )}
+                        {visibleQueuedDailyQuests.map((quest) => (
+                          <button key={quest.id} type="button" onClick={() => launchDailyQuest(quest.metric)} className="w-full min-h-8 border border-slate-800 bg-slate-950 px-2 text-left flex items-center gap-2 pixel-btn-interactive">
+                            <span className="flex-1 min-w-0"><span className="block text-[7.5px] font-black text-slate-200 truncate">{quest.title}</span><span className="block text-[6px] text-slate-500 truncate">{quest.progress}/{quest.target} · {quest.description}</span></span>
+                            <span className="text-[#00d2ff] text-sm leading-none">›</span>
+                          </button>
+                        ))}
+                        {!isDailyRunExpanded && queuedDailyQuests.length > visibleQueuedDailyQuests.length && (
+                          <button type="button" onClick={() => setIsDailyRunExpanded(true)} className="min-h-7 text-[6.5px] font-black uppercase text-slate-400 border border-slate-800 bg-black pixel-btn-interactive">+ {queuedDailyQuests.length - visibleQueuedDailyQuests.length} more missions</button>
+                        )}
+                        {isDailyRunExpanded && completedDailyQuests.length > 0 && (
+                          <div className="pt-1 text-[6.5px] font-black uppercase text-[#00ff66] tracking-wider">Completed today · {completedDailyQuests.length}</div>
+                        )}
+                        {isDailyRunExpanded && completedDailyQuests.map((quest) => (
+                          <div key={quest.id} className="min-h-8 border border-[#00ff66]/30 bg-[#07301f] px-2 flex items-center justify-between gap-2 text-left font-mono"><span className="text-[7px] font-black text-slate-200 truncate">{quest.title}</span><span className="text-[6.5px] text-[#00ff66] shrink-0">✓ COMPLETE</span></div>
                         ))}
                       </>
                     )}
