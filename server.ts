@@ -574,6 +574,8 @@ interface TelegramNotification {
   error?: string;
   attempts?: number;
   nextAttemptAt?: number;
+  /** Tournament table invitations outrank broad announcements. */
+  priority?: number;
 }
 
 interface TelegramAuthPayload {
@@ -2532,6 +2534,7 @@ function findUserByReferralCode(code: string) {
 
 type TelegramNotificationOptions = {
   dedupeKey: string;
+  priority?: number;
 };
 
 function normalizeTelegramNotification(entry: TelegramNotification): TelegramNotification {
@@ -2580,7 +2583,7 @@ function appendTelegramNotification(entry: TelegramNotification) {
 }
 
 function queueTelegramNotification(user: UserState, message: string, options: TelegramNotificationOptions) {
-  if (!user.telegramChatId) {
+  if (!user.telegramChatId || user.telegramNotificationsDisabledAt) {
     return;
   }
   queueTelegramMessage(user.userId, user.telegramChatId, message, undefined, options);
@@ -2608,6 +2611,7 @@ function queueTelegramMessage(
     createdAt: Date.now(),
     attempts: 0,
     nextAttemptAt: Date.now(),
+    priority: options.priority || 0,
   });
   schedulePersist();
   return true;
@@ -2618,7 +2622,6 @@ function markTelegramChatUndeliverable(telegramChatId: number) {
   let changed = false;
   for (const user of users.values()) {
     if (user.telegramChatId === telegramChatId) {
-      user.telegramChatId = undefined;
       user.telegramNotificationsDisabledAt = now;
       changed = true;
       schedulePersist({ userId: user.userId });
@@ -2647,7 +2650,8 @@ function queueTournamentTelegramMessage(
   const replyMarkup = buttonUrl
     ? { inline_keyboard: [[{ text: buttonText || '🎮 Open REDOapp', url: buttonUrl }]] }
     : undefined;
-  return queueTelegramMessage(userId, telegramChatId, message, replyMarkup, { dedupeKey });
+  const priority = dedupeKey.includes(':winner:') ? 20 : dedupeKey.includes(':announcement:') ? 0 : 10;
+  return queueTelegramMessage(userId, telegramChatId, message, replyMarkup, { dedupeKey, priority });
 }
 
 async function performTelegramNotificationFlush() {
@@ -2656,7 +2660,7 @@ async function performTelegramNotificationFlush() {
   const pending = telegramNotifications.filter((item) => (
     (item.status === 'pending' || item.status === 'failed')
     && (item.nextAttemptAt || 0) <= now
-  )).slice(0, 5);
+  )).sort((a, b) => (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt).slice(0, 20);
   for (const item of pending) {
     item.status = 'sending';
     item.attempts = (item.attempts || 0) + 1;
@@ -2696,11 +2700,17 @@ async function performTelegramNotificationFlush() {
       if (!response.ok) {
         const payload = await response.text();
         const isInvalidChat = response.status === 400 && /chat not found/i.test(payload);
-        item.status = isInvalidChat ? 'invalid_chat' : 'unknown';
-        item.error = isInvalidChat
-          ? 'Telegram chat is unavailable.'
-          : `Telegram returned HTTP ${response.status}.`;
-        item.nextAttemptAt = undefined;
+        let retryAfter = 0;
+        if (response.status === 429) {
+          try {
+            retryAfter = Number((JSON.parse(payload || '{}') as { parameters?: { retry_after?: number } }).parameters?.retry_after || 15);
+          } catch {
+            retryAfter = 15;
+          }
+        }
+        item.status = isInvalidChat ? 'invalid_chat' : response.status === 429 ? 'failed' : 'unknown';
+        item.error = isInvalidChat ? 'Telegram chat is unavailable.' : `Telegram returned HTTP ${response.status}.`;
+        item.nextAttemptAt = response.status === 429 ? Date.now() + Math.max(1, retryAfter) * 1_000 : undefined;
         if (isInvalidChat) {
           markTelegramChatUndeliverable(item.telegramChatId);
           console.warn(`Telegram notification ${item.id} disabled an unavailable recipient.`);
@@ -2727,6 +2737,15 @@ function flushTelegramNotifications() {
   if (telegramFlushPromise) return telegramFlushPromise;
   telegramFlushPromise = performTelegramNotificationFlush().finally(() => {
     telegramFlushPromise = null;
+    const hasMoreDue = telegramNotifications.some((item) => (
+      (item.status === 'pending' || item.status === 'failed')
+      && (item.nextAttemptAt || 0) <= Date.now()
+    ));
+    if (hasMoreDue) {
+      setTimeout(() => {
+        flushTelegramNotifications().catch((error) => console.error('Telegram notification continuation failed', error));
+      }, 250).unref?.();
+    }
   });
   return telegramFlushPromise;
 }
@@ -5416,7 +5435,10 @@ function buildBlackjackPerspectiveState(match: ActiveMatch, userId: string) {
     };
   });
 
-  const champion = bj.players.find((p) => p.wins >= bj.targetWins);
+  // The match winner is decided server-side by the final bankroll (with wins
+  // only as the tiebreaker).  Selecting the first player to reach two hands
+  // made the UI announce a player with fewer chips than the actual champion.
+  const champion = bj.players.find((p) => isSameUser(p.userId, bj.matchChampionUserId || bj.winnerUserId || ''));
   const mappedChampion = champion ? {
     id: !isSpectator && champion.userId === userId ? 'player' : 'opponent',
     name: champion.username,
@@ -7147,6 +7169,7 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
 function resolveTelegramChatId(pid: string): number | undefined {
   const u = users.get(pid);
   const pObj = currentTournament?.participants.find((p) => p.userId === pid);
+  if (u?.telegramNotificationsDisabledAt) return undefined;
   if (pObj?.chatId) return pObj.chatId;
   if (u?.telegramChatId) return u.telegramChatId;
   if (u?.telegramId) return u.telegramId;
@@ -7656,19 +7679,22 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
   ].join('\n');
 
   let queuedCount = 0;
-  const eligibleUsers = Array.from(users.values()).filter((u) => u.telegramChatId);
+  const knownTelegramUsers = Array.from(users.values()).filter((u) => u.telegramChatId || u.telegramId);
+  const eligibleUsers = knownTelegramUsers.filter((u) => !u.telegramNotificationsDisabledAt);
+  const unavailableUsers = knownTelegramUsers.length - eligibleUsers.length;
 
   const tournamentsUrl = buildTelegramMiniAppLink('tournaments');
 
   for (const u of eligibleUsers) {
-    if (u.telegramChatId) {
+    const telegramChatId = u.telegramChatId || u.telegramId;
+    if (telegramChatId) {
       const queued = queueTournamentTelegramMessage(
         u.userId,
-        u.telegramChatId,
+        telegramChatId,
         text,
         tournamentsUrl,
         '🏆 Tournaments ➔',
-        `tournament:${tourn.id}:announcement:${u.userId}`,
+        `tournament:${tourn.id}:announcement:${Date.now()}:${u.userId}`,
       );
       if (queued) queuedCount++;
     }
@@ -7682,7 +7708,8 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     success: true,
     notifiedCount: queuedCount,
     totalUsers: eligibleUsers.length,
-    message: `Tournament announcement queued for ${queuedCount} Telegram user(s).`,
+    unavailableUsers,
+    message: `Tournament announcement queued for ${queuedCount} available Telegram user(s). ${unavailableUsers} unavailable chat(s) were skipped.`,
   });
 });
 
