@@ -1055,6 +1055,7 @@ export function Web3Dashboard({
   };
 
   const [adminTitle, setAdminTitle] = useState('');
+  const [adminPrizeType, setAdminPrizeType] = useState<'nft' | 'bear'>('nft');
   const [adminNftLink, setAdminNftLink] = useState('');
   const [adminMinutes, setAdminMinutes] = useState('60');
   const [adminTicketCost, setAdminTicketCost] = useState('0');
@@ -1084,6 +1085,7 @@ export function Web3Dashboard({
         body: JSON.stringify({
           title: adminTitle.trim() || defaultTitle,
           gameType: adminGameType,
+          prizeType: adminPrizeType,
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
@@ -1124,6 +1126,7 @@ export function Web3Dashboard({
         body: JSON.stringify({
           title: adminTitle.trim() || defaultSimTitle,
           gameType: adminGameType,
+          prizeType: adminPrizeType,
           nftLink: adminNftLink.trim() || 'https://getgems.io',
           startInMinutes: Number(adminMinutes) || 60,
           entryTicketCost: Number(adminTicketCost) || 0,
@@ -5165,18 +5168,22 @@ export function Web3Dashboard({
                       </div>
                     )}
 
-                    {/* Rules & NFT Gift Link */}
+                    {/* Rules & prize details */}
                     <div className="bg-black/80 p-2.5 border border-black space-y-1.5 text-[8px] text-slate-300">
                       <div className="flex justify-between items-center text-[#00d2ff]">
-                        <span className="font-bold uppercase">NFT AWARD:</span>
-                        <a
-                          href={tournamentData.nftLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline hover:text-white font-bold"
-                        >
-                          View Prize NFT ➔
-                        </a>
+                        <span className="font-bold uppercase">{tournamentData.prizeType === 'bear' ? 'PRIZE:' : 'NFT AWARD:'}</span>
+                        {tournamentData.prizeType === 'bear' ? (
+                          <span className="text-xl leading-none" role="img" aria-label="Teddy bear prize">🧸</span>
+                        ) : (
+                          <a
+                            href={tournamentData.nftLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-white font-bold"
+                          >
+                            View Prize NFT ➔
+                          </a>
+                        )}
                       </div>
                       <p className="text-slate-400 leading-relaxed font-sans">
                         {tournamentData.rules}
@@ -5197,14 +5204,20 @@ export function Web3Dashboard({
                             <span className="text-[9px] font-black text-white">{tournamentData.winnerName}</span>
                           </div>
                         </div>
-                        <a
-                          href={tournamentData.nftLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase pixel-btn-interactive border border-black"
-                        >
-                          Claimed Prize 🎁
-                        </a>
+                        {tournamentData.prizeType === 'bear' ? (
+                          <span className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase border border-black" role="img" aria-label="Teddy bear prize">
+                            🧸
+                          </span>
+                        ) : (
+                          <a
+                            href={tournamentData.nftLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase pixel-btn-interactive border border-black"
+                          >
+                            Claimed Prize 🎁
+                          </a>
+                        )}
                       </div>
                     )}
 
@@ -5507,11 +5520,31 @@ export function Web3Dashboard({
                         onChange={(e) => setAdminTitle(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                       />
+                      <div>
+                        <label className="text-[7px] text-slate-400 block mb-0.5 font-bold">PRIZE TYPE</label>
+                        <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
+                          <button
+                            type="button"
+                            onClick={() => setAdminPrizeType('nft')}
+                            className={`min-h-11 border transition-all cursor-pointer ${adminPrizeType === 'nft' ? 'bg-[#00d2ff] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
+                          >
+                            NFT PRIZE
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAdminPrizeType('bear')}
+                            className={`min-h-11 border transition-all cursor-pointer ${adminPrizeType === 'bear' ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
+                          >
+                            🧸 TEDDY BEAR
+                          </button>
+                        </div>
+                      </div>
                       <input
                         type="text"
-                        placeholder="Prize Link (e.g. https://t.me/...)"
+                        placeholder="NFT prize link (e.g. https://t.me/...)"
                         value={adminNftLink}
                         onChange={(e) => setAdminNftLink(e.target.value)}
+                        disabled={adminPrizeType === 'bear'}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                       />
                       <div className="grid grid-cols-2 gap-1.5">

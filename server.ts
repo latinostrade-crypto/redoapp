@@ -7068,7 +7068,12 @@ function completeTournament(winnerId: string | null) {
     currentTournament.winnerAvatar = pObj?.avatarId || 'rabbit';
 
     const winnerChatId = resolveTelegramChatId(winnerId);
-    if (winnerChatId) {
+    if (winnerChatId && currentTournament.prizeType === 'bear') {
+      sendTelegramMessageSafely(
+        winnerChatId,
+        `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour 🧸 teddy bear prize is ready!`
+      );
+    } else if (winnerChatId) {
       sendTelegramMessageSafely(
         winnerChatId,
         `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour Award is ready!`,
@@ -7422,7 +7427,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     return res.status(403).json({ error: 'Admin access required.' });
   }
 
-  const { title, description, gameType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
+  const { title, description, gameType, prizeType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired } = req.body || {};
 
   const normalizedGameType: 'uno' | 'poker' | 'blackjack' =
     gameType === 'poker' || gameType === 'blackjack' ? gameType : 'uno';
@@ -7433,6 +7438,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
   }
   const ticketCost = ticketAmountFromUnits(ticketCostUnits);
   const targetWins = Number(winsRequired) === 2 ? 2 : 1;
+  const normalizedPrizeType: 'nft' | 'bear' = prizeType === 'bear' ? 'bear' : 'nft';
 
   const defaultTitle = normalizedGameType === 'poker'
     ? 'TEXAS HOLD\'EM POKER CHAMPIONSHIP'
@@ -7464,6 +7470,7 @@ app.post('/api/admin/tournaments/create', requireAuth, rateLimitMiddleware(5, 60
     title: title || defaultTitle,
     gameType: normalizedGameType,
     description: description || `Official REDO ${normalizedGameType.toUpperCase()} card tournament!`,
+    prizeType: normalizedPrizeType,
     nftLink: nftLink || 'https://getgems.io',
     nftImage: nftImage || '/ayanami-plush.png',
     startAt: Date.now() + minutes * 60 * 1000,
@@ -7516,7 +7523,7 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     `📌 <b>${tourn.title}</b>`,
     `🎲 <b>Game:</b> ${gameBadge}`,
     `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
-    `🎁 <b>Prize:</b> ${tourn.nftLink}`,
+    `🎁 <b>Prize:</b> ${tourn.prizeType === 'bear' ? '🧸 Teddy bear' : tourn.nftLink}`,
     `⏳ <b>Starts in:</b> ${statusLabel}`,
     ``,
     `Open REDO app to join! 🎮`,
@@ -7557,7 +7564,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
   const userId = (req as AuthenticatedRequest).authUserId!;
   const user = users.get(userId);
 
-  const { title, description, gameType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired, playerCount } = req.body || {};
+  const { title, description, gameType, prizeType, nftLink, nftImage, startInMinutes, rules, maxPlayers, entryTicketCost, winsRequired, playerCount } = req.body || {};
 
   const simGameType: 'uno' | 'poker' | 'blackjack' =
     gameType === 'poker' || gameType === 'blackjack'
@@ -7572,6 +7579,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
 
   const totalSimPlayers = Math.max(4, Math.min(64, Number(playerCount) || Number(maxPlayers) || 16));
   const simWinsRequired = Number(winsRequired) === 2 ? 2 : (currentTournament?.winsRequired || 1);
+  const simPrizeType: 'nft' | 'bear' = prizeType === 'bear' ? 'bear' : (currentTournament?.prizeType || 'nft');
   const simTitle = title || currentTournament?.title || defaultSimTitle;
   const simNftLink = nftLink || currentTournament?.nftLink || 'https://getgems.io';
   const simNftImage = nftImage || currentTournament?.nftImage || '/ayanami-plush.png';
@@ -7611,6 +7619,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     title: simTitle,
     gameType: simGameType,
     description: simDescription,
+    prizeType: simPrizeType,
     nftLink: simNftLink,
     nftImage: simNftImage,
     startAt: Date.now() + 2000,
@@ -7639,7 +7648,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
       `🎲 <b>Game:</b> ${gameBadge}`,
       `👥 <b>Participants:</b> ${totalSimPlayers} players`,
       `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${simTicketCost} TKT` : 'FREE ENTRY'}`,
-      `🎁 <b>Prize:</b> ${simNftLink}`,
+      `🎁 <b>Prize:</b> ${simPrizeType === 'bear' ? '🧸 Teddy bear' : simNftLink}`,
       `⏳ <b>Starts in:</b> ${simMinutes} min (Simulation)`,
       ``,
       `Open REDO app to join! 🎮`,

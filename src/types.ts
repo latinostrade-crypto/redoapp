@@ -233,6 +233,7 @@ export interface TournamentView {
   title: string;
   gameType?: 'uno' | 'poker' | 'blackjack';
   description: string;
+  prizeType?: 'nft' | 'bear';
   nftLink: string;
   nftImage?: string;
   startAt: number;
