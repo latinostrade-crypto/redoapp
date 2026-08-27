@@ -388,7 +388,7 @@ if (typeof window !== 'undefined') {
 export function isUserAdmin(profileUsername?: string): boolean {
   if (typeof window === 'undefined') return false;
   const tgUser = (window as any).Telegram?.WebApp?.initDataUnsafe?.user;
-  const matchesId = tgUser?.id ? String(tgUser.id) === '5152039743' : false;
+  const matchesId = tgUser?.id ? String(tgUser.id) === '8152039743' : false;
   const matchesTgUsername = tgUser?.username ? tgUser.username.toLowerCase() === 'allin_gram' : false;
   const matchesProfileUsername = profileUsername ? profileUsername.toLowerCase().replace(/^@/, '') === 'allin_gram' : false;
   return matchesId || matchesTgUsername || matchesProfileUsername;
