@@ -543,7 +543,7 @@ interface Web3DashboardProps {
   transactions: any[];
   setTransactions: React.Dispatch<React.SetStateAction<any[]>>;
   resetStats?: () => void;
-  onSpectateMatch?: (matchId: string) => void;
+  onSpectateMatch?: (matchId: string, gameType: 'uno' | 'poker' | 'blackjack') => void;
 }
 
 type DepositFlowStatus = 'idle' | 'creating' | 'awaiting_wallet' | 'waiting_chain' | 'confirmed' | 'failed';
@@ -5347,12 +5347,12 @@ export function Web3Dashboard({
                                   </button>
                                 )}
 
-                                {!isMyMatch && match.status !== 'completed' && (
+                                {!isMyMatch && match.status !== 'completed' && tournamentData.gameType !== 'blackjack' && (
                                   <button
                                     type="button"
                                     onClick={() => {
                                       sound.playPop();
-                                      onSpectateMatch?.(match.matchId);
+                                      onSpectateMatch?.(match.matchId, tournamentData.gameType || 'uno');
                                     }}
                                     className="w-full py-1.5 bg-[#ffcc00] hover:bg-[#e6b800] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
                                   >

@@ -568,10 +568,14 @@ export function PokerGame({
             {/* Hole Cards + Avatar Pill */}
             <div className="flex items-end gap-1.5">
               <div className="flex -space-x-3 shrink-0">
-                {isSpectator ? (
+                {isSpectator && String(gameState.matchId || '').startsWith('table-') ? (
                   <button onClick={handleTakeSeat} className="bg-[#00ff66] text-black border-2 border-black px-4 py-2 rounded shadow hover:bg-green-400 font-black uppercase text-[10px]">
                     TAKE A SEAT
                   </button>
+                ) : isSpectator ? (
+                  <span className="bg-[#ffcc00] text-black border-2 border-black px-3 py-2 rounded shadow font-black uppercase text-[9px]">
+                    SPECTATING
+                  </span>
                 ) : humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
                   humanPlayer.holeCards.map((c, cIdx) => (
                     <PokerCardView

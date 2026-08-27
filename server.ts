@@ -470,6 +470,8 @@ interface UserState {
   telegramLastName?: string;
   telegramPhotoUrl?: string;
   telegramChatId?: number;
+  /** Set after Telegram confirms that the user can no longer receive bot messages. */
+  telegramNotificationsDisabledAt?: number;
   telegramAuthAt?: number;
   walletAddress?: string;
   availableTickets: number;
@@ -566,7 +568,7 @@ interface TelegramNotification {
   dedupeKey?: string;
   /** Telegram has no idempotency key, therefore financial-event notices are at-most-once. */
   deliveryMode?: 'at_most_once';
-  status: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown';
+  status: 'pending' | 'sending' | 'sent' | 'failed' | 'unknown' | 'invalid_chat';
   createdAt: number;
   sentAt?: number;
   error?: string;
@@ -2592,7 +2594,7 @@ function queueTelegramMessage(
   options: TelegramNotificationOptions,
 ) {
   if (telegramNotifications.some((item) => item.dedupeKey === options.dedupeKey)) {
-    return;
+    return false;
   }
   telegramNotifications.push({
     id: `tg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -2608,6 +2610,44 @@ function queueTelegramMessage(
     nextAttemptAt: Date.now(),
   });
   schedulePersist();
+  return true;
+}
+
+function markTelegramChatUndeliverable(telegramChatId: number) {
+  const now = Date.now();
+  let changed = false;
+  for (const user of users.values()) {
+    if (user.telegramChatId === telegramChatId) {
+      user.telegramChatId = undefined;
+      user.telegramNotificationsDisabledAt = now;
+      changed = true;
+      schedulePersist({ userId: user.userId });
+    }
+  }
+  if (currentTournament) {
+    currentTournament.participants.forEach((participant) => {
+      if (participant.chatId === telegramChatId) {
+        participant.chatId = undefined;
+        changed = true;
+      }
+    });
+  }
+  return changed;
+}
+
+function queueTournamentTelegramMessage(
+  userId: string,
+  telegramChatId: number | undefined,
+  message: string,
+  buttonUrl: string | undefined,
+  buttonText: string | undefined,
+  dedupeKey: string,
+) {
+  if (!telegramChatId) return false;
+  const replyMarkup = buttonUrl
+    ? { inline_keyboard: [[{ text: buttonText || '🎮 Open REDOapp', url: buttonUrl }]] }
+    : undefined;
+  return queueTelegramMessage(userId, telegramChatId, message, replyMarkup, { dedupeKey });
 }
 
 async function performTelegramNotificationFlush() {
@@ -2654,10 +2694,18 @@ async function performTelegramNotificationFlush() {
       });
       if (!response.ok) {
         const payload = await response.text();
-        item.status = 'unknown';
-        item.error = `Telegram returned HTTP ${response.status}: ${payload}`;
+        const isInvalidChat = response.status === 400 && /chat not found/i.test(payload);
+        item.status = isInvalidChat ? 'invalid_chat' : 'unknown';
+        item.error = isInvalidChat
+          ? 'Telegram chat is unavailable.'
+          : `Telegram returned HTTP ${response.status}.`;
         item.nextAttemptAt = undefined;
-        console.error(`Telegram notification ${item.id} failed (attempt ${item.attempts}): ${payload}`);
+        if (isInvalidChat) {
+          markTelegramChatUndeliverable(item.telegramChatId);
+          console.warn(`Telegram notification ${item.id} disabled an unavailable recipient.`);
+        } else {
+          console.error(`Telegram notification ${item.id} failed with HTTP ${response.status} (attempt ${item.attempts}).`);
+        }
       } else {
         item.status = 'sent';
         item.sentAt = Date.now();
@@ -2952,7 +3000,8 @@ function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
     user.telegramFirstName !== auth.first_name ||
     user.telegramLastName !== auth.last_name ||
     user.telegramPhotoUrl !== auth.photo_url ||
-    user.telegramAuthAt !== auth.auth_date;
+    user.telegramAuthAt !== auth.auth_date ||
+    !!user.telegramNotificationsDisabledAt;
   user.telegramId = auth.id;
   user.telegramChatId = auth.id;
   user.telegramUsername = auth.username;
@@ -2960,6 +3009,7 @@ function applyTelegramAuth(user: UserState, auth: TelegramAuthPayload) {
   user.telegramLastName = auth.last_name;
   user.telegramPhotoUrl = auth.photo_url;
   user.telegramAuthAt = auth.auth_date;
+  user.telegramNotificationsDisabledAt = undefined;
   if (changed) {
     schedulePersist({ userId: user.userId });
     invalidateReferralCache(user.referredByUserId);
@@ -7009,36 +7059,6 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
 });
 
 // TOURNAMENT ENDPOINTS & AUTOMATION
-function sendTelegramMessageSafely(chatId: number, text: string, buttonUrl?: string, buttonText?: string) {
-  if (!TELEGRAM_BOT_TOKEN || !chatId) return;
-  const body: any = {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-  };
-  if (buttonUrl) {
-    // Telegram Bot API requires `url` (not `web_app`) for t.me deep links.
-    body.reply_markup = {
-      inline_keyboard: [[{ text: buttonText || '🎮 JOIN MATCH TABLE NOW', url: buttonUrl }]],
-    };
-  }
-  fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error(`[Telegram Bot Error] chatId=${chatId}: HTTP ${res.status} - ${errText}`);
-      } else {
-        console.log(`[Telegram Bot Success] Message sent to chatId=${chatId}`);
-      }
-    })
-    .catch((err) => {
-      console.error(`[Telegram Bot Transport Error] chatId=${chatId}:`, err);
-    });
-}
 
 function resolveTelegramChatId(pid: string): number | undefined {
   const u = users.get(pid);
@@ -7069,16 +7089,22 @@ function completeTournament(winnerId: string | null) {
 
     const winnerChatId = resolveTelegramChatId(winnerId);
     if (winnerChatId && currentTournament.prizeType === 'bear') {
-      sendTelegramMessageSafely(
+      queueTournamentTelegramMessage(
+        winnerId,
         winnerChatId,
-        `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour 🧸 teddy bear prize is ready!`
+        `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour 🧸 teddy bear prize is ready!`,
+        undefined,
+        undefined,
+        `tournament:${currentTournament.id}:winner:${winnerId}`,
       );
     } else if (winnerChatId) {
-      sendTelegramMessageSafely(
+      queueTournamentTelegramMessage(
+        winnerId,
         winnerChatId,
         `🏆 <b>CONGRATULATIONS CHAMPION!</b>\nYou won <b>${currentTournament.title}</b>!\nYour Award is ready!`,
         currentTournament.nftLink,
-        '🎁 View Prize ➔'
+        '🎁 View Prize ➔',
+        `tournament:${currentTournament.id}:winner:${winnerId}`,
       );
     }
   } else {
@@ -7108,6 +7134,9 @@ function evaluateTournamentProgression() {
   if (currentRoundWinners.length <= 1) {
     completeTournament(currentRoundWinners[0] || null);
     schedulePersist();
+    void flushTelegramNotifications().catch((error) => {
+      console.error('Tournament start notification flush failed', error);
+    });
     return;
   }
 
@@ -7181,12 +7210,22 @@ function evaluateTournamentProgression() {
         const text = isFinalRound
           ? `🏆 <b>FINAL ROUND STARTED!</b>\nCongratulations! You reached the ${gameLabel.toUpperCase()} TOURNAMENT FINAL! Tap below to join your table now.`
           : `🏆 <b>SEMI-FINAL ROUND ${nextRoundNumber} STARTED!</b>\nCongratulations! You advanced to Round ${nextRoundNumber} in ${gameLabel} Tournament! Tap below to join your table now.`;
-        sendTelegramMessageSafely(targetChatId, text, tableUrl, '🎮 Enter Table ➔');
+        queueTournamentTelegramMessage(
+          pid,
+          targetChatId,
+          text,
+          tableUrl,
+          '🎮 Enter Table ➔',
+          `tournament:${currentTournament!.id}:round:${nextRoundNumber}:table:${matchId}:player:${pid}`,
+        );
       }
     });
   });
 
   schedulePersist();
+  void flushTelegramNotifications().catch((error) => {
+    console.error('Tournament round notification flush failed', error);
+  });
 }
 
 function processTournamentTick() {
@@ -7257,11 +7296,13 @@ function processTournamentTick() {
         if (targetChatId) {
           const gameLabel = gameType === 'poker' ? 'Poker Tournament' : gameType === 'blackjack' ? 'Blackjack Tournament' : 'Tournament';
           const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
-          sendTelegramMessageSafely(
+          queueTournamentTelegramMessage(
+            pid,
             targetChatId,
             `🏆 <b>${gameLabel} Started!</b>\nYour table is ready! Tap below to enter match. Timer per turn: 10 seconds.`,
             tableUrl,
-            '🎮 Enter Table ➔'
+            '🎮 Enter Table ➔',
+            `tournament:${currentTournament!.id}:round:1:table:${matchId}:player:${pid}`,
           );
         }
       });
@@ -7277,6 +7318,9 @@ function processTournamentTick() {
     });
 
     schedulePersist();
+    void flushTelegramNotifications().catch((error) => {
+      console.error('Tournament start notification flush failed', error);
+    });
   }
 }
 
@@ -7529,28 +7573,34 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     `Open REDO app to join! 🎮`,
   ].join('\n');
 
-  let notifiedCount = 0;
+  let queuedCount = 0;
   const eligibleUsers = Array.from(users.values()).filter((u) => u.telegramChatId);
 
   const tournamentsUrl = buildTelegramMiniAppLink('tournaments');
 
   for (const u of eligibleUsers) {
     if (u.telegramChatId) {
-      sendTelegramMessageSafely(
+      const queued = queueTournamentTelegramMessage(
+        u.userId,
         u.telegramChatId,
         text,
         tournamentsUrl,
-        '🏆 Tournaments ➔'
+        '🏆 Tournaments ➔',
+        `tournament:${tourn.id}:announcement:${u.userId}`,
       );
-      notifiedCount++;
+      if (queued) queuedCount++;
     }
   }
 
+  void flushTelegramNotifications().catch((error) => {
+    console.error('Tournament announcement notification flush failed', error);
+  });
+
   return res.json({
     success: true,
-    notifiedCount,
+    notifiedCount: queuedCount,
     totalUsers: eligibleUsers.length,
-    message: `Tournament announcement sent to ${notifiedCount} Telegram user(s).`,
+    message: `Tournament announcement queued for ${queuedCount} Telegram user(s).`,
   });
 });
 
@@ -7655,11 +7705,13 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
     ].join('\n');
 
     const tournamentsUrl = buildTelegramMiniAppLink('tournaments');
-    sendTelegramMessageSafely(
+    queueTournamentTelegramMessage(
+      userId,
       adminChatId,
       simNoticeText,
       tournamentsUrl,
-      '🏆 Tournaments ➔'
+      '🏆 Tournaments ➔',
+      `tournament:${tournamentId}:simulation-announcement:${userId}`,
     );
   }
 
@@ -7677,10 +7729,13 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
       const targetChatId = resolveTelegramChatId(pid);
       if (targetChatId) {
         const tableUrl = buildTelegramMiniAppLink(`tournament_table_${matchId}`);
-        sendTelegramMessageSafely(
+        queueTournamentTelegramMessage(
+          pid,
           targetChatId,
           `🏆 <b>Tournament Started!</b>\nYour table is ready! Tap below to enter match.`,
-          tableUrl
+          tableUrl,
+          '🎮 Enter Table ➔',
+          `tournament:${tournamentId}:round:1:table:${matchId}:player:${pid}`,
         );
       }
     });
@@ -7724,6 +7779,9 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
   }
 
   schedulePersist();
+  void flushTelegramNotifications().catch((error) => {
+    console.error('Tournament simulation notification flush failed', error);
+  });
   return res.json({
     success: true,
     tournament: currentTournament ? { ...currentTournament, isRegistered: true } : null,

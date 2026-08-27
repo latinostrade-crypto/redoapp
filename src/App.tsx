@@ -87,6 +87,7 @@ export default function App() {
     playerFold,
     playerCallOrCheck,
     playerRaise,
+    spectatePokerMatch,
     resetPokerSession,
   } = usePokerGame({
     onSettlement: (payout, won) => {
@@ -201,18 +202,43 @@ export default function App() {
     [selectedAvatar, startPokerSession, userName]
   );
 
+  const handleSpectateMatch = useCallback(async (
+    matchId: string,
+    gameType: 'uno' | 'poker' | 'blackjack',
+  ) => {
+    if (gameType === 'poker') {
+      setActiveGameType('poker');
+      await spectatePokerMatch(matchId);
+      return;
+    }
+    if (gameType === 'blackjack') {
+      // The tournament menu hides this action, but keep stale clients from
+      // entering UNO with Blackjack state.
+      window.alert('Blackjack table spectating is not available yet.');
+      return;
+    }
+    await spectateMatch(matchId);
+  }, [spectateMatch, spectatePokerMatch]);
+
   const handleReturnFromPoker = useCallback(() => {
     const currentMatchId = pokerState.matchId;
+    let wasSpectator = false;
+    try {
+      wasSpectator = Boolean(JSON.parse(localStorage.getItem('redoapp_active_match') || '{}').isSpectator);
+    } catch {}
     setActiveGameType('uno');
     resetPokerSession();
     returnToLobby();
     try {
       localStorage.removeItem('redoapp_active_match');
-      if (currentMatchId) {
+      if (currentMatchId && !wasSpectator) {
         sessionStorage.setItem('redoapp_user_left_match', currentMatchId);
       }
     } catch {}
     window.dispatchEvent(new CustomEvent('redoapp:match-ended'));
+    if (wasSpectator) {
+      return;
+    }
     if (currentMatchId?.startsWith('table-')) {
       const idempotencyKey = `casino-leave:${currentMatchId}:${crypto.randomUUID()}`;
       apiRequest('/api/casino/leave-table', {
@@ -845,7 +871,7 @@ export default function App() {
               transactions={transactions}
               setTransactions={setTransactions}
               resetStats={resetStats}
-              onSpectateMatch={spectateMatch}
+              onSpectateMatch={handleSpectateMatch}
             />
           </div>
         </main>

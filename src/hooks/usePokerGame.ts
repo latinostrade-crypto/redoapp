@@ -1120,6 +1120,27 @@ export function usePokerGame(options?: {
     });
   }, []);
 
+  const spectatePokerMatch = useCallback(async (matchId: string) => {
+    if (!matchId) return false;
+    clearDealingTimeouts();
+    settledRef.current = false;
+    remoteStateVersionRef.current = 0;
+    remoteStateMatchIdRef.current = matchId;
+    try {
+      localStorage.setItem('redoapp_active_match', JSON.stringify({
+        matchId,
+        mode: 'pvp',
+        gameType: 'poker',
+        isSpectator: true,
+        createdAt: Date.now(),
+      }));
+    } catch {}
+    setRemoteMatchId(matchId);
+    setGameState((prev) => ({ ...prev, matchId, mode: 'pvp', waitingForPlayers: true }));
+    await syncRemoteMatchState(matchId);
+    return true;
+  }, [syncRemoteMatchState]);
+
   return {
     gameState,
     turnTimeLeft,
@@ -1128,6 +1149,7 @@ export function usePokerGame(options?: {
     playerFold,
     playerCallOrCheck,
     playerRaise,
+    spectatePokerMatch,
     resetPokerSession,
   };
 }
