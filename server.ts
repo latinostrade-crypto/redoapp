@@ -4394,8 +4394,8 @@ function settleBlackjackMatch(activeMatch: ActiveMatch) {
     const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
     if (tMatch) {
       const candidateWinnerId = champion?.userId || bj.players[0]?.userId || null;
-      const winnerId = activeMatch.matchId.startsWith('tourn-') && !isTournamentHuman(candidateWinnerId || '')
-        ? null
+      const winnerId = activeMatch.matchId.startsWith('tourn-')
+        ? canonicalTournamentWinnerId(candidateWinnerId)
         : candidateWinnerId;
       tMatch.status = 'completed';
       tMatch.winnerId = winnerId;
@@ -5283,8 +5283,8 @@ function settlePokerMatch(activeMatch: ActiveMatch) {
     const tMatch = currentTournament.matches.find((m) => m.matchId === activeMatch.matchId);
     if (tMatch) {
       const candidateWinnerId = champion?.userId || pk.players[0]?.userId || null;
-      const winnerId = activeMatch.matchId.startsWith('tourn-') && !isTournamentHuman(candidateWinnerId || '')
-        ? null
+      const winnerId = activeMatch.matchId.startsWith('tourn-')
+        ? canonicalTournamentWinnerId(candidateWinnerId)
         : candidateWinnerId;
       tMatch.status = 'completed';
       tMatch.winnerId = winnerId;
@@ -5339,7 +5339,11 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
   const mappedPlayers = pk.players.map((p, idx) => {
     const isMe = !isSpectator && isSameUser(p.userId, userId);
     const localId = isMe ? 'player' : `opponent_${idx}`;
-    const holeCards = isMe || isShowdownOrEnded
+    // A folded hand is mucked for everyone, including its owner. Only live
+    // hands are ever exposed at showdown/final match state.
+    const holeCards = p.folded || p.eliminated
+      ? []
+      : (isMe || isShowdownOrEnded)
       ? p.holeCards
       : p.holeCards.map((c, cIdx) => ({
           id: `hidden_card_${idx}_${cIdx}`,
@@ -6006,12 +6010,21 @@ function prepareTournamentConnectionLobby(match: ActiveMatch) {
   if (match.blackjackGameState) match.blackjackGameState.turnStartedAt = undefined;
 }
 
+function getTournamentParticipant(userId: string) {
+  return currentTournament?.participants.find((entry) => isSameUser(entry.userId, userId));
+}
+
 function isTournamentHuman(userId: string) {
-  const participant = currentTournament?.participants.find((entry) => entry.userId === userId);
+  const participant = getTournamentParticipant(userId);
   return Boolean(participant)
     && !userId.startsWith('bot_')
     && participant?.status !== 'no_show'
     && participant?.status !== 'disqualified';
+}
+
+function canonicalTournamentWinnerId(userId: string | null) {
+  if (!userId || !isTournamentHuman(userId)) return null;
+  return getTournamentParticipant(userId)?.userId || null;
 }
 
 const TOURNAMENT_AFK_GRACE_MS = 15_000;
@@ -10002,8 +10015,8 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
     if (tMatch) {
       const winsRequired = currentTournament.winsRequired || 1;
       const candidateWinnerId = activeMatch.gameState.winnerUserId || placements[0]?.userId || null;
-      const winnerId = activeMatch.matchId.startsWith('tourn-') && !isTournamentHuman(candidateWinnerId || '')
-        ? null
+      const winnerId = activeMatch.matchId.startsWith('tourn-')
+        ? canonicalTournamentWinnerId(candidateWinnerId)
         : candidateWinnerId;
       if (winnerId) {
         tMatch.playerWins = tMatch.playerWins || {};

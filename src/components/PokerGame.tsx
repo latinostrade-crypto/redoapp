@@ -406,7 +406,7 @@ export function PokerGame({
               {gameState.sidePots!.map((sidePot, index) => `${index === 0 ? 'MAIN' : `SIDE ${index}`}: ${sidePot.amount}`).join(' · ')}
             </span>
           )}
-          {gameState.stage !== 'idle' && gameState.stage !== 'ended' && (
+          {['preflop', 'flop', 'turn', 'river', 'showdown'].includes(gameState.stage) && (
             <span className="text-[7.5px] font-black text-emerald-400 uppercase mt-0.5 tracking-widest bg-black/70 px-2 py-0.2 rounded border border-emerald-500/30">
               {gameState.stage === 'preflop'
                 ? 'PRE-FLOP (DEAL)'
@@ -429,11 +429,11 @@ export function PokerGame({
               <div key={opp.id} className={`absolute ${posClass} flex flex-col items-center z-30`}>
                 <div className={`flex items-center gap-1 ${reverse ? 'flex-row-reverse' : ''}`}>
                   <div className="flex -space-x-4 shrink-0 scale-[0.65] origin-bottom">
-                    {(opp.holeCards || []).map((c, cIdx) => (
+                    {!opp.folded && !opp.eliminated && (opp.holeCards || []).map((c, cIdx) => (
                       <PokerCardView
                         key={c?.id || cIdx}
                         card={c}
-                        hidden={gameState.stage !== 'ended'}
+                        hidden={gameState.stage !== 'ended' && gameState.stage !== 'match_ended'}
                         isWinning={c && gameState.winningCardIds?.includes(c.id)}
                       />
                     ))}
@@ -605,7 +605,7 @@ export function PokerGame({
                   <span className="bg-[#ffcc00] text-black border-2 border-black px-3 py-2 rounded shadow font-black uppercase text-[9px]">
                     SPECTATING
                   </span>
-                ) : humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
+                ) : !humanPlayer.folded && !humanPlayer.eliminated && humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
                   humanPlayer.holeCards.map((c, cIdx) => (
                     <PokerCardView
                       key={c?.id || cIdx}

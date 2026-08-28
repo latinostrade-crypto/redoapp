@@ -5251,7 +5251,13 @@ export function Web3Dashboard({
                                 <div className="grid grid-cols-2 gap-1.5 font-mono text-[7.5px]">
                                   {match.playerIds.map((pid) => {
                                     const pObj = tournamentData.participants.find((p) => p.userId === pid);
-                                    const isWinner = match.winnerId === pid;
+                                    // The final tournament winner is persisted on the tournament
+                                    // as well as on the match.  Use it as a recovery-safe fallback
+                                    // so a completed final can never look undecided after a refresh.
+                                    const finalWinnerId = match.matchId.includes('-final')
+                                      ? (match.winnerId || tournamentData.winnerUserId)
+                                      : match.winnerId;
+                                    const isWinner = finalWinnerId === pid;
                                     const isMe = pid === currentUserId;
                                     const wins = match.playerWins?.[pid] || 0;
 
