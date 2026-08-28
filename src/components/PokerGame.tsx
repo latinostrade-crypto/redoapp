@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PokerCard, PokerGameState } from '../types/poker';
 import { apiRequest } from '../utils/api';
@@ -13,6 +13,7 @@ import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, M
 import { Avatar } from './Avatars';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
+import { useMatchEmoji } from '../hooks/useMatchEmoji';
 
 interface PokerGameProps {
   gameState: PokerGameState;
@@ -158,10 +159,19 @@ export function PokerGame({
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
   const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+  const handleMatchEmoji = useCallback((event: { emojiId: string; sentAt: number }) => {
+    setActiveEmoji({ emoji: event.emojiId, key: event.sentAt });
+    window.setTimeout(() => setActiveEmoji(null), 3500);
+  }, []);
+  const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
 
   const handleSendEmoji = (emoji: EmojiItem) => {
-    setActiveEmoji({ emoji, key: Date.now() });
-    setTimeout(() => setActiveEmoji(null), 3500);
+    if (!gameState.matchId) {
+      setActiveEmoji({ emoji, key: Date.now() });
+      setTimeout(() => setActiveEmoji(null), 3500);
+      return;
+    }
+    void sendMatchEmoji(emoji).catch(() => undefined);
   };
 
   const isSpectator = !gameState.players.find((p) => p.id === 'player');

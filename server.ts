@@ -7334,6 +7334,13 @@ function evaluateTournamentProgression() {
   });
 }
 
+function broadcastMatchEmoji(matchId: string, emojiId: string) {
+  const subscribers = matchSubscribers.get(matchId);
+  if (!subscribers) return;
+  const payload = { emojiId, sentAt: Date.now() };
+  subscribers.forEach((response) => sendSse(response, 'match-emoji', payload, false));
+}
+
 function processTournamentTick() {
   if (!currentTournament) return;
   const now = Date.now();
@@ -9610,6 +9617,27 @@ app.get('/api/matches/stream/:matchId', requireAuth, (req: AuthenticatedRequest,
       }
     }
   });
+});
+
+app.post('/api/matches/:matchId/emoji', requireAuth, (req: AuthenticatedRequest, res) => {
+  const { matchId } = req.params;
+  const { emojiId } = req.body as { emojiId?: unknown };
+  const allowedEmojiIds = new Set(['Cool', 'Fire', 'HAHA', 'LIKE', 'CRY', 'Gun', 'SOLD', 'toilet']);
+  if (typeof emojiId !== 'string' || !allowedEmojiIds.has(emojiId)) {
+    return res.status(400).json({ error: 'Unsupported emoji.' });
+  }
+
+  const activeMatch = getActiveMatchOrCasino(matchId);
+  if (!activeMatch) return res.status(404).json({ error: 'Match not found.' });
+
+  const userId = getAuthenticatedUserId(req);
+  if (!buildPerspectiveState(activeMatch, userId)) {
+    return res.status(403).json({ error: 'User is not part of this match.' });
+  }
+
+  markMatchPlayerConnected(activeMatch, userId);
+  broadcastMatchEmoji(matchId, emojiId);
+  return res.json({ success: true });
 });
 
 app.post('/api/matches/action', requireAuth, async (req: AuthenticatedRequest, res) => {

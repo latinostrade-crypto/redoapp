@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiRequest } from '../utils/api';
 import { useUserProfile } from '../hooks/useUserProfile';
@@ -29,6 +29,7 @@ import {
 import { Avatar } from './Avatars';
 import { sound } from '../utils/sound';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
+import { useMatchEmoji } from '../hooks/useMatchEmoji';
 
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
@@ -241,10 +242,19 @@ export function BlackjackGame({
   const maxAvailableBet = humanPlayer?.chips ? humanPlayer.chips + (humanPlayer.bet || 0) : 100;
 
   const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+  const handleMatchEmoji = useCallback((event: { emojiId: string; sentAt: number }) => {
+    setActiveEmoji({ emoji: event.emojiId, key: event.sentAt });
+    window.setTimeout(() => setActiveEmoji(null), 3500);
+  }, []);
+  const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
 
   const handleSendEmoji = (emoji: EmojiItem) => {
-    setActiveEmoji({ emoji, key: Date.now() });
-    setTimeout(() => setActiveEmoji(null), 3500);
+    if (!gameState.matchId) {
+      setActiveEmoji({ emoji, key: Date.now() });
+      setTimeout(() => setActiveEmoji(null), 3500);
+      return;
+    }
+    void sendMatchEmoji(emoji).catch(() => undefined);
   };
 
   const handleBetChange = (newAmount: number) => {

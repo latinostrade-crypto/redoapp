@@ -15,6 +15,7 @@ import { PokerGame } from './components/PokerGame';
 import { BlackjackGame } from './components/BlackjackGame';
 import { LoadingScreen } from './components/LoadingScreen';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './components/QuickEmojiPanel';
+import { useMatchEmoji } from './hooks/useMatchEmoji';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiRequest, ApiTraceDetail } from './utils/api';
 import {
@@ -152,12 +153,21 @@ export default function App() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5);
   const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+  const isOnlineUnoMatch = (gameMode === 'pvp' || gameMode === 'private') && Boolean(gameState.matchId);
+  const sendMatchEmoji = useMatchEmoji(gameState.matchId, isOnlineUnoMatch, useCallback((event) => {
+    setActiveEmoji({ emoji: event.emojiId, key: event.sentAt });
+    window.setTimeout(() => setActiveEmoji(null), 3500);
+  }, []));
 
   const handleSendEmoji = useCallback((emoji: EmojiItem) => {
-    setActiveEmoji({ emoji, key: Date.now() });
+    if (!isOnlineUnoMatch) {
+      setActiveEmoji({ emoji, key: Date.now() });
+      setTimeout(() => setActiveEmoji(null), 3500);
+    } else {
+      void sendMatchEmoji(emoji).catch(() => undefined);
+    }
     triggerBubble('player', emoji.label);
-    setTimeout(() => setActiveEmoji(null), 3500);
-  }, [triggerBubble]);
+  }, [isOnlineUnoMatch, sendMatchEmoji, triggerBubble]);
 
   useEffect(() => {
     if (gameState.phase === 'round_over') {
