@@ -23,6 +23,7 @@ interface PokerGameProps {
   onRaise: (amount: number) => void;
   onNextHand?: () => void;
   onReturnToLobby: () => void;
+  onInvite?: () => void;
 }
 
 const SUIT_SYMBOLS: Record<string, { symbol: string; color: string }> = {
@@ -153,14 +154,15 @@ export function PokerGame({
   onRaise,
   onNextHand,
   onReturnToLobby,
+  onInvite,
 }: PokerGameProps) {
   const [muted, setMuted] = useState(() => sound.getMuted());
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
-  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
-  const handleMatchEmoji = useCallback((event: { emojiId: string; sentAt: number }) => {
-    setActiveEmoji({ emoji: event.emojiId, key: event.sentAt });
+  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; senderUserId?: string; key: number } | null>(null);
+  const handleMatchEmoji = useCallback((event: { emojiId: string; senderUserId: string; sentAt: number }) => {
+    setActiveEmoji({ emoji: event.emojiId, senderUserId: event.senderUserId, key: event.sentAt });
     window.setTimeout(() => setActiveEmoji(null), 3500);
   }, []);
   const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
@@ -340,6 +342,7 @@ export function PokerGame({
             <RotateCcw className="w-3 h-3" />
             <span>LOBBY</span>
           </button>
+          {onInvite && <button type="button" onClick={onInvite} className="px-2 py-0.5 bg-[#1da1f2] text-white border border-black text-[8px] font-black uppercase pixel-btn-interactive">INVITE</button>}
           <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
             POKER HOLD'EM ({gameState.mode.toUpperCase()})
           </span>
@@ -425,6 +428,7 @@ export function PokerGame({
                       isTurn ? 'border-[#00ff66] shadow-[0_0_10px_#00ff66]' : 'border-black'
                     } ${opp.folded || opp.eliminated ? 'opacity-40 grayscale' : ''}`}
                   >
+                    {activeEmoji && activeEmoji.senderUserId === opp.userId && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
                     {isDealer && (
                       <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3 h-3 rounded-full text-[6px] font-black flex items-center justify-center border border-black shadow z-10">
                         D
@@ -611,7 +615,7 @@ export function PokerGame({
                 } ${humanPlayer.folded || humanPlayer.eliminated ? 'opacity-40 grayscale' : ''}`}
               >
                 <AnimatePresence>
-                  {activeEmoji && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
+                  {activeEmoji && (!activeEmoji.senderUserId || activeEmoji.senderUserId === humanPlayer.userId) && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
                 </AnimatePresence>
                 {gameState.players[gameState.dealerIndex]?.id === humanPlayer.id && (
                   <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3.5 h-3.5 rounded-full text-[7px] font-black flex items-center justify-center border border-black shadow z-10">

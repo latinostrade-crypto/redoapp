@@ -4,6 +4,7 @@ import { EmojiItem } from '../components/QuickEmojiPanel';
 
 export type MatchEmojiEvent = {
   emojiId: string;
+  senderUserId: string;
   sentAt: number;
 };
 

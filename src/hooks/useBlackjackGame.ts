@@ -1031,6 +1031,30 @@ export function useBlackjackGame(options?: {
     });
   }, []);
 
+  const spectateBlackjackMatch = useCallback(async (matchId: string) => {
+    if (!matchId) return false;
+    clearDealingTimeouts();
+    remoteStateVersionRef.current = 0;
+    remoteStateMatchIdRef.current = matchId;
+    try {
+      localStorage.setItem('redoapp_active_match', JSON.stringify({
+        matchId,
+        mode: 'pvp',
+        gameType: 'blackjack',
+        isSpectator: true,
+        createdAt: Date.now(),
+      }));
+      setRemoteMatchId(matchId);
+      setGameState((prev) => ({ ...prev, matchId, mode: 'pvp', waitingForPlayers: true }));
+      await syncRemoteMatchState(matchId);
+      return true;
+    } catch {
+      try { localStorage.removeItem('redoapp_active_match'); } catch {}
+      setRemoteMatchId(null);
+      return false;
+    }
+  }, [syncRemoteMatchState]);
+
   return {
     gameState,
     turnTimeLeft,
@@ -1045,6 +1069,7 @@ export function useBlackjackGame(options?: {
     playerSurrender,
     playerInsurance,
     nextHand,
+    spectateBlackjackMatch,
     resetSession,
   };
 }

@@ -7334,10 +7334,10 @@ function evaluateTournamentProgression() {
   });
 }
 
-function broadcastMatchEmoji(matchId: string, emojiId: string) {
+function broadcastMatchEmoji(matchId: string, emojiId: string, senderUserId: string) {
   const subscribers = matchSubscribers.get(matchId);
   if (!subscribers) return;
-  const payload = { emojiId, sentAt: Date.now() };
+  const payload = { emojiId, senderUserId, sentAt: Date.now() };
   subscribers.forEach((response) => sendSse(response, 'match-emoji', payload, false));
 }
 
@@ -9393,6 +9393,13 @@ app.get('/api/private-rooms/status/:roomCode', requireAuth, (req, res) => {
   return res.json(buildPrivateRoomPayload(room));
 });
 
+app.get('/api/private-rooms/preview/:roomCode', requireAuth, (req, res) => {
+  const normalizedCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
+  const room = privateRooms.get(normalizedCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
+  if (!room) return res.status(404).json({ error: 'Private room was not found or has expired.' });
+  return res.json({ roomCode: room.roomCode, stake: room.stake, gameType: room.gameType || 'uno', status: room.status });
+});
+
 app.get('/api/private-rooms/stream/:roomCode', requireAuth, (req, res) => {
   const roomCode = normalizePrivateRoomCode(req.params.roomCode) || String(req.params.roomCode || '').toUpperCase();
   const room = privateRooms.get(roomCode) || privateRooms.get(String(req.params.roomCode || '').toUpperCase());
@@ -9636,7 +9643,7 @@ app.post('/api/matches/:matchId/emoji', requireAuth, (req: AuthenticatedRequest,
   }
 
   markMatchPlayerConnected(activeMatch, userId);
-  broadcastMatchEmoji(matchId, emojiId);
+  broadcastMatchEmoji(matchId, emojiId, userId);
   return res.json({ success: true });
 });
 

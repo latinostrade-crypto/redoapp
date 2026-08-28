@@ -44,6 +44,7 @@ interface BlackjackGameProps {
   onInsurance: () => void;
   onNextHand: () => void;
   onReturnToLobby: () => void;
+  onInvite?: () => void;
 }
 
 function ChipStackIcon({ className = 'w-3 h-3' }: { className?: string }) {
@@ -131,6 +132,7 @@ export function BlackjackGame({
   onInsurance,
   onNextHand,
   onReturnToLobby,
+  onInvite,
 }: BlackjackGameProps) {
   const [muted, setMuted] = useState(sound.getMuted());
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
@@ -241,9 +243,9 @@ export function BlackjackGame({
 
   const maxAvailableBet = humanPlayer?.chips ? humanPlayer.chips + (humanPlayer.bet || 0) : 100;
 
-  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
-  const handleMatchEmoji = useCallback((event: { emojiId: string; sentAt: number }) => {
-    setActiveEmoji({ emoji: event.emojiId, key: event.sentAt });
+  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; senderUserId?: string; key: number } | null>(null);
+  const handleMatchEmoji = useCallback((event: { emojiId: string; senderUserId: string; sentAt: number }) => {
+    setActiveEmoji({ emoji: event.emojiId, senderUserId: event.senderUserId, key: event.sentAt });
     window.setTimeout(() => setActiveEmoji(null), 3500);
   }, []);
   const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
@@ -325,6 +327,7 @@ export function BlackjackGame({
             <RotateCcw className="w-3 h-3" />
             <span>LOBBY</span>
           </button>
+          {onInvite && <button type="button" onClick={onInvite} className="px-2 py-0.5 bg-[#1da1f2] text-white border border-black text-[8px] font-black uppercase pixel-btn-interactive">INVITE</button>}
           <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
             {gameState.isPersistentTable ? 'LIVE TABLE' : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5}`}
           </span>
@@ -351,6 +354,7 @@ export function BlackjackGame({
           </button>
         </div>
       </header>
+      {isSpectator && <div className="bg-[#ffcc00] text-black text-center text-[8px] font-black py-1 border border-black">👁 SPECTATING · CARDS HIDDEN</div>}
 
       {/* 2. CASINO FELT TABLE WITH MULTI-SEAT PLAYERS */}
       <div className="w-full h-[410px] min-[380px]:h-[440px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[40px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-between p-2 z-10 shrink-0">
@@ -501,7 +505,7 @@ export function BlackjackGame({
 
                   {/* Floating Profit Notification on Round End */}
                   <AnimatePresence>
-                    {p.id === 'player' && activeEmoji && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
+                    {activeEmoji && (!activeEmoji.senderUserId || activeEmoji.senderUserId === (p as any).userId) && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
                   </AnimatePresence>
                   {typeof p.lastProfit === 'number' && (gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
                     <motion.div

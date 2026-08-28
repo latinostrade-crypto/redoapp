@@ -120,6 +120,7 @@ export default function App() {
     playerSurrender: handleBlackjackSurrender,
     playerInsurance: handleBlackjackInsurance,
     nextHand: handleNextBlackjackHand,
+    spectateBlackjackMatch,
     resetSession: resetBlackjackSession,
   } = useBlackjackGame({
     onSettlement: (payout, won, push) => {
@@ -152,10 +153,10 @@ export default function App() {
 
   const [rulesOpen, setRulesOpen] = useState(false);
   const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5);
-  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; key: number } | null>(null);
+  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; senderUserId?: string; key: number } | null>(null);
   const isOnlineUnoMatch = (gameMode === 'pvp' || gameMode === 'private') && Boolean(gameState.matchId);
   const sendMatchEmoji = useMatchEmoji(gameState.matchId, isOnlineUnoMatch, useCallback((event) => {
-    setActiveEmoji({ emoji: event.emojiId, key: event.sentAt });
+    setActiveEmoji({ emoji: event.emojiId, senderUserId: event.senderUserId, key: event.sentAt });
     window.setTimeout(() => setActiveEmoji(null), 3500);
   }, []));
 
@@ -222,13 +223,25 @@ export default function App() {
       return;
     }
     if (gameType === 'blackjack') {
-      // The tournament menu hides this action, but keep stale clients from
-      // entering UNO with Blackjack state.
-      window.alert('Blackjack table spectating is not available yet.');
+      setActiveGameType('blackjack');
+      await spectateBlackjackMatch(matchId);
       return;
     }
     await spectateMatch(matchId);
-  }, [spectateMatch, spectatePokerMatch]);
+  }, [spectateMatch, spectatePokerMatch, spectateBlackjackMatch]);
+
+  const watchLinkConsumedRef = useRef(false);
+  useEffect(() => {
+    if (watchLinkConsumedRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const startParam = params.get('startapp') || params.get('tgWebAppStartParam') || (window as any).Telegram?.WebApp?.initDataUnsafe?.start_param || '';
+    const matchId = String(startParam).match(/^watch_(.+)$/i)?.[1];
+    if (!matchId) return;
+    watchLinkConsumedRef.current = true;
+    apiRequest<{ gameType?: 'uno' | 'poker' | 'blackjack' }>(`/api/matches/state/${encodeURIComponent(matchId)}`, { timeoutMs: 12_000 })
+      .then((state) => handleSpectateMatch(matchId, state.gameType || 'uno'))
+      .catch(() => { watchLinkConsumedRef.current = false; });
+  }, [handleSpectateMatch]);
 
   const handleReturnFromPoker = useCallback(() => {
     const currentMatchId = pokerState.matchId;
@@ -274,6 +287,15 @@ export default function App() {
     },
     [selectedAvatar, startBlackjackSession, userName]
   );
+
+  const inviteToTable = useCallback((matchId?: string, gameType?: string) => {
+    if (!matchId) return;
+    const link = `https://t.me/redo_appbot/app?startapp=watch_${matchId}`;
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(`Watch my ${gameType || 'game'} table on REDOapp!`)}`;
+    const tg = (window as any).Telegram?.WebApp;
+    if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
+    else window.open(shareUrl, '_blank');
+  }, []);
 
   const handleReturnFromBlackjack = useCallback(() => {
     const currentMatchId = blackjackState.matchId;
@@ -823,6 +845,7 @@ export default function App() {
             onRaise={playerRaise}
             onNextHand={handleNextPokerHand}
             onReturnToLobby={handleReturnFromPoker}
+            onInvite={() => inviteToTable(pokerState.matchId, 'poker')}
           />
         </main>
       ) : activeGameType === 'blackjack' ? (
@@ -840,6 +863,7 @@ export default function App() {
             onInsurance={handleBlackjackInsurance}
             onNextHand={handleNextBlackjackHand}
             onReturnToLobby={handleReturnFromBlackjack}
+            onInvite={() => inviteToTable(blackjackState.matchId, 'blackjack')}
           />
         </main>
       ) : (
@@ -1084,8 +1108,9 @@ export default function App() {
               const isOffline = gameMode !== 'offline' && !pandaPlayer.isConnected;
               const isBot = gameMode !== 'offline' && pandaPlayer.isAi;
               const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
-              return (
-                <div className="flex flex-col items-center relative gap-1">
+                return (
+                  <div className="flex flex-col items-center relative gap-1">
+                    {activeEmoji && activeEmoji.senderUserId === (pandaPlayer as any).userId && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
                   <div style={{ filter: avatarFilter }}>
                     <Avatar id={pandaPlayer.avatar} emotion={pandaPlayer.emotion} isActive={isActive} size={38} />
                   </div>
@@ -1121,6 +1146,7 @@ export default function App() {
                 const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
                 return (
                   <div className="flex flex-col items-center relative gap-1 text-center">
+                    {activeEmoji && activeEmoji.senderUserId === (leftPlayer as any).userId && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
                     <div style={{ filter: avatarFilter }}>
                       <Avatar id={leftPlayer.avatar} emotion={leftPlayer.emotion} isActive={isActive} size={36} />
                     </div>
@@ -1264,6 +1290,7 @@ export default function App() {
                 const avatarFilter = `${gameMode === 'pvp' ? 'blur(4.5px) ' : ''}${isOffline ? 'grayscale(90%) opacity(0.5)' : ''}`.trim() || 'none';
                 return (
                   <div className="flex flex-col items-center relative gap-1 text-center">
+                    {activeEmoji && activeEmoji.senderUserId === (rightPlayer as any).userId && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
                     <div style={{ filter: avatarFilter }}>
                       <Avatar id={rightPlayer.avatar} emotion={rightPlayer.emotion} isActive={isActive} size={36} />
                     </div>
@@ -1300,7 +1327,7 @@ export default function App() {
           {/* BOTTOM ZONE: HUMAN PLAYER ZONE */}
           <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2 relative">
             <AnimatePresence>
-              {activeEmoji && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
+              {activeEmoji && (!activeEmoji.senderUserId || activeEmoji.senderUserId === (gameState.players.find((p) => p.id === 'player') as any)?.userId) && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
             </AnimatePresence>
             
             {/* NO-SCROLL DYNAMIC OVERLAPPING CARDS ZONE */}
@@ -1358,6 +1385,7 @@ export default function App() {
                   <span>LEVEL {playerLevel}</span>
                 </div>
                 <QuickEmojiPanel onSendEmoji={handleSendEmoji} />
+                {gameState.matchId && <button type="button" onClick={() => inviteToTable(gameState.matchId, 'UNO')} className="px-2 py-1.5 bg-[#1da1f2] text-white border border-black text-[9px] font-black uppercase pixel-btn-interactive">INVITE</button>}
               </div>
               
               <div className="text-white bg-black px-2 py-1.5 border border-black">

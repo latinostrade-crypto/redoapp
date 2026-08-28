@@ -1947,7 +1947,11 @@ export function Web3Dashboard({
       walletAddress: rawAddress || null,
       gameType: pvpGameTab,
     };
-    return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
+    return apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(roomCodeToUse)}`, { timeoutMs: 6_000 }).then((preview) => {
+      if (preview.stake > 0 && !window.confirm(`Join this private ${preview.gameType.toUpperCase()} table for ${preview.stake} TKT? Your stake will be reserved now.`)) {
+        throw new Error('join_cancelled');
+      }
+      return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
       // A lost join response is recovered through room status/iframe below.
       // Do not occupy the Telegram WebView connection pool with the generic
@@ -1955,11 +1959,13 @@ export function Web3Dashboard({
       retryOnNetworkError: false,
       timeoutMs: 12_000,
       body: JSON.stringify({ ...joinPayload, userId: currentUserId }),
+      });
     }).then((result) => {
       initialLaunchRoomCodeRef.current = '';
       applyPrivateRoomJoin(result, roomCodeToUse);
       return true;
     }).catch(async (error) => {
+      if (error instanceof Error && error.message === 'join_cancelled') return false;
       initialLaunchRoomCodeRef.current = '';
       try {
         const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(roomCodeToUse), { timeoutMs: 4000 });
@@ -2045,14 +2051,20 @@ export function Web3Dashboard({
       walletAddress: rawAddress || null,
       gameType: parsed.gameType || initialLaunchRoomParsedRef.current.gameType || 'uno',
     };
-    apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
+    apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(code)}`, { timeoutMs: 6_000 }).then((preview) => {
+      if (preview.stake > 0 && !window.confirm(`Join this private ${preview.gameType.toUpperCase()} table for ${preview.stake} TKT? Your stake will be reserved now.`)) {
+        throw new Error('join_cancelled');
+      }
+      return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
       method: 'POST',
       retryOnNetworkError: false,
       timeoutMs: 12_000,
       body: JSON.stringify({ ...joinPayload, userId: effectiveUserId }),
+      });
     }).then((result) => {
       applyPrivateRoomJoin(result, code);
     }).catch(async (error) => {
+      if (error instanceof Error && error.message === 'join_cancelled') return;
       try {
         const statusRes = await apiRequest<PrivateRoomResponse>('/api/private-rooms/status/' + encodeURIComponent(code), { timeoutMs: 4000 });
         if (privateRoomHasPlayer(statusRes, effectiveUserId)) {
@@ -2226,6 +2238,7 @@ export function Web3Dashboard({
       alert(message);
       return;
     }
+    if (effectiveStake > 0 && !window.confirm(`Create a private ${pvpGameTab.toUpperCase()} table for ${effectiveStake} TKT per player? Your stake will be reserved now.`)) return;
     if (privateRoomCreateInFlightRef.current) return;
     let verifiedUserId = currentUserId;
     try {
@@ -2488,6 +2501,7 @@ export function Web3Dashboard({
       alert(message);
       return;
     }
+    if (selectedStake > 0 && !window.confirm(`Join this paid ${pvpGameTab.toUpperCase()} table for ${selectedStake} TKT? The stake will be reserved now.`)) return;
     sound.playShuffle();
     wakeBackend();
     setPublicQueueError('');
@@ -6403,7 +6417,7 @@ export function Web3Dashboard({
                           <button 
                             type="button"
                             onClick={() => {
-                              if (onStartPokerGame) onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
+                              if (onStartPokerGame && window.confirm(`Open this poker table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
                             }}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400`}
                           >
@@ -6456,7 +6470,7 @@ export function Web3Dashboard({
                           <button 
                             type="button"
                             onClick={() => {
-                              if (onStartPokerGame) onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
+                              if (onStartPokerGame && window.confirm(`Open this poker table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
                             }}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400`}
                           >
@@ -6561,7 +6575,7 @@ export function Web3Dashboard({
                           <button 
                             type="button"
                             onClick={() => {
-                              if (onStartBlackjackGame) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
+                              if (onStartBlackjackGame && window.confirm(`Open this blackjack table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
                             }}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#00ff66] text-black cursor-pointer hover:bg-green-400`}
                           >
@@ -6614,7 +6628,7 @@ export function Web3Dashboard({
                           <button 
                             type="button"
                             onClick={() => {
-                              if (onStartBlackjackGame) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
+                              if (onStartBlackjackGame && window.confirm(`Open this blackjack table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
                             }}
                             className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#00ff66] text-black cursor-pointer hover:bg-green-400`}
                           >
