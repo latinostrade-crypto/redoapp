@@ -14,6 +14,7 @@ import { Avatar } from './Avatars';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
+import { useTableVisualEvents } from '../hooks/useTableVisualEvents';
 
 interface PokerGameProps {
   gameState: PokerGameState;
@@ -166,6 +167,7 @@ export function PokerGame({
     window.setTimeout(() => setActiveEmoji(null), 3500);
   }, []);
   const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
+  const { playback, revealedCardIds, isReplaying } = useTableVisualEvents(gameState.visualEvents, gameState.visualEpoch);
 
   const handleSendEmoji = (emoji: EmojiItem) => {
     if (!gameState.matchId) {
@@ -330,6 +332,19 @@ export function PokerGame({
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
+      <AnimatePresence>
+        {playback && (
+          <motion.div
+            key={playback.key}
+            initial={{ opacity: 0, y: -12, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="absolute top-10 left-1/2 -translate-x-1/2 z-[70] max-w-[85%] bg-black/95 border-2 border-[#ffcc00] px-3 py-1.5 rounded-full text-center text-[9px] font-black uppercase text-[#ffcc00] shadow-[0_0_18px_rgba(255,204,0,0.65)]"
+          >
+            {playback.message}
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
       <header className="flex justify-between items-center bg-slate-950 border border-black px-2.5 py-1 z-20 rounded">
@@ -508,7 +523,7 @@ export function PokerGame({
                     key={slotIdx}
                     className="w-8 h-11 min-[380px]:w-9 min-[380px]:h-13 border-2 border-dashed border-emerald-700/80 rounded-md flex items-center justify-center bg-black/40 shrink-0 shadow-inner"
                   >
-                    {card ? (
+                    {card && (!gameState.visualEvents || revealedCardIds.has(card.id) || gameState.stage === 'ended' || gameState.stage === 'match_ended') ? (
                       <PokerCardView
                         card={card}
                         isWinning={gameState.winningCardIds?.includes(card.id)}
@@ -642,7 +657,7 @@ export function PokerGame({
 
       {/* 3. SHOWDOWN / HAND ENDED / WINNER MODAL */}
       <AnimatePresence>
-        {gameState.stage === 'ended' && (
+        {gameState.stage === 'ended' && !isReplaying && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -665,19 +680,8 @@ export function PokerGame({
                 </div>
               </div>
 
-              {/* Winning Combination Info */}
-              {gameState.winningHandDesc && (
-                <div className="bg-slate-900 border border-slate-700 p-2 rounded text-left space-y-1">
-                  <div className="text-[7.5px] uppercase font-bold text-slate-400">Winning Hand:</div>
-                  <div className="text-[9.5px] text-[#ffcc00] font-black leading-tight">
-                    {gameState.winningHandDesc}
-                  </div>
-                </div>
-              )}
-
-              {/* Players Summary List */}
               <div className="bg-black/80 border border-black rounded p-1.5 space-y-1 text-left max-h-[120px] overflow-y-auto">
-                <div className="text-[7px] font-bold text-slate-400 uppercase">Showdown Results:</div>
+                <div className="text-[7px] font-bold text-slate-400 uppercase">COMBINATIONS</div>
                 {gameState.players.map((p) => {
                   const isWinner = gameState.winnerIds.includes(p.id);
                   const evalRes = p.holeCards.length === 2 ? evaluate7CardHand([...p.holeCards, ...gameState.communityCards]) : null;
@@ -695,7 +699,7 @@ export function PokerGame({
                       </div>
                       <div className="text-[7.5px] text-right flex items-center gap-1">
                         {p.folded ? (
-                          <span className="text-slate-500">FOLDED</span>
+                          <span className="text-slate-500">FOLD</span>
                         ) : evalRes?.description ? (
                           <span>{evalRes.description}</span>
                         ) : (
@@ -709,6 +713,12 @@ export function PokerGame({
                   );
                 })}
               </div>
+
+              {!gameState.isMatchOver && (
+                <div className="bg-cyan-950/70 border border-cyan-400/60 py-1.5 rounded text-[8px] font-black text-cyan-200 uppercase">
+                  NEXT HAND STARTS IN {nextHandCountdown}S
+                </div>
+              )}
 
               {/* Action Buttons: Next Hand & Lobby */}
               <div className="space-y-1.5 pt-1">

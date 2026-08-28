@@ -30,6 +30,7 @@ import { Avatar } from './Avatars';
 import { sound } from '../utils/sound';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
+import { useTableVisualEvents } from '../hooks/useTableVisualEvents';
 
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
@@ -134,6 +135,7 @@ export function BlackjackGame({
   onReturnToLobby,
   onInvite,
 }: BlackjackGameProps) {
+  const { playback, revealedCardIds, isReplaying } = useTableVisualEvents(gameState.visualEvents, gameState.visualEpoch);
   const [muted, setMuted] = useState(sound.getMuted());
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
   const [currentBetAmount, setCurrentBetAmount] = useState<number>(selectedBet);
@@ -315,6 +317,19 @@ export function BlackjackGame({
 
   return (
     <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[560px]">
+      <AnimatePresence>
+        {playback && (
+          <motion.div
+            key={playback.key}
+            initial={{ opacity: 0, y: -12, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="absolute top-10 left-1/2 -translate-x-1/2 z-[70] max-w-[85%] bg-black/95 border-2 border-[#ffcc00] px-3 py-1.5 rounded-full text-center text-[9px] font-black uppercase text-[#ffcc00] shadow-[0_0_18px_rgba(255,204,0,0.65)]"
+          >
+            {playback.message}
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
       <header className="flex justify-between items-center bg-slate-950 border border-black px-2 py-1 z-20 rounded">
@@ -382,7 +397,7 @@ export function BlackjackGame({
                 <BlackjackCardView
                   key={c.id || idx}
                   card={c}
-                  hidden={c.hidden === true || (idx === 1 && gameState.stage === 'player_turn')}
+                  hidden={c.hidden === true || (idx === 1 && gameState.stage === 'player_turn') || (idx >= 2 && Boolean(gameState.visualEvents) && !revealedCardIds.has(c.id))}
                   isDealerHoleCard={idx === 1 && gameState.stage !== 'player_turn'}
                 />
               ))}
@@ -585,7 +600,7 @@ export function BlackjackGame({
 
       {/* 3. COMPACT & SEMI-TRANSPARENT ROUND ENDED / MATCH STANDINGS MODAL */}
       <AnimatePresence>
-        {(gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && (
+        {(gameState.stage === 'round_ended' || gameState.stage === 'match_ended') && !isReplaying && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: -10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -602,17 +617,11 @@ export function BlackjackGame({
                 </h2>
               </div>
 
-              {gameState.winningHandDesc && (
-                <p className="text-[8px] text-slate-200 font-bold bg-black/70 border border-slate-800 p-1.5 rounded leading-relaxed">
-                  {gameState.winningHandDesc}
-                </p>
-              )}
-
-              {/* Standings Table sorted by Chips */}
+              {/* Compact result: hand value, winner and what happens next. */}
               <div className="space-y-0.5 bg-black/60 border border-slate-800 p-1.5 rounded text-[7.5px] font-bold max-h-[90px] overflow-y-auto">
                 <div className="text-slate-400 text-[6.5px] uppercase tracking-wider flex justify-between border-b border-slate-800 pb-0.5">
                   <span>PLAYER</span>
-                  <span>CHIPS</span>
+                  <span>HAND</span>
                 </div>
                 {sortedByChips.map((p, rankIdx) => (
                   <div key={p.id} className="flex justify-between items-center py-0.5">
@@ -620,8 +629,8 @@ export function BlackjackGame({
                       {rankIdx === 0 ? '🥇 ' : rankIdx === 1 ? '🥈 ' : rankIdx === 2 ? '🥉 ' : '4. '}
                       {p.name} {p.id === 'player' ? '(You)' : ''}
                     </span>
-                    <span className={p.chips > 0 ? "text-[#ffcc00] font-black" : "text-red-400 font-black"}>
-                      {p.chips > 0 ? `💰 ${p.chips}` : '💀 OUT'}
+                    <span className={p.isBusted ? "text-red-400 font-black" : "text-[#ffcc00] font-black"}>
+                      {p.isBusted ? 'BUST' : p.hasBlackjack ? 'BLACKJACK' : p.score}
                     </span>
                   </div>
                 ))}

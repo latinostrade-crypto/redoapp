@@ -86,6 +86,16 @@ export interface PokerGameLog {
   type: 'info' | 'bet' | 'fold' | 'deal' | 'win';
 }
 
+export interface TableVisualEvent {
+  id: string;
+  sequence: number;
+  type: 'deal' | 'community_card' | 'action' | 'fold' | 'dealer_draw' | 'showdown' | 'result';
+  message: string;
+  playerId?: string;
+  cardId?: string;
+  createdAt: number;
+}
+
 export interface PokerSidePot {
   amount: number;
   eligiblePlayerIds: PokerPlayerId[];
@@ -127,4 +137,6 @@ export interface PokerGameState {
   isPersistentTable?: boolean;
   connectionDeadlineAt?: number | null;
   stateVersion?: number;
+  visualEvents?: TableVisualEvent[];
+  visualEpoch?: number;
 }

@@ -4,6 +4,10 @@ export interface TournamentParticipant {
   avatarId: string;
   registeredAt: number;
   chatId?: number;
+  /** Tournament entries are people only; this lifecycle is server-owned. */
+  status?: 'registered' | 'active' | 'no_show' | 'disqualified' | 'eliminated' | 'advanced_by_walkover';
+  disqualifiedAt?: number | null;
+  disqualificationReason?: 'no_show' | 'afk' | 'left' | null;
 }
 
 export interface TournamentMatch {
@@ -15,6 +19,8 @@ export interface TournamentMatch {
   status: 'pending' | 'in_progress' | 'completed';
   waitingTimerEndAt?: number | null;
   playerWins?: Record<string, number>;
+  outcome?: 'played' | 'walkover' | 'void';
+  voidReason?: 'all_players_absent' | null;
 }
 
 export interface TournamentData {

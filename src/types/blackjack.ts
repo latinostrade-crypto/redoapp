@@ -4,6 +4,7 @@
  */
 
 import { AvatarId } from '../types';
+import type { TableVisualEvent } from './poker';
 
 export type BlackjackSuit = 'spades' | 'hearts' | 'diamonds' | 'clubs';
 export type BlackjackRank = number; // 2-10, 11 (J), 12 (Q), 13 (K), 14 (A)
@@ -96,4 +97,6 @@ export interface BlackjackGameState {
   isPersistentTable?: boolean;
   connectionDeadlineAt?: number | null;
   stateVersion?: number;
+  visualEvents?: TableVisualEvent[];
+  visualEpoch?: number;
 }

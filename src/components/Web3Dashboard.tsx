@@ -1111,48 +1111,6 @@ export function Web3Dashboard({
     }
   };
 
-  const handleAdminSimulateTournament = async (playerCount: number = 16) => {
-    if (adminSubmitting) return;
-    sound.playPop();
-    setAdminSubmitting(true);
-    try {
-      const defaultSimTitle = adminGameType === 'poker'
-        ? `REDO POKER CHAMPIONSHIP (${playerCount} PLAYERS)`
-        : adminGameType === 'blackjack'
-        ? `REDO BLACKJACK GRAND PRIX (${playerCount} PLAYERS)`
-        : `REDO CHAMPIONSHIP (${playerCount} PLAYERS)`;
-      const defaultRules = adminGameType === 'poker'
-        ? '10s turn timer. Texas Hold\'em tables. Last player standing advances.'
-        : adminGameType === 'blackjack'
-        ? '10s turn timer. Blackjack tables. Highest score/chips advances.'
-        : (adminWinsRequired === 2 ? 'First to 2 Wins (Best of 3)' : '10s turn timer. Single elimination tables.');
-
-      const res = await apiRequest<{ success: boolean; tournament: import('../types').TournamentView; history?: import('../types').TournamentView[] }>('/api/admin/tournaments/simulate', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: adminTitle.trim() || defaultSimTitle,
-          gameType: adminGameType,
-          prizeType: adminPrizeType,
-          nftLink: adminNftLink.trim() || 'https://getgems.io',
-          startInMinutes: Number(adminMinutes) || 60,
-          entryTicketCost: Number(adminTicketCost) || 0,
-          winsRequired: adminWinsRequired,
-          playerCount,
-          rules: adminRules.trim() || defaultRules,
-        }),
-      });
-      if (res?.tournament) {
-        setTournamentData(res.tournament);
-        if (res.history) setPastTournaments(res.history);
-        alert(`Tournament simulation (${playerCount} players, multi-round bracket) completed successfully! Check bracket and past champions list.`);
-      }
-    } catch (err: any) {
-      alert(err instanceof Error ? err.message : 'Failed to simulate tournament.');
-    } finally {
-      setAdminSubmitting(false);
-    }
-  };
-
   const [adminNotifying, setAdminNotifying] = useState(false);
 
   const handleAdminSendNotification = async () => {
@@ -5684,7 +5642,7 @@ export function Web3Dashboard({
                         onChange={(e) => setAdminRules(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                       />
-                      <div className="grid grid-cols-3 gap-1.5 pt-1">
+                      <div className="pt-1">
                         <button
                           type="button"
                           onClick={handleAdminCreateTournament}
@@ -5692,22 +5650,6 @@ export function Web3Dashboard({
                           className="w-full py-2 bg-[#ffcc00] text-black font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
                         >
                           {adminSubmitting ? 'Updating...' : tournamentData ? 'Update Tourn' : 'Create Tourn'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAdminSimulateTournament(16)}
-                          disabled={adminSubmitting}
-                          className="w-full py-2 bg-[#00ff66] text-black font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
-                        >
-                          {adminSubmitting ? 'Simulating...' : '🚀 Sim 16P'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAdminSimulateTournament(32)}
-                          disabled={adminSubmitting}
-                          className="w-full py-2 bg-[#ff4b4b] text-white font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
-                        >
-                          {adminSubmitting ? 'Simulating...' : '🔥 Sim 32P'}
                         </button>
                       </div>
 
