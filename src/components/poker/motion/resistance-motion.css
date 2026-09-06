@@ -1,0 +1,72 @@
+/* Shared material: square block masks. Finite events, quiet resting states. */
+.rp-pixel-build, .rp-event-cue, .rp-pixel-modal-transition { mask-size: 32px 32px; mask-repeat: repeat; animation: rp-material-build 240ms steps(1, end) both; }
+.rp-pixel-dissolve { mask-size: 32px 32px; mask-repeat: repeat; animation: rp-material-dissolve 280ms steps(1, end) both; }
+@keyframes rp-material-build {
+  0% { mask-image: var(--rp-mask-1); }
+  15% { mask-image: var(--rp-mask-2); }
+  30% { mask-image: var(--rp-mask-3); }
+  45% { mask-image: var(--rp-mask-4); }
+  60% { mask-image: var(--rp-mask-5); }
+  75% { mask-image: var(--rp-mask-6); }
+  90% { mask-image: var(--rp-mask-7); }
+  100% { mask-image: none; }
+}
+@keyframes rp-material-dissolve {
+  0% { mask-image: none; opacity: 1; transform: translateX(0); }
+  20% { mask-image: var(--rp-mask-6); }
+  40% { mask-image: var(--rp-mask-4); transform: translateX(-2px); }
+  60% { mask-image: var(--rp-mask-3); }
+  80% { mask-image: var(--rp-mask-1); transform: translateX(-4px); }
+  100% { mask-image: var(--rp-mask-0); opacity: 0; }
+}
+.rp-event-stage { position: absolute; top: 59%; left: 50%; transform: translateX(-50%); width: min(210px, calc(100% - 2 * var(--seat-edge) - var(--seat-width) - 8px)); min-height: 34px; z-index: 42; pointer-events: none; text-align: center; }
+.rp-event-cue { display: grid; gap: 4px; padding: 5px 3px; color: #edf1f2; border-left: 2px solid #697780; background: #090e11; box-shadow: 2px 2px #020303; }
+.rp-event-cue span { font: 600 9px/1.2 var(--rp-font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-event-cue strong { font: 11px/1.4 var(--rp-font-terminal); overflow-wrap: anywhere; }
+.rp-event-cue--impact { border-color: var(--rp-signal); color: #fff; }
+.rp-event-cue--impact strong { font-size: 14px; text-shadow: 2px 0 #86211c; animation: rp-cue-impact 160ms steps(3, end); }
+@keyframes rp-cue-impact { 0% { transform: translateX(-2px); } 40% { transform: translateX(2px); } 100% { transform: none; } }
+.rp-table .rp-pixel-border-progress { inset: -1px; border: none; transform: none; transition: none; color: var(--rp-signal); z-index: 5; }
+.rp-pixel-border-progress svg { width: 100%; height: 100%; overflow: visible; }
+.rp-pixel-border-progress rect { transition: stroke-dasharray 120ms steps(3, end); }
+.rp-seat-countdown { position: absolute; left: 2px; top: 2px; z-index: 6; background: #080c0f; color: #ff8a82; font: 10px/1.2 var(--rp-font-terminal); padding: 1px 2px; }
+.rp-seat-hole-cards--dealt i { animation: rp-seat-deal 240ms steps(5, end) var(--seat-deal-delay, 0ms) both; }
+.rp-seat-hole-cards--dealt i:nth-child(2) { animation-delay: calc(var(--seat-deal-delay, 0ms) + 90ms); }
+@keyframes rp-seat-deal { 0% { opacity: 0; transform: translate(var(--seat-card-from-x, 0px), var(--seat-card-from-y, 8px)); } 35% { opacity: 1; } 85% { transform: translateY(1px); } 100% { opacity: 1; transform: none; } }
+@keyframes rp-card-deal { 0% { transform: translate(var(--rp-card-from-x, 0px), var(--rp-card-from-y, -34px)) scale(.65); opacity: 0; } 20% { opacity: 1; } 80% { transform: translate(0, 2px); } 100% { transform: none; opacity: 1; } }
+.resistance-avatar--active .resistance-avatar__face { animation: none; }
+.resistance-avatar--active .resistance-avatar__signal { box-shadow: 0 0 0 2px #030405, 2px 0 #ff5548; }
+.rp-player-signal-state--restored .resistance-avatar__face { animation: rp-material-build 300ms steps(1, end) both; mask-size: 32px 32px; }
+.rp-player-elimination .resistance-avatar__face { animation: rp-material-dissolve 400ms steps(1, end) both; mask-size: 32px 32px; }
+.resistance-avatar--eliminated .resistance-avatar__face { opacity: 1; }
+.resistance-avatar--disconnected .resistance-avatar__face { animation: rp-signal-fragment 240ms steps(1, end) both; mask-size: 32px 32px; }
+@keyframes rp-signal-fragment { 0% { mask-image: none; } 35% { mask-image: var(--rp-mask-6); transform: translateX(1px); } 65% { mask-image: var(--rp-mask-3); transform: translateX(-1px); } 100% { mask-image: var(--rp-mask-4); transform: none; } }
+.rp-player-seat--winner::after { content: ''; position: absolute; inset: -2px; border: 2px solid #dcebe3; pointer-events: none; animation: rp-winner-perimeter 400ms steps(4, end) both; }
+@keyframes rp-winner-perimeter { 0% { clip-path: inset(0 100% 100% 0); } 50% { clip-path: inset(0 0 50% 0); } 100% { clip-path: inset(0); } }
+.rp-table .rp-seat-state { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.rp-hand-result__header { position: relative; }
+.rp-hand-result__header::after { content: ''; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: #8ee1af; transform-origin: left; animation: rp-result-scan 360ms steps(8, end) both; }
+@keyframes rp-result-scan { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.rp-hand-result__winner { animation: rp-winner-perimeter 240ms steps(4, end); }
+.rp-hand-result__portrait { width: 36px; flex: none; }
+.rp-hand-result__winner { flex-wrap: wrap; }
+.rp-hand-result__identity { flex: 1; min-width: 70px; }
+.rp-hand-result__session-label { display: block; color: #a9b5be; font: 8px/1.5 var(--rp-font-terminal); margin-top: 6px; }
+.rp-hand-result__winners--grid .rp-hand-result__portrait { display: none; }
+.rp-hand-result[open] { animation: none; }
+.rp-pre-action-toast-slot .rp-pixel-toast { animation: rp-material-build 160ms steps(1, end); mask-size: 32px 32px; }
+.rp-sticker { display: inline-grid; place-items: center; width: 36px; height: 36px; position: relative; }
+.rp-sticker > canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+.rp-sticker-source { position: absolute; width: 48px; height: 48px; visibility: hidden; pointer-events: none; }
+.rp-pixel-reaction .rp-sticker { width: 32px; height: 32px; }
+.rp-pixel-reaction--large .rp-sticker { width: 42px; height: 42px; }
+.rp-pixel-reaction { display: grid; place-items: center; }
+.rp-table .rp-turn-timer { animation: none; }
+.resistance-poker--reduced-motion *, .resistance-poker--reduced-motion *::before, .resistance-poker--reduced-motion *::after { animation: none !important; transition: none !important; }
+.resistance-poker--reduced-motion .rp-pixel-dissolve { visibility: hidden; }
+.resistance-poker--reduced-motion .resistance-avatar--eliminated .resistance-avatar__face { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .rp-pixel-build, .rp-pixel-dissolve, .rp-event-cue, .rp-event-cue strong, .rp-pixel-modal-transition, .rp-hand-result__header::after, .rp-hand-result__winner { animation: none !important; }
+  .rp-pixel-dissolve { visibility: hidden; }
+  .resistance-avatar--eliminated .resistance-avatar__face { opacity: 0; }
+}

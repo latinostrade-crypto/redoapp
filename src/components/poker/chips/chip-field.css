@@ -1,0 +1,55 @@
+/* Chip graphics have no red badge, no duplicate balance, no pointer targets. */
+.rp-chip-piles { display: block; position: relative; width: min(var(--pile-max, 42px), calc(var(--pile-count) * 9px + 4px)); height: calc(var(--pile-size, 14px) + 5px); }
+.rp-chip-denomination { display: contents; }
+.rp-chip-pile { position: absolute; left: calc((100% - var(--pile-size, 14px)) * var(--pile-position)); bottom: calc(var(--pile-row, 0) * -5px); width: var(--pile-size, 14px); height: calc(var(--pile-size, 14px) + var(--pile-rise, 0px)); }
+.rp-chip-denomination--1 { --chip-color: #919ba7; --chip-top: #d2d8df; }
+.rp-chip-denomination--5 { --chip-color: #c94439; --chip-top: #ff7c68; }
+.rp-chip-denomination--25 { --chip-color: #276ec0; --chip-top: #77b7fb; }
+.rp-chip-denomination--100 { --chip-color: #9b6b23; --chip-top: #f5c660; }
+.rp-chip-denomination--500 { --chip-color: #744cb3; --chip-top: #c9a3ff; }
+.rp-chip-denomination--2500 { --chip-color: #24846f; --chip-top: #80d8b7; }
+.rp-chip-denomination--10000 { --chip-color: #ad477d; --chip-top: #fda5cc; }
+.rp-seat-balance-logo { width: 11px; height: 11px; }
+.rp-player-seat:not(.rp-player-seat--compact) { width: 106px; }
+.rp-player-seat__meta .rp-chip-value { font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.rp-chip-field { position: absolute; inset: 0; z-index: 25; pointer-events: none; contain: layout style; }
+.rp-chip-bankroll, .rp-chip-bank { position: absolute; transform: translate(-50%, -50%); line-height: 0; }
+.rp-chip-field .rp-chip-stack { min-height: 0; min-width: 0; }
+.rp-chip-bankroll .rp-chip-stack { animation: rp-pile-build 160ms steps(4, end) both; }
+.rp-chip-bankroll { --pile-max: 30px; --pile-size: 12px; }
+.rp-chip-bankroll::before { content: ''; position: absolute; width: 1px; height: 5px; background: #57626b; left: 50%; bottom: calc(100% + 1px); }
+.rp-chip-bankroll--local::before { bottom: auto; top: calc(100% + 1px); }
+.rp-chip-bank { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.rp-chip-bank .rp-chip-stack { animation: rp-pile-merge 200ms steps(4, end) both; }
+.rp-chip-bank .rp-chip-value { font: 6px/1 'Silkscreen', monospace; color: #e1d3b6; }
+.rp-chip-bank--split { --pile-max: 28px; --pile-size: 11px; }
+.rp-chip-flight { --pile-max: 28px; --pile-size: 12px; }
+.rp-chip-flight { position: absolute; left: 0; top: 0; width: 0; height: 0; animation: rp-chips-bet 960ms steps(9, end) both; will-change: transform; }
+.rp-chip-flight > .rp-chip-stack { position: absolute; transform: translate(-50%, -50%); filter: drop-shadow(0 2px 0 #000); }
+.rp-chip-flight--win, .rp-chip-flight--return { animation-name: rp-chips-award; animation-fill-mode: forwards; opacity: 0; }
+.rp-chip-flight--return { --chip-return-accent: #c8e6de; }
+.rp-counter-step { display: inline-block; animation: rp-counter-resolve 150ms steps(3, end); }
+.rp-all-in-sequence .rp-announcement { top: 32px; padding: 6px 12px; min-height: 0; width: min(calc(100% - 32px), 300px); }
+.rp-all-in-sequence .rp-announcement strong { font-size: 12px; }
+.rp-all-in-sequence .rp-announcement__eyebrow { display: none; }
+@keyframes rp-pile-build { from { opacity: .4; clip-path: inset(65% 0 0 0); } to { opacity: 1; clip-path: inset(0); } }
+@keyframes rp-pile-merge { 0% { transform: translateY(-3px); opacity: .65; } 100% { transform: translateY(0); opacity: 1; } }
+@keyframes rp-counter-resolve { 0% { color: #fff2bc; transform: translateY(-1px); } 100% { transform: translateY(0); } }
+@keyframes rp-chips-bet {
+  0% { opacity: 0; transform: translate(var(--from-x), var(--from-y)) scale(.75); }
+  8% { opacity: 1; }
+  28%, 47% { opacity: 1; transform: translate(var(--stop-x), var(--stop-y)) scale(1); }
+  59% { opacity: 1; transform: translate(var(--route1-x), var(--route1-y)); }
+  73% { opacity: 1; transform: translate(var(--route2-x), var(--route2-y)); }
+  85% { opacity: 1; transform: translate(var(--to-x), var(--to-y)) scale(1); }
+  86%, 100% { opacity: 0; transform: translate(var(--to-x), var(--to-y)) scale(1); }
+}
+@keyframes rp-chips-award {
+  0% { opacity: 1; transform: translate(var(--from-x), var(--from-y)); }
+  30% { opacity: 1; transform: translate(var(--route1-x), var(--route1-y)); }
+  58% { opacity: 1; transform: translate(var(--route2-x), var(--route2-y)); }
+  83% { opacity: 1; transform: translate(var(--to-x), var(--to-y)); }
+  84%, 100% { opacity: 0; transform: translate(var(--to-x), var(--to-y)); }
+}
+.resistance-poker--reduced-motion .rp-chip-field *, .resistance-poker--reduced-motion .rp-counter-step { animation: none !important; }
+@media (prefers-reduced-motion: reduce) { .rp-chip-field *, .rp-counter-step { animation: none !important; } }

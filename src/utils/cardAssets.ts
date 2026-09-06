@@ -52,8 +52,6 @@ const standardValues: CardValue[] = [
 
 export const REQUIRED_GAME_IMAGE_URLS = (() => {
   const urls = new Set<string>([
-    '/banner.png',
-    '/text(logo).jpg',
     '/card-thumbs/back.jpeg',
     '/card-thumbs/wild%201.jpeg',
     '/card-thumbs/wild%202.jpeg',
@@ -104,7 +102,7 @@ export function preloadRequiredGameImages() {
   if (preloadPromise) return preloadPromise;
   preloadPromise = (async () => {
     // 1. Immediately preload critical lobby assets first
-    const criticalUrls = ['/banner.png', '/text(logo).jpg', '/card-thumbs/back.jpeg'];
+    const criticalUrls = ['/card-thumbs/back.jpeg'];
     await Promise.allSettled(
       criticalUrls
         .filter((url) => !retainedImages.has(url))

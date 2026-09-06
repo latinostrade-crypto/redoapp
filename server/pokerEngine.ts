@@ -1,6 +1,7 @@
 import { evaluate7CardHand } from '../src/utils/pokerEvaluator';
 import { PokerCard, PokerSuit } from '../src/types/poker';
 import { randomInt } from 'node:crypto';
+import { buildPokerSidePots, calculatePokerPotAwards, pokerPotTransferKind } from './pokerPots';
 
 export type ServerPokerStage = 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'ended';
 
@@ -30,6 +31,9 @@ export interface ServerPokerGameState {
   communityCards: PokerCard[];
   stage: ServerPokerStage;
   pot: number;
+  sidePots?: Array<{ amount: number; eligibleUserIds: string[] }>;
+  chipAwards?: Array<{ userId: string; amount: number; potIndex: number; kind: 'win' | 'return' }>;
+  visualEpoch?: number;
   currentBet: number;
   minRaise: number;
   players: ServerPokerPlayer[];
@@ -173,6 +177,9 @@ export class PokerEngine {
     this.state.deck = createShuffledDeck();
     this.state.communityCards = [];
     this.state.pot = 0;
+    this.state.sidePots = [];
+    this.state.chipAwards = [];
+    this.state.visualEpoch = (this.state.visualEpoch || 0) + 1;
     this.state.currentBet = this.state.bigBlindAmount;
     this.state.minRaise = this.state.bigBlindAmount;
     this.state.winnerUserIds = [];
@@ -367,6 +374,12 @@ export class PokerEngine {
     if (active.length === 1) {
       const winner = active[0];
       winner.chips += this.state.pot;
+      this.state.sidePots = [{ amount: this.state.pot, eligibleUserIds: [winner.userId] }];
+      const returned = Math.max(0, winner.totalMatchInvested - Math.max(0, ...this.state.players.filter(p => p !== winner).map(p => p.totalMatchInvested)));
+      this.state.chipAwards = [
+        { userId: winner.userId, amount: this.state.pot - returned, potIndex: 0, kind: 'win' as const },
+        { userId: winner.userId, amount: returned, potIndex: 0, kind: 'return' as const },
+      ].filter(a => a.amount > 0);
       this.state.winnerUserIds = [winner.userId];
       this.log(`${winner.username} wins ${this.state.pot} (everyone else folded).`, 'win');
     } else {
@@ -378,15 +391,18 @@ export class PokerEngine {
       });
       
       active.sort((a, b) => (b.handScore || 0) - (a.handScore || 0));
-      const bestScore = active[0].handScore;
-      const winners = active.filter(p => p.handScore === bestScore);
-      
-      const split = Math.floor(this.state.pot / winners.length);
-      winners.forEach(w => w.chips += split);
-      this.state.winnerUserIds = winners.map(w => w.userId);
-      this.state.winningHandDesc = winners[0].handDesc;
-      
-      this.log(`${winners.map(w=>w.username).join(', ')} wins ${split} with ${this.state.winningHandDesc}.`, 'win');
+      this.state.sidePots = buildPokerSidePots(this.state.players);
+      this.state.chipAwards = [];
+      this.state.sidePots.forEach((pot, potIndex) => {
+        const split = calculatePokerPotAwards(pot, active.map(p => ({ userId: p.userId, handScore: p.handScore || 0, seatIndex: this.state.players.indexOf(p) })), this.state.dealerIndex, this.state.players.length);
+        split.awards.forEach((amount, userId) => {
+          active.find(p => p.userId === userId)!.chips += amount;
+          this.state.chipAwards!.push({ userId, amount, potIndex, kind: pokerPotTransferKind(this.state.players, potIndex) });
+        });
+      });
+      this.state.winnerUserIds = [...new Set(this.state.chipAwards.filter(a => a.kind === 'win').map(a => a.userId))];
+      this.state.winningHandDesc = active[0].handDesc;
+      this.log(`${this.state.winnerUserIds.map(id => active.find(p => p.userId === id)!.username).join(', ')} wins with ${this.state.winningHandDesc}.`, 'win');
     }
     
     this.state.stage = 'ended';

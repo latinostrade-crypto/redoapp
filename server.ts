@@ -10,9 +10,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createTicketingService, type DepositIntent, type TicketLedgerEntry, type WithdrawalRequest } from './server/tickets';
 import { distributePlayersIntoTables, type TournamentData, type TournamentParticipant, type TournamentMatch } from './server/tournaments';
-import { buildPokerSidePots, calculatePokerPotAwards } from './server/pokerPots';
+import { buildPokerSidePots, calculatePokerPotAwards, pokerPotTransferKind } from './server/pokerPots';
 import { calculatePokerCashoutReferralShares } from './server/pokerCashout';
 import { rollDailyVaultReward } from './server/dailyVault';
+import { sendSerializedSse } from './server/sseTransport';
+import { createChangedSnapshotWriter } from './server/changedSnapshot';
 
 
 dotenv.config();
@@ -54,7 +56,12 @@ const CASINO_RUNTIME_IDLE_MS = 60_000;
 // a notification or switches chats. A valid seat must survive that normal
 // interruption; HTTP state reads renew this in-memory lease without causing
 // a database write or a gameplay snapshot broadcast.
-const CASINO_PRESENCE_GRACE_MS = 3 * 60_000;
+const casinoPresenceTestOverride = process.env.NODE_ENV === 'production'
+  ? Number.NaN
+  : Number(process.env.TEST_CASINO_PRESENCE_GRACE_MS);
+const CASINO_PRESENCE_GRACE_MS = Number.isFinite(casinoPresenceTestOverride) && casinoPresenceTestOverride >= 500
+  ? casinoPresenceTestOverride
+  : 3 * 60_000;
 // Enable only after supabase/persistent_tables.sql has been applied. Keeping
 // the switch explicit makes a rolling deployment safe: old production data
 // continues to use the compatible app_state path until the schema is ready.
@@ -175,8 +182,10 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '64kb' }));
 app.use(compression({
+  level: 1,
+  threshold: 1024,
   filter: (req, res) => {
-    if (res.getHeader('Content-Type') === 'text/event-stream') {
+    if (String(res.getHeader('Content-Type') || '').startsWith('text/event-stream')) {
       return false;
     }
     return compression.filter(req, res);
@@ -432,6 +441,7 @@ interface ServerPokerGameState {
   /** Every amount is an integer chip value. Pots are rebuilt at showdown
    * from totalMatchInvested so folded/all-in contributions stay accounted. */
   sidePots?: Array<{ amount: number; eligibleUserIds: string[] }>;
+  chipAwards?: Array<{ userId: string; amount: number; potIndex: number; kind: 'win' | 'return' }>;
   currentBet: number;
   minRaise: number;
   communityCards: ServerPokerCard[];
@@ -714,12 +724,12 @@ let pastTournaments: TournamentData[] = [];
 const matchSubscribers = new Map<string, Set<Response>>();
 const privateRoomSubscribers = new Map<string, Set<Response>>();
 const queueSubscribers = new Map<string, Set<Response>>();
-const lastSsePayloadByResponse = new WeakMap<Response, Map<string, string>>();
 const realtimeTraffic = {
   framesSent: 0,
   framesDeduplicated: 0,
   payloadBytesSent: 0,
   heartbeatsSent: 0,
+  slowConnectionsClosed: 0,
 };
 const matchmakerCleanupTimers = new Map<string, NodeJS.Timeout>();
 const referralStatsByInviter = new Map<string, ReferralStats>();
@@ -1086,9 +1096,20 @@ async function persistDirtyRows<T>(
   }
 }
 
+const persistGlobalSnapshot = createChangedSnapshotWriter((snapshot: unknown) => upsertStateRow('global-state', snapshot));
+let persistRequestedWhileWriting = false;
+
 async function persistStateNow() {
-  if (persistInFlight) return persistInFlight;
-  persistInFlight = persistStateNowInternal().finally(() => {
+  if (persistInFlight) {
+    persistRequestedWhileWriting = true;
+    return persistInFlight;
+  }
+  persistInFlight = (async () => {
+    do {
+      persistRequestedWhileWriting = false;
+      await persistStateNowInternal();
+    } while (persistRequestedWhileWriting);
+  })().finally(() => {
     persistInFlight = null;
   });
   return persistInFlight;
@@ -1178,7 +1199,7 @@ async function persistStateNowInternal() {
         matchmakingQueue,
         telegramNotifications,
       };
-      await upsertStateRow('global-state', globalState);
+      await persistGlobalSnapshot(globalState);
     } catch (err) {
       console.error('Supabase granular persist failed:', err);
       throw err;
@@ -2678,6 +2699,8 @@ async function performTelegramNotificationFlush() {
     (item.status === 'pending' || item.status === 'failed')
     && (item.nextAttemptAt || 0) <= now
   )).sort((a, b) => (b.priority || 0) - (a.priority || 0) || a.createdAt - b.createdAt).slice(0, 20);
+  // Idle timer ticks must not rewrite the complete durable notification history.
+  if (pending.length === 0) return;
   for (const item of pending) {
     item.status = 'sending';
     item.attempts = (item.attempts || 0) + 1;
@@ -4831,12 +4854,13 @@ function advanceBlackjackHandOrTurn(match: ActiveMatch, player: ServerBlackjackP
 function awardPokerShowdownPots(pk: ServerPokerGameState, active: ServerPokerPlayer[]) {
   const sidePots = buildPokerSidePots(pk.players);
   pk.sidePots = sidePots;
+  pk.chipAwards = [];
   const winners = new Map<string, ServerPokerPlayer>();
   let headlineBestFive: ServerPokerCard[] = [];
   let headlineDescription = '';
   const summaries: string[] = [];
 
-  for (const pot of sidePots) {
+  for (const [potIndex, pot] of sidePots.entries()) {
     const awards = calculatePokerPotAwards(
       pot,
       active.map((player) => ({
@@ -4851,6 +4875,7 @@ function awardPokerShowdownPots(pk: ServerPokerGameState, active: ServerPokerPla
     const potWinners = awards.winnerUserIds.map((userId) => active.find((player) => player.userId === userId)!);
     potWinners.forEach((winner) => {
       winner.chips += awards.awards.get(winner.userId) || 0;
+      pk.chipAwards.push({ userId: winner.userId, amount: awards.awards.get(winner.userId) || 0, potIndex, kind: pokerPotTransferKind(pk.players, potIndex) });
       winners.set(winner.userId, winner);
     });
     if (!headlineDescription) {
@@ -4961,6 +4986,13 @@ function advancePokerTurn(match: ActiveMatch) {
   if (active.length <= 1) {
     const winner = active[0] || pk.players[0];
     winner.chips += pk.pot;
+    pk.sidePots = [{ amount: pk.pot, eligibleUserIds: [winner.userId] }];
+    const otherMax = Math.max(0, ...pk.players.filter(p => p !== winner).map(p => p.totalMatchInvested));
+    const returned = Math.max(0, winner.totalMatchInvested - otherMax);
+    pk.chipAwards = [
+      { userId: winner.userId, amount: pk.pot - returned, potIndex: 0, kind: 'win' },
+      { userId: winner.userId, amount: returned, potIndex: 0, kind: 'return' },
+    ].filter(a => a.amount > 0) as NonNullable<ServerPokerGameState['chipAwards']>;
     pk.winnerUserIds = [winner.userId];
     pk.winningCardIds = winner.holeCards.map((c) => c.id);
     pk.winningHandDesc = `All opponents folded. ${winner.username} wins pot of ${pk.pot} chips!`;
@@ -4998,8 +5030,6 @@ function advancePokerTurn(match: ActiveMatch) {
 function startNextPokerRound(match: ActiveMatch) {
   const pk = match.pokerGameState;
   if (!pk || pk.stage === 'match_ended') return;
-  pk.visualEpoch = (pk.visualEpoch || 1) + 1;
-  pk.visualEvents = [];
 
   if (match.creatorUserId === 'casino') {
     pk.players = pk.players.filter((player) =>
@@ -5017,6 +5047,13 @@ function startNextPokerRound(match: ActiveMatch) {
       // Keep the final showdown on screen first. The next tick turns this
       // into a waiting table instead of inventing a tournament champion.
       pk.stage = 'idle';
+      pk.pot = 0;
+      pk.currentBet = 0;
+      pk.sidePots = [];
+      pk.chipAwards = [];
+      pk.visualEvents = [];
+      pk.visualEpoch = (pk.visualEpoch || 1) + 1;
+      pk.players.forEach(p => { p.currentBet = 0; p.totalMatchInvested = 0; });
       pk.nextRoundStartsAt = null;
       return;
     }
@@ -5024,6 +5061,10 @@ function startNextPokerRound(match: ActiveMatch) {
     return;
   }
 
+  pk.visualEpoch = (pk.visualEpoch || 1) + 1;
+  pk.visualEvents = [];
+  pk.chipAwards = [];
+  pk.sidePots = [];
   const deck = generateServerPokerDeck();
   pk.deck = deck;
 
@@ -5357,6 +5398,7 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
       userId: p.userId,
       name: p.username,
       avatar: p.avatarId,
+      photoUrl: p.isAi ? null : getUser(p.userId).telegramPhotoUrl || null,
       chips: p.chips,
       currentBet: p.currentBet,
       totalMatchInvested: p.totalMatchInvested,
@@ -5395,6 +5437,10 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
     stage: pk.stage,
     pot: pk.pot,
     sidePots,
+    chipAwards: (pk.chipAwards || []).map(award => ({
+      amount: award.amount, potIndex: award.potIndex, kind: award.kind,
+      playerId: !isSpectator && isSameUser(award.userId, userId) ? 'player' : `opponent_${pk.players.findIndex(p => isSameUser(p.userId, award.userId))}`,
+    })),
     currentBet: pk.currentBet,
     minRaise: pk.minRaise,
     communityCards: pk.communityCards,
@@ -6643,22 +6689,7 @@ function runMatchmakingTick() {
 }
 
 function sendSse(response: Response, event: string, payload: unknown, dedupe = true) {
-  if (response.writableEnded || response.destroyed) return false;
-  const serializedPayload = JSON.stringify(payload);
-  const eventPayloads = lastSsePayloadByResponse.get(response) || new Map<string, string>();
-  if (dedupe && eventPayloads.get(event) === serializedPayload) {
-    realtimeTraffic.framesDeduplicated += 1;
-    return false;
-  }
-  eventPayloads.set(event, serializedPayload);
-  lastSsePayloadByResponse.set(response, eventPayloads);
-  response.write(`event: ${event}\n`);
-  response.write(`data: ${serializedPayload}\n\n`);
-  (response as any).flush?.();
-  realtimeTraffic.framesSent += 1;
-  realtimeTraffic.payloadBytesSent += Buffer.byteLength(serializedPayload);
-  if (event === 'heartbeat') realtimeTraffic.heartbeatsSent += 1;
-  return true;
+  return sendSerializedSse(response, event, JSON.stringify(payload), realtimeTraffic, dedupe);
 }
 
 function subscribeToChannel(store: Map<string, Set<Response>>, key: string, response: Response) {
@@ -6725,8 +6756,8 @@ function broadcastPrivateRoom(roomCode: string) {
   const room = privateRooms.get(roomCode);
   const subscribers = privateRoomSubscribers.get(roomCode);
   if (!room || !subscribers) return;
-  const payload = buildPrivateRoomPayload(room);
-  subscribers.forEach((response) => sendSse(response, 'private-room', payload));
+  const payload = JSON.stringify(buildPrivateRoomPayload(room));
+  subscribers.forEach((response) => sendSerializedSse(response, 'private-room', payload, realtimeTraffic));
 }
 
 function broadcastMatchCancelled(matchId: string, reason: string) {
@@ -6824,13 +6855,16 @@ function broadcastMatch(matchId: string) {
   const subscribers = matchSubscribers.get(matchId);
   if (!activeMatch) return;
   if (!subscribers) return;
+  const perspectives = new Map<string, string>();
   subscribers.forEach((response) => {
     const userId = response.locals.userId as string | undefined;
     if (!userId) return;
-    const payload = buildPerspectiveState(activeMatch, userId);
-    if (payload) {
-      sendSse(response, 'match-state', payload);
+    if (!perspectives.has(userId)) {
+      const payload = buildPerspectiveState(activeMatch, userId);
+      if (payload) perspectives.set(userId, JSON.stringify(payload));
     }
+    const serialized = perspectives.get(userId);
+    if (serialized) sendSerializedSse(response, 'match-state', serialized, realtimeTraffic);
   });
 }
 
@@ -6853,6 +6887,7 @@ function buildOperationalHealthStatus() {
     status: 'healthy',
     time: new Date().toISOString(),
     service: 'redoapp-backend',
+    process: { uptimeSeconds: Math.round(process.uptime()), memory: process.memoryUsage(), cpu: process.cpuUsage() },
     privateRoomsVersion: 'json-create-free-room-v5',
     cache: {
       provider: redisCacheEnabled ? 'upstash-redis' : 'disabled',
@@ -6882,8 +6917,9 @@ function buildOperationalHealthStatus() {
 // Render only needs a successful response here. Keep the public check free of
 // operational counters and payout state, which belong behind administrator auth.
 app.get('/api/health', (req, res) => {
-  const health = buildOperationalHealthStatus();
-  res.json({ status: health.status, time: health.time, service: health.service });
+  // Render calls this frequently: do not walk users, payouts or SSE channels.
+  res.set('Cache-Control', 'no-store');
+  res.json({ status: 'healthy', time: new Date().toISOString(), service: 'redoapp-backend' });
 });
 
 app.get('/api/admin/health', requireAdmin, (req, res) => {
@@ -10619,6 +10655,9 @@ setInterval(() => {
 // writing on every animation frame or every spectator message.
 setInterval(() => {
   casinoManager.getTables().forEach((table) => {
+    // Actions still await their ordered checkpoints. A periodic fallback must
+    // not append redundant jobs indefinitely while the database is slow.
+    if (casinoRuntimePersistTails.has(table.id)) return;
     if (table.engine) persistCasinoRuntime(table.id).catch((error) => {
       console.error(`Failed to checkpoint casino table ${table.id}`, error);
     });

@@ -1,0 +1,87 @@
+/* A single symmetric seat rail. Chips use these same measured seat anchors. */
+.resistance-poker .rp-table {
+  --seat-width: 64px;
+  --seat-edge: 38px;
+  container-type: inline-size;
+  --board-card: clamp(26px, calc((100cqw - 2 * var(--seat-edge) - var(--seat-width) - 20px) / 5), 40px);
+  height: 480px !important;
+}
+.rp-table .rp-opponent-position {
+  left: var(--seat-x);
+  top: var(--seat-y);
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+.rp-table [data-seat-slot="0"], .rp-table [data-seat-slot="6"] { --seat-y: 26%; }
+.rp-table [data-seat-slot="1"], .rp-table [data-seat-slot="7"] { --seat-y: 48%; }
+.rp-table [data-seat-slot="2"], .rp-table [data-seat-slot="8"] { --seat-y: 70%; }
+.rp-table [data-seat-slot="0"], .rp-table [data-seat-slot="1"], .rp-table [data-seat-slot="2"] { --seat-x: var(--seat-edge); }
+.rp-table [data-seat-slot="6"], .rp-table [data-seat-slot="7"], .rp-table [data-seat-slot="8"] { --seat-x: calc(100% - var(--seat-edge)); }
+.rp-table [data-seat-slot="3"] { --seat-x: 22%; --seat-y: 38px; }
+.rp-table [data-seat-slot="4"] { --seat-x: 50%; --seat-y: 38px; }
+.rp-table [data-seat-slot="5"] { --seat-x: 78%; --seat-y: 38px; }
+.rp-table [data-seat-slot="9"] { --seat-x: 50%; --seat-y: calc(100% - 42px); }
+.rp-table .rp-player-seat--compact { width: var(--seat-width); min-height: 56px; }
+.rp-table .rp-player-seat--compact .rp-player-seat__meta {
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  bottom: 3px;
+}
+.rp-table .rp-player-seat--compact .rp-player-seat__meta > strong { max-width: 100%; font-size: 7px; }
+.rp-table .rp-player-seat--compact .rp-player-seat__meta > .rp-chip-value { font-size: 7px; gap: 2px; }
+.rp-table .rp-player-seat--compact .rp-player-seat__portrait { margin-top: -1px; }
+.rp-table .rp-player-seat--compact .rp-player-seat__portrait { width: 28px; margin-left: 0; margin-right: 0; }
+.rp-table .rp-player-seat--compact .resistance-avatar { max-width: 28px; max-height: 28px; }
+.rp-table .rp-seat-hole-cards { z-index: 3; right: 2px; top: 4px; width: 28px; height: 25px; display: flex; gap: 2px; }
+.rp-table .rp-seat-hole-cards i { position: relative; left: auto; right: auto; top: auto; flex: none; width: 13px; height: 25px; transform: none; }
+.rp-table .rp-seat-hole-cards--revealed i { font: 800 8px/1.1 ui-sans-serif, system-ui, sans-serif; gap: 2px; }
+.rp-table .rp-seat-balance-logo { width: 9px; height: 9px; }
+.rp-table .rp-pot-position { top: calc(23% - 14px); left: 50%; transform: translateX(-50%); }
+.rp-table .rp-pot { font-size: 12px; line-height: 16px; padding: 2px 10px; }
+.rp-table .rp-stage-label { font-size: 6px; line-height: 10px; padding: 1px 5px; }
+.rp-table .rp-board-position { top: 48%; left: 50%; transform: translate(-50%, -50%); }
+.rp-table .rp-community-board .rp-card-slot { width: var(--board-card); height: calc(var(--board-card) * 1.4); }
+.rp-table .rp-card-slot > .rp-pixel-card-deal { width: 100%; height: 100%; }
+.rp-table .rp-table-signal { min-width: 0; width: min(230px, calc(100cqw - 2 * var(--seat-edge) - var(--seat-width) - 12px)); gap: 5px; padding-inline: 4px; }
+.rp-table .rp-table-signal > span:first-child { display: none; }
+.rp-table .rp-table-signal > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rp-table .rp-table-signal .rp-turn-seconds { flex-shrink: 0; color: #e8edf0; font-size: 8px; font-variant-numeric: tabular-nums; }
+.rp-table .rp-board-zone { top: 48%; width: min(230px, 65%); height: 104px; }
+.rp-table .rp-local-position { bottom: 12px; left: 50%; transform: translateX(-50%); }
+.rp-table .rp-local-player { display: block; transform: none; filter: none; }
+.rp-table .rp-local-player .rp-player-seat:not(.rp-player-seat--compact) { width: 100px; min-height: 60px; grid-template-columns: 42px minmax(0, 1fr); }
+.rp-table .rp-local-player .resistance-avatar { max-width: 42px; max-height: 42px; }
+.rp-local-position .rp-local-cards { position: absolute; right: calc(100% + 10px); bottom: 2px; }
+.rp-table .rp-local-position .rp-hand-rank { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); white-space: nowrap; max-width: 220px; font-size: 7px; }
+.rp-table .rp-waiting-hand { width: 78px; min-height: 38px; font-size: 6px; line-height: 1.5; text-align: center; white-space: normal; letter-spacing: .04em; }
+.rp-table .rp-local-cards [role="group"] > .rp-pixel-card-deal { width: 42px; height: 60px; }
+
+/* Extra banks get their own central rows, without changing ownership lanes. */
+.resistance-poker .rp-table--many-pots { height: 580px !important; }
+.rp-table--many-pots .rp-pot-position { top: 18%; }
+.rp-table--many-pots .rp-board-position, .rp-table--many-pots .rp-board-zone { top: 53%; }
+
+@media (max-width: 359px) {
+  .resistance-poker .rp-table { --seat-width: 54px; --seat-edge: 31px; }
+  .rp-table .rp-player-seat--compact .rp-player-seat__meta > strong { font-size: 6px; }
+  .rp-table .rp-player-seat--compact .rp-player-seat__meta > .rp-chip-value { font-size: 6px; }
+  .rp-table .rp-player-seat--compact .rp-player-seat__portrait { width: 22px; }
+  .rp-table .rp-player-seat--compact .resistance-avatar { max-width: 22px; max-height: 28px; }
+  .rp-table .rp-seat-hole-cards { width: 26px; gap: 1px; }
+  .rp-table .rp-seat-hole-cards i { width: 12px; }
+  .rp-table .rp-local-player .rp-player-seat:not(.rp-player-seat--compact) { width: 88px; grid-template-columns: 34px minmax(0, 1fr); }
+  .rp-table .rp-local-player .resistance-avatar { max-width: 34px; max-height: 34px; }
+  .rp-local-position .rp-local-cards { right: calc(100% + 6px); }
+  .rp-table .rp-local-cards [role="group"] > .rp-pixel-card-deal { width: 36px; height: 54px; }
+  .rp-table .rp-local-player .rp-player-seat__meta > strong { font-size: 7px; }
+  .rp-table .rp-waiting-hand { width: 64px; }
+}
+@media (min-width: 600px) {
+  .resistance-poker .rp-table { --seat-width: 72px; --seat-edge: 48px; height: 520px !important; }
+  .resistance-poker .rp-table--many-pots { height: 620px !important; }
+  .rp-table .rp-player-seat--compact { min-height: 62px; }
+  .rp-table .rp-player-seat--compact .rp-player-seat__meta > strong { font-size: 8px; }
+  .rp-table .rp-player-seat--compact .rp-player-seat__meta > .rp-chip-value { font-size: 8px; }
+}

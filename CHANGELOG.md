@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — Resistance UI and Render preparation (2026-09-06)
+
+- Resistance game menus, shared dark controls, game-specific banners and compact profile wallet control.
+- Pixel banner transitions, poker chip presentation and improved hand-result UI.
+- Pixel-identical lossless menu assets, deferred UNO deck loading, cached wallet chunk and visibility-aware sticker playback.
+- Build-time backend compilation, lower-overhead health checks and SSE delivery, bounded slow-client handling and stable Blackjack subscriptions.
+- Reproducible Render builds, hashed-asset cache headers, scoped build filters and an audited dependency lockfile.
+- Local release gates and an explicit commit manifest; no deployment or paid-launch approval implied.
+- Eliminate idle outbox rewrites; acknowledge immutable global snapshots only after successful writes and drain concurrent persistence requests.
+- Scope backend-only Supabase RPC/view permissions, retain the existing Render Starter service, and detach the obsolete YOapp Blueprint without deleting resources.
+
 ## Version 3
 
 Recent live updates:

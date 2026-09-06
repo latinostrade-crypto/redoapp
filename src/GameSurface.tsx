@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { TonConnectUIProvider } from '@tonconnect/ui-react';
 import App from './App';
 import { wakeBackend } from './utils/api';
-import { initializeRequiredGameImages } from './utils/cardAssets';
 
 const manifestUrl = window.location.origin + '/tonconnect-manifest.json';
 const telegramBotUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
@@ -17,7 +16,6 @@ export default function GameSurface() {
     if (gameBootstrapped) return;
     gameBootstrapped = true;
     wakeBackend();
-    initializeRequiredGameImages();
   }, []);
 
   return (

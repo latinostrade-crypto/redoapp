@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { useTonConnectUI, useTonAddress } from '@tonconnect/ui-react';
@@ -16,10 +16,27 @@ import {
   Zap,
 } from 'lucide-react';
 import { sound } from '../utils/sound';
+import { playPokerFeedback } from '../utils/pokerFeedback';
 import { Avatar } from './Avatars';
+import { ResistanceAvatar } from './poker/ResistanceAvatar';
+import { ChipValue } from './poker/PokerTable';
+import { CasinoConfirmDialog, CasinoNoticeToast, type CasinoConfirmationRequest, type CasinoNotice } from './poker/CasinoConfirmDialog';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
 import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setBridgeToken, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal, isSameUser } from '../utils/api';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
+import './poker/poker-lobby.css';
+import './poker/motion/resistance-motion.css';
+import './poker/resistance-network.css';
+import { pixelMaskStyle } from './poker/motion/pixelMasks';
+import { SeatOccupancy } from './poker/SeatOccupancy';
+import { transitionResistanceScene } from './poker/motion/sceneTransition';
+import { MenuIcon } from './poker/menu/MenuIcon';
+import { MenuProfile } from './poker/menu/MenuProfile';
+import { PokerLobbyMenu } from './poker/menu/PokerLobbyMenu';
+import { UnoLobbyMenu } from './poker/menu/UnoLobbyMenu';
+import { transitionMenuBanner, cancelMenuBannerTransition } from './poker/menu/bannerTransition';
+import blackjackBanner from '../assets/resistance/blackjack-network-banner.lossless.webp';
+import './poker/menu/resistance-menu.css';
 
 const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'redo_appbot';
 const TELEGRAM_APP_SHORT_NAME = import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || 'app';
@@ -723,6 +740,21 @@ export function Web3Dashboard({
   onSpectateMatch,
 }: Web3DashboardProps) {
   const prefersReducedMotion = useReducedMotion();
+  const [dashboardNotice, setDashboardNotice] = useState<CasinoNotice | null>(null);
+  const dashboardNoticeTimerRef = useRef<number | null>(null);
+  const showDashboardNotice = useCallback((message: string, tone: CasinoNotice['tone'] = 'neutral') => {
+    if (dashboardNoticeTimerRef.current !== null) window.clearTimeout(dashboardNoticeTimerRef.current);
+    const key = Date.now();
+    setDashboardNotice({ key, message, tone });
+    dashboardNoticeTimerRef.current = window.setTimeout(() => {
+      setDashboardNotice((current) => current?.key === key ? null : current);
+      dashboardNoticeTimerRef.current = null;
+    }, 2_800);
+  }, []);
+
+  useEffect(() => () => {
+    if (dashboardNoticeTimerRef.current !== null) window.clearTimeout(dashboardNoticeTimerRef.current);
+  }, []);
   const initialLaunchRoomParsedRef = useRef<{ code: string; gameType?: 'uno' | 'poker' | 'blackjack' }>({ code: '' });
   if (!initialLaunchRoomParsedRef.current.code) {
     const startApp = getTelegramStartParam();
@@ -792,6 +824,13 @@ export function Web3Dashboard({
   });
   const [casinoTableLiveData, setCasinoTableLiveData] = useState<CasinoTableView[]>([]);
   const [casinoTableStatus, setCasinoTableStatus] = useState<'idle' | 'refreshing' | 'ready' | 'offline'>('idle');
+  const [casinoRefreshRevision, setCasinoRefreshRevision] = useState(0);
+  useLayoutEffect(() => {
+    const menu = document.querySelector('.rp-main-menu');
+    menu?.classList.toggle('rp-main-menu--pvp', currentTab === 'pvp');
+    return () => { menu?.classList.remove('rp-main-menu--pvp'); };
+  }, [currentTab]);
+  useEffect(() => () => cancelMenuBannerTransition(), []);
   const casinoTables = pvpGameTab === 'uno' || pvpSubMode === 'practice' || pvpSubMode === 'private'
     ? []
     : getPermanentCasinoTables(pvpGameTab, pvpSubMode, casinoTableLiveData);
@@ -816,6 +855,8 @@ export function Web3Dashboard({
           const allowedIds = new Set(PERMANENT_CASINO_TABLES.map((table) => table.id));
           setCasinoTableLiveData((res.tables || []).filter((table) => allowedIds.has(table.id)));
           setCasinoTableStatus('ready');
+        } else if (active) {
+          setCasinoTableStatus('offline');
         }
       } catch (err) {
         console.error('Failed to fetch casino tables', err);
@@ -837,7 +878,7 @@ export function Web3Dashboard({
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [currentTab, pvpGameTab, pvpSubMode]);
+  }, [currentTab, pvpGameTab, pvpSubMode, casinoRefreshRevision]);
 
   useEffect(() => {
     sessionStorage.setItem(DASHBOARD_TAB_STORAGE_KEY, currentTab);
@@ -1054,7 +1095,7 @@ export function Web3Dashboard({
         setTournamentData(res.tournament);
       }
     } catch (err: any) {
-      alert(err instanceof Error ? err.message : 'Could not update registration.');
+      showDashboardNotice(err instanceof Error ? err.message : 'Could not update registration.', 'danger');
     } finally {
       setTournRegistering(false);
     }
@@ -1102,10 +1143,10 @@ export function Web3Dashboard({
       });
       if (res?.tournament) {
         setTournamentData(res.tournament);
-        alert('Tournament updated successfully!');
+        showDashboardNotice('Tournament updated successfully!', 'signal');
       }
     } catch (err: any) {
-      alert(err instanceof Error ? err.message : 'Failed to update tournament.');
+      showDashboardNotice(err instanceof Error ? err.message : 'Failed to update tournament.', 'danger');
     } finally {
       setAdminSubmitting(false);
     }
@@ -1122,10 +1163,10 @@ export function Web3Dashboard({
         method: 'POST',
       });
       if (res?.success) {
-        alert(`📢 ${res.message || `Tournament announcement sent to ${res.notifiedCount} Telegram users!`}`);
+        showDashboardNotice(res.message || `Tournament announcement sent to ${res.notifiedCount} Telegram users!`, 'signal');
       }
     } catch (err: any) {
-      alert(cleanErrorMessage(err));
+      showDashboardNotice(cleanErrorMessage(err), 'danger');
     } finally {
       setAdminNotifying(false);
     }
@@ -1163,6 +1204,31 @@ export function Web3Dashboard({
   const [privateRoomHostUserId, setPrivateRoomHostUserId] = useState<string>('');
   const [privateRoomSnapshot, setPrivateRoomSnapshot] = useState<PrivateRoomResponse | null>(null);
   const [showConnectModal, setShowConnectModal] = useState(false);
+  const [casinoConfirmation, setCasinoConfirmation] = useState<CasinoConfirmationRequest | null>(null);
+  const casinoConfirmationResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
+  const casinoConfirmationKeyRef = useRef(0);
+  const requestCasinoConfirmation = useCallback((request: Omit<CasinoConfirmationRequest, 'key'>) => {
+    casinoConfirmationResolverRef.current?.(false);
+    casinoConfirmationKeyRef.current += 1;
+    setCasinoConfirmation({ ...request, key: casinoConfirmationKeyRef.current });
+    return new Promise<boolean>((resolve) => {
+      casinoConfirmationResolverRef.current = resolve;
+    });
+  }, []);
+  const settleCasinoConfirmation = useCallback((confirmed: boolean) => {
+    const resolve = casinoConfirmationResolverRef.current;
+    casinoConfirmationResolverRef.current = null;
+    setCasinoConfirmation(null);
+    playPokerFeedback(confirmed ? 'ui_confirm' : 'ui_cancel');
+    resolve?.(confirmed);
+  }, []);
+  const confirmCasinoConfirmation = useCallback(() => settleCasinoConfirmation(true), [settleCasinoConfirmation]);
+  const cancelCasinoConfirmation = useCallback(() => settleCasinoConfirmation(false), [settleCasinoConfirmation]);
+
+  useEffect(() => () => {
+    casinoConfirmationResolverRef.current?.(false);
+    casinoConfirmationResolverRef.current = null;
+  }, []);
   const [showPromoModal, setShowPromoModal] = useState<boolean>(() => {
     try {
       return !sessionStorage.getItem(PROMO_EVENT_DISMISSED_KEY);
@@ -1220,8 +1286,15 @@ export function Web3Dashboard({
   const storedUserId = localStorage.getItem('redoapp_current_user_id') || '';
   const fallbackGuestUserId = React.useMemo(() => {
     let id = sessionStorage.getItem('redoapp_tab_guest_id');
+    // Legacy local guest ids used an underscore, but the server only issues
+    // anonymous sessions for its canonical guest: namespace. Preserve any
+    // already authenticated identity; only repair unauthenticated guests.
+    if (id?.startsWith('guest_') && !getSessionToken()) {
+      id = id.replace(/^guest_/, 'guest:');
+      sessionStorage.setItem('redoapp_tab_guest_id', id);
+    }
     if (!id) {
-      id = `guest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      id = `guest:${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       sessionStorage.setItem('redoapp_tab_guest_id', id);
     }
     return id;
@@ -1554,13 +1627,15 @@ export function Web3Dashboard({
       const detail = (event as CustomEvent<Partial<PlayerProfile> & { xp?: number }>).detail;
       if (typeof detail?.xp !== 'number') return;
       setProfile((prev) => {
-        if (!prev) return prev;
+        // The dashboard also publishes this event. Do not echo an unchanged
+        // XP value into a new profile object and trigger another publication.
+        if (!prev || prev.xp === detail.xp) return prev;
         return {
           ...prev,
           xp: detail.xp,
         };
       });
-      setFullProfile((prev) => prev ? { ...prev, xp: detail.xp } : prev);
+      setFullProfile((prev) => prev && prev.xp !== detail.xp ? { ...prev, xp: detail.xp } : prev);
     };
 
     window.addEventListener('redoapp:profile-sync', handleProfileSync as EventListener);
@@ -1812,7 +1887,7 @@ export function Web3Dashboard({
               sound.playPop();
               if (resolvedCode) {
                 await copyTextSafely(resolvedCode);
-                alert(`Room code ${resolvedCode} copied!`);
+                showDashboardNotice(`Room code ${resolvedCode} copied.`, 'signal');
               }
             }}
             className="px-3 py-2 bg-[#00d2ff] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black shadow-[1px_1px_0_#000] cursor-pointer"
@@ -1905,8 +1980,14 @@ export function Web3Dashboard({
       walletAddress: rawAddress || null,
       gameType: pvpGameTab,
     };
-    return apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(roomCodeToUse)}`, { timeoutMs: 6_000 }).then((preview) => {
-      if (preview.stake > 0 && !window.confirm(`Join this private ${preview.gameType.toUpperCase()} table for ${preview.stake} TKT? Your stake will be reserved now.`)) {
+    return apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(roomCodeToUse)}`, { timeoutMs: 6_000 }).then(async (preview) => {
+      if (preview.stake > 0 && !(await requestCasinoConfirmation({
+        title: 'Authorize private table',
+        message: `Reserve ${preview.stake} TKT to join this private ${preview.gameType.toUpperCase()} table?`,
+        detail: 'The backend holds the stake only after confirmation and releases it if the table does not start.',
+        confirmLabel: 'RESERVE & JOIN',
+        tone: 'danger',
+      }))) {
         throw new Error('join_cancelled');
       }
       return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
@@ -1943,7 +2024,7 @@ export function Web3Dashboard({
     });
   // The bridge callback is declared below with the other WebView transport helpers.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady, currentUserId, userName, selectedAvatar, rawAddress, pvpGameTab, privateJoinCode, privateRoomCode, applyPrivateRoomState]);
+  }, [authReady, currentUserId, userName, selectedAvatar, rawAddress, pvpGameTab, privateJoinCode, privateRoomCode, applyPrivateRoomState, requestCasinoConfirmation]);
 
   useEffect(() => {
     const parsed = initialLaunchRoomParsedRef.current;
@@ -2009,8 +2090,14 @@ export function Web3Dashboard({
       walletAddress: rawAddress || null,
       gameType: parsed.gameType || initialLaunchRoomParsedRef.current.gameType || 'uno',
     };
-    apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(code)}`, { timeoutMs: 6_000 }).then((preview) => {
-      if (preview.stake > 0 && !window.confirm(`Join this private ${preview.gameType.toUpperCase()} table for ${preview.stake} TKT? Your stake will be reserved now.`)) {
+    apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(code)}`, { timeoutMs: 6_000 }).then(async (preview) => {
+      if (preview.stake > 0 && !(await requestCasinoConfirmation({
+        title: 'Authorize invited table',
+        message: `Reserve ${preview.stake} TKT to join this private ${preview.gameType.toUpperCase()} table?`,
+        detail: 'This invite opens the existing room; the server remains authoritative for the ticket hold.',
+        confirmLabel: 'RESERVE & JOIN',
+        tone: 'danger',
+      }))) {
         throw new Error('join_cancelled');
       }
       return apiRequest<PrivateRoomResponse>('/api/private-rooms/join', {
@@ -2193,10 +2280,15 @@ export function Web3Dashboard({
     if (effectiveStake > 0 && goldenTickets < effectiveStake) {
       const message = `You need at least ${effectiveStake} tickets to create a room with this stake.`;
       setPrivateRoomError(message);
-      alert(message);
       return;
     }
-    if (effectiveStake > 0 && !window.confirm(`Create a private ${pvpGameTab.toUpperCase()} table for ${effectiveStake} TKT per player? Your stake will be reserved now.`)) return;
+    if (effectiveStake > 0 && !(await requestCasinoConfirmation({
+      title: 'Authorize private room',
+      message: `Reserve ${effectiveStake} TKT to create a private ${pvpGameTab.toUpperCase()} table?`,
+      detail: `${effectiveStake} TKT is required per player. The hold is released if the room is cancelled before play.`,
+      confirmLabel: 'RESERVE & CREATE',
+      tone: 'danger',
+    }))) return;
     if (privateRoomCreateInFlightRef.current) return;
     let verifiedUserId = currentUserId;
     try {
@@ -2434,14 +2526,13 @@ export function Web3Dashboard({
     }
   }, [currentUserId, openPublicMatch, publicQueueCanceling, selectedStake]);
 
-  const handleStartMatchmakingQueue = useCallback(() => {
+  const handleStartMatchmakingQueue = useCallback(async () => {
     if (!authReady) {
       setBootstrapAttempt((prev) => prev + 1);
     }
     if (selectedStake > 0 && !walletConnected && !isLocalNetwork) {
       const message = 'Connect wallet first for ticket-stake public matches.';
       setPublicQueueError(message);
-      alert(message);
       return;
     }
     const requiredEnergy = selectedStake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
@@ -2450,16 +2541,20 @@ export function Web3Dashboard({
         ? `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`
         : `You need ${PUBLIC_STAKE_MATCH_ENERGY_COST} energy to join a public game.`;
       setPublicQueueError(message);
-      alert(message);
       return;
     }
     if (selectedStake > 0 && goldenTickets < selectedStake) {
       const message = `You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`;
       setPublicQueueError(message);
-      alert(message);
       return;
     }
-    if (selectedStake > 0 && !window.confirm(`Join this paid ${pvpGameTab.toUpperCase()} table for ${selectedStake} TKT? The stake will be reserved now.`)) return;
+    if (selectedStake > 0 && !(await requestCasinoConfirmation({
+      title: 'Authorize public queue',
+      message: `Reserve ${selectedStake} TKT for this ${pvpGameTab.toUpperCase()} matchmaking queue?`,
+      detail: 'Matchmaking holds the stake server-side and releases it if the queue expires before a match starts.',
+      confirmLabel: 'RESERVE & SEARCH',
+      tone: 'danger',
+    }))) return;
     sound.playShuffle();
     wakeBackend();
     setPublicQueueError('');
@@ -2566,7 +2661,7 @@ export function Web3Dashboard({
         return 'searching';
       });
     });
-  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy]);
+  }, [authReady, selectedStake, walletConnected, isLocalNetwork, energy.energy, goldenTickets, userName, selectedAvatar, rawAddress, pvpGameTab, openPublicMatch, updateProfileEnergy, requestCasinoConfirmation]);
 
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     if (!authReady || !getSessionToken()) {
@@ -2596,7 +2691,7 @@ export function Web3Dashboard({
       setDepositFlowStatus('confirmed');
       setDepositStatusMessage(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
       if (!options?.silent) {
-        alert(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
+        showDashboardNotice(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`, 'signal');
       }
       return true;
     } catch (e) {
@@ -2614,7 +2709,7 @@ export function Web3Dashboard({
           setDepositRecoveryAttempt((attempt) => attempt + 1);
         }, 15_000);
       } else if (!options?.silent) {
-        alert(message);
+        showDashboardNotice(message, 'danger');
       }
       return false;
     } finally {
@@ -3091,6 +3186,11 @@ export function Web3Dashboard({
 
     return () => {
       cancelled = true;
+      // StrictMode replays effects during local development. A cancelled
+      // request must not suppress the next setup with the same identity.
+      if (syncRequestKeyRef.current === requestKey) {
+        syncRequestKeyRef.current = '';
+      }
     };
   }, [bootstrapUserId, rawAddress, telegramInitData, launchStartParam, bootstrapAttempt]);
 
@@ -3515,7 +3615,7 @@ export function Web3Dashboard({
               setPvpGameTab('uno');
               setCurrentTab('events');
               setEventsSubTab('stickers');
-              alert('⚠️ Стикер Ayanami Plush больше не найден на вашем кошельке! Доступ к Покеру и Блэкджеку приостановлен.');
+              showDashboardNotice('Ayanami Plush is no longer detected in your wallet. Poker and Blackjack access is paused.', 'danger');
             }
           }
         } else {
@@ -3533,12 +3633,12 @@ export function Web3Dashboard({
 
   const buyTicketsWithTon = async () => {
     if (!walletConnected) {
-      alert("Please connect your wallet first.");
+      showDashboardNotice('Please connect your wallet first.', 'danger');
       return;
     }
     const amount = Number(depositAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      alert('Enter a deposit amount greater than 0.');
+      showDashboardNotice('Enter a deposit amount greater than 0.', 'danger');
       return;
     }
     sound.playPop();
@@ -3602,7 +3702,7 @@ export function Web3Dashboard({
       setDepositStatusMessage(transient
         ? 'Could not prepare the deposit yet. No TON was sent. Tap Deposit to retry safely.'
         : message);
-      if (!transient) alert(message);
+      if (!transient) showDashboardNotice(message, 'danger');
     } finally {
       setBuyingTickets(false);
     }
@@ -3886,14 +3986,14 @@ export function Web3Dashboard({
   const selectDashboardTab = (tabId: typeof currentTab) => {
     if (currentTab === tabId) return;
     sound.playPop();
-    setCurrentTab(tabId);
+    transitionMenuBanner(currentTab === 'pvp', tabId === 'pvp', () => setCurrentTab(tabId));
   };
 
   return (
-    <div className="w-full bg-[#0c0f12] text-[#f8fafc] pixel-box-lg p-3 sm:p-5 relative overflow-hidden flex flex-col gap-4 select-none pixel-scanlines">
+    <div style={pixelMaskStyle} data-network-section={currentTab} className="resistance-network rp-menu-shell w-full text-[#f8fafc] relative flex flex-col select-none">
       
       {/* 1. Tabs (Swapped to the top of the card) */}
-      <div className="grid grid-cols-4 border-2 border-black bg-slate-950 p-0.5 gap-0.5 z-10">
+      <nav className="rp-network-nav" aria-label="Main menu">
         {dashboardTabs.map((tab) => {
           const active = currentTab === tab.id;
           return (
@@ -3906,51 +4006,18 @@ export function Web3Dashboard({
                 selectDashboardTab(tab.id);
               }}
               style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
-              className={`text-center py-2 text-[8px] sm:text-[9px] font-black uppercase font-mono transition-all cursor-pointer border select-none ${
-                active
-                  ? 'bg-[#00d2ff] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)]'
-                  : 'text-slate-400 border-transparent hover:text-slate-200'
-              }`}
+              className="text-center uppercase cursor-pointer select-none"
             >
-              {tab.label}
+              <MenuIcon name={tab.id === 'profile' ? 'user' : tab.id === 'events' ? 'events' : tab.id === 'pvp' ? 'poker' : 'shop'} />
+              <span>{tab.label}</span>
             </button>
           );
         })}
-      </div>
+      </nav>
 
-      {/* 2. Network Connectivity bar */}
-      <div className="flex flex-wrap items-stretch gap-1.5 bg-[#18181c] p-2 pixel-box-sm border-black">
-        <div className="order-1 flex h-[34px] min-w-[72px] max-w-[112px] flex-1 items-center overflow-hidden border-2 border-black bg-black px-1">
-          <img
-            src="/text(logo).jpg"
-            alt="REDOapp"
-            className="h-full w-full object-contain object-left select-none pointer-events-none"
-            style={{ imageRendering: 'auto' }}
-          />
-        </div>
-
-        <div className="order-2 grid w-full min-w-0 grid-cols-4 gap-1 font-mono text-left">
-          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
-            <span className="block truncate text-[5px] font-bold text-slate-500">XP</span>
-            <span className="block whitespace-nowrap text-[9px] font-black text-[#00d2ff]">{effectiveXp}</span>
-          </div>
-          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
-            <span className="block truncate text-[5px] font-bold text-slate-500">TKT</span>
-            <span className="block whitespace-nowrap text-[9px] font-black text-[#ffcc00]">{goldenTickets}</span>
-          </div>
-          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
-            <span className="block truncate text-[5px] font-bold text-slate-500">LVL</span>
-            <span className="block whitespace-nowrap text-[9px] font-black text-[#ec4899]">{displayLevel}</span>
-          </div>
-          <div className="min-w-0 bg-slate-950 border border-black px-1 py-1">
-            <span className="block truncate text-[5px] font-bold text-slate-500">PWR</span>
-            <span className="flex items-center whitespace-nowrap text-[9px] font-black text-[#00ff66]">
-              <Zap className="w-2 h-2 shrink-0 fill-[#00ff66]" />{energy.energy}/{energy.maxEnergy}
-            </span>
-          </div>
-        </div>
-
-        <div className="order-1 ml-auto flex min-w-0 items-center justify-end gap-1.5">
+      <MenuProfile bannerTarget={currentTab === 'pvp' ? pvpGameTab : undefined} name={tgProfileName || userName || 'Guest'} photoUrl={tgPhotoUrl} avatar={selectedAvatar} level={displayLevel} xp={displayCurrentLevelXp} xpNeeded={displayXpNeeded} tickets={goldenTickets} chips={Math.round(activeProfile?.casinoChips || 0)}>
+        <div className="rp-menu-energy"><Zap aria-hidden="true" />ENERGY {energy.energy}/{energy.maxEnergy}</div>
+        <div className="rp-account-actions">
           {onOpenRules && (
             <button
               type="button"
@@ -4003,7 +4070,7 @@ export function Web3Dashboard({
             )}
           </button>
         </div>
-      </div>
+      </MenuProfile>
 
       {bootstrapState === 'error' && (
         <div className="flex items-center gap-2 bg-[#2a0d0d] border border-black px-3 py-2 text-[8px] leading-relaxed text-[#ffb3b3] font-mono">
@@ -4094,62 +4161,38 @@ export function Web3Dashboard({
       })()}
 
       {/* 4. Tab Content */}
-      <div className="flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
+      <div className="rp-network-content flex-1 min-h-[290px] sm:min-h-[320px] flex flex-col justify-start">
           {currentTab === 'profile' && (
             <motion.div
               key="profile"
-              initial={{ opacity: 0 }}
+              initial={false}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="w-full space-y-3"
+              className="rp-menu-section rp-menu-me w-full space-y-3"
             >
-              <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
+              <div className="rp-menu-me__modules space-y-3">
                 
-                {/* Profile Read-Only Info */}
-                <div className="flex items-center gap-3 border-b border-black pb-2">
-                  <div className="w-10 h-10 bg-slate-950 border border-black flex items-center justify-center relative overflow-hidden flex-shrink-0">
-                    {tgPhotoUrl && !tgPhotoFailed ? (
-                      <img 
-                        src={tgPhotoUrl} 
-                        alt="Telegram Avatar" 
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                        onError={() => {
-                          setTgPhotoFailed(true);
-                        }}
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center w-full h-full">
-                        <Avatar id={selectedAvatar} emotion="happy" isActive={false} size={28} />
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-left font-mono leading-tight">
-                    <span className="block text-[6.5px] text-slate-400 uppercase">Telegram Profile</span>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="text-[10px] font-black text-[#00ff66] truncate block max-w-[150px]">
-                        {tgProfileName ? `@${tgProfileName}` : 'guest'}
-                      </span>
-                      {walletConnected && (
-                        <span className="w-5 h-5 bg-[#00ff66] text-black border border-black flex items-center justify-center shadow-[0_0_10px_rgba(0,255,102,0.65)]" title="Wallet connected">
-                          <Wallet className="w-3 h-3" />
-                        </span>
-                      )}
-                      {nftCheckState === 'verified' && (
-                        <span className="w-5 h-5 bg-[#ffcc00] text-black border border-black flex items-center justify-center shadow-[0_0_10px_rgba(255,204,0,0.75)]" title="NFT holder verified">
-                          <Trophy className="w-3 h-3" />
-                        </span>
-                      )}
-                    </div>
-                    <span className="block text-[6.5px] text-slate-500 mt-0.5">
-                      ID: {currentUserId}
-                    </span>
-                  </div>
-                </div>
+                <header className="rp-menu-operative-strip">
+                  <span><MenuIcon name="user" />OPERATIVE PROFILE</span>
+                  <strong>{tgProfileName ? `@${tgProfileName}` : 'Guest'}</strong>
+                  <small>OPERATIVE ID: {currentUserId}</small>
+                  {walletConnected && <span className="rp-menu-verified"><Wallet />Wallet connected</span>}
+                  {nftCheckState === 'verified' && <span className="rp-menu-verified"><Trophy />NFT holder verified</span>}
+                  <button
+                    type="button"
+                    onClick={connectWallet}
+                    disabled={isConnecting}
+                    className="rp-menu-operative-wallet"
+                  >
+                    <Wallet aria-hidden="true" />
+                    {isConnecting ? 'SYNCING...' : walletConnected ? 'Disconnect Wallet' : 'Connect Wallet'}
+                  </button>
+                </header>
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
                   <button
                     type="button"
+                    aria-expanded={showXpDetails}
                     onClick={() => {
                       sound.playPop();
                       setShowXpDetails(!showXpDetails);
@@ -4193,6 +4236,7 @@ export function Web3Dashboard({
                   </div>
                   <button
                     type="button"
+                    aria-expanded={showReferralDetails}
                     onClick={() => {
                       sound.playPop();
                       const nextOpen = !showReferralDetails;
@@ -4228,7 +4272,7 @@ export function Web3Dashboard({
                       </div>
                       <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
                         <span className="text-slate-400 uppercase">Poker Referral Chips</span>
-                        <span className="font-black text-[#ffcc00]">{pokerReferralChipEarnings.toFixed(0)} CHIPS</span>
+                        <ChipValue amount={Math.round(pokerReferralChipEarnings)} iconClassName="w-3 h-3" className="font-black text-[#ffcc00]" />
                       </div>
                       
                       {activeProfile?.referralLink ? (
@@ -4241,7 +4285,7 @@ export function Web3Dashboard({
                             onClick={() => {
                               navigator.clipboard.writeText(activeProfile.referralLink);
                               sound.playPop();
-                              alert('Referral link copied.');
+                              showDashboardNotice('Referral link copied.', 'signal');
                             }}
                             className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
                           >
@@ -4383,6 +4427,7 @@ export function Web3Dashboard({
                               disabled={isOpeningLootbox || vaultCardChoice !== null}
                               onClick={() => openLootboxChest(cardIndex)}
                               aria-label={`Choose vault card ${cardIndex + 1}`}
+                              aria-pressed={chosen}
                               initial={prefersReducedMotion ? false : { opacity: 0, y: -24, rotate: (cardIndex - 2.5) * 4 }}
                               animate={prefersReducedMotion
                                 ? undefined
@@ -4470,47 +4515,16 @@ export function Web3Dashboard({
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1.5 pt-1.5">
-                <button
-                  type="button"
-                  onClick={connectWallet}
-                  disabled={isConnecting}
-                  className={`w-full py-1.5 border-2 border-black pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono cursor-pointer ${
-                    isConnecting
-                      ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                      : walletConnected
-                      ? 'bg-[#ff4b4b]/20 text-[#ff4b4b] border-black hover:bg-[#ff4b4b]/30'
-                      : 'bg-[#00d2ff]/20 text-[#00d2ff] border-black hover:bg-[#00d2ff]/30'
-                  }`}
-                >
-                  {isConnecting ? 'SYNCING...' : walletConnected ? 'Disconnect Wallet' : 'Connect Wallet'}
-                </button>
-
-                {false && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('Wanna completely reset all stats and XP?')) {
-                      sound.playPop();
-                      resetStats();
-                    }
-                  }}
-                  className="w-full py-1.5 bg-[#ff4b4b]/10 text-[#ff4b4b]/70 hover:text-[#ff4b4b] border border-black/40 pixel-btn-interactive text-[9px] font-bold uppercase tracking-wider font-mono cursor-pointer"
-                >
-                  Hard Reset Progress
-                </button>
-                )}
-              </div>
             </motion.div>
           )}
 
           {currentTab === 'rewards' && (
             <motion.div
               key="rewards"
-              initial={{ opacity: 0 }}
+              initial={false}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="w-full space-y-3 py-2 text-left"
+              className="rp-menu-section rp-menu-shop w-full space-y-3 py-2 text-left"
             >
               {showAccountRefresh && <div className="bg-[#18181c] border border-black pixel-box-sm p-2 font-mono space-y-1.5">
                 <button
@@ -4711,7 +4725,7 @@ export function Web3Dashboard({
                       disabled={!authReady || accountRefreshState === 'refreshing'}
                       onClick={() => {
                         const amount = Number(exchangeAmount);
-                        if (!Number.isFinite(amount) || amount <= 0) return alert('Enter a valid amount');
+                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice('Enter a valid amount.', 'danger');
                         apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
                           method: 'POST',
                           body: JSON.stringify({ direction: 'tkt_to_chips', amount }),
@@ -4720,9 +4734,9 @@ export function Web3Dashboard({
                             setGoldenTickets(res.availableTickets);
                             if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
                             if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
-                            alert(`Exchanged ${amount} TKT for ${amount * 100} Chips`);
+                            showDashboardNotice(`Exchanged ${amount} TKT for ${amount * 100} chips.`, 'signal');
                           }
-                        }).catch(e => alert(e.message));
+                        }).catch(e => showDashboardNotice(e.message, 'danger'));
                       }}
                       className="px-2 bg-purple-600 hover:bg-purple-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
                     >
@@ -4733,7 +4747,7 @@ export function Web3Dashboard({
                       disabled={!authReady || accountRefreshState === 'refreshing'}
                       onClick={() => {
                         const amount = Number(exchangeAmount);
-                        if (!Number.isFinite(amount) || amount <= 0) return alert('Enter a valid amount');
+                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice('Enter a valid amount.', 'danger');
                         apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
                           method: 'POST',
                           body: JSON.stringify({ direction: 'chips_to_tkt', amount }),
@@ -4742,9 +4756,9 @@ export function Web3Dashboard({
                             setGoldenTickets(res.availableTickets);
                             if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
                             if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
-                            alert(`Exchanged ${amount * 100} Chips for ${amount} TKT`);
+                            showDashboardNotice(`Exchanged ${amount * 100} chips for ${amount} TKT.`, 'signal');
                           }
-                        }).catch(e => alert(e.message));
+                        }).catch(e => showDashboardNotice(e.message, 'danger'));
                       }}
                       className="px-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
                     >
@@ -4894,15 +4908,16 @@ export function Web3Dashboard({
           {currentTab === 'events' && (
             <motion.div
               key="events"
-              initial={{ opacity: 0, y: 8 }}
+              initial={false}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className="w-full space-y-3 py-2 text-center select-none"
+              className="rp-menu-section rp-menu-events w-full space-y-3 py-2 text-center select-none"
             >
               {/* Events Sub-Tab Selector */}
               <div className="grid grid-cols-2 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8.5px] font-mono font-bold">
                 <button
                   type="button"
+                  aria-pressed={eventsSubTab === 'quests'}
                   onClick={() => {
                     sound.playPop();
                     setEventsSubTab('quests');
@@ -4917,6 +4932,7 @@ export function Web3Dashboard({
                 </button>
                 <button
                   type="button"
+                  aria-pressed={eventsSubTab === 'tournaments'}
                   onClick={() => {
                     sound.playPop();
                     setEventsSubTab('tournaments');
@@ -5000,7 +5016,7 @@ export function Web3Dashboard({
                           onClick={() => {
                             navigator.clipboard.writeText(NFT_COLLECTION_ADDRESS);
                             sound.playPop();
-                            alert('Collection address copied.');
+                            showDashboardNotice('Collection address copied.', 'signal');
                           }}
                           className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
                         >
@@ -5089,7 +5105,7 @@ export function Web3Dashboard({
                           >
                             <div className="flex items-center gap-1">
                               <span className="text-[9px]">{medal}</span>
-                              <Avatar id={(entry.avatarId as any) || 'rabbit'} size={14} />
+                              <ResistanceAvatar name={entry.username} fallbackAvatar={(entry.avatarId as any) || 'rabbit'} size={24} />
                             </div>
                             <span className="text-[7.5px] font-bold text-slate-200 truncate w-full">
                               {entry.username}
@@ -5129,6 +5145,7 @@ export function Web3Dashboard({
                             {tournamentData.status === 'in_progress' ? 'LIVE NOW · IN PROGRESS' : tournamentData.status === 'finished' ? 'COMPLETED' : 'UPCOMING'}
                           </span>
                         </div>
+                        <span className="rp-network-eyebrow">TRANSMISSION · TOURNAMENT</span>
                         <h2 className="text-xs font-black text-white uppercase">
                           {tournamentData.title}
                         </h2>
@@ -5176,7 +5193,7 @@ export function Web3Dashboard({
                     {tournamentData.winnerName && (
                       <div className="bg-[#1a2318] border border-[#00ff66]/40 p-2.5 rounded-sm flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Avatar id={(tournamentData.winnerAvatar as any) || 'rabbit'} size={24} />
+                          <ResistanceAvatar name={tournamentData.winnerName} fallbackAvatar={(tournamentData.winnerAvatar as any) || 'rabbit'} state="winner" size={34} />
                           <div>
                             <span className="text-[7px] text-[#00ff66] font-bold block uppercase">PREVIOUS CHAMPION</span>
                             <span className="text-[9px] font-black text-white">{tournamentData.winnerName}</span>
@@ -5273,7 +5290,7 @@ export function Web3Dashboard({
                                         }`}
                                       >
                                         <div className="flex items-center gap-1 truncate">
-                                          <Avatar id={(pObj?.avatarId as any) || 'rabbit'} size={14} />
+                                          <ResistanceAvatar name={pObj?.username || pid} fallbackAvatar={(pObj?.avatarId as any) || 'rabbit'} state={isWinner ? 'winner' : 'online'} size={24} />
                                           <span className="truncate font-bold">
                                             {pObj?.username || pid.replace(/^tg:/, '')} {isMe ? '(You)' : ''}
                                           </span>
@@ -5445,6 +5462,7 @@ export function Web3Dashboard({
                         <div className="grid grid-cols-3 gap-1 font-bold text-[7.5px]">
                           <button
                             type="button"
+                            aria-pressed={adminGameType === 'uno'}
                             onClick={() => {
                               setAdminGameType('uno');
                               if (!adminTitle || adminTitle.includes('CHAMPIONSHIP') || adminTitle.includes('GRAND PRIX')) {
@@ -5462,6 +5480,7 @@ export function Web3Dashboard({
                           </button>
                           <button
                             type="button"
+                            aria-pressed={adminGameType === 'poker'}
                             onClick={() => {
                               setAdminGameType('poker');
                               if (!adminTitle || adminTitle.includes('CHAMPIONSHIP') || adminTitle.includes('GRAND PRIX')) {
@@ -5479,6 +5498,7 @@ export function Web3Dashboard({
                           </button>
                           <button
                             type="button"
+                            aria-pressed={adminGameType === 'blackjack'}
                             onClick={() => {
                               setAdminGameType('blackjack');
                               if (!adminTitle || adminTitle.includes('CHAMPIONSHIP') || adminTitle.includes('GRAND PRIX')) {
@@ -5509,6 +5529,7 @@ export function Web3Dashboard({
                         <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
                           <button
                             type="button"
+                            aria-pressed={adminPrizeType === 'nft'}
                             onClick={() => setAdminPrizeType('nft')}
                             className={`min-h-11 border transition-all cursor-pointer ${adminPrizeType === 'nft' ? 'bg-[#00d2ff] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
                           >
@@ -5516,6 +5537,7 @@ export function Web3Dashboard({
                           </button>
                           <button
                             type="button"
+                            aria-pressed={adminPrizeType === 'bear'}
                             onClick={() => setAdminPrizeType('bear')}
                             className={`min-h-11 border transition-all cursor-pointer ${adminPrizeType === 'bear' ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
                           >
@@ -5560,6 +5582,7 @@ export function Web3Dashboard({
                         <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
                           <button
                             type="button"
+                            aria-pressed={adminWinsRequired === 1}
                             onClick={() => setAdminWinsRequired(1)}
                             className={`py-1 border text-center ${adminWinsRequired === 1 ? 'bg-[#00ff66] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
                           >
@@ -5567,6 +5590,7 @@ export function Web3Dashboard({
                           </button>
                           <button
                             type="button"
+                            aria-pressed={adminWinsRequired === 2}
                             onClick={() => setAdminWinsRequired(2)}
                             className={`py-1 border text-center ${adminWinsRequired === 2 ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
                           >
@@ -5580,28 +5604,32 @@ export function Web3Dashboard({
                         <span className="text-[7px] text-slate-400">Timer:</span>
                         <button
                           type="button"
-                          onClick={() => setAdminMinutes('5')}
+                            aria-pressed={adminMinutes === '5'}
+                            onClick={() => setAdminMinutes('5')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '5' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           5m
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdminMinutes('15')}
+                            aria-pressed={adminMinutes === '15'}
+                            onClick={() => setAdminMinutes('15')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '15' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           15m
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdminMinutes('60')}
+                            aria-pressed={adminMinutes === '60'}
+                            onClick={() => setAdminMinutes('60')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '60' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           1h
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdminMinutes('1440')}
+                            aria-pressed={adminMinutes === '1440'}
+                            onClick={() => setAdminMinutes('1440')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminMinutes === '1440' ? 'bg-[#00d2ff] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           24h
@@ -5613,28 +5641,32 @@ export function Web3Dashboard({
                         <span className="text-[7px] text-slate-400">Fee:</span>
                         <button
                           type="button"
-                          onClick={() => setAdminTicketCost('0')}
+                            aria-pressed={adminTicketCost === '0'}
+                            onClick={() => setAdminTicketCost('0')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0' ? 'bg-[#00ff66] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           Free
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdminTicketCost('0.5')}
+                            aria-pressed={adminTicketCost === '0.5'}
+                            onClick={() => setAdminTicketCost('0.5')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0.5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           0.5 TKT
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdminTicketCost('1')}
+                            aria-pressed={adminTicketCost === '1'}
+                            onClick={() => setAdminTicketCost('1')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '1' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           1 TKT
                         </button>
                         <button
                           type="button"
-                          onClick={() => setAdminTicketCost('5')}
+                            aria-pressed={adminTicketCost === '5'}
+                            onClick={() => setAdminTicketCost('5')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
                           5 TKT
@@ -5705,7 +5737,7 @@ export function Web3Dashboard({
                           </div>
                           <div className="flex items-center justify-between text-[8px] bg-black/60 p-1.5 border border-slate-900 rounded">
                             <div className="flex items-center gap-1.5">
-                              <Avatar id={(past.winnerAvatar as any) || 'rabbit'} size={16} />
+                              <ResistanceAvatar name={past.winnerName || 'Champion'} fallbackAvatar={(past.winnerAvatar as any) || 'rabbit'} state="winner" size={28} />
                               <div>
                                 <span className="text-[7px] text-[#ffcc00] font-bold block uppercase">CHAMPION WINNER</span>
                                 <span className="text-[8.5px] font-black text-white">{past.winnerName || 'Unknown Winner'}</span>
@@ -5730,79 +5762,21 @@ export function Web3Dashboard({
           {currentTab === 'pvp' && (
             <motion.div
               key="pvp"
-              initial={{ opacity: 0 }}
+              initial={false}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="w-full space-y-3 py-2 text-left"
             >
-              {/* Consolidated Game Sub-Tab selector (UNO vs POKER vs BLACKJACK) - Accessible to ALL */}
-              <div className="grid grid-cols-3 border-2 border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] min-[380px]:text-[9px] font-mono font-black mb-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playPop();
-                    setPvpGameTab('uno');
-                  }}
-                  className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
-                    pvpGameTab === 'uno'
-                      ? 'bg-[#00d2ff] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)] font-black'
-                      : 'text-slate-400 border-transparent hover:text-slate-200'
-                  }`}
-                >
-                  🎮 UNO
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playPop();
-                    setPvpGameTab('poker');
-                  }}
-                  className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
-                    pvpGameTab === 'poker'
-                      ? 'bg-[#ffcc00] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)] font-black'
-                      : 'text-slate-400 border-transparent hover:text-slate-200'
-                  }`}
-                >
-                  ♠️ POKER
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    sound.playPop();
-                    setPvpGameTab('blackjack');
-                  }}
-                  className={`text-center py-1.5 uppercase transition-all cursor-pointer border truncate ${
-                    pvpGameTab === 'blackjack'
-                      ? 'bg-[#00ff66] text-black border-black shadow-[inset_1px_1px_rgba(255,255,255,0.4)] font-black'
-                      : 'text-slate-400 border-transparent hover:text-slate-200'
-                  }`}
-                >
-                  🃏 BLACKJACK
-                </button>
-              </div>
+      <nav className="rp-menu-games" aria-label="Choose game">
+        {(['poker', 'uno', 'blackjack'] as const).map(game => <button key={game} type="button" aria-pressed={pvpGameTab === game} onClick={() => {
+          sound.playPop();
+          if (game !== pvpGameTab) transitionMenuBanner(true, true, () => setPvpGameTab(game));
+          setPvpSubMode(mode => game === 'uno' && mode === 'free' || game !== 'uno' && mode === 'private' ? 'public' : mode);
+        }}><MenuIcon name={game} /><span>{game.toUpperCase()}</span></button>)}
+      </nav>
 
               {pvpGameTab === 'uno' && (
-                <>
-                  {/* Consolidated PVP Sub Mode selector */}
-              <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
-                {(['public', 'private', 'practice'] as const).map((sub) => (
-                  <button
-                    key={sub}
-                    type="button"
-                    onClick={() => {
-                      sound.playPop();
-                      setPvpSubMode(sub);
-                    }}
-                    className={`text-center py-1 uppercase transition-all cursor-pointer border ${
-                      pvpSubMode === sub
-                        ? 'bg-[#00ff66]/20 text-[#00ff66] border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)]'
-                        : 'text-slate-400 border-transparent hover:text-slate-200'
-                    }`}
-                  >
-                    {sub === 'public' ? 'Public' : sub === 'private' ? 'Private' : 'Practice'}
-                  </button>
-                ))}
-              </div>
+                <UnoLobbyMenu mode={pvpSubMode} onMode={mode=>{sound.playPop(); setPvpSubMode(mode);}}>
 
               {/* Sub Mode Content */}
               {pvpSubMode === 'public' && (
@@ -5847,7 +5821,7 @@ export function Web3Dashboard({
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                       <div className="flex justify-between items-center text-[9px]">
                         <h3 className="font-black text-slate-100 uppercase">
-                          PUBLIC PVP ARENA
+                          <MenuIcon name="uno" /> PUBLIC UNO MATCHES
                         </h3>
                         <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
                           {selectedStake === 0 ? (
@@ -5863,6 +5837,7 @@ export function Web3Dashboard({
                           <button
                             key={stake}
                             type="button"
+                            aria-pressed={selectedStake === stake}
                             onClick={() => {
                               sound.playPop();
                               setSelectedStake(stake);
@@ -6139,6 +6114,7 @@ export function Web3Dashboard({
                               <button
                                 key={stake}
                                 type="button"
+                                aria-pressed={privateRoomStake === stake}
                                 onClick={() => {
                                   sound.playPop();
                                   setPrivateRoomStake(stake);
@@ -6169,6 +6145,7 @@ export function Web3Dashboard({
                               <button
                                 key={count}
                                 type="button"
+                                aria-pressed={privateRoomTargetPlayers === count}
                                 onClick={() => {
                                   sound.playPop();
                                   setPrivateRoomTargetPlayers(count);
@@ -6220,6 +6197,7 @@ export function Web3Dashboard({
                             value={privateJoinCode}
                             onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
                             placeholder="ROOM CODE"
+                            aria-label="UNO room code"
                             className="w-full bg-black border border-black text-slate-200 px-2 py-2 text-[9px] font-mono tracking-widest uppercase"
                           />
                         </div>
@@ -6229,7 +6207,7 @@ export function Web3Dashboard({
                           onClick={() => {
                             const normalizedCode = privateJoinCode.trim().toUpperCase();
                             if (!normalizedCode) {
-                              alert('Enter a room code first.');
+                              showDashboardNotice('Enter a room code first.', 'danger');
                               return;
                             }
                             sound.playPop();
@@ -6296,327 +6274,57 @@ export function Web3Dashboard({
                   </button>
                 </div>
               )}
-            </>
+            </UnoLobbyMenu>
           )}
 
           {pvpGameTab === 'poker' && (
-            <div className="w-full space-y-3 font-mono">
-              {/* Poker Sub Mode selector */}
-              <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
-                {(['public', 'free', 'practice'] as const).map((sub) => (
-                  <button
-                    key={sub}
-                    type="button"
-                    onClick={() => {
-                      sound.playPop();
-                      setPvpSubMode(sub);
-                    }}
-                    className={`text-center py-1 uppercase transition-all cursor-pointer border ${
-                      pvpSubMode === sub
-                        ? 'bg-[#ffcc00]/20 text-[#ffcc00] border-[#ffcc00]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-bold'
-                        : 'text-slate-400 border-transparent hover:text-slate-200'
-                    }`}
-                  >
-                    {sub === 'public' ? 'Public' : sub === 'free' ? 'Free' : 'Practice'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Poker Public Arena */}
-              {pvpSubMode === 'public' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <h3 className="font-black text-[#ffcc00] uppercase flex items-center gap-1">
-                      <span>♠️</span> PUBLIC POKER TABLES
-                    </h3>
-                    <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
-                      BAL: <strong>{(profile?.casinoChips || 0).toFixed(0)}</strong> CHIPS
-                    </span>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {casinoTableStatus !== 'ready' && (
-                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
-                    )}
-                    {casinoTables.map((table) => (
-                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.name || table.id.split('-').pop()}</span>
-                          <span className="text-[8px] text-slate-400">{table.maxPlayers} Seats</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {table.playersCount < table.maxPlayers && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const tg = (window as any).Telegram?.WebApp;
-                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Poker Table ${table.name || table.id.split('-').pop()}!`);
-                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
-                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
-                                else window.open(shareUrl, '_blank');
-                              }}
-                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
-                            >
-                              INVITE
-                            </button>
-                          )}
-                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              if (onStartPokerGame && window.confirm(`Open this poker table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
-                            }}
-                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400`}
-                          >
-                            OPEN
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              
-              {/* Poker Free Tables */}
-              {pvpSubMode === 'free' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <h3 className="font-black text-[#ffcc00] uppercase">POKER FREE TABLES</h3>
-                    <span className="text-[8px] text-slate-400">ENTRY: ⚡ 2 · 100 FREE CHIPS</span>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {casinoTableStatus !== 'ready' && (
-                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
-                    )}
-                    {casinoTables.map((table) => (
-                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-[#ffcc00] font-bold">Table {table.name || table.id.split('-').pop()}</span>
-                          <span className="text-[8px] text-slate-400">Min Buy-in: {table.minBuyIn} • {table.maxPlayers} Seats</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {table.playersCount < table.maxPlayers && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const tg = (window as any).Telegram?.WebApp;
-                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Poker Table ${table.name || table.id.split('-').pop()}!`);
-                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
-                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
-                                else window.open(shareUrl, '_blank');
-                              }}
-                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
-                            >
-                              INVITE
-                            </button>
-                          )}
-                          <span className="text-[8px] text-slate-300">{table.humanPlayersCount ?? table.playersCount}/{table.maxPlayers} Players</span>
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              if (onStartPokerGame && window.confirm(`Open this poker table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartPokerGame('pvp', table.minBuyIn, table.id, table.id);
-                            }}
-                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#ffcc00] text-black cursor-pointer hover:bg-yellow-400`}
-                          >
-                            OPEN
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {/* Poker Practice Mode */}
-              {pvpSubMode === 'practice' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                  <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
-                    Practice Texas Hold'em against 3 AI bots (Bear, Fox, Panda) zero risk.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      sound.playShuffle();
-                      if (onStartPokerGame) {
-                        onStartPokerGame('offline', 0);
-                      } else {
-                        onStartGame('offline', 0);
-                      }
-                    }}
-                    className="w-full py-3 bg-[#00ff66] text-black font-black text-[10px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black text-black" />
-                    PLAY POKER PRACTICE (FREE)
-                  </button>
-                </div>
-              )}
-            </div>
+            <PokerLobbyMenu mode={pvpSubMode} onMode={mode => {sound.playPop(); setPvpSubMode(mode);}}
+              tables={casinoTables} status={casinoTableStatus} balance={Math.round(activeProfile?.casinoChips || 0)}
+              onRefresh={() => {setCasinoTableStatus('refreshing'); setCasinoRefreshRevision(value => value + 1);}}
+              onOpen={table => {
+                if (onStartPokerGame) transitionResistanceScene(() => onStartPokerGame('pvp', table.minBuyIn, table.id, table.id), Boolean(prefersReducedMotion));
+              }}
+              onInvite={table => {
+                const tg = (window as any).Telegram?.WebApp;
+                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
+                const text = encodeURIComponent(`Join me at Poker Table ${table.name || table.id.split('-').pop()}!`);
+                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl); else window.open(shareUrl, '_blank');
+              }}
+              onPractice={() => {
+                sound.playShuffle();
+                if (onStartPokerGame) transitionResistanceScene(() => onStartPokerGame('offline', 0), Boolean(prefersReducedMotion));
+                else onStartGame('offline', 0);
+              }}
+            />
           )}
 
           {pvpGameTab === 'blackjack' && (
-            <div className="w-full space-y-3 font-mono">
-              {/* Blackjack Sub Mode selector */}
-              <div className="grid grid-cols-3 border border-black bg-slate-950 p-0.5 gap-0.5 text-[8px] font-mono font-bold">
-                {(['public', 'free', 'practice'] as const).map((sub) => (
-                  <button
-                    key={sub}
-                    type="button"
-                    onClick={() => {
-                      sound.playPop();
-                      setPvpSubMode(sub);
-                    }}
-                    className={`text-center py-1 uppercase transition-all cursor-pointer border ${
-                      pvpSubMode === sub
-                        ? 'bg-[#00ff66]/20 text-[#00ff66] border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-bold'
-                        : 'text-slate-400 border-transparent hover:text-slate-200'
-                    }`}
-                  >
-                    {sub === 'public' ? 'Public' : sub === 'free' ? 'Free' : 'Practice'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Blackjack Public Arena */}
-              {pvpSubMode === 'public' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <h3 className="font-black text-[#00ff66] uppercase flex items-center gap-1">
-                      <span>🃏</span> PUBLIC BLACKJACK TABLES
-                    </h3>
-                    <span className="text-[8px] text-[#00ff66] bg-black px-1.5 py-0.5 border border-black">
-                      BAL: <strong>{(profile?.casinoChips || 0).toFixed(0)}</strong> CHIPS
-                    </span>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {casinoTableStatus !== 'ready' && (
-                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
-                    )}
-                    {casinoTables.map((table) => (
-                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.name || table.id.split('-').pop()}</span>
-                          <span className="text-[8px] text-slate-400">{table.maxPlayers} Seats</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {table.playersCount < table.maxPlayers && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const tg = (window as any).Telegram?.WebApp;
-                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.name || table.id.split('-').pop()}!`);
-                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
-                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
-                                else window.open(shareUrl, '_blank');
-                              }}
-                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
-                            >
-                              INVITE
-                            </button>
-                          )}
-                          <span className="text-[8px] text-slate-300">{table.playersCount}/{table.maxPlayers} Players</span>
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              if (onStartBlackjackGame && window.confirm(`Open this blackjack table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
-                            }}
-                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#00ff66] text-black cursor-pointer hover:bg-green-400`}
-                          >
-                            OPEN
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              
-              {/* Blackjack Free Tables */}
-              {pvpSubMode === 'free' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
-                  <div className="flex justify-between items-center text-[9px]">
-                    <h3 className="font-black text-[#00ff66] uppercase">BLACKJACK FREE TABLES</h3>
-                    <span className="text-[8px] text-slate-400">ENTRY: ⚡ 2 · 100 FREE CHIPS</span>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {casinoTableStatus !== 'ready' && (
-                      <div className="text-[8px] text-slate-500 text-center py-1">{casinoTableStatus === 'offline' ? 'LIVE SEATS OFFLINE — TABLES REMAIN OPEN' : 'UPDATING LIVE SEATS…'}</div>
-                    )}
-                    {casinoTables.map((table) => (
-                      <div key={table.id} className="flex justify-between items-center p-2 bg-black border border-slate-800">
-                        <div className="flex flex-col">
-                          <span className="text-[10px] text-[#00ff66] font-bold">Table {table.name || table.id.split('-').pop()}</span>
-                          <span className="text-[8px] text-slate-400">Min Bet: {table.minBuyIn} • {table.maxPlayers} Seats</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {table.playersCount < table.maxPlayers && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const tg = (window as any).Telegram?.WebApp;
-                                const link = `https://t.me/redo_appbot/app?startapp=table_${table.id}`;
-                                const text = encodeURIComponent(`Join me at Blackjack Table ${table.name || table.id.split('-').pop()}!`);
-                                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
-                                if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl);
-                                else window.open(shareUrl, '_blank');
-                              }}
-                              className="px-2 py-1 bg-[#1da1f2] text-white font-black text-[7px] uppercase border border-black hover:bg-[#1a91da] pixel-btn-interactive"
-                            >
-                              INVITE
-                            </button>
-                          )}
-                          <span className="text-[8px] text-slate-300">{table.humanPlayersCount ?? table.playersCount}/{table.maxPlayers} Players</span>
-                          <button 
-                            type="button"
-                            onClick={() => {
-                              if (onStartBlackjackGame && window.confirm(`Open this blackjack table and prepare a ${table.minBuyIn} CHIPS buy-in?`)) onStartBlackjackGame('pvp', table.minBuyIn, table.id, table.id);
-                            }}
-                            className={`px-3 py-1 font-black text-[9px] border border-black transition-colors bg-[#00ff66] text-black cursor-pointer hover:bg-green-400`}
-                          >
-                            OPEN
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {/* Blackjack Practice Mode */}
-              {pvpSubMode === 'practice' && (
-                <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                  <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
-                    Practice Blackjack 21 against the house with zero ticket risk.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      sound.playShuffle();
-                      if (onStartBlackjackGame) {
-                        onStartBlackjackGame('offline', 0);
-                      } else {
-                        onStartGame('offline', 0);
-                      }
-                    }}
-                    className="w-full py-3 bg-[#00ff66] text-black border border-black text-[10px] uppercase font-black pixel-btn-interactive flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black text-black" />
-                    PLAY BLACKJACK PRACTICE (FREE)
-                  </button>
-                </div>
-              )}
-            </div>
+            <PokerLobbyMenu game="blackjack" bannerSrc={blackjackBanner} mode={pvpSubMode}
+              onMode={mode=>{sound.playPop();setPvpSubMode(mode);}} tables={casinoTables}
+              status={casinoTableStatus} balance={Math.round(activeProfile?.casinoChips || 0)}
+              onRefresh={()=>{setCasinoTableStatus('refreshing');setCasinoRefreshRevision(value=>value+1);}}
+              onOpen={table=>{if(onStartBlackjackGame) onStartBlackjackGame('pvp',table.minBuyIn,table.id,table.id);}}
+              onInvite={table=>{
+                const tg=(window as any).Telegram?.WebApp;
+                const link=`https://t.me/redo_appbot/app?startapp=table_${table.id}`;
+                const text=encodeURIComponent(`Join me at Blackjack Table ${table.name || table.id.split('-').pop()}!`);
+                const shareUrl=`https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+                if(tg?.openTelegramLink) tg.openTelegramLink(shareUrl); else window.open(shareUrl,'_blank');
+              }}
+              onPractice={()=>{sound.playShuffle();if(onStartBlackjackGame) onStartBlackjackGame('offline',0);else onStartGame('offline',0);}}
+            />
           )}
             </motion.div>
           )}
       </div>
+
+      <CasinoConfirmDialog
+        request={casinoConfirmation}
+        onConfirm={confirmCasinoConfirmation}
+        onCancel={cancelCasinoConfirmation}
+      />
+      <CasinoNoticeToast notice={dashboardNotice} />
 
       {/* WALLET CONNECT OVERLAY MODAL */}
       <AnimatePresence>
@@ -6909,7 +6617,7 @@ export function Web3Dashboard({
                 >
                   <div className="flex items-center gap-2 truncate">
                     <span className="font-bold text-[#ffcc00] w-4 text-center">{idx + 1}.</span>
-                    <Avatar id={(entry.avatarId as any) || 'rabbit'} size={16} />
+                    <ResistanceAvatar name={entry.username} fallbackAvatar={(entry.avatarId as any) || 'rabbit'} state={idx === 0 ? 'winner' : 'online'} size={26} />
                     <span className="text-slate-200 font-bold truncate">{entry.username}</span>
                   </div>
                   <span className="font-black text-[#00ff66] text-[9px] px-1.5 py-0.5 bg-[#00ff66]/10 border border-[#00ff66]/30 rounded">

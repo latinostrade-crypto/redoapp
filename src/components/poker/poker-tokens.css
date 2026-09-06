@@ -1,0 +1,79 @@
+:root {
+  /* Pixel geometry */
+  --rp-pixel-unit: 2px;
+  --rp-pixel-block-sm: 2px;
+  --rp-pixel-block-md: 4px;
+  --rp-pixel-block-lg: 8px;
+  --rp-border-thin: 1px;
+  --rp-border-default: 2px;
+  --rp-border-impact: 4px;
+
+  /* 2 / 4 / 8 layout rhythm */
+  --rp-space-0-5: 2px;
+  --rp-space-1: 4px;
+  --rp-space-2: 8px;
+  --rp-space-3: 12px;
+  --rp-space-4: 16px;
+  --rp-space-5: 20px;
+  --rp-space-6: 24px;
+
+  /* Typography */
+  --rp-font-display: "Press Start 2P", monospace;
+  --rp-font-terminal: "Silkscreen", monospace;
+  --rp-font-body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Palette and player/table states */
+  --rp-bg: #050607;
+  --rp-panel: #0b0d10;
+  --rp-panel-2: #11151a;
+  --rp-line: #29323a;
+  --rp-line-strong: #52606b;
+  --rp-signal: #ff3b30;
+  --rp-signal-hot: #ff5448;
+  /* One Resistance control palette across menu, events and shop. */
+  --rp-control-gradient: linear-gradient(180deg, #642723 0%, #391716 52%, #211011 100%);
+  --rp-control-gradient-active: linear-gradient(180deg, #bc4236 0%, #842921 52%, #4b1917 100%);
+  --rp-control-gradient-disabled: linear-gradient(180deg, #302122 0%, #1c1618 100%);
+  --rp-control-border: #92504a;
+  --rp-danger: #ff5a50;
+  --rp-danger-soft: #ff8a82;
+  --rp-danger-deep: #5e1713;
+  --rp-online: #65f28c;
+  --rp-success: #79f2ac;
+  --rp-info: #75d5ff;
+  --rp-winner: #f3f4f6;
+  --rp-winner-outline: rgba(243, 244, 246, .25);
+  --rp-winner-shadow: rgba(243, 244, 246, .48);
+  --rp-muted: #77808b;
+  --rp-text: #f3f4f6;
+  --rp-text-soft: #c7ced4;
+  --rp-shadow: #000;
+  --rp-table-idle: #080b0d;
+  --rp-table-active: #171d22;
+  --rp-table-showdown: #28100f;
+
+  /* Five motion levels */
+  --rp-motion-static: 0ms;
+  --rp-motion-micro: 120ms;
+  --rp-motion-gameplay: 360ms;
+  --rp-motion-event: 620ms;
+  --rp-motion-impact: 880ms;
+  --rp-transition-linear: linear;
+  --rp-transition-stepped: steps(4, end);
+
+  /* Effect intensity */
+  --rp-shake-sm: 2px;
+  --rp-shake-md: 3px;
+  --rp-glitch-sm: 2px;
+  --rp-glitch-md: 3px;
+
+  /* Layer ownership */
+  --rp-z-table: 10;
+  --rp-z-controls: 30;
+  --rp-z-toast: 80;
+  --rp-z-announcement: 90;
+  --rp-z-impact-decoration: 88;
+  --rp-z-modal: 150;
+  --rp-z-boot: 190;
+  --rp-z-wipe: 200;
+}

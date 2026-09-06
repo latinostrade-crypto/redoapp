@@ -52,7 +52,7 @@ const redis = createServer(async (req, res) => {
 redis.listen(redisPort, '127.0.0.1');
 await once(redis, 'listening');
 
-const server = spawn(process.execPath, [tsxCli, path.join(root, 'server.ts')], {
+const server = spawn(process.execPath, process.env.REDOAPP_TEST_COMPILED === '1' ? [path.join(root, 'build/server.mjs')] : [tsxCli, path.join(root, 'server.ts')], {
   cwd: root,
   env: {
     ...process.env,

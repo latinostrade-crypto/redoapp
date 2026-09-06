@@ -7,8 +7,11 @@ export const isLocal = typeof window !== 'undefined' && (
   window.location.hostname.endsWith('.local')
 );
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (
-  isLocal && typeof window !== 'undefined' ? `http://${window.location.hostname}:10000` : 'https://yoapp-backend.onrender.com'
+  // Vite proxies /api and SSE to the local backend. The phone needs access
+  // to only the frontend port, not a second cross-origin/firewall endpoint.
+  isLocal ? '' : 'https://yoapp-backend.onrender.com'
 );
+const usesLocalApiProxy = isLocal && !import.meta.env.VITE_API_BASE_URL;
 const SESSION_TOKEN_STORAGE_KEY = 'redoapp_session_token';
 const BRIDGE_TOKEN_STORAGE_KEY = 'redoapp_tab_bridge_token';
 // Render documents an approximately one-minute wake-up for idle free services.
@@ -34,7 +37,6 @@ function emitApiTrace(detail: ApiTraceDetail) {
 }
 
 export function wakeBackend() {
-  if (!API_BASE_URL) return;
   fetch(`${API_BASE_URL}/api/health`, {
     method: 'GET',
     cache: 'no-store',
@@ -212,8 +214,9 @@ function refreshApiSession(signal?: AbortSignal) {
 }
 
 export async function apiRequest<T>(path: string, init?: ApiRequestInit): Promise<T> {
-  const { retryOnNetworkError = false, networkAttempts = 2, skipAuthRefresh = false, timeoutMs = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
-  const attempts = retryOnNetworkError ? Math.max(1, Math.min(3, networkAttempts)) : 1;
+  const { retryOnNetworkError = false, networkAttempts = 2, skipAuthRefresh = false, timeoutMs: requestedTimeout = API_REQUEST_TIMEOUT_MS, ...requestInit } = init || {};
+  const timeoutMs = usesLocalApiProxy ? Math.min(8_000, requestedTimeout) : requestedTimeout;
+  const attempts = retryOnNetworkError && !usesLocalApiProxy ? Math.max(1, Math.min(3, networkAttempts)) : 1;
   const method = (requestInit.method || 'GET').toUpperCase();
   const url = `${API_BASE_URL}${path}`;
   const traceId = `api-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;

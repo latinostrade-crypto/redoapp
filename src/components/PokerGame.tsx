@@ -4,21 +4,51 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { PokerCard, PokerGameState } from '../types/poker';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
+import { PokerGameState, PokerPlayer } from '../types/poker';
 import { apiRequest } from '../utils/api';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { sound } from '../utils/sound';
-import { RotateCcw, Volume2, VolumeX, Trophy, Timer, ArrowUpRight, Play, Plus, Minus, Loader2 } from 'lucide-react';
-import { Avatar } from './Avatars';
+import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus } from 'lucide-react';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
-import { useTableVisualEvents } from '../hooks/useTableVisualEvents';
+import { useTelegramSafeArea } from '../hooks/useTelegramSafeArea';
+import { getPokerHapticsEnabled, playPokerFeedback, setPokerHapticsEnabled } from '../utils/pokerFeedback';
+import { ResistanceAvatar, ResistanceAvatarState } from './poker/ResistanceAvatar';
+import { EmptyPlayerSeat, ResistancePlayerSeat } from './poker/ResistancePlayerSeat';
+import {
+  PixelCounter,
+  PixelLoader,
+  PixelSnap,
+  PixelTextReveal,
+  PixelToast,
+  ScreenShake,
+} from './poker/PixelPrimitives';
+import { canQueuePokerPreCheck, PokerPreAction, resolvePokerPreAction } from './poker/preActions';
+import { ChipStackIcon, ChipValue, CommunityCards, HoleCards, PokerTable, Pot } from './poker/PokerTable';
+import { ChipField } from './poker/chips/ChipField';
+import { useChipTimeline } from './poker/chips/useChipTimeline';
+import { PokerHandResult } from './poker/PokerHandResult';
+import { getPokerHandWinners } from './poker/handResult';
+import { usePokerPresentation } from './poker/motion/usePokerPresentation';
+import { transitionResistanceScene } from './poker/motion/sceneTransition';
+import { pixelMaskStyle } from './poker/motion/pixelMasks';
+import { isFinished } from './poker/motion/presentation';
+import { LocalPokerHand } from './poker/LocalPokerHand';
+import { ActionButton, BetControls, RaiseControl } from './poker/PokerControls';
+import {
+  ConnectionStatus,
+  PixelModal,
+} from './poker/PokerOverlays';
+import './poker/poker-resistance.css';
+import './poker/poker-layout.css';
+import './poker/motion/resistance-motion.css';
 
 interface PokerGameProps {
   gameState: PokerGameState;
   turnTimeLeft?: number;
+  forceReducedMotion?: boolean;
   onFold: () => void;
   onCallOrCheck: () => void;
   onRaise: (amount: number) => void;
@@ -27,129 +57,18 @@ interface PokerGameProps {
   onInvite?: () => void;
 }
 
-const SUIT_SYMBOLS: Record<string, { symbol: string; color: string }> = {
-  spades: { symbol: '♠', color: 'text-slate-950' },
-  hearts: { symbol: '♥', color: 'text-red-600' },
-  diamonds: { symbol: '♦', color: 'text-blue-600' },
-  clubs: { symbol: '♣', color: 'text-emerald-700' },
-};
-
-const RANK_LABELS: Record<number, string> = {
-  2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: '10',
-  11: 'J', 12: 'Q', 13: 'K', 14: 'A',
-};
-
-/**
- * Custom 3D Stack of Casino Chips SVG Logo
- */
-export function ChipStackIcon({ className = 'w-3.5 h-3.5' }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={`inline-block shrink-0 ${className}`}
-    >
-      {/* Bottom Chip (Gold) */}
-      <path d="M3 14.5v3.5c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-3.5" fill="#D97706" stroke="#78350F" strokeWidth="0.8" />
-      <ellipse cx="12" cy="14.5" rx="9" ry="3.2" fill="#F59E0B" stroke="#78350F" strokeWidth="0.8" />
-      <ellipse cx="12" cy="14.2" rx="7" ry="2.2" stroke="#FEF3C7" strokeWidth="0.6" strokeDasharray="2 1.5" />
-      
-      {/* Middle Chip (Emerald Green) */}
-      <path d="M3 9.5v3.5c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-3.5" fill="#059669" stroke="#064E3B" strokeWidth="0.8" />
-      <ellipse cx="12" cy="9.5" rx="9" ry="3.2" fill="#10B981" stroke="#064E3B" strokeWidth="0.8" />
-      <ellipse cx="12" cy="9.2" rx="7" ry="2.2" stroke="#D1FAE5" strokeWidth="0.6" strokeDasharray="2 1.5" />
-      
-      {/* Top Chip (Ruby Red) */}
-      <path d="M3 4.5v3.5c0 1.93 4.03 3.5 9 3.5s9-1.57 9-3.5v-3.5" fill="#DC2626" stroke="#7F1D1D" strokeWidth="0.8" />
-      <ellipse cx="12" cy="4.5" rx="9" ry="3.2" fill="#EF4444" stroke="#7F1D1D" strokeWidth="0.8" />
-      <ellipse cx="12" cy="4.2" rx="7" ry="2.2" stroke="#FEE2E2" strokeWidth="0.6" strokeDasharray="2 1.5" />
-      <ellipse cx="12" cy="4.2" rx="3.5" ry="1.2" fill="#FEF08A" stroke="#CA8A04" strokeWidth="0.5" />
-    </svg>
-  );
-}
-
-function ChipStack({ amount, label }: { amount: number; label?: string }) {
-  if (amount <= 0) return null;
-
-  return (
-    <motion.div
-      initial={{ scale: 0 }}
-      animate={{ scale: 1 }}
-      className="flex items-center gap-1 bg-black/90 border border-amber-400/80 px-1.5 py-0.5 rounded-full shadow-[0_2px_4px_rgba(0,0,0,0.8)] select-none shrink-0"
-    >
-      <ChipStackIcon className="w-3.5 h-3.5" />
-      <span className="text-[7.5px] font-black text-[#ffcc00] leading-none">
-        {label ? `${label} ${amount}` : amount}
-      </span>
-    </motion.div>
-  );
-}
-
-function PokerCardView({
-  card,
-  hidden = false,
-  faceDown = false,
-  isLarge = false,
-  isWinning = false,
-  className = '',
-}: {
-  card?: PokerCard;
-  hidden?: boolean;
-  faceDown?: boolean;
-  isLarge?: boolean;
-  isWinning?: boolean;
-  className?: string;
-  key?: React.Key;
-}) {
-  const cardSizeClass = isLarge
-    ? 'w-9 h-13 min-[380px]:w-11 min-[380px]:h-15'
-    : 'w-8 h-11 min-[380px]:w-9 min-[380px]:h-13';
-
-  if (hidden || faceDown || !card) {
-    return (
-      <motion.div
-        initial={{ scale: 0.4, y: -20, opacity: 0 }}
-        animate={{ scale: 1, y: 0, opacity: 1 }}
-        className={`${cardSizeClass} border-2 border-black rounded-md shadow-md overflow-hidden bg-slate-950 select-none shrink-0 ${className}`}
-      >
-        <img
-          src="/card-thumbs/back.jpeg"
-          alt="Card Back"
-          className="w-full h-full object-cover"
-        />
-      </motion.div>
-    );
-  }
-
-  const suitInfo = SUIT_SYMBOLS[card.suit] || { symbol: '?', color: 'text-black' };
-  const rankLabel = RANK_LABELS[card.rank] || String(card.rank);
-
-  return (
-    <motion.div
-      initial={{ scale: 0.4, y: -20, opacity: 0 }}
-      animate={{ scale: 1, y: 0, opacity: 1 }}
-      transition={{ type: 'spring', stiffness: 350, damping: 25 }}
-      className={`${cardSizeClass} bg-slate-100 border-2 ${
-        isWinning ? 'border-[#ffcc00] ring-2 ring-[#ffcc00] shadow-[0_0_12px_#ffcc00]' : 'border-black'
-      } rounded-md p-1 flex flex-col justify-between select-none shadow-[2px_2px_0_#000] shrink-0 relative overflow-hidden ${className}`}
-    >
-      <div className={`text-[10px] min-[380px]:text-[11px] font-black leading-none ${suitInfo.color}`}>
-        {rankLabel}
-      </div>
-      <div className={`text-base min-[380px]:text-lg self-center leading-none ${suitInfo.color}`}>
-        {suitInfo.symbol}
-      </div>
-      <div className={`text-[10px] min-[380px]:text-[11px] font-black leading-none self-end rotate-180 ${suitInfo.color}`}>
-        {rankLabel}
-      </div>
-    </motion.div>
-  );
+function getResistanceAvatarState(player: PokerPlayer, isWinner: boolean): ResistanceAvatarState {
+  if (player.eliminated) return 'eliminated';
+  if (player.isConnected === false) return 'disconnected';
+  if (isWinner) return 'winner';
+  if (player.folded) return 'folded';
+  return 'online';
 }
 
 export function PokerGame({
   gameState,
   turnTimeLeft = 15,
+  forceReducedMotion = false,
   onFold,
   onCallOrCheck,
   onRaise,
@@ -157,19 +76,38 @@ export function PokerGame({
   onReturnToLobby,
   onInvite,
 }: PokerGameProps) {
+  const systemReduceMotion = useReducedMotion();
+  const reduceMotion = forceReducedMotion || systemReduceMotion;
+  const presentation = usePokerPresentation(gameState, Boolean(reduceMotion));
+  const chipView = useChipTimeline(gameState, Boolean(reduceMotion), presentation.payoutAt);
+  const telegramSafeArea = useTelegramSafeArea();
   const [muted, setMuted] = useState(() => sound.getMuted());
+  const [hapticsEnabled, setHapticsEnabled] = useState(getPokerHapticsEnabled);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
+  const [sceneClosing, setSceneClosing] = useState(false);
+  const [preAction, setPreAction] = useState<PokerPreAction | null>(null);
+  const [preActionNotice, setPreActionNotice] = useState<{ key: number; message: string; tone: 'signal' | 'danger' | 'neutral' } | null>(null);
+  const resultRevealReady = presentation.resultReady;
   const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; senderUserId?: string; key: number } | null>(null);
+  const announcedResultRef = useRef('');
+  const sequenceTimersRef = useRef<number[]>([]);
+  const previousHumanTurnRef = useRef(false);
+  const timerWarningRef = useRef('');
+  const preActionExecutionRef = useRef('');
+  const preActionNoticeTimerRef = useRef<number | null>(null);
+  const previousPotRef = useRef(gameState.pot);
+  const previousPlayerStatesRef = useRef<Map<string, { connected: boolean; eliminated: boolean }> | null>(null);
+  const autoNextTriggeredRef = useRef(false);
   const handleMatchEmoji = useCallback((event: { emojiId: string; senderUserId: string; sentAt: number }) => {
     setActiveEmoji({ emoji: event.emojiId, senderUserId: event.senderUserId, key: event.sentAt });
     window.setTimeout(() => setActiveEmoji(null), 3500);
   }, []);
   const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
-  const { playback, revealedCardIds, isReplaying } = useTableVisualEvents(gameState.visualEvents, gameState.visualEpoch);
 
   const handleSendEmoji = (emoji: EmojiItem) => {
+    playPokerFeedback('ui_click');
     if (!gameState.matchId) {
       setActiveEmoji({ emoji, key: Date.now() });
       setTimeout(() => setActiveEmoji(null), 3500);
@@ -178,8 +116,9 @@ export function PokerGame({
     void sendMatchEmoji(emoji).catch(() => undefined);
   };
 
-  const isSpectator = !gameState.players.find((p) => p.id === 'player');
-  const humanPlayer = gameState.players.find((p) => p.id === 'player') || gameState.players[0] || {
+  const seatedHumanPlayer = gameState.players.find((p) => p.id === 'player');
+  const isSpectator = !seatedHumanPlayer;
+  const humanPlayer = seatedHumanPlayer || {
     id: 'spectator',
     name: 'Spectator',
     avatar: 'rabbit',
@@ -202,11 +141,72 @@ export function PokerGame({
   const [seatJoinError, setSeatJoinError] = useState('');
   const seatRequestIdRef = useRef('');
   const { profile, fetchProfile } = useUserProfile();
+  const telegramPhotoUrl = humanPlayer.photoUrl
+    || profile?.telegramPhotoUrl
+    || (window as typeof window & { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { photo_url?: string } } } } }).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url
+    || null;
+  const isPersistentCashTable = String(gameState.matchId || gameState.tableId || '').startsWith('table-poker-');
+  const stakeUsesChips = isPersistentCashTable;
+  const isFreeChipTable = stakeUsesChips && String(gameState.matchId || gameState.tableId).includes('-free-');
+
+  useEffect(() => () => {
+    sequenceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    if (preActionNoticeTimerRef.current !== null) window.clearTimeout(preActionNoticeTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!resultRevealReady || chipView.busy || !['ended', 'match_ended'].includes(gameState.stage)) return;
+    const signature = `${gameState.visualEpoch}:${gameState.stage}:${gameState.winnerIds.join(',')}`;
+    if (announcedResultRef.current === signature) return;
+    announcedResultRef.current = signature;
+    playPokerFeedback('winner');
+  }, [chipView.busy, resultRevealReady, gameState.visualEpoch, gameState.stage, gameState.winnerIds]);
+
+  useEffect(() => {
+    const visiblePot = chipView.pots.reduce((sum, amount) => sum + amount, 0);
+    if (visiblePot > previousPotRef.current) playPokerFeedback('pot_receive');
+    previousPotRef.current = visiblePot;
+  }, [chipView.pots]);
+
+  useEffect(() => {
+    const current = new Map(gameState.players.map((player) => [player.id, {
+      connected: player.isConnected !== false,
+      eliminated: Boolean(player.eliminated),
+    }]));
+    const previous = previousPlayerStatesRef.current;
+    previousPlayerStatesRef.current = current;
+    if (!previous) return;
+
+    gameState.players.forEach((player) => {
+      const before = previous.get(player.id);
+      const after = current.get(player.id)!;
+      if (!before) {
+        playPokerFeedback('player_join');
+        return;
+      }
+      if (before.connected && !after.connected) playPokerFeedback('player_disconnect');
+      if (!before.connected && after.connected) playPokerFeedback('player_join');
+      if (!before.eliminated && after.eliminated) playPokerFeedback('player_eliminated');
+    });
+  }, [gameState.players]);
+
+  const handleReturnToLobby = useCallback(() => {
+    if (sceneClosing) return;
+    playPokerFeedback('scene_transition');
+    setSceneClosing(true);
+    transitionResistanceScene(onReturnToLobby, Boolean(reduceMotion));
+  }, [onReturnToLobby, sceneClosing, reduceMotion]);
 
   const handleTakeSeat = async () => {
+    playPokerFeedback('ui_confirm');
     setSeatJoinError('');
     setShowBuyInModal(true);
   };
+
+  const handleCloseBuyInModal = useCallback(() => {
+    playPokerFeedback('ui_cancel');
+    setShowBuyInModal(false);
+  }, []);
 
   const handleExchange = async () => {
     if (isExchanging) return;
@@ -217,10 +217,11 @@ export function PokerGame({
         body: JSON.stringify({ direction: 'tkt_to_chips', amount: exchangeAmount })
       });
       if (res.success) {
+        playPokerFeedback('player_join');
         await fetchProfile();
         setExchangeAmount(1);
       } else {
-        alert('Exchange failed');
+        setSeatJoinError('Exchange failed. Check your ticket balance and retry.');
       }
     } catch (e) {
       console.error(e);
@@ -279,10 +280,113 @@ export function PokerGame({
   const isHumanTurn =
     gameState.stage !== 'idle' &&
     gameState.stage !== 'ended' &&
+    gameState.stage !== 'match_ended' &&
+    !gameState.isMatchOver &&
     !gameState.isDealing &&
     gameState.players[gameState.currentPlayerIndex]?.id === 'player';
   const callNeeded = humanPlayer ? Math.max(0, gameState.currentBet - humanPlayer.currentBet) : 0;
   const canCallOrCheck = Boolean(isHumanTurn && humanPlayer && !humanPlayer.folded && !humanPlayer.isAllIn);
+  const canQueuePreCheck = canQueuePokerPreCheck(callNeeded);
+  const canRemainPreActionQueued = Boolean(
+    !isSpectator &&
+    gameState.stage !== 'idle' &&
+    gameState.stage !== 'ended' &&
+    gameState.stage !== 'match_ended' &&
+    !gameState.isMatchOver &&
+    !humanPlayer.folded &&
+    !humanPlayer.eliminated &&
+    !humanPlayer.isAllIn &&
+    humanPlayer.isConnected !== false
+  );
+  const canQueuePreAction = canRemainPreActionQueued && !isHumanTurn;
+  const handWinnerIds = new Set(presentation.winnerReady ? getPokerHandWinners(gameState).map(w => w.player.id) : []);
+  const humanAvatarState = getResistanceAvatarState(humanPlayer, handWinnerIds.has(humanPlayer.id));
+  const humanTurnProgress = isHumanTurn ? Math.max(0, Math.min(1, turnTimeLeft / (gameState.turnTimeoutSec || 15))) : 1;
+
+  useEffect(() => {
+    if (isHumanTurn && !previousHumanTurnRef.current) playPokerFeedback('player_turn');
+    previousHumanTurnRef.current = isHumanTurn;
+
+    const warningSignature = `${gameState.turnStartedAt || 0}:${gameState.currentPlayerIndex}`;
+    if (isHumanTurn && turnTimeLeft === 5 && timerWarningRef.current !== warningSignature) {
+      timerWarningRef.current = warningSignature;
+      playPokerFeedback('timer_warning');
+    }
+  }, [gameState.currentPlayerIndex, gameState.turnStartedAt, isHumanTurn, turnTimeLeft]);
+
+  const showPreActionNotice = useCallback((message: string, tone: 'signal' | 'danger' | 'neutral' = 'neutral') => {
+    if (preActionNoticeTimerRef.current !== null) window.clearTimeout(preActionNoticeTimerRef.current);
+    const key = Date.now();
+    setPreActionNotice({ key, message, tone });
+    preActionNoticeTimerRef.current = window.setTimeout(() => {
+      setPreActionNotice((current) => current?.key === key ? null : current);
+      preActionNoticeTimerRef.current = null;
+    }, 1_800);
+  }, []);
+
+  useEffect(() => {
+    const resolution = resolvePokerPreAction({
+      queued: preAction,
+      canRemainQueued: canRemainPreActionQueued,
+      isHumanTurn,
+      canAct: canCallOrCheck,
+      callNeeded,
+    });
+
+    if (resolution === 'none' || resolution === 'wait') return;
+
+    const signature = `${gameState.matchId || 'practice'}:${gameState.turnStartedAt || 0}:${gameState.currentPlayerIndex}:${preAction}:${resolution}`;
+    if (preActionExecutionRef.current === signature) return;
+    preActionExecutionRef.current = signature;
+    setPreAction(null);
+
+    if (resolution === 'fold') {
+      playPokerFeedback('fold');
+      showPreActionNotice('PRE-FOLD EXECUTED', 'danger');
+      onFold();
+      return;
+    }
+
+    if (resolution === 'check') {
+      playPokerFeedback('ui_confirm');
+      showPreActionNotice('PRE-CHECK EXECUTED', 'signal');
+      onCallOrCheck();
+      return;
+    }
+
+    if (preAction === 'check' && callNeeded > 0) {
+      playPokerFeedback('ui_cancel');
+      showPreActionNotice('PRE-CHECK CANCELLED · BET TO CALL', 'danger');
+    }
+  }, [
+    callNeeded,
+    canCallOrCheck,
+    canRemainPreActionQueued,
+    gameState.currentPlayerIndex,
+    gameState.matchId,
+    gameState.turnStartedAt,
+    isHumanTurn,
+    onCallOrCheck,
+    onFold,
+    preAction,
+    showPreActionNotice,
+  ]);
+
+  const togglePreAction = (action: PokerPreAction) => {
+    if (action === 'check' && !canQueuePreCheck) {
+      playPokerFeedback('ui_cancel');
+      showPreActionNotice('PRE-CHECK UNAVAILABLE · BET TO CALL', 'danger');
+      return;
+    }
+    playPokerFeedback(preAction === action ? 'ui_cancel' : 'ui_click');
+    preActionExecutionRef.current = '';
+    setPreAction((current) => current === action ? null : action);
+  };
+
+  const clearPreAction = () => {
+    preActionExecutionRef.current = '';
+    setPreAction(null);
+  };
 
   // Live hand rank evaluation for human player
   const humanHandEval = React.useMemo(() => {
@@ -297,7 +401,14 @@ export function PokerGame({
   const toggleMute = () => {
     const isNowMuted = sound.toggleMute();
     setMuted(isNowMuted);
-    sound.playPop();
+    playPokerFeedback('ui_click');
+  };
+
+  const toggleHaptics = () => {
+    const next = !hapticsEnabled;
+    setPokerHapticsEnabled(next);
+    setHapticsEnabled(next);
+    playPokerFeedback('ui_click');
   };
 
   // Keep custom raise amount synced
@@ -307,462 +418,264 @@ export function PokerGame({
 
   // Auto-next hand countdown during showdown
   useEffect(() => {
-    if (gameState.stage !== 'ended') {
+    if (gameState.stage !== 'ended' || gameState.isMatchOver) {
+      autoNextTriggeredRef.current = false;
       setNextHandCountdown(6);
       return;
     }
+    if (!resultRevealReady || chipView.busy) return;
+    if (gameState.mode === 'offline') setNextHandCountdown(6);
     const update = () => {
       if (gameState.nextRoundStartsAt) {
         setNextHandCountdown(Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000)));
       } else if (gameState.mode === 'offline' && onNextHand) {
-        setNextHandCountdown((prev) => {
-          if (prev <= 1) {
-            onNextHand();
-            return 0;
-          }
-          return prev - 1;
-        });
+        setNextHandCountdown((previous) => Math.max(0, previous - 1));
       }
     };
-    update();
+    if (gameState.nextRoundStartsAt) update();
     const timer = setInterval(update, gameState.nextRoundStartsAt ? 250 : 1000);
 
     return () => clearInterval(timer);
-  }, [gameState.stage, gameState.mode, gameState.nextRoundStartsAt, onNextHand]);
+  }, [gameState.stage, gameState.isMatchOver, gameState.mode, gameState.nextRoundStartsAt, resultRevealReady, chipView.busy, onNextHand]);
+
+  useEffect(() => {
+    if (
+      gameState.stage !== 'ended' ||
+      gameState.isMatchOver ||
+      gameState.mode !== 'offline' ||
+      !onNextHand ||
+      nextHandCountdown > 0 ||
+      autoNextTriggeredRef.current
+    ) return;
+    autoNextTriggeredRef.current = true;
+    onNextHand();
+  }, [gameState.mode, gameState.stage, gameState.isMatchOver, nextHandCountdown, onNextHand]);
 
   return (
-    <div className="w-full max-w-md mx-auto flex flex-col justify-start gap-1 bg-[#080d0a] border-4 border-black p-2 relative overflow-hidden select-none font-mono text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] rounded-xl min-h-[550px]">
+    <ScreenShake
+      active={false}
+      className={`resistance-poker${reduceMotion ? ' resistance-poker--reduced-motion' : ''} w-full max-w-md mx-auto flex flex-col justify-start gap-1 border-4 border-black p-2 relative overflow-hidden select-none text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] min-h-[550px]`}
+      style={{
+        ...pixelMaskStyle,
+        '--tg-safe-top': `${telegramSafeArea.top}px`,
+        '--tg-safe-right': `${telegramSafeArea.right}px`,
+        '--tg-safe-bottom': `${telegramSafeArea.bottom}px`,
+        '--tg-safe-left': `${telegramSafeArea.left}px`,
+      } as React.CSSProperties}
+    >
       <AnimatePresence>
-        {playback && (
+        {preActionNotice && (
           <motion.div
-            key={playback.key}
-            initial={{ opacity: 0, y: -12, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8 }}
-            className="absolute top-10 left-1/2 -translate-x-1/2 z-[70] max-w-[85%] bg-black/95 border-2 border-[#ffcc00] px-3 py-1.5 rounded-full text-center text-[9px] font-black uppercase text-[#ffcc00] shadow-[0_0_18px_rgba(255,204,0,0.65)]"
+            key={preActionNotice.key}
+            className="rp-pre-action-toast-slot"
+            initial={false}
+            animate={reduceMotion ? undefined : { clipPath: 'inset(0)' }}
+            exit={reduceMotion ? undefined : { clipPath: 'inset(0 100% 0 0)' }}
+            transition={{ duration: reduceMotion ? 0 : 0.12 }}
           >
-            {playback.message}
+            <PixelToast message={preActionNotice.message} tone={preActionNotice.tone} />
           </motion.div>
         )}
       </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
-      <header className="flex justify-between items-center bg-slate-950 border border-black px-2.5 py-1 z-20 rounded">
+      <header className="rp-header flex justify-between items-center border px-2.5 py-1 z-20">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={onReturnToLobby}
-            className="px-2 py-0.5 bg-red-950 border border-red-500/40 hover:bg-red-900 text-red-300 text-[8px] font-black uppercase flex items-center gap-1 pixel-btn-interactive cursor-pointer"
+            onClick={handleReturnToLobby}
+            className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase flex items-center gap-1 cursor-pointer"
           >
             <RotateCcw className="w-3 h-3" />
             <span>LOBBY</span>
           </button>
-          {onInvite && <button type="button" onClick={onInvite} className="px-2 py-0.5 bg-[#1da1f2] text-white border border-black text-[8px] font-black uppercase pixel-btn-interactive">INVITE</button>}
-          <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
-            POKER HOLD'EM ({gameState.mode.toUpperCase()})
+          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase">INVITE</button>}
+          <span className="rp-mode-label text-[8px] font-black uppercase px-1.5 py-0.5">
+            HOLD'EM · {gameState.mode.toUpperCase()}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-[8px] font-black text-[#ffcc00] flex items-center gap-1 bg-black px-1.5 py-0.5 border border-black">
-            <ChipStackIcon className="w-3 h-3" />
-            <span>{gameState.stake === 0 ? 'FREE' : `${gameState.stake}TKT`}</span>
+          <span className="rp-stake-label text-[8px] font-black flex items-center gap-1 px-1.5 py-0.5">
+            {stakeUsesChips ? (
+              <ChipValue
+                amount={gameState.stake}
+                iconClassName="w-3 h-3"
+                prefix={isFreeChipTable ? <span>FREE ·</span> : null}
+                suffix={!isFreeChipTable ? <span>MIN</span> : null}
+              />
+            ) : gameState.stake === 0 ? <span>FREE</span> : <span>{gameState.stake} TKT</span>}
           </span>
 
           <button
             type="button"
             onClick={toggleMute}
-            className={`p-1 border border-black pixel-btn-interactive cursor-pointer ${
-              muted ? 'bg-red-950/40 text-red-400' : 'bg-slate-900 text-[#00ff66]'
+            aria-label={muted ? 'Unmute poker sounds' : 'Mute poker sounds'}
+            className={`min-w-[44px] p-1 border border-black pixel-btn-interactive cursor-pointer ${
+              muted ? 'bg-red-950/40 text-red-400' : 'bg-slate-900 text-slate-200'
             }`}
           >
             {muted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
           </button>
+          <button
+            type="button"
+            onClick={toggleHaptics}
+            className={`rp-header-toggle px-1 text-[7px] font-black ${hapticsEnabled ? 'text-slate-100' : 'text-slate-500'}`}
+            aria-pressed={hapticsEnabled}
+            aria-label={`${hapticsEnabled ? 'Disable' : 'Enable'} poker haptics`}
+            title="Haptics"
+          >
+            {hapticsEnabled ? 'H' : 'H×'}
+          </button>
         </div>
       </header>
 
-      {/* 2. OVAL POKER FELT TABLE CANVAS */}
-      <div className="w-full h-[385px] min-[380px]:h-[415px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[50px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-center z-10 shrink-0">
-        
-        {/* Felt Watermark Pattern */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none rounded-[45px] bg-[radial-gradient(#00ff66_1px,transparent_1px)] [background-size:10px_10px]" />
+      {/* 2. RESISTANCE SIGNAL TABLE */}
+      <PokerTable bankCount={chipView.pots.length}>
+        <div className="rp-event-stage" aria-live="polite" aria-atomic="true">
+          {presentation.cue && <div key={presentation.cue.id} className={`rp-event-cue rp-pixel-build${presentation.cue.impact ? ' rp-event-cue--impact' : ''}`}>
+            <span>{presentation.cue.detail}</span><strong>{presentation.cue.label}</strong>
+          </div>}
+        </div>
 
         {/* POT & STAGE DISPLAY (Top-center) */}
-        <div className="absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center z-20">
-          <motion.div
-            key={gameState.pot}
-            initial={{ scale: 1.2 }}
-            animate={{ scale: 1 }}
-            className="bg-slate-950/95 border-2 border-[#ffcc00] px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(255,204,0,0.4)] flex items-center gap-1.5"
-          >
-            <ChipStackIcon className="w-3.5 h-3.5" />
-            <div className="flex items-center gap-1 text-[9.5px] font-black text-[#ffcc00] uppercase tracking-wide">
-              <span>POT:</span>
-              <span>{gameState.pot}</span>
-            </div>
-          </motion.div>
-          {(gameState.sidePots?.length || 0) > 1 && (
-            <span className="mt-0.5 rounded bg-black/70 px-1.5 py-0.5 text-[7px] font-bold text-amber-200">
-              {gameState.sidePots!.map((sidePot, index) => `${index === 0 ? 'MAIN' : `SIDE ${index}`}: ${sidePot.amount}`).join(' · ')}
-            </span>
-          )}
+        <div className="rp-pot-position absolute flex flex-col items-center z-20">
+          <Pot amount={chipView.pots.reduce((sum, amount) => sum + amount, 0)} />
           {['preflop', 'flop', 'turn', 'river', 'showdown'].includes(gameState.stage) && (
-            <span className="text-[7.5px] font-black text-emerald-400 uppercase mt-0.5 tracking-widest bg-black/70 px-2 py-0.2 rounded border border-emerald-500/30">
+            <span className="rp-stage-label text-[7.5px] font-black uppercase mt-0.5 tracking-widest px-2 py-0.5 border">
               {gameState.stage === 'preflop'
                 ? 'PRE-FLOP (DEAL)'
                 : gameState.stage === 'flop'
                 ? 'FLOP (3 CARDS)'
                 : gameState.stage === 'turn'
                 ? 'TURN (4TH CARD)'
-                : 'RIVER (5TH CARD)'}
+                : gameState.stage === 'river'
+                ? 'RIVER (5TH CARD)'
+                : 'SHOWDOWN'}
             </span>
           )}
         </div>
 
         {/* DYNAMIC OPPONENTS RENDERING */}
         {(() => {
-          const opponents = gameState.players.filter((p) => p.id !== humanPlayer.id);
-          const renderOpponentView = (opp: typeof gameState.players[0], posClass: string, reverse = false) => {
-            const isTurn = gameState.players[gameState.currentPlayerIndex]?.id === opp.id && gameState.stage !== 'ended';
+          const opponents = isSpectator
+            ? gameState.players
+            : gameState.players.filter((p) => p.id !== humanPlayer.id);
+          const renderOpponentView = (opp: typeof gameState.players[0], positionIndex: number) => {
+            const isTurn = gameState.players[gameState.currentPlayerIndex]?.id === opp.id && !isFinished(gameState);
             const isDealer = gameState.players[gameState.dealerIndex]?.id === opp.id;
+            const isWinner = handWinnerIds.has(opp.id);
+            const avatarState = getResistanceAvatarState(opp, isWinner);
+            const turnProgress = isTurn ? Math.max(0, Math.min(1, turnTimeLeft / (gameState.turnTimeoutSec || 15))) : 1;
             return (
-              <div key={opp.id} className={`absolute ${posClass} flex flex-col items-center z-30`}>
-                <div className={`flex items-center gap-1 ${reverse ? 'flex-row-reverse' : ''}`}>
-                  <div className="flex -space-x-4 shrink-0 scale-[0.65] origin-bottom">
-                    {!opp.folded && !opp.eliminated && (opp.holeCards || []).map((c, cIdx) => (
-                      <PokerCardView
-                        key={c?.id || cIdx}
-                        card={c}
-                        hidden={gameState.stage !== 'ended' && gameState.stage !== 'match_ended'}
-                        isWinning={c && gameState.winningCardIds?.includes(c.id)}
-                      />
-                    ))}
-                  </div>
-                  <div
-                    className={`relative p-0.5 bg-slate-950 border rounded flex flex-col items-center min-w-[38px] max-w-[42px] scale-[0.75] origin-top ${
-                      isTurn ? 'border-[#00ff66] shadow-[0_0_10px_#00ff66]' : 'border-black'
-                    } ${opp.folded || opp.eliminated ? 'opacity-40 grayscale' : ''}`}
-                  >
-                    {activeEmoji && activeEmoji.senderUserId === opp.userId && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
-                    {isDealer && (
-                      <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3 h-3 rounded-full text-[6px] font-black flex items-center justify-center border border-black shadow z-10">
-                        D
-                      </span>
-                    )}
-                    <Avatar
-                      avatarId={opp.avatar || 'rabbit'}
-                      emotion={opp.folded ? 'worried' : isTurn ? 'thinking' : 'happy'}
-                      size="xs"
-                    />
-                    <span className="text-[6px] font-black text-white truncate max-w-[36px] leading-tight mt-0.5">
-                      {opp.name || 'Player'}
-                    </span>
-                    <div className="flex items-center gap-0.5 text-[6px] font-bold text-[#ffcc00] leading-tight">
-                      <ChipStackIcon className="w-2 h-2" />
-                      <span>{opp.chips ?? 0}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1 mt-0.5">
-                  {(opp.currentBet || 0) > 0 && <ChipStack amount={opp.currentBet} />}
-                  {opp.lastAction && (
-                    <div className="px-1.5 py-0.2 bg-black border border-[#00ff66] text-[#00ff66] text-[7px] font-black rounded uppercase shadow-sm leading-none">
-                      {opp.lastAction}
-                    </div>
-                  )}
-                </div>
+              <div key={opp.id} className="rp-opponent-position absolute z-30" data-seat-slot={positionIndex}>
+                <ResistancePlayerSeat
+                  player={opp}
+                  state={avatarState}
+                  active={isTurn}
+                  dealer={isDealer}
+                  blind={gameState.players[gameState.smallBlindIndex]?.id === opp.id ? 'SB' : gameState.players[gameState.bigBlindIndex]?.id === opp.id ? 'BB' : undefined}
+                  turnProgress={turnProgress}
+                  turnSeconds={turnTimeLeft}
+                  photoUrl={opp.photoUrl}
+                  revealCards={presentation.revealedPlayers.has(opp.id) && !opp.folded && !opp.mucked}
+                  dealAt={presentation.dealAt}
+                  dealIndex={positionIndex}
+                  reaction={activeEmoji && activeEmoji.senderUserId === opp.userId ? <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} resistance /> : null}
+                  displayBalance={chipView.balances[opp.id]}
+                />
               </div>
             );
           };
 
-          const POSITIONS = [
-            'left-[4px] top-[58%]',
-            'left-[-4px] top-[40%]',
-            'left-[-4px] top-[20%]',
-            'left-[4px] top-[3%]',
-            'top-[-4px] left-[20%]',
-            'top-[-4px] right-[20%]',
-            'right-[4px] top-[3%]',
-            'right-[-4px] top-[20%]',
-            'right-[-4px] top-[40%]',
-            'right-[4px] top-[58%]',
-          ];
+          const visiblePositions = Array.from({ length: isSpectator ? 10 : 9 }, (_, index) => index);
 
           return (
             <>
-              {opponents.map((opp, idx) => {
-                const pos = POSITIONS[idx % POSITIONS.length];
-                const isReverse = pos.includes('right');
-                return renderOpponentView(opp, pos, isReverse);
+              {visiblePositions.map((index) => {
+                const opponent = opponents[index];
+                if (opponent) return renderOpponentView(opponent, index);
+                return (
+                  <div key={`open-seat-${index}`} className="rp-opponent-position absolute z-30" data-seat-slot={index}>
+                    <EmptyPlayerSeat seatNumber={index + 1} />
+                  </div>
+                );
               })}
             </>
           );
         })()}
 
-        {/* CENTER TABLE: 3D CARD DECK + COMMUNITY CARDS + TIMER */}
-        <div className="absolute top-[44%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 z-20">
+        {/* CENTER TABLE: COMMUNITY BOARD + ACTIVE SIGNAL */}
+        <div className="rp-board-position absolute flex flex-col items-center gap-2 z-35">
           
-          <div className="flex items-center gap-2">
-            {/* 3D VISUAL CARD DECK IN CENTER-LEFT OF FELT */}
-            <div className="relative w-6 h-9 shrink-0 opacity-85 select-none pointer-events-none">
-              <div className="absolute inset-0 bg-slate-950 border border-black rounded translate-x-0.5 translate-y-0.5 overflow-hidden shadow">
-                <img src="/card-thumbs/back.jpeg" alt="Deck" className="w-full h-full object-cover" />
-              </div>
-              <div className="absolute inset-0 bg-slate-950 border-2 border-black rounded overflow-hidden shadow-md">
-                <img src="/card-thumbs/back.jpeg" alt="Deck" className="w-full h-full object-cover" />
-              </div>
-            </div>
+          <CommunityCards
+            cards={gameState.communityCards}
+            revealedCardIds={presentation.boardIds}
+            winningCardIds={presentation.winnerReady ? gameState.winningCardIds : []}
+          />
 
-            {/* 5 COMMUNITY CARDS */}
-            <div className="flex gap-1">
-              {[0, 1, 2, 3, 4].map((slotIdx) => {
-                const card = gameState.communityCards[slotIdx];
-                return (
-                  <div
-                    key={slotIdx}
-                    className="w-8 h-11 min-[380px]:w-9 min-[380px]:h-13 border-2 border-dashed border-emerald-700/80 rounded-md flex items-center justify-center bg-black/40 shrink-0 shadow-inner"
-                  >
-                    {card && (!gameState.visualEvents || revealedCardIds.has(card.id) || gameState.stage === 'ended' || gameState.stage === 'match_ended') ? (
-                      <PokerCardView
-                        card={card}
-                        isWinning={gameState.winningCardIds?.includes(card.id)}
-                      />
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* PROMINENT BLINKING TURN TIMER OR WAITING BANNER DIRECTLY UNDER COMMUNITY CARDS */}
+          {/* Compact table status; the countdown itself also consumes the active seat border. */}
           {gameState.waitingForPlayers ? (
-            <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse select-none">
-              <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
-              <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
-                {gameState.waitingForOpponent ? 'WAITING FOR ONE MORE PLAYER...' : 'WAITING FOR PLAYERS TO CONNECT...'}
-              </span>
-            </div>
+            <ConnectionStatus waitingForOpponent={gameState.waitingForOpponent} />
           ) : (
-            gameState.stage !== 'idle' && gameState.stage !== 'ended' && (
-              <motion.div
-                animate={{
-                  scale: turnTimeLeft <= 5 ? [1, 1.1, 1] : [1, 1.03, 1],
-                  boxShadow: turnTimeLeft <= 5
-                    ? ['0 0 10px #ff3333', '0 0 25px #ff3333', '0 0 10px #ff3333']
-                    : isHumanTurn
-                    ? ['0 0 10px #00ff66', '0 0 20px #00ff66', '0 0 10px #00ff66']
-                    : ['0 0 6px #00d2ff', '0 0 14px #00d2ff', '0 0 6px #00d2ff'],
-                }}
-                transition={{ repeat: Infinity, duration: turnTimeLeft <= 5 ? 0.45 : 0.9 }}
-                className={`px-3 py-1 rounded-full border-2 font-black text-[9px] min-[380px]:text-[9.5px] flex items-center gap-1.5 tracking-wider uppercase backdrop-blur-md select-none ${
-                  turnTimeLeft <= 5
-                    ? 'bg-red-950 border-red-500 text-red-300 animate-pulse'
-                    : isHumanTurn
-                    ? 'bg-black/95 border-[#00ff66] text-[#00ff66]'
-                    : 'bg-black/95 border-[#00d2ff] text-[#00d2ff]'
-                }`}
-              >
-                <Timer className={`w-3.5 h-3.5 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
-                <span>
-                  {isHumanTurn
-                    ? `YOUR TURN: ${turnTimeLeft}S`
-                    : `${gameState.players[gameState.currentPlayerIndex]?.name || 'PLAYER'}: ${turnTimeLeft}S`}
-                </span>
-              </motion.div>
+            gameState.stage !== 'idle' && !isFinished(gameState) && (
+              <div className={`rp-table-signal${turnTimeLeft <= 5 ? ' rp-table-signal--danger' : ''}`}>
+                <span>SIGNAL</span>
+                <strong>{isHumanTurn ? 'YOUR TURN' : gameState.players[gameState.currentPlayerIndex]?.name || 'PLAYER'}</strong>
+                <span className="rp-turn-seconds" aria-label={`${turnTimeLeft} seconds remaining`}>{turnTimeLeft}S</span>
+              </div>
             )
           )}
         </div>
 
         {/* HUMAN PLAYER (BOTTOM CENTER) */}
-        {humanPlayer && (
-          <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex flex-col items-center z-30">
-            {/* LIVE HAND RANK BADGE */}
+        {!isSpectator && humanPlayer && (
+          <div className="rp-local-position absolute z-30" data-seat-slot={9}>
             {humanHandEval && (
-              <div className="mb-0.5 bg-black/95 border border-emerald-400 px-2 py-0.5 rounded text-[7.5px] font-black text-emerald-300 uppercase tracking-wider shadow flex items-center gap-1">
+              <div className="rp-hand-rank px-2 py-0.5 text-[7.5px] font-black uppercase tracking-wider">
                 <span>{humanHandEval.description}</span>
               </div>
             )}
-
-            {/* Action / Chip Stack */}
-            <div className="flex items-center gap-1 mb-0.5">
-              {humanPlayer.currentBet > 0 && <ChipStack amount={humanPlayer.currentBet} />}
-              {humanPlayer.lastAction && (
-                <div className="px-1.5 py-0.2 bg-black border border-[#00ff66] text-[#00ff66] text-[7px] font-black rounded uppercase shadow-sm leading-none">
-                  {humanPlayer.lastAction}
-                </div>
-              )}
-            </div>
-
-            {/* Hole Cards + Avatar Pill */}
-            <div className="flex items-end gap-1.5">
-              <div className="flex -space-x-3 shrink-0">
-                {isSpectator && String(gameState.matchId || '').startsWith('table-') ? (
-                  <button onClick={handleTakeSeat} className="bg-[#00ff66] text-black border-2 border-black px-4 py-2 rounded shadow hover:bg-green-400 font-black uppercase text-[10px]">
-                    TAKE A SEAT
-                  </button>
-                ) : isSpectator ? (
-                  <span className="bg-[#ffcc00] text-black border-2 border-black px-3 py-2 rounded shadow font-black uppercase text-[9px]">
-                    SPECTATING
-                  </span>
-                ) : !humanPlayer.folded && !humanPlayer.eliminated && humanPlayer.holeCards && humanPlayer.holeCards.length > 0 ? (
-                  humanPlayer.holeCards.map((c, cIdx) => (
-                    <PokerCardView
-                      key={c?.id || cIdx}
-                      card={c}
-                      isLarge
-                      isWinning={c && gameState.winningCardIds?.includes(c.id)}
-                      faceDown={!c}
-                      className={cIdx === 1 ? 'rotate-6 origin-bottom-left' : '-rotate-6 origin-bottom-right'}
-                    />
-                  ))
-                ) : (
-                  <div className="bg-black/80 border border-[#ffcc00] px-3 py-1 rounded text-[8px] text-[#ffcc00] font-black uppercase tracking-widest flex items-center justify-center whitespace-nowrap min-w-[80px]">
-                    Waiting for next hand...
-                  </div>
-                )}
+            {/* Own cards and identity are the strongest visual layer. */}
+            <div className="rp-local-player flex items-end gap-2">
+              <div className="rp-local-cards">
+                <LocalPokerHand cards={humanPlayer.holeCards || []} folded={humanPlayer.folded} eliminated={humanPlayer.eliminated} reduced={Boolean(reduceMotion)} winningCardIds={presentation.winnerReady ? gameState.winningCardIds : []} />
               </div>
 
-              {/* Avatar Pill */}
-              <div
-                className={`relative p-0.5 bg-slate-950 border rounded flex flex-col items-center min-w-[46px] max-w-[50px] ${
-                  isHumanTurn ? 'border-[#00ff66] shadow-[0_0_12px_#00ff66]' : 'border-black'
-                } ${humanPlayer.folded || humanPlayer.eliminated ? 'opacity-40 grayscale' : ''}`}
-              >
-                <AnimatePresence>
-                  {activeEmoji && (!activeEmoji.senderUserId || activeEmoji.senderUserId === humanPlayer.userId) && <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} />}
-                </AnimatePresence>
-                {gameState.players[gameState.dealerIndex]?.id === humanPlayer.id && (
-                  <span className="absolute -top-1.5 -right-1.5 bg-[#ffcc00] text-black w-3.5 h-3.5 rounded-full text-[7px] font-black flex items-center justify-center border border-black shadow z-10">
-                    D
-                  </span>
-                )}
-                <Avatar
-                  avatarId={humanPlayer.avatar || 'rabbit'}
-                  emotion={humanPlayer.folded ? 'worried' : isHumanTurn ? 'thinking' : 'happy'}
-                  size="xs"
-                />
-                <span className="text-[7px] font-black text-white truncate max-w-[44px] leading-tight mt-0.5">
-                  {humanPlayer.name || 'Player'}
-                </span>
-                <div className="flex items-center gap-0.5 text-[6.5px] font-bold text-[#ffcc00] leading-tight">
-                  <ChipStackIcon className="w-2.5 h-2.5" />
-                  <span>{humanPlayer.chips ?? 0}</span>
-                </div>
-              </div>
+              <ResistancePlayerSeat
+                player={humanPlayer}
+                state={humanAvatarState}
+                active={isHumanTurn}
+                dealer={gameState.players[gameState.dealerIndex]?.id === humanPlayer.id}
+                blind={gameState.players[gameState.smallBlindIndex]?.id === humanPlayer.id ? 'SB' : gameState.players[gameState.bigBlindIndex]?.id === humanPlayer.id ? 'BB' : undefined}
+                turnProgress={humanTurnProgress}
+                turnSeconds={turnTimeLeft}
+                photoUrl={telegramPhotoUrl}
+                compact={false}
+                showCards={false}
+                reaction={activeEmoji && (!activeEmoji.senderUserId || activeEmoji.senderUserId === humanPlayer.userId) ? <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} resistance /> : null}
+                displayBalance={chipView.balances[humanPlayer.id]}
+              />
             </div>
           </div>
         )}
-      </div>
 
-      {/* 3. SHOWDOWN / HAND ENDED / WINNER MODAL */}
-      <AnimatePresence>
-        {gameState.stage === 'ended' && !isReplaying && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-3 backdrop-blur-md overflow-y-auto"
-          >
-            <div className="bg-slate-950 border-2 border-[#00ff66] p-3.5 rounded-xl max-w-xs w-full text-center space-y-2.5 shadow-[0_0_35px_#00ff66] my-auto">
-              
-              {/* Winner Header */}
-              <div className="space-y-1">
-                <Trophy className="w-8 h-8 text-[#ffcc00] mx-auto animate-bounce" />
-                <h2 className="text-xs font-black text-[#00ff66] uppercase tracking-wider">
-                  {gameState.winnerIds.includes('player')
-                    ? '🎉 YOU WON THE POT!'
-                    : `🏆 WINNER: ${gameState.players.find((p) => gameState.winnerIds.includes(p.id))?.name || 'PLAYER'}`}
-                </h2>
-                <div className="bg-[#ffcc00]/20 border border-[#ffcc00] text-[#ffcc00] font-black text-[11px] py-1 px-3 rounded-full inline-flex items-center gap-1.5 shadow-sm">
-                  <ChipStackIcon className="w-3.5 h-3.5" />
-                  <span>POT WON: +{gameState.pot}</span>
-                </div>
-              </div>
-
-              <div className="bg-black/80 border border-black rounded p-1.5 space-y-1 text-left max-h-[120px] overflow-y-auto">
-                <div className="text-[7px] font-bold text-slate-400 uppercase">COMBINATIONS</div>
-                {gameState.players.map((p) => {
-                  const isWinner = gameState.winnerIds.includes(p.id);
-                  const evalRes = p.holeCards.length === 2 ? evaluate7CardHand([...p.holeCards, ...gameState.communityCards]) : null;
-                  return (
-                    <div
-                      key={p.id}
-                      className={`flex justify-between items-center text-[8px] p-1 rounded ${
-                        isWinner ? 'bg-[#00ff66]/20 border border-[#00ff66]/50 text-[#00ff66] font-black' : 'text-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1">
-                        <Avatar avatarId={p.avatar} size="xs" />
-                        <span className="truncate max-w-[65px]">{p.name}</span>
-                        {isWinner && <span className="text-[7px] text-[#ffcc00]">★</span>}
-                      </div>
-                      <div className="text-[7.5px] text-right flex items-center gap-1">
-                        {p.folded ? (
-                          <span className="text-slate-500">FOLD</span>
-                        ) : evalRes?.description ? (
-                          <span>{evalRes.description}</span>
-                        ) : (
-                          <div className="flex items-center gap-0.5">
-                            <ChipStackIcon className="w-2 h-2" />
-                            <span>{p.chips}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {!gameState.isMatchOver && (
-                <div className="bg-cyan-950/70 border border-cyan-400/60 py-1.5 rounded text-[8px] font-black text-cyan-200 uppercase">
-                  NEXT HAND STARTS IN {nextHandCountdown}S
-                </div>
-              )}
-
-              {/* Action Buttons: Next Hand & Lobby */}
-              <div className="space-y-1.5 pt-1">
-                {gameState.mode === 'offline' && !gameState.isMatchOver && (
-                  <button
-                    type="button"
-                    onClick={onNextHand}
-                    className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black font-black text-[10px] uppercase pixel-btn-interactive shadow flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-black text-black" />
-                    <span>NEXT HAND ({nextHandCountdown}S)</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={onReturnToLobby}
-                  className={`w-full py-1.5 border border-black font-bold text-[8.5px] uppercase pixel-btn-interactive cursor-pointer ${
-                    gameState.isMatchOver ? 'bg-[#00ff66] text-black font-black' : 'bg-slate-900 text-slate-300'
-                  }`}
-                >
-                  RETURN TO LOBBY
-                </button>
-              </div>
-            </div>
-          </motion.div>
+        <ChipField state={gameState} view={chipView} />
+        {['ended', 'match_ended'].includes(gameState.stage) && resultRevealReady && !chipView.busy && (
+          <PokerHandResult state={gameState} countdown={nextHandCountdown} onNextHand={onNextHand} onLobby={handleReturnToLobby} />
         )}
-      </AnimatePresence>
+      </PokerTable>
 
       {/* 4. RAISE SELECTION DRAWER POPUP */}
       <AnimatePresence>
         {showRaisePanel && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="bg-slate-950 border-2 border-[#ffcc00] p-3 rounded-lg z-30 space-y-2.5 font-mono shadow-[0_0_20px_rgba(255,204,0,0.35)]"
-          >
-            <div className="flex justify-between items-center text-[9px] font-black text-[#ffcc00]">
-              <span>ADJUST RAISE AMOUNT</span>
-              <div className="flex items-center gap-1 text-[10px] bg-black px-2 py-0.5 border border-[#ffcc00] rounded">
+          <RaiseControl>
+            <div className="rp-panel-heading flex justify-between items-center text-[9px] font-black">
+              <span>RAISE CONTROL</span>
+              <div className="rp-control-packet flex items-center gap-1 text-[10px] px-2 py-0.5 border">
                 <span>TOTAL:</span>
                 <ChipStackIcon className="w-3 h-3" />
-                <strong>{customRaiseAmount}</strong>
+                <PixelCounter value={customRaiseAmount} />
               </div>
             </div>
 
@@ -770,8 +683,8 @@ export function PokerGame({
             <div className="grid grid-cols-5 gap-1">
               {[
                 { label: `+${gameState.minRaise} MIN`, amt: gameState.currentBet + gameState.minRaise },
-                { label: '+5', amt: gameState.currentBet + 5 },
-                { label: '+10', amt: gameState.currentBet + 10 },
+                { label: '1/2 POT', amt: gameState.currentBet + Math.max(gameState.bigBlindAmount, Math.ceil(gameState.pot / 2)) },
+                { label: '3/4 POT', amt: gameState.currentBet + Math.max(gameState.bigBlindAmount, Math.ceil(gameState.pot * 0.75)) },
                 { label: 'POT', amt: Math.max(gameState.currentBet + gameState.bigBlindAmount, gameState.pot) },
                 { label: 'ALL-IN', amt: humanPlayer.chips + humanPlayer.currentBet },
               ].map((preset, pIdx) => (
@@ -782,7 +695,7 @@ export function PokerGame({
                     sound.playPop();
                     setCustomRaiseAmount(Math.min(humanPlayer.chips + humanPlayer.currentBet, preset.amt));
                   }}
-                  className="py-1.5 bg-black border border-amber-400/60 hover:border-amber-400 text-[8px] font-black text-slate-100 uppercase rounded cursor-pointer active:scale-95 transition-transform"
+                  className="rp-raise-preset py-1.5 text-[8px] font-black uppercase cursor-pointer"
                 >
                   {preset.label}
                 </button>
@@ -790,7 +703,7 @@ export function PokerGame({
             </div>
 
             {/* Stepper with - / Slider / + */}
-            <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded border border-black">
+            <div className="rp-stepper flex items-center gap-2 p-1.5 border">
               <button
                 type="button"
                 onClick={() => {
@@ -799,7 +712,8 @@ export function PokerGame({
                     Math.max(gameState.currentBet + gameState.minRaise, prev - 1)
                   );
                 }}
-                className="w-7 h-7 bg-black border border-amber-400/50 text-white rounded flex items-center justify-center font-black active:scale-90"
+                className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
+                aria-label="Decrease raise by one chip"
               >
                 <Minus className="w-3.5 h-3.5" />
               </button>
@@ -811,7 +725,8 @@ export function PokerGame({
                 step={1}
                 value={customRaiseAmount}
                 onChange={(e) => setCustomRaiseAmount(Number(e.target.value))}
-                className="w-full accent-[#ffcc00] cursor-pointer"
+                className="rp-raise-range w-full cursor-pointer"
+                aria-label="Raise amount"
               />
 
               <button
@@ -822,72 +737,152 @@ export function PokerGame({
                     Math.min(humanPlayer.chips + humanPlayer.currentBet, prev + 1)
                   );
                 }}
-                className="w-7 h-7 bg-black border border-amber-400/50 text-white rounded flex items-center justify-center font-black active:scale-90"
+                className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
+                aria-label="Increase raise by one chip"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
             </div>
 
+            <label className="rp-direct-raise-label" htmlFor="poker-direct-raise">
+              DIRECT AMOUNT
+              <input
+                id="poker-direct-raise"
+                type="number"
+                min={gameState.currentBet + gameState.minRaise}
+                max={humanPlayer.chips + humanPlayer.currentBet}
+                step={1}
+                value={customRaiseAmount}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (!Number.isFinite(value)) return;
+                  setCustomRaiseAmount(Math.max(
+                    gameState.currentBet + gameState.minRaise,
+                    Math.min(humanPlayer.chips + humanPlayer.currentBet, value)
+                  ));
+                }}
+                className="rp-number-input bg-black border px-2 text-center"
+              />
+            </label>
+
             <div className="flex gap-1.5">
               <button
                 type="button"
-                onClick={() => setShowRaisePanel(false)}
-                className="w-1/3 py-2.5 bg-slate-900 border border-black text-slate-300 text-[9px] font-bold uppercase rounded cursor-pointer"
+                onClick={() => {
+                  playPokerFeedback('ui_cancel');
+                  setShowRaisePanel(false);
+                }}
+                className="rp-secondary-button w-1/3 py-2.5 text-[9px] font-bold uppercase cursor-pointer"
               >
                 CANCEL
               </button>
               <button
                 type="button"
                 onClick={() => {
+                  clearPreAction();
                   setShowRaisePanel(false);
+                  playPokerFeedback('bet_move');
+                  showPreActionNotice(`RAISE ${customRaiseAmount} TRANSMITTED`, 'signal');
                   onRaise(customRaiseAmount);
                 }}
-                className="w-2/3 py-2.5 bg-[#ffcc00] text-black border-2 border-black font-black text-[10px] uppercase rounded pixel-btn-interactive shadow cursor-pointer flex items-center justify-center gap-1"
+                className="rp-primary-button w-2/3 py-2.5 font-black text-[10px] uppercase cursor-pointer flex items-center justify-center gap-1"
               >
                 <span>CONFIRM RAISE</span>
-                <div className="flex items-center gap-0.5 bg-black/20 px-1.5 py-0.2 rounded text-[9px]">
+                <div className="flex items-center gap-0.5 bg-black/30 px-1.5 py-0.5 text-[9px]">
                   <ChipStackIcon className="w-2.5 h-2.5" />
                   <span>{customRaiseAmount}</span>
                 </div>
               </button>
             </div>
-          </motion.div>
+          </RaiseControl>
         )}
       </AnimatePresence>
 
       {/* 5. PLAYER TURN ACTION CONTROLS */}
-      {gameState.stage !== 'idle' && gameState.stage !== 'ended' && gameState.stage !== 'match_ended' && !gameState.isMatchOver && !showRaisePanel && (
-        <div className="bg-slate-950 border border-black p-2 rounded-lg z-20 flex flex-col gap-1.5">
-          <div className="flex justify-between items-center text-[8.5px] font-bold">
-            <span className={isHumanTurn ? 'text-[#00ff66] font-black' : 'text-slate-400'}>
-              {isHumanTurn ? 'YOUR TURN · CHOOSE ACTION' : 'WAITING FOR OPPONENTS…'}
+      {gameState.stage !== 'idle' && gameState.stage !== 'ended' && gameState.stage !== 'match_ended' && !gameState.isMatchOver && !showRaisePanel && (isHumanTurn || canQueuePreAction || isSpectator) && (
+        <BetControls>
+          {isHumanTurn && <div className="flex justify-between items-center text-[8.5px] font-bold">
+            <span className="text-white font-black">
+              {`YOUR TURN · ${turnTimeLeft}S`}
             </span>
             {callNeeded > 0 && (
-              <div className="flex items-center gap-1 text-[#ffcc00]">
+              <div className="flex items-center gap-1 text-[#ff8a82]">
                 <span>CALL:</span>
                 <ChipStackIcon className="w-2.5 h-2.5" />
                 <strong>{callNeeded}</strong>
               </div>
             )}
-          </div>
+          </div>}
 
-          <div className="grid grid-cols-3 gap-1.5">
-            {/* FOLD */}
+          {canQueuePreAction && (
+            <div className="rp-pre-actions" aria-label="Preliminary poker actions">
+              <span className="rp-pre-actions__label"><PixelTextReveal>QUEUE NEXT MOVE</PixelTextReveal></span>
+              <div className="rp-pre-actions__buttons">
+                <button
+                  type="button"
+                  aria-pressed={preAction === 'fold'}
+                  onClick={() => togglePreAction('fold')}
+                  className={`rp-pre-action rp-pre-action--fold${preAction === 'fold' ? ' rp-pre-action--selected' : ''}`}
+                >
+                  <PixelSnap>PRE-FOLD</PixelSnap>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={preAction === 'check'}
+                  disabled={!canQueuePreCheck}
+                  onClick={() => togglePreAction('check')}
+                  className={`rp-pre-action rp-pre-action--check${preAction === 'check' ? ' rp-pre-action--selected' : ''}`}
+                >
+                  <PixelSnap>PRE-CHECK</PixelSnap>
+                </button>
+              </div>
+              <span className="rp-pre-actions__hint">
+                {!canQueuePreCheck ? 'PRE-CHECK LOCKED · BET ALREADY ACTIVE' : 'PRE-CHECK AUTO-CANCELS IF A BET ARRIVES'}
+              </span>
+            </div>
+          )}
+
+          {isSpectator && isPersistentCashTable && (
             <button
               type="button"
+              onClick={handleTakeSeat}
+              className="rp-primary-button rp-spectator-join w-full px-4 py-2.5 font-black uppercase text-[10px]"
+            >
+              TAKE A SEAT
+            </button>
+          )}
+
+          {isSpectator && !isPersistentCashTable && (
+            <div className="rp-system-module w-full px-3 py-2 text-center font-black uppercase text-[9px]">
+              SPECTATING · ACTIONS LOCKED
+            </div>
+          )}
+
+          {isHumanTurn && <div className="grid grid-cols-3 gap-1.5">
+            {/* FOLD */}
+            <ActionButton
+              tone="fold"
               disabled={!canCallOrCheck}
-              onClick={onFold}
-              className="py-2.5 bg-red-950 border border-red-500/40 text-red-300 font-black text-[9px] uppercase rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[44px] cursor-pointer"
+              onClick={() => {
+                clearPreAction();
+                playPokerFeedback('fold');
+                showPreActionNotice('FOLD TRANSMITTED', 'danger');
+                onFold();
+              }}
             >
               FOLD
-            </button>
+            </ActionButton>
 
             {/* CHECK / CALL */}
-            <button
-              type="button"
+            <ActionButton
+              tone="primary"
               disabled={!canCallOrCheck}
-              onClick={onCallOrCheck}
-              className="py-2.5 bg-[#00ff66]/20 border border-[#00ff66] text-[#00ff66] font-black text-[9px] uppercase rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[44px] flex items-center justify-center gap-1 cursor-pointer"
+              onClick={() => {
+                clearPreAction();
+                playPokerFeedback(callNeeded === 0 ? 'ui_confirm' : 'bet_move');
+                showPreActionNotice(callNeeded === 0 ? 'CHECK LOCKED' : `CALL ${callNeeded} TRANSMITTED`, 'signal');
+                onCallOrCheck();
+              }}
             >
               {callNeeded === 0 ? (
                 <span>CHECK</span>
@@ -898,120 +893,126 @@ export function PokerGame({
                   <span>{callNeeded}</span>
                 </div>
               )}
-            </button>
+            </ActionButton>
 
             {/* RAISE BUTTON */}
-            <button
-              type="button"
+            <ActionButton
+              tone="raise"
               disabled={!canCallOrCheck || humanPlayer.chips <= callNeeded}
               onClick={() => {
-                sound.playPop();
+                clearPreAction();
+                playPokerFeedback('ui_click');
                 setCustomRaiseAmount(gameState.currentBet + gameState.minRaise);
                 setShowRaisePanel(true);
               }}
-              className="py-2.5 bg-[#ffcc00]/20 border border-[#ffcc00] text-[#ffcc00] font-black text-[9px] uppercase rounded pixel-btn-interactive disabled:opacity-40 disabled:pointer-events-none min-h-[44px] flex items-center justify-center gap-1 cursor-pointer"
             >
               <span>RAISE</span>
-              <ArrowUpRight className="w-3 h-3 text-[#ffcc00]" />
-            </button>
-          </div>
-        </div>
+              <ArrowUpRight className="w-3 h-3" />
+            </ActionButton>
+          </div>}
+        </BetControls>
       )}
 
       {/* 6. MATCH CHAMPION / ROUND END CONTROLS */}
-      {(gameState.stage === 'match_ended' || gameState.isMatchOver) && (
-        <div className="bg-slate-950/95 border-2 border-[#ffcc00] p-3 rounded-lg z-20 flex flex-col gap-2 shadow-2xl">
+      {resultRevealReady && !chipView.busy && (gameState.stage === 'match_ended' || gameState.isMatchOver) && (
+        <div className="rp-result-panel border-2 p-3 z-20 flex flex-col gap-2">
           <div className="text-center">
-            <span className="text-[10px] font-black text-[#ffcc00] uppercase tracking-wider block">
-              🏆 {gameState.matchWinnerName ? `${gameState.matchWinnerName.toUpperCase()} WON THE MATCH!` : 'POKER MATCH CONCLUDED'}
+            <span className="rp-panel-heading text-[10px] font-black uppercase tracking-wider block">
+              {gameState.matchWinnerName ? `${gameState.matchWinnerName.toUpperCase()} WON THE MATCH` : 'POKER MATCH CONCLUDED'}
             </span>
             {gameState.winningHandDesc && (
-              <span className="text-[8px] text-slate-300 font-mono block mt-0.5">
+              <span className="text-[9px] text-slate-300 block mt-0.5">
                 {gameState.winningHandDesc}
               </span>
             )}
           </div>
           <button
             type="button"
-            onClick={onReturnToLobby}
-            className="w-full py-2.5 bg-[#00ff66] text-black border-2 border-black font-black text-[10px] uppercase rounded pixel-btn-interactive shadow cursor-pointer active:translate-y-0.5"
+            onClick={handleReturnToLobby}
+            className="rp-primary-button w-full py-2.5 font-black text-[10px] uppercase cursor-pointer"
           >
             RETURN TO LOBBY ➔
           </button>
         </div>
       )}
 
-      {gameState.stage === 'ended' && !gameState.isMatchOver && (
-        <div className="bg-slate-950/90 border border-emerald-500/50 p-2 rounded-lg z-20 flex flex-col gap-1.5 shadow">
-          <div className="text-center text-[8.5px] font-bold text-emerald-300">
+      {resultRevealReady && !chipView.busy && gameState.stage === 'ended' && !gameState.isMatchOver && (
+        <div className="rp-result-panel border p-2 z-20 flex flex-col gap-1.5">
+          <div className="text-center text-[8.5px] font-bold text-slate-200">
             <span>{gameState.winningHandDesc || 'Round completed! Dealing next hand...'}</span>
           </div>
           {gameState.mode === 'offline' && onNextHand && (
             <button
               type="button"
               onClick={onNextHand}
-              className="w-full py-2 bg-[#ffcc00] text-black border border-black font-black text-[9px] uppercase rounded pixel-btn-interactive cursor-pointer"
+              className="rp-primary-button w-full py-2 font-black text-[9px] uppercase cursor-pointer"
             >
               NEXT HAND ➔
             </button>
           )}
           {gameState.mode !== 'offline' && (
-            <div className="w-full py-2 bg-cyan-950/60 border border-cyan-400/60 text-cyan-200 text-center font-black text-[9px] uppercase rounded">
+            <div className="rp-system-module w-full py-2 text-center font-black text-[9px] uppercase">
               {gameState.nextRoundStartsAt ? `NEXT HAND STARTS IN ${nextHandCountdown}S` : 'WAITING FOR AN OPPONENT TO START THE NEXT HAND'}
             </div>
           )}
         </div>
       )}
-      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="absolute bottom-2 left-2 z-40" />
+      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="absolute bottom-2 left-2 z-40" resistance />
 
       {/* BUY IN MODAL */}
       <AnimatePresence>
         {showBuyInModal && (
           <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 font-mono"
+            initial={reduceMotion ? false : { clipPath: 'inset(50% 50%)' }} animate={reduceMotion ? undefined : { clipPath: 'inset(0 0)' }} exit={reduceMotion ? undefined : { clipPath: 'inset(50% 50%)' }}
+            transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'linear' }}
+            className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80"
           >
-            <div className="bg-[#18181c] border-2 border-[#ffcc00] pixel-box-sm p-4 flex flex-col items-center gap-3 w-72 shadow-[0_0_20px_rgba(255,204,0,0.3)]">
-              <h2 className="text-[#ffcc00] font-black text-xs uppercase text-center w-full border-b border-[#ffcc00]/30 pb-2">Buy In</h2>
-              <div className="text-center w-full space-y-1">
-                <div className="text-[9px] text-slate-300">Balance: <span className="text-[#00ff66] font-bold">{(profile?.casinoChips || 0).toFixed(0)} Chips</span></div>
-                <div className="text-[9px] text-slate-300">Tickets: <span className="text-pink-400 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
+            <PixelModal
+              labelledBy="poker-buy-in-title"
+              onRequestClose={handleCloseBuyInModal}
+              className="flex flex-col items-center gap-3 w-72"
+            >
+              <h2 id="poker-buy-in-title" className="rp-modal__header rp-panel-heading font-black text-xs uppercase text-center w-full border-b border-slate-700 pb-2">Secure Table Entry</h2>
+              <div className="rp-modal__content text-center w-full space-y-1">
+                <div className="text-[9px] text-slate-300">Balance: <span className="text-white font-bold">{(profile?.casinoChips || 0).toFixed(0)} Chips</span></div>
+                <div className="text-[9px] text-slate-300">Tickets: <span className="text-slate-100 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
               </div>
               
               {gameState.matchId.includes('-free-') ? (
-                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
+                <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-3 text-center">
                   <p className="text-white text-[10px]">
-                    Cost: <span className="text-[#00ff66] font-black">⚡ 2 Energy</span>
+                    Cost: <span className="text-white font-black">⚡ 2 Energy</span>
                   </p>
                   <p className="text-white text-[10px]">
-                    You receive: <span className="text-[#ffcc00] font-black">100 Free Chips</span>
+                    You receive: <span className="text-[#ff6a61] font-black">100 Free Chips</span>
                   </p>
                 </div>
               ) : gameState.matchId.includes('-practice-') ? (
-                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
+                <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-3 text-center">
                   <p className="text-white text-[10px]">
-                    Cost: <span className="text-[#00ff66] font-black">Free</span>
+                    Cost: <span className="text-white font-black">Free</span>
                   </p>
                   <p className="text-white text-[10px]">
-                    You receive: <span className="text-[#ffcc00] font-black">1000 Practice Chips</span>
+                    You receive: <span className="text-[#ff6a61] font-black">1000 Practice Chips</span>
                   </p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
+                <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-2">
                   <div className="text-[8px] text-slate-400 mb-1 font-bold">Convert TKT to Chips (1 TKT = 100 Chips):</div>
                   <div className="flex gap-2">
                     <input
+                      aria-label="Tickets to convert to chips"
                       type="number"
                       min={1}
                       step={1}
                       value={exchangeAmount}
                       onChange={e => setExchangeAmount(Number(e.target.value))}
-                      className="bg-black border border-pink-500/50 text-pink-400 font-bold px-2 py-1 text-center text-[10px] w-full"
+                      className="rp-number-input bg-black border font-bold px-2 py-1 text-center text-[10px] w-full"
                     />
                     <button 
                       onClick={handleExchange} 
                       disabled={isExchanging}
-                      className="px-2 py-1 bg-pink-900 text-pink-200 text-[8px] border border-pink-700 font-bold uppercase hover:bg-pink-800 disabled:opacity-50 whitespace-nowrap"
+                      className="rp-secondary-button px-2 py-1 text-[8px] font-bold uppercase disabled:opacity-50 whitespace-nowrap"
                     >
                       Convert
                     </button>
@@ -1020,20 +1021,21 @@ export function PokerGame({
               )}
 
               {gameState.matchId.includes('-public-') && (
-                <div className="flex flex-col gap-1 w-full mt-2">
-                  <div className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</div>
+                <div className="rp-modal__content flex flex-col gap-1 w-full mt-2">
+                  <label htmlFor="poker-buy-in-amount" className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</label>
                   <input
+                    id="poker-buy-in-amount"
                     type="number"
                     min={100}
                     step={50}
                     value={buyInAmount}
                     onChange={e => setBuyInAmount(Number(e.target.value))}
-                    className="bg-black border border-[#ffcc00] text-[#ffcc00] font-bold px-2 py-1.5 text-center text-[10px] w-full"
+                    className="rp-number-input bg-black border font-bold px-2 py-1.5 text-center text-[10px] w-full"
                   />
                 </div>
               )}
-              <div className="flex gap-2 w-full mt-2">
-                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">{isJoiningSeat ? 'Continue in background' : 'Cancel'}</button>
+              <div className="rp-modal__actions flex gap-2 w-full mt-2">
+                <button data-modal-cancel onClick={handleCloseBuyInModal} className="rp-secondary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase">{isJoiningSeat ? 'Continue in background' : 'Cancel'}</button>
                 <button 
                   disabled={isJoiningSeat}
                   onClick={() => {
@@ -1042,16 +1044,16 @@ export function PokerGame({
                     if (gameState.matchId.includes('-practice-')) chipsToBuyIn = 1000;
                     void handleConfirmBuyIn(chipsToBuyIn);
                   }}
-                  className="flex-1 px-2 py-2 bg-[#ffcc00] text-black text-[9px] border border-black font-bold uppercase hover:bg-yellow-400 disabled:opacity-60"
+                  className="rp-primary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase disabled:opacity-60"
                 >
-                  {isJoiningSeat ? <><Loader2 className="inline w-3 h-3 animate-spin mr-1" />JOINING…</> : 'Join Table'}
+                  {isJoiningSeat ? <PixelLoader label="JOINING TABLE" /> : 'Join Table'}
                 </button>
               </div>
               {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{seatJoinError}</div>}
-            </div>
+            </PixelModal>
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </ScreenShake>
   );
 }

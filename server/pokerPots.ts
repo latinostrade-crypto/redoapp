@@ -16,6 +16,12 @@ export interface PokerPotEligiblePlayer {
   seatIndex: number;
 }
 
+/** Identifies the uncontested excess without changing settlement amounts. */
+export function pokerPotTransferKind(players: PokerPotContributor[], potIndex: number): 'win' | 'return' {
+  const levels = [...new Set(players.map(p => Math.max(0, Math.floor(p.totalMatchInvested || 0))).filter(Boolean))].sort((a, b) => a - b);
+  return players.filter(p => p.totalMatchInvested >= levels[potIndex]).length === 1 ? 'return' : 'win';
+}
+
 /**
  * Reconstruct main and side pots from total hand investment. Folded players
  * remain contributors, but are excluded from winning eligibility.

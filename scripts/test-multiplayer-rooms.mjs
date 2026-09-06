@@ -11,7 +11,7 @@ const runtimeDir = await mkdtemp(path.join(tmpdir(), 'redoapp-multiplayer-rooms-
 const port = 33_000 + Math.floor(Math.random() * 1_000);
 const baseUrl = `http://127.0.0.1:${port}`;
 const tsxCli = path.join(root, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-const server = spawn(process.execPath, [tsxCli, path.join(root, 'server.ts')], {
+const server = spawn(process.execPath, process.env.REDOAPP_TEST_COMPILED === '1' ? [path.join(root, 'build/server.mjs')] : [tsxCli, path.join(root, 'server.ts')], {
   cwd: root,
   env: {
     ...process.env,

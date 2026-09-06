@@ -1,0 +1,169 @@
+/* Reference-led menu. Scoped away from the live poker table and comic. */
+.rp-main-menu { padding: 10px 12px 24px; gap: 0; max-width: 680px; }
+.rp-main-banner { border: 1px solid #27303c; margin-bottom: 0; box-shadow: inset 0 0 0 2px #06080c; }
+.rp-main-banner > img { display: block; }
+.rp-main-menu--pvp .rp-main-banner { display: none; }
+.rp-menu-poker__banner { position: relative; }
+.rp-menu-poker__banner > .rp-menu-tools { position: absolute; top: 6px; right: 6px; z-index: 80; }
+#redo-lobby-tools { position: absolute; top: 6px; right: 6px; z-index: 80; }
+.resistance-network.rp-menu-shell { border: none; box-shadow: none; background: #080b11; padding: 0; gap: 10px; }
+.rp-menu-icon { width: 20px; height: 20px; flex: none; display: inline-block; }
+.rp-menu-shell .rp-network-nav { padding: 0; gap: 0; min-height: 54px; background: #080c13; border: 1px solid #303b4a; border-top: 0; }
+.rp-menu-shell .rp-network-nav button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 54px; padding: 8px 3px; border: 0; background: transparent; color: #a7b3cc; box-shadow: none; font: 12px/1.2 var(--rp-font-terminal); }
+.rp-menu-shell .rp-network-nav button + button { border-left: 1px solid #283240; }
+.rp-menu-shell .rp-network-nav button[aria-pressed=true] { color: #ff6269; background: linear-gradient(0deg, #521a24, #10101a 80%); box-shadow: inset 0 -3px #f84c59, inset 0 -6px #5e222b; }
+.rp-menu-shell .rp-network-nav .rp-menu-icon { width: 22px; height: 22px; }
+.rp-menu-profile { display: grid; grid-template-columns: 60px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 10px; margin: 0; background: linear-gradient(135deg,#121924,#070a10 60%); border: 1px solid #394556; box-shadow: inset 0 0 0 3px #080b10, inset 0 0 0 4px #1b2431; }
+.rp-menu-profile__avatar { width: 60px; height: 64px; display: grid; place-items: center; background: #150e15; border: 2px solid #7d303c; box-shadow: 2px 2px #020405; }
+.rp-menu-profile__identity { min-width: 0; }
+.rp-menu-profile__identity > strong { display: block; font: 16px/1.3 var(--rp-font-terminal); color: #f2f1f0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-bottom: 8px; border-bottom: 1px solid #38414f; }
+.rp-menu-profile__level { display: grid; grid-template-columns: auto minmax(28px,1fr); align-items: center; gap: 5px; padding-top: 6px; color: #a3b2ce; font: 10px/1.2 var(--rp-font-body); font-variant-numeric: tabular-nums; }
+.rp-menu-profile__level > span:last-child { grid-column: 1/-1; }
+.rp-menu-profile progress { display: block; appearance: none; height: 7px; width: 100%; border: 0; background: #2c3749; }
+.rp-menu-profile progress::-webkit-progress-bar { background: #2c3749; }
+.rp-menu-profile progress::-webkit-progress-value { background: linear-gradient(90deg,#b82c3a,#fa5260); }
+.rp-menu-profile progress::-moz-progress-bar { background: #ef4455; }
+.rp-menu-profile__funds { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-self: stretch; width: 105px; padding: 8px 0; border: 1px solid #273241; background: #070b12; }
+.rp-menu-profile__funds > div { display: grid; align-content: center; justify-items: center; gap: 8px; padding: 0 6px; min-width: 0; }
+.rp-menu-profile__funds > div + div { border-left: 1px solid #2f3948; }
+.rp-menu-profile__funds > div > span:first-child { font: 11px/1 var(--rp-font-terminal); color: #a5b4d0; }
+.rp-menu-profile__funds strong { display: flex; align-items: center; gap: 5px; font: 600 13px/1.3 var(--rp-font-body); color: #f2f2f3; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.rp-menu-profile__funds .rp-chip-value, .rp-menu-profile__funds strong { max-width: 100%; flex-wrap: wrap; justify-content: center; }
+.rp-menu-profile__funds .rp-menu-icon { color: #eeb967; width: 18px; height: 18px; }
+.rp-menu-currency { width: 20px; height: 20px; }
+.rp-menu-tools { position: relative; color: #c9d3e5; font-family: var(--rp-font-body); }
+.rp-menu-tools > summary { display: grid; place-items: center; list-style: none; width: 44px; height: 44px; cursor: pointer; background: #080c14ed; border: 1px solid #526178; box-shadow: inset 0 0 0 2px #171d28, 2px 2px #000; }
+.rp-menu-tools > summary::-webkit-details-marker { display: none; }
+.rp-menu-tools > summary:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.rp-menu-tools[open] > summary { border-color: #ed5966; }
+.rp-menu-tools__panel { position: absolute; right: 0; top: 50px; width: min(270px,calc(100vw - 36px)); padding: 12px; background: #0c111b; border: 1px solid #6a3b47; box-shadow: 4px 4px #000; z-index: 90; }
+.rp-menu-tools__panel > strong { font: 11px var(--rp-font-terminal); }
+.rp-menu-tools .rp-account-actions { display: grid; grid-template-columns: 1fr; margin-top: 10px; }
+.rp-menu-tools button { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; min-height: 44px; background: var(--rp-control-gradient); border: 1px solid #8c4550; color: #f4e9ea; border-radius: 0; font: 12px var(--rp-font-terminal); box-shadow: none; }
+.rp-menu-tools button svg { color: inherit; filter: none; }
+.rp-menu-tools button:disabled { opacity: .5; }
+.rp-menu-energy { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 12px; }
+.rp-menu-energy svg { width: 16px; height: 16px; }
+.rp-menu-shell .rp-network-content > div { padding: 0; }
+.rp-menu-games { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; margin: 0 0 10px; }
+.rp-menu-shell .rp-menu-games button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; padding: 8px 4px; border: 1px solid #354050; background: linear-gradient(180deg,#101721,#080b11); color: #a9b7d0; font: 12px var(--rp-font-terminal); box-shadow: inset 0 0 0 2px #0a1018; }
+.rp-menu-shell .rp-menu-games button[aria-pressed=true] { color: #fff0ef; border-color: #ed4c5b; background: linear-gradient(145deg,#651e2b,#350e18); box-shadow: inset 0 0 0 2px #a13445,0 0 0 1px #491c29; }
+.rp-menu-games button[aria-pressed=true] .rp-menu-icon { color: #ff4c60; }
+.rp-menu-poker { display: grid; gap: 8px; }
+.rp-menu-poker__banner { margin: 0 0 2px; padding: 3px; border: 1px solid #394555; background: #020408; }
+.rp-menu-poker__banner img { width: 100%; height: auto; aspect-ratio: 3/1; display: block; image-rendering: pixelated; }
+.rp-menu-poker__modes { display: flex; gap: 5px; }
+.rp-menu-poker__modes nav { display: grid; flex: 1; grid-template-columns: repeat(3,minmax(0,1fr)); border: 1px solid #354051; min-width: 0; }
+.rp-menu-shell .rp-menu-poker__modes button { min-height: 44px; padding: 6px; border: 0; background: #090e16; box-shadow: none; color: #a8b4cb; font: 11px var(--rp-font-terminal); text-transform: uppercase; }
+.rp-menu-shell .rp-menu-poker__modes button[aria-pressed=true] { color: #f6f2f1; box-shadow: inset 0 -3px #ed4959; background: linear-gradient(0deg,#31121b,#090e16); }
+.rp-menu-shell button.rp-menu-filter { display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #354051; padding: 6px 8px; }
+.rp-menu-filter .rp-menu-icon { width: 17px; height: 17px; }
+.rp-menu-filters { display: grid; gap: 4px; padding: 8px; background: #0e1520; border: 1px solid #384253; font-size: 12px; }
+.rp-menu-filters label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.rp-menu-filters input { width: 20px; height: 20px; accent-color: #e34a5c; }
+.rp-menu-filters select { flex: 1; min-height: 44px; min-width: 0; background: #080b11; border: 1px solid #4c586c; color: white; padding: 8px; }
+.rp-menu-tables-heading { display: flex; align-items: center; gap: 6px; border: 1px solid #354051; min-height: 46px; padding-left: 10px; background: #090e16; }
+.rp-menu-tables-heading h2 { display: flex; align-items: center; flex: 1; gap: 7px; margin: 0; font: 12px/1.3 var(--rp-font-terminal); min-width: 0; }
+.rp-menu-tables-heading h2 .rp-menu-icon { color: #fb4d60; }
+.rp-menu-tables-heading > .rp-chip-value { border-left: 1px solid #303a4a; padding-left: 6px; font-size: 12px; }
+.rp-menu-tables-heading > .rp-chip-value > span { color: #9aacc9; font-size: 11px; }
+.rp-menu-shell .rp-menu-tables-heading button { width: 44px; align-self: stretch; border: 0; border-left: 1px solid #354051; background: #111722; box-shadow: none; display: grid; place-items: center; color: #b7c5df; }
+.rp-menu-table-list { display: grid; gap: 6px; }
+.rp-menu-table { display: grid; grid-template-columns: 45px minmax(0,1fr) 58px 82px; gap: 6px; align-items: center; padding: 8px; background: linear-gradient(125deg,#111823,#070b11 55%); border: 1px solid #344052; box-shadow: inset 3px 0 #192332; }
+.rp-menu-table__chips { display: block; position: relative; width: 45px; height: 38px; }
+.rp-menu-table__chips svg:first-child { position: absolute; width: 32px; height: 38px; top: 1px; left: 0; }
+.rp-menu-table__chips svg:last-child { position: absolute; width: 28px; height: 33px; bottom: 0; right: 0; }
+.rp-menu-table__name { min-width: 0; }
+.rp-menu-table__name h3 { font: 14px/1.2 var(--rp-font-terminal); margin: 0 0 5px; color: #f1f2f3; overflow-wrap: anywhere; }
+.rp-menu-table__name > span { color: #97a9c5; font: 10px/1.5 var(--rp-font-body); }
+.rp-menu-table__name .rp-chip-value { font-size: 10px; }
+.rp-menu-table__occupancy { display: flex; align-items: center; gap: 5px; border-left: 1px solid #303b4c; padding-left: 6px; color: #9cb0cf; }
+.rp-menu-table__occupancy .rp-menu-icon { width: 14px; height: 14px; }
+.rp-menu-table__occupancy strong { font: 12px var(--rp-font-body); font-variant-numeric: tabular-nums; }
+.rp-menu-table__occupancy small { display: block; font: 10px var(--rp-font-body); margin-top: 4px; }
+.rp-menu-shell button.rp-menu-open { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 6px 8px; color: #fff0ec; font: 13px/1.2 var(--rp-font-terminal); background: linear-gradient(145deg,#d4414d,#8d2131); border: 1px solid #ff6d77; box-shadow: inset 0 0 0 2px #ae3442, 2px 2px #280b15; }
+.rp-menu-open .rp-menu-icon { width: 16px; height: 16px; }
+.rp-menu-shell button.rp-menu-table__invite { display: grid; justify-items: center; align-content: center; gap: 4px; min-height: 54px; min-width: 44px; padding: 0; background: transparent; color: #98abc8; border: 0; box-shadow: none; font: 7px var(--rp-font-body); }
+.rp-menu-table__invite-label { display: flex; align-items: center; gap: 2px; }
+.rp-menu-table__invite .rp-menu-icon { width: 12px; height: 12px; }
+.rp-menu-table-status { padding: 8px; margin: 0; color: #9eacc2; font: 11px/1.5 var(--rp-font-body); }
+.rp-menu-practice { padding: 14px; border: 1px solid #344154; display: grid; gap: 12px; }
+.rp-menu-practice p { font: 13px/1.5 var(--rp-font-body); color: #aebbd0; margin: 0; }
+@media (min-width: 500px) { .rp-menu-profile__level { grid-template-columns: auto minmax(30px,1fr) auto; } .rp-menu-profile__level > span:last-child { grid-column: auto; } .rp-menu-profile__funds { min-width: 155px; } .rp-menu-table { grid-template-columns: 60px minmax(0,1fr) 90px 120px; } .rp-menu-table__name h3 { font-size: 18px; } .rp-menu-table__occupancy strong { font-size: 16px; } }
+@media (max-width: 359px) { .rp-main-menu { padding-inline: 8px; } .rp-menu-profile { grid-template-columns: 48px minmax(0,1fr) 98px; padding: 7px; gap: 7px; } .rp-menu-profile__avatar { width: 48px; height: 58px; } .rp-menu-profile__avatar > * { scale: .8; } .rp-menu-profile__identity > strong { font-size: 13px; } .rp-menu-profile__funds { min-width: 0; } .rp-menu-profile__funds > div { padding-inline: 4px; } .rp-menu-profile__funds strong { font-size: 11px; gap: 3px; } .rp-menu-profile__funds .rp-menu-icon,.rp-menu-currency { width: 16px; height: 16px; } .rp-menu-shell .rp-network-nav button { font-size: 10px; gap: 4px; } .rp-menu-shell .rp-menu-games button { font-size: 10px; gap: 5px; } .rp-menu-games { gap: 5px; } .rp-menu-games .rp-menu-icon { width: 17px; height: 17px; } .rp-menu-shell .rp-menu-poker__modes button { font-size: 9px; padding-inline: 3px; } .rp-menu-shell button.rp-menu-filter { padding-inline: 5px; } .rp-menu-tables-heading { padding-left: 5px; } .rp-menu-tables-heading h2 { font-size: 10px; gap: 4px; } .rp-menu-tables-heading h2 .rp-menu-icon { width: 15px; } .rp-menu-table { grid-template-columns: 34px minmax(0,1fr) 52px 68px; gap: 5px; padding: 6px; } .rp-menu-table__chips { width: 34px; } .rp-menu-table__chips svg:first-child { width: 26px; } .rp-menu-table__chips svg:last-child { width: 22px; } .rp-menu-table__name h3 { font-size: 12px; } .rp-menu-table__occupancy { padding-left: 4px; gap: 3px; } .rp-menu-table__occupancy .rp-menu-icon { width: 11px; } .rp-menu-shell button.rp-menu-open { font-size: 11px; gap: 5px; } }
+@media (prefers-reduced-motion: reduce) { .rp-menu-shell *, .rp-menu-tools * { animation: none !important; transition: none !important; } }
+
+/* UNO has matchmaking queues, not permanent poker tables: share the visual
+   hierarchy without inventing seat counts or changing its entry workflow. */
+.rp-menu-uno { display: grid; gap: 8px; }
+.rp-menu-uno__content { display: grid; gap: 10px; font: 12px/1.5 var(--rp-font-body); }
+.rp-menu-uno__content > div { margin-top: 0; }
+.rp-menu-uno .pixel-box-sm { border: 1px solid #344052; box-shadow: inset 0 0 0 2px #090e15; background: linear-gradient(125deg,#111823,#070b11 65%); border-radius: 0; }
+.rp-menu-uno h3 { display: flex; align-items: center; gap: 8px; min-height: 28px; font: 13px/1.4 var(--rp-font-terminal); color: #f3f0f1; }
+.rp-menu-uno h3 .rp-menu-icon { color: #ed5668; }
+.rp-menu-uno [class*="text-[6"], .rp-menu-uno [class*="text-[7"] { font-size: 10px; line-height: 1.5; }
+.rp-menu-uno [class*="text-[8"], .rp-menu-uno [class*="text-[9"] { font-size: 12px; line-height: 1.5; }
+.rp-menu-uno [class*="text-[10"] { font-size: 13px; line-height: 1.5; }
+.rp-menu-uno [class*="text-slate-3"], .rp-menu-uno [class*="text-slate-4"], .rp-menu-uno [class*="text-slate-5"] { color: #a8b8d0; }
+.rp-menu-uno__content .font-mono { font-family: var(--rp-font-body); }
+.rp-menu-shell .rp-menu-uno__content button { min-height: 44px; border: 1px solid #39475a; color: #c6d2e6; background: linear-gradient(180deg,#172131,#0a101a); box-shadow: inset 0 0 0 1px #080b11; font: 11px/1.4 var(--rp-font-terminal); }
+.rp-menu-shell .rp-menu-uno__content button[aria-pressed=true] { background: linear-gradient(145deg,#651e2b,#350e18); border-color: #ed4c5b; color: #fff0ef; box-shadow: inset 0 -3px #ff6573; }
+.rp-menu-uno__content button > span { font-size: inherit; }
+.rp-menu-uno__content button > span + span { font: 10px/1.4 var(--rp-font-body); }
+.rp-menu-shell .rp-menu-uno__content button.w-full { min-height: 48px; background: linear-gradient(145deg,#bc3545,#6d192d); border-color: #e76376; color: #fff0ed; box-shadow: inset 0 0 0 2px #7b2536; }
+.rp-menu-shell .rp-menu-uno__content button:disabled { opacity: .6; border-color: #3d4554; background: #1a1c27; box-shadow: none; }
+.rp-menu-uno__content input { min-height: 44px; border: 1px solid #3b485d; background: #060b12; color: #f1eef0; font: 13px/1.4 var(--rp-font-body); }
+.rp-menu-uno__content p { font: 12px/1.6 var(--rp-font-body); }
+.rp-menu-uno__content .grid-cols-4 { grid-template-columns: repeat(4,minmax(0,1fr)); }
+.rp-menu-uno__content .pixel-btn-interactive:active { transform: none; }
+.rp-menu-uno__content { animation: rp-menu-content-arrive 160ms steps(3,end); }
+@keyframes rp-menu-content-arrive { from { opacity: .5; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+@media (max-width:359px) { .rp-menu-uno h3 { font-size: 11px; gap: 5px; } .rp-menu-shell .rp-menu-uno__content button { font-size: 10px; } .rp-menu-uno__content .grid-cols-4 { grid-template-columns: repeat(3,minmax(0,1fr)); } }
+@media (max-width:359px) { .rp-menu-table { grid-template-columns: 44px minmax(0,1fr) 52px 68px; } .rp-menu-profile__funds { width: 98px; } }
+
+/* Profile, events and shop use the same readable terminal panels. */
+.rp-menu-section { font: 12px/1.5 var(--rp-font-body); color: #becbe0; }
+.rp-menu-section .font-mono { font-family: var(--rp-font-body); }
+.rp-menu-section .pixel-box-sm, .rp-menu-me__modules > div { padding: 12px; border: 1px solid #354155; background: linear-gradient(125deg,#121b29,#080d15 75%); box-shadow: inset 0 0 0 2px #090e16; border-radius: 0; }
+.rp-menu-section [class*="text-[5"], .rp-menu-section [class*="text-[6"] { font-size: 10px; line-height: 1.5; }
+.rp-menu-section [class*="text-[7"], .rp-menu-section [class*="text-[8"] { font-size: 12px; line-height: 1.5; }
+.rp-menu-section [class*="text-[9"], .rp-menu-section [class*="text-[10"] { font-size: 13px; line-height: 1.5; }
+.rp-menu-section [class*="text-slate-3"], .rp-menu-section [class*="text-slate-4"], .rp-menu-section [class*="text-slate-5"] { color: #a4b5cf; }
+.rp-menu-section h2, .rp-menu-section h3 { font: 14px/1.5 var(--rp-font-terminal); color: #eceef3; overflow-wrap: anywhere; }
+.rp-menu-section p { font: 12px/1.6 var(--rp-font-body); }
+.rp-menu-shell .rp-menu-section button { min-height: 44px; min-width: 44px; padding: 8px; font: 11px/1.4 var(--rp-font-terminal); color: #a9b7d0; background: linear-gradient(180deg,#101721,#080b11); border: 1px solid #354050; box-shadow: inset 0 0 0 2px #0a1018; text-shadow: none; }
+.rp-menu-section button svg { color: inherit; }
+.rp-menu-shell .rp-menu-section button[aria-expanded=true], .rp-menu-shell .rp-menu-section button[aria-pressed=true] { color: #fff0ef; border-color: #ed4c5b; background: linear-gradient(145deg,#651e2b,#350e18); box-shadow: inset 0 0 0 2px #a13445,0 0 0 1px #491c29; }
+.rp-menu-shell .rp-menu-section button:disabled { background: #1c1b26; border-color: #4f4150; color: #afa1b3; opacity: .65; box-shadow: none; }
+.rp-menu-section button:focus-visible { outline: 2px solid #fce6e9; outline-offset: 2px; }
+.rp-menu-section button span { font-size: inherit; }
+.rp-menu-section button > span + span, .rp-menu-section button span.block + span.block { font-family: var(--rp-font-body); font-size: 10px; font-weight: 400; }
+.rp-menu-section input, .rp-menu-section select { min-height: 44px; min-width: 0; padding: 8px; border: 1px solid #414e63; border-radius: 0; background: #050a12; color: #e7edf7; font: 16px/1.4 var(--rp-font-body); }
+.rp-menu-section input[type=checkbox] { min-height: 20px; accent-color: #eb506b; }
+.rp-menu-section .animate-pulse-soft, .rp-menu-section .animate-bounce-subtle { animation: none; }
+.rp-menu-section [class*="rounded"] { border-radius: 0; }
+.rp-menu-section [class*="shadow-"] { box-shadow: none; }
+.rp-menu-me__modules > div + div { margin-top: 10px; }
+.rp-menu-operative-strip { padding: 10px 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; background: #0a101b; border: 1px solid #364256; border-left: 3px solid #bd354e; }
+.rp-menu-operative-strip > span:first-child { display: flex; gap: 8px; align-items: center; font: 11px var(--rp-font-terminal); color: #e1c1c9; }
+.rp-menu-operative-strip > strong { font: 12px var(--rp-font-body); color: #dfe6f3; }
+.rp-menu-operative-strip small { flex-basis: 100%; color: #95a9c7; font: 10px/1.4 var(--rp-font-body); overflow-wrap: anywhere; }
+.rp-menu-shell .rp-menu-operative-wallet { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: fit-content; max-width: 100%; margin-left: auto; padding: 6px 10px; font-size: 10px; text-transform: uppercase; cursor: pointer; }
+.rp-menu-operative-wallet svg { width: 16px; height: 16px; flex: none; }
+.rp-menu-verified { display: inline-flex; gap: 5px; align-items: center; color: #bfdcc7; font-size: 10px; }
+.rp-menu-verified svg { width: 14px; height: 14px; }
+.rp-menu-me [aria-label="Locked Daily Vault"] { background: #0c1421; border-color: #35435a; padding: 10px; }
+.rp-menu-me [aria-label="Locked Daily Vault"] > div:first-child { padding-bottom: 4px; }
+.rp-menu-me [aria-label="Locked Daily Vault"] .grid > div { height: 32px; background: #101b2d; color: #8e9cb3; }
+.rp-menu-me .grid-cols-\[1fr_auto\] { grid-template-columns: minmax(0,1fr); }
+.rp-menu-me [class*="border-[#00d2ff]"] { border-color: #9d4055; background: #18111d; }
+.rp-menu-me [class*="bg-[#9b51e0]"], .rp-menu-me [class*="bg-[#00d2ff]"]:not(button) { background-color: #b93b55; }
+.rp-menu-me .text-right { text-align: left; }
+.rp-menu-section .truncate { white-space: normal; overflow-wrap: anywhere; }
+.rp-menu-me [aria-label="Choose a Daily Vault card"] { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.rp-menu-shop .grid-cols-7 { gap: 4px; }
+.rp-menu-shop .grid-cols-7 > div { min-width: 0; overflow-wrap: anywhere; padding: 4px 2px; }
+.rp-menu-events .group { box-shadow: none; }
+@media (hover:hover) { .rp-menu-shell .rp-menu-section button:hover:not(:disabled), .rp-menu-shell .rp-menu-games button:hover:not(:disabled) { border-color: #ed4c5b; color: #fff0ef; box-shadow: inset 0 -3px #ed4959; } }
+.rp-menu-shell .rp-menu-section button:active:not(:disabled), .rp-menu-shell .rp-menu-games button:active:not(:disabled) { border-color: #ed4c5b; box-shadow: inset 0 -3px #ed4959; }
+@media (max-width:359px) { .rp-menu-section .pixel-box-sm,.rp-menu-me__modules > div { padding: 9px; } .rp-menu-shell .rp-menu-section button { font-size: 10px; padding: 7px; } .rp-menu-shop .grid-cols-7 { grid-template-columns: repeat(4,minmax(0,1fr)); } }

@@ -31,6 +31,7 @@ import { sound } from '../utils/sound';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
 import { useTableVisualEvents } from '../hooks/useTableVisualEvents';
+import { ChipStackIcon as ResistanceChipIcon } from './poker/PokerTable';
 
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
@@ -49,13 +50,7 @@ interface BlackjackGameProps {
 }
 
 function ChipStackIcon({ className = 'w-3 h-3' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <ellipse cx="12" cy="6" rx="8" ry="3" fill="#ffcc00" stroke="#000" />
-      <path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6" fill="#e6b800" stroke="#000" />
-      <path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" fill="#cca300" stroke="#000" />
-    </svg>
-  );
+  return <ResistanceChipIcon className={className} />;
 }
 
 function ChipStack({ amount, label }: { amount: number; label?: string }) {
@@ -63,7 +58,7 @@ function ChipStack({ amount, label }: { amount: number; label?: string }) {
     <div className="flex items-center gap-1 bg-black/80 px-2 py-0.5 rounded border border-[#ffcc00]/60 shadow-[0_0_8px_rgba(255,204,0,0.3)]">
       <ChipStackIcon className="w-3.5 h-3.5 text-[#ffcc00]" />
       <span className="text-[8.5px] font-black text-[#ffcc00] uppercase tracking-wider">
-        {amount} {label || 'CHIPS'}
+        {label ? `${label} ` : ''}{amount}
       </span>
     </div>
   );
@@ -278,30 +273,33 @@ export function BlackjackGame({
   }, [gameState.stage]);
 
   // Next Hand Auto-Countdown Timer when round ends
+  const nextHandActionRef = useRef(onNextHand);
+  useEffect(() => { nextHandActionRef.current = onNextHand; }, [onNextHand]);
   useEffect(() => {
     if (gameState.stage !== 'round_ended') {
       setNextHandCountdown(6);
       return;
     }
 
+    const offlineDeadline = Date.now() + 6_000;
+    let advanced = false;
     const update = () => {
       if (gameState.nextRoundStartsAt) {
         setNextHandCountdown(Math.max(0, Math.ceil((gameState.nextRoundStartsAt - Date.now()) / 1000)));
       } else if (gameState.mode === 'offline') {
-        setNextHandCountdown((prev) => {
-          if (prev <= 1) {
-            onNextHand();
-            return 0;
-          }
-          return prev - 1;
-        });
+        const remaining = Math.max(0, Math.ceil((offlineDeadline - Date.now()) / 1000));
+        setNextHandCountdown(remaining);
+        if (remaining === 0 && !advanced) {
+          advanced = true;
+          nextHandActionRef.current();
+        }
       }
     };
     update();
     const timer = setInterval(update, gameState.nextRoundStartsAt ? 250 : 1000);
 
     return () => clearInterval(timer);
-  }, [gameState.stage, gameState.nextRoundStartsAt, gameState.mode, onNextHand]);
+  }, [gameState.stage, gameState.nextRoundStartsAt, gameState.mode, gameState.currentHand]);
 
   const activePlayer = gameState.players[gameState.currentPlayerIndex];
   const isHumanActiveTurn = gameState.stage === 'player_turn' && !gameState.isDealing && activePlayer?.id === 'player';
@@ -348,14 +346,14 @@ export function BlackjackGame({
           </span>
           <span className="text-[7.5px] font-black text-[#ffcc00] uppercase bg-black px-1.5 py-0.5 border border-black">
             {gameState.isPersistentTable
-              ? (gameState.stake === 0 ? 'FREE · 2 ENERGY ENTRY' : 'CASH TABLE · CASH OUT CHIPS')
+              ? (gameState.stake === 0 ? 'FREE · 2 ENERGY ENTRY' : <span className="inline-flex items-center gap-1">CASH TABLE · CASH OUT <ChipStackIcon className="w-3 h-3" /></span>)
               : `PRIZE: ${gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT`}`}
           </span>
         </div>
 
         <div className="flex items-center gap-1.5">
           <span className="text-[8px] font-black text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
-            BANKROLL: {humanPlayer?.chips ?? 100} 💰
+            <span className="inline-flex items-center gap-1">BANKROLL <ChipStackIcon className="w-3 h-3" /> {humanPlayer?.chips ?? 100}</span>
           </span>
 
           <button
@@ -513,9 +511,9 @@ export function BlackjackGame({
                   style={{ flex: '1 1 0', minWidth: 0 }}
                 >
                   <div className="scale-[0.95] origin-bottom flex flex-col items-center w-full">
-                  {/* CHIPS BADGE */}
+                  {/* CHIP BALANCE BADGE */}
                   <div className="absolute -top-3 bg-amber-400 text-black px-1.5 py-0.2 rounded text-[7px] font-black uppercase shadow tracking-tight">
-                    💰 {p.chips ?? 0} CHIPS
+                    <ChipStackIcon className="inline-block w-2.5 h-2.5 mr-1" />{p.chips ?? 0}
                   </div>
 
                   {/* Floating Profit Notification on Round End */}
@@ -682,8 +680,8 @@ export function BlackjackGame({
             <span>{canPlay ? '👉 YOUR TURN - CHOOSE ACTION:' : `⏳ WAITING FOR ${activePlayer?.name?.toUpperCase()}...`}</span>
             {humanPlayer && (
               <div className="flex items-center gap-1 text-white">
-                <span>CHIPS:</span>
-                <strong className="text-[#ffcc00] text-[9.5px]">💰 {humanPlayer.chips}</strong>
+                <ChipStackIcon className="w-3 h-3" />
+                <strong className="text-[#ffcc00] text-[9.5px]">{humanPlayer.chips}</strong>
                 <span className="ml-1">SCORE:</span>
                 <strong className="text-[#00d2ff] text-[9.5px]">{humanPlayer.score}</strong>
               </div>

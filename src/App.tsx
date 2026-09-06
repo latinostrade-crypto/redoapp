@@ -3,20 +3,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useUnoGame } from './hooks/useUnoGame';
 import { usePokerGame } from './hooks/usePokerGame';
 import { useBlackjackGame } from './hooks/useBlackjackGame';
 import { Avatar } from './components/Avatars';
 import { UnoCard } from './components/UnoCard';
 import { RuleModal } from './components/RuleModal';
-import { Web3Dashboard } from './components/Web3Dashboard';
-import { PokerGame } from './components/PokerGame';
-import { BlackjackGame } from './components/BlackjackGame';
 import { LoadingScreen } from './components/LoadingScreen';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './components/QuickEmojiPanel';
 import { useMatchEmoji } from './hooks/useMatchEmoji';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { apiRequest, ApiTraceDetail } from './utils/api';
 import {
   Volume2,
@@ -32,9 +29,25 @@ import {
 } from 'lucide-react';
 import { sound } from './utils/sound';
 import { AvatarId, CardColor } from './types';
+import lobbyBanner from './assets/resistance/lobby-banner.lossless.webp';
+import { initializeRequiredGameImages } from './utils/cardAssets';
+
+const Web3Dashboard = lazy(() => import('./components/Web3Dashboard').then((module) => ({ default: module.Web3Dashboard })));
+const PokerGame = lazy(() => import('./components/PokerGame').then((module) => ({ default: module.PokerGame })));
+const BlackjackGame = lazy(() => import('./components/BlackjackGame').then((module) => ({ default: module.BlackjackGame })));
+
+function GameModuleLoader({ label }: { label: string }) {
+  return (
+    <div className="w-full border-2 border-slate-700 bg-black p-4 text-center font-mono text-[9px] font-black uppercase tracking-wider text-slate-200" role="status">
+      <span className="block text-red-400">{label}_</span>
+      <span aria-hidden="true">[████████░░░░]</span>
+    </div>
+  );
+}
 
 export default function App() {
   const firstFreeGameWalletPromptKey = 'redoapp_prompt_connect_wallet_after_free_game';
+  const forceReducedPokerMotion = new URLSearchParams(window.location.search).get('reducedMotion') === '1';
   const {
     gameState,
     stats,
@@ -152,6 +165,9 @@ export default function App() {
   const xpProgressPercentage = Math.min(100, Math.floor((currentLevelXp / xpNeeded) * 100));
 
   const [rulesOpen, setRulesOpen] = useState(false);
+  useEffect(() => {
+    if (activeGameType === 'uno' && gameState.phase !== 'setup') initializeRequiredGameImages();
+  }, [activeGameType, gameState.phase]);
   const [roundTimeLeft, setRoundTimeLeft] = useState<number>(5);
   const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; senderUserId?: string; key: number } | null>(null);
   const isOnlineUnoMatch = (gameMode === 'pvp' || gameMode === 'private') && Boolean(gameState.matchId);
@@ -549,8 +565,10 @@ export default function App() {
     // Telegram browser. Never leave the whole Mini App behind an unbounded
     // splash screen; the dashboard exposes its own retry state.
     const safetyTimeout = window.setTimeout(() => {
-      if (!(window as any).redoappIsAppStarting) return;
       (window as any).redoappIsAppStarting = false;
+      // A pending sync trace can survive the starting flag. Release both:
+      // requests still finish normally, but cannot hold/reopen the splash.
+      (window as any).redoappActiveLoads = [];
       window.dispatchEvent(new CustomEvent('redoapp:loading-change'));
     }, 3500);
     return () => window.clearTimeout(safetyTimeout);
@@ -837,76 +855,88 @@ export default function App() {
       {/* POKER GAMEPLAY SURFACE */}
       {activeGameType === 'poker' ? (
         <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
-          <PokerGame
-            gameState={pokerState}
-            turnTimeLeft={pokerTurnTimeLeft}
-            onFold={playerFold}
-            onCallOrCheck={playerCallOrCheck}
-            onRaise={playerRaise}
-            onNextHand={handleNextPokerHand}
-            onReturnToLobby={handleReturnFromPoker}
-            onInvite={() => inviteToTable(pokerState.matchId, 'poker')}
-          />
+          <MotionConfig reducedMotion={forceReducedPokerMotion ? 'always' : 'user'}>
+            <Suspense fallback={<GameModuleLoader label="CONNECTING TO TABLE" />}>
+              <PokerGame
+                gameState={pokerState}
+                turnTimeLeft={pokerTurnTimeLeft}
+                forceReducedMotion={forceReducedPokerMotion}
+                onFold={playerFold}
+                onCallOrCheck={playerCallOrCheck}
+                onRaise={playerRaise}
+                onNextHand={handleNextPokerHand}
+                onReturnToLobby={handleReturnFromPoker}
+                onInvite={() => inviteToTable(pokerState.matchId, 'poker')}
+              />
+            </Suspense>
+          </MotionConfig>
         </main>
       ) : activeGameType === 'blackjack' ? (
         <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
-          <BlackjackGame
-            gameState={blackjackState}
-            turnTimeLeft={blackjackTurnTimeLeft}
-            selectedBet={blackjackSelectedBet}
-            onPlaceBet={handleBlackjackPlaceBet}
-            onHit={handleBlackjackHit}
-            onStand={handleBlackjackStand}
-            onDoubleDown={handleBlackjackDoubleDown}
-            onSplit={handleBlackjackSplit}
-            onSurrender={handleBlackjackSurrender}
-            onInsurance={handleBlackjackInsurance}
-            onNextHand={handleNextBlackjackHand}
-            onReturnToLobby={handleReturnFromBlackjack}
-            onInvite={() => inviteToTable(blackjackState.matchId, 'blackjack')}
-          />
+          <Suspense fallback={<GameModuleLoader label="CONNECTING TO BLACKJACK" />}>
+            <BlackjackGame
+              gameState={blackjackState}
+              turnTimeLeft={blackjackTurnTimeLeft}
+              selectedBet={blackjackSelectedBet}
+              onPlaceBet={handleBlackjackPlaceBet}
+              onHit={handleBlackjackHit}
+              onStand={handleBlackjackStand}
+              onDoubleDown={handleBlackjackDoubleDown}
+              onSplit={handleBlackjackSplit}
+              onSurrender={handleBlackjackSurrender}
+              onInsurance={handleBlackjackInsurance}
+              onNextHand={handleNextBlackjackHand}
+              onReturnToLobby={handleReturnFromBlackjack}
+              onInvite={() => inviteToTable(blackjackState.matchId, 'blackjack')}
+            />
+          </Suspense>
         </main>
       ) : (
         <>
           {/* LOBBY / SETUP SCREEN */}
           {gameState.phase === 'setup' && (
-        <main className="w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-start">
+        <main className="rp-main-menu w-full max-w-md px-4 py-4 z-10 animate-fade-in flex flex-col justify-start">
 
           {/* Lobby Banner */}
-          <div className="w-full border-4 border-black overflow-hidden bg-slate-950 shadow-[4px_4px_0_#000] aspect-[3/1] mb-4 relative">
+          <div className="rp-main-banner w-full border-4 border-black bg-slate-950 aspect-[3/1] relative">
             <img
-              src="./banner.png"
+              src={lobbyBanner}
               alt="YO PIXEL REDOapp Banner"
+              width={1200}
+              height={400}
               className="w-full h-full object-cover select-none pointer-events-none"
               style={{ imageRendering: 'pixelated' }}
             />
+            <div id="redo-lobby-tools" />
           </div>
 
           {/* Web3 Smartphone-Oriented Dashboard Menu */}
           <div className="w-full z-10">
-            <Web3Dashboard
-              userName={userName}
-              selectedAvatar={selectedAvatar}
-              AVATAR_LIST={AVATAR_LIST}
-              stats={stats}
-              playerLevel={playerLevel}
-              currentLevelXp={currentLevelXp}
-              xpNeeded={xpNeeded}
-              xpProgressPercentage={xpProgressPercentage}
-              playerXp={playerXp}
-              onStartGame={handleStartGame}
-              onStartPokerGame={handleStartPokerGame}
-              onStartBlackjackGame={handleStartBlackjackGame}
-              onNameChange={setUserName}
-              onAvatarSelect={setSelectedAvatar}
-              onOpenRules={() => setRulesOpen(true)}
-              goldenTickets={goldenTickets}
-              setGoldenTickets={setGoldenTickets}
-              transactions={transactions}
-              setTransactions={setTransactions}
-              resetStats={resetStats}
-              onSpectateMatch={handleSpectateMatch}
-            />
+            <Suspense fallback={<GameModuleLoader label="SYNCING LOBBY" />}>
+              <Web3Dashboard
+                userName={userName}
+                selectedAvatar={selectedAvatar}
+                AVATAR_LIST={AVATAR_LIST}
+                stats={stats}
+                playerLevel={playerLevel}
+                currentLevelXp={currentLevelXp}
+                xpNeeded={xpNeeded}
+                xpProgressPercentage={xpProgressPercentage}
+                playerXp={playerXp}
+                onStartGame={handleStartGame}
+                onStartPokerGame={handleStartPokerGame}
+                onStartBlackjackGame={handleStartBlackjackGame}
+                onNameChange={setUserName}
+                onAvatarSelect={setSelectedAvatar}
+                onOpenRules={() => setRulesOpen(true)}
+                goldenTickets={goldenTickets}
+                setGoldenTickets={setGoldenTickets}
+                transactions={transactions}
+                setTransactions={setTransactions}
+                resetStats={resetStats}
+                onSpectateMatch={handleSpectateMatch}
+              />
+            </Suspense>
           </div>
         </main>
       )}

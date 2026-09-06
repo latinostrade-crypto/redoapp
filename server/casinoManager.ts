@@ -22,7 +22,12 @@ const BOT_ROSTER = [
   ['bot_table_bear', 'Bear Ace', 'bear'],
   ['bot_table_fox', 'Fox River', 'fox'],
 ] as const;
-const TABLE_PRESENCE_GRACE_MS = 3 * 60_000;
+const tablePresenceTestOverride = process.env.NODE_ENV === 'production'
+  ? Number.NaN
+  : Number(process.env.TEST_CASINO_PRESENCE_GRACE_MS);
+const TABLE_PRESENCE_GRACE_MS = Number.isFinite(tablePresenceTestOverride) && tablePresenceTestOverride >= 500
+  ? tablePresenceTestOverride
+  : 3 * 60_000;
 
 /** Permanent table catalogue with lazily allocated game runtimes. */
 export class CasinoManager {
@@ -78,6 +83,9 @@ export class CasinoManager {
     if (table.gameType === 'poker') {
       state.stage = 'idle';
       state.pot = 0;
+      state.sidePots = [];
+      state.chipAwards = [];
+      state.visualEpoch = (state.visualEpoch || 0) + 1;
       state.currentBet = 0;
       state.communityCards = [];
       state.winnerUserIds = [];

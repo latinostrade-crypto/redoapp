@@ -23,6 +23,7 @@ import {
   CARTOON_BUBBLES,
 } from '../utils/unoEngine';
 import { sound } from '../utils/sound';
+import { buildGameLobbyUrl } from '../utils/gameRouting';
 import { calculateTicketPayouts } from '../utils/rewardEconomy';
 import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 import { clearMatch } from '../utils/matchmaking';
@@ -1428,8 +1429,7 @@ const getNextActiveClientPlayerIndex = (players: Player[], currentIndex: number,
     localStorage.removeItem('redoapp_active_match');
     if (typeof window !== 'undefined' && window.history?.replaceState) {
       try {
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState(null, '', cleanUrl);
+        window.history.replaceState(null, '', buildGameLobbyUrl(window.location.href));
       } catch {
         // Ignore iframe history errors
       }

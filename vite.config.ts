@@ -6,6 +6,19 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      manifest: true,
+      rollupOptions: {
+        output: {
+          // Keep wallet code independently cacheable without pulling React
+          // (shared with the story) into this game-only chunk.
+          onlyExplicitManualChunks: true,
+          manualChunks(id) {
+            if (id.includes('/node_modules/@tonconnect/')) return 'wallet-vendor';
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

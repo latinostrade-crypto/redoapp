@@ -3,15 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// Sound Synthesizer using Web Audio API for cute cartoonish sound effects
+export type PokerSoundId =
+  | 'ui_click' | 'ui_confirm' | 'ui_cancel'
+  | 'card_deal' | 'card_flip' | 'player_turn' | 'timer_warning'
+  | 'bet_move' | 'pot_receive' | 'fold' | 'all_in'
+  | 'player_join' | 'player_disconnect' | 'player_eliminated'
+  | 'showdown' | 'game_start' | 'winner' | 'game_over' | 'scene_transition';
+
+// Shared Web Audio synthesizer. Poker uses the dedicated dry, deterministic
+// terminal cue bank below; the older game surfaces retain their existing cues.
 class SoundSynth {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
   private idleTimer: number | null = null;
+  private userActivated = false;
 
   constructor() {
     // Only initialized on first user interaction to comply with browser autoplay policies
     if (typeof document !== 'undefined') {
+      const unlock = () => { this.userActivated = true; };
+      document.addEventListener('pointerdown', unlock, { once: true, capture: true });
+      document.addEventListener('keydown', unlock, { once: true, capture: true });
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden' && this.ctx && this.ctx.state === 'running') {
           this.ctx.suspend().catch(() => {});
@@ -21,6 +33,7 @@ class SoundSynth {
   }
 
   private init() {
+    if (!this.userActivated || document.hidden) return;
     if (!this.ctx) {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {
@@ -59,6 +72,49 @@ class SoundSynth {
       this.isMuted = stored === 'true';
     }
     return this.isMuted;
+  }
+
+  playPokerCue(id: PokerSoundId) {
+    if (this.getMuted()) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const patterns: Record<PokerSoundId, Array<[number, number, number, number, OscillatorType]>> = {
+      ui_click: [[520, 0, .045, .045, 'square']],
+      ui_confirm: [[360, 0, .05, .05, 'square'], [610, .055, .06, .045, 'square']],
+      ui_cancel: [[390, 0, .05, .045, 'square'], [220, .055, .07, .04, 'square']],
+      card_deal: [[145, 0, .035, .035, 'sawtooth'], [95, .04, .025, .025, 'square']],
+      card_flip: [[190, 0, .035, .035, 'square'], [560, .038, .045, .035, 'square']],
+      player_turn: [[680, 0, .055, .045, 'square'], [820, .07, .055, .04, 'square']],
+      timer_warning: [[920, 0, .06, .05, 'square'], [920, .12, .06, .045, 'square']],
+      bet_move: [[180, 0, .035, .04, 'square'], [240, .035, .035, .035, 'square'], [310, .07, .04, .03, 'square']],
+      pot_receive: [[260, 0, .04, .04, 'square'], [390, .045, .04, .04, 'square'], [520, .09, .055, .035, 'square']],
+      fold: [[260, 0, .055, .04, 'sawtooth'], [120, .06, .08, .035, 'square']],
+      all_in: [[110, 0, .12, .065, 'sawtooth'], [220, .1, .12, .055, 'square'], [440, .2, .14, .05, 'square']],
+      player_join: [[330, 0, .05, .04, 'square'], [495, .06, .07, .04, 'square']],
+      player_disconnect: [[420, 0, .045, .045, 'square'], [170, .05, .1, .04, 'sawtooth']],
+      player_eliminated: [[230, 0, .07, .05, 'sawtooth'], [115, .075, .16, .045, 'square']],
+      showdown: [[150, 0, .07, .045, 'square'], [300, .08, .07, .045, 'square'], [600, .16, .12, .05, 'square']],
+      game_start: [[240, 0, .055, .04, 'square'], [360, .065, .055, .04, 'square'], [540, .13, .08, .045, 'square']],
+      winner: [[330, 0, .07, .045, 'square'], [440, .08, .07, .045, 'square'], [660, .16, .12, .05, 'square']],
+      game_over: [[300, 0, .08, .05, 'sawtooth'], [200, .09, .1, .045, 'square'], [100, .2, .18, .04, 'square']],
+      scene_transition: [[480, 0, .04, .035, 'square'], [320, .045, .04, .03, 'square'], [160, .09, .06, .025, 'square']],
+    };
+
+    const now = this.ctx.currentTime;
+    patterns[id].forEach(([frequency, offset, duration, volume, type]) => {
+      if (!this.ctx) return;
+      const oscillator = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, now + offset);
+      gain.gain.setValueAtTime(volume, now + offset);
+      gain.gain.exponentialRampToValueAtTime(.001, now + offset + duration);
+      oscillator.connect(gain);
+      gain.connect(this.ctx.destination);
+      oscillator.start(now + offset);
+      oscillator.stop(now + offset + duration);
+    });
   }
 
   playPop() {

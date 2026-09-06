@@ -1,0 +1,190 @@
+@import './poker-tokens.css';
+
+.rp-lobby {
+  --rp-lobby-signal: var(--rp-signal);
+  font-family: var(--rp-font-body);
+  color: #eef1f3;
+}
+
+.rp-lobby-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  color: #eef1f3;
+  background: #050607;
+  border: 1px solid #414b54;
+  box-shadow: inset 3px 0 var(--rp-lobby-signal), 3px 3px 0 #000;
+}
+
+.rp-lobby-identity > div:last-child { display: grid; gap: 4px; text-align: left; }
+.rp-lobby-identity span { color: #77808b; font: 400 6px/1 "Silkscreen", monospace; letter-spacing: .12em; }
+.rp-lobby-identity strong { color: #f2f4f5; font: 400 10px/1 "Press Start 2P", monospace; }
+
+.rp-lobby-tabs {
+  background: #080a0d;
+  border: 1px solid #3b444c;
+  box-shadow: 3px 3px 0 #000;
+}
+
+.rp-lobby-tabs button {
+  min-height: 44px;
+  border-radius: 0;
+  transition: transform 100ms steps(2, end), background-color 100ms steps(2, end), color 100ms steps(2, end);
+}
+
+.rp-lobby-tab { background: #0b0e11; }
+.rp-lobby-tab--active { color: #fff; background: #28100f; border: 1px solid #b93831; box-shadow: inset 3px 0 var(--rp-lobby-signal); }
+
+.rp-lobby-panel {
+  background: #0d1014;
+  border: 1px solid #414b54;
+  border-radius: 0;
+  box-shadow: 4px 4px 0 #000;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  animation: rp-lobby-build 220ms steps(5, end) both;
+}
+
+.rp-lobby-heading {
+  color: #f2f4f5;
+  font-family: "Silkscreen", monospace;
+  text-shadow: 2px 0 #611712;
+}
+
+.rp-lobby-balance {
+  color: #d7dde1;
+  background: #050607;
+  border-color: #4c565e;
+}
+
+.rp-lobby-table-row {
+  background: #07090b;
+  border-color: #303941;
+  box-shadow: inset 2px 0 #222a31;
+}
+
+.rp-lobby-primary,
+.rp-lobby-secondary {
+  min-height: 44px;
+  border-radius: 0;
+  box-shadow: 0 3px 0 #000;
+  transition: transform 100ms steps(2, end), background-color 100ms steps(2, end);
+}
+
+.rp-lobby-primary { color: #fff; background: #b82620; border: 1px solid #ff5a50; }
+.rp-lobby-secondary { color: #d4d9dd; background: #13181d; border: 1px solid #53606a; }
+.rp-lobby-primary:active,
+.rp-lobby-secondary:active { transform: translateY(3px); box-shadow: none; }
+
+.rp-lobby-practice { background: linear-gradient(145deg, #101419, #090b0e); }
+
+.rp-lobby-confirm {
+  position: fixed;
+  z-index: var(--rp-z-modal);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding:
+    max(16px, env(safe-area-inset-top), var(--tg-safe-top, 0px))
+    max(16px, env(safe-area-inset-right), var(--tg-safe-right, 0px))
+    max(16px, env(safe-area-inset-bottom), var(--tg-safe-bottom, 0px))
+    max(16px, env(safe-area-inset-left), var(--tg-safe-left, 0px));
+  background: rgba(0, 0, 0, .88);
+}
+
+.rp-lobby-confirm__panel {
+  width: min(100%, 340px);
+  color: #eef1f3;
+  background: #07090b;
+  border: 3px solid #53606a;
+  box-shadow: 8px 8px 0 #000, inset 0 0 0 2px #171c21;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  animation: rp-confirm-frame 180ms steps(5, end) both;
+}
+
+.rp-lobby-confirm__panel--danger { border-color: #ff5a50; }
+
+.rp-lobby-confirm__header {
+  padding: 12px;
+  border-bottom: 2px solid #303941;
+  animation: rp-confirm-stage 100ms steps(3, end) 160ms both;
+}
+
+.rp-lobby-confirm__header span { color: #77808b; font: 400 6px/1.4 "Silkscreen", monospace; letter-spacing: .08em; }
+.rp-lobby-confirm__header h2 { margin-top: 7px; color: #fff; font: 400 11px/1.4 "Press Start 2P", monospace; text-transform: uppercase; }
+
+.rp-lobby-confirm__content {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  padding: 14px 12px;
+  color: #d8dde1;
+  animation: rp-confirm-stage 100ms steps(3, end) 260ms both;
+}
+
+.rp-lobby-confirm__content p { margin: 0; font-size: 11px; line-height: 1.5; }
+.rp-lobby-confirm__content small { grid-column: 1 / -1; color: #89939b; font: 400 7px/1.5 "Silkscreen", monospace; }
+
+.rp-lobby-confirm__actions {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 8px;
+  padding: 0 12px 12px;
+  animation: rp-confirm-stage 100ms steps(3, end) 360ms both;
+}
+
+.rp-lobby-confirm__actions button { min-height: 48px; padding: 8px; font: 800 9px/1 Inter, sans-serif; }
+
+.rp-lobby-notice {
+  position: fixed;
+  z-index: calc(var(--rp-z-modal) + 10);
+  left: 50%;
+  top: max(14px, env(safe-area-inset-top), var(--tg-safe-top, 0px));
+  width: min(calc(100% - 24px), 360px);
+  transform: translateX(-50%);
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  color: #eef1f3;
+  background: #07090b;
+  border: 2px solid #53606a;
+  box-shadow: 5px 5px 0 #000;
+  pointer-events: none;
+}
+
+.rp-lobby-notice span { color: #77808b; font: 400 6px/1 "Silkscreen", monospace; letter-spacing: .1em; }
+.rp-lobby-notice strong { font-size: 10px; line-height: 1.4; }
+.rp-lobby-notice--signal { border-color: #79f2ac; }
+.rp-lobby-notice--danger { border-color: #ff5a50; color: #ffb0aa; }
+
+@keyframes rp-confirm-frame {
+  0% { opacity: 0; clip-path: inset(48% 50%); }
+  45% { opacity: 1; clip-path: inset(0 48%); }
+  100% { opacity: 1; clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+}
+
+@keyframes rp-confirm-stage { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0); } }
+
+@keyframes rp-lobby-build {
+  0% { clip-path: inset(0 100% 100% 0); }
+  100% { clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px); }
+}
+
+@media (max-width: 359px) {
+  .rp-lobby-table-row { align-items: flex-start; gap: 8px; }
+  .rp-lobby-table-row > div:last-child { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rp-lobby *,
+  .rp-lobby *::before,
+  .rp-lobby *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+  .rp-lobby-confirm__panel,
+  .rp-lobby-confirm__header,
+  .rp-lobby-confirm__content,
+  .rp-lobby-confirm__actions { animation-duration: 1ms !important; animation-delay: 0ms !important; }
+}

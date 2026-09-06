@@ -35,6 +35,28 @@ export const LottieSticker: React.FC<LottieStickerProps> = ({
 
       anim.setSpeed(speed);
       animRef.current = anim;
+      let visible = true;
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+      const syncPlayback = () => {
+        if (reduced.matches) { anim.goToAndStop(Math.floor(anim.totalFrames * .3), true); return; }
+        if (autoplay && visible && !document.hidden) anim.play(); else anim.pause();
+      };
+      const observer = typeof IntersectionObserver === 'undefined' ? undefined : new IntersectionObserver(([entry]) => {
+        visible = entry.isIntersecting;
+        syncPlayback();
+      });
+      observer?.observe(containerRef.current);
+      document.addEventListener('visibilitychange', syncPlayback);
+      reduced.addEventListener('change', syncPlayback);
+      anim.addEventListener('DOMLoaded', syncPlayback);
+      syncPlayback();
+      return () => {
+        observer?.disconnect();
+        document.removeEventListener('visibilitychange', syncPlayback);
+        reduced.removeEventListener('change', syncPlayback);
+        anim.destroy();
+        if (animRef.current === anim) animRef.current = null;
+      };
     } catch (err) {
       console.error('Failed to load lottie sticker:', path, err);
     }

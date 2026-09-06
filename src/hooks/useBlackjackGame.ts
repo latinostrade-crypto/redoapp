@@ -33,6 +33,8 @@ export function useBlackjackGame(options?: {
   onMatchCancelled?: () => void;
 }) {
   const [selectedBet, setSelectedBet] = useState<number>(DEFAULT_BET);
+  const optionsRef = useRef(options);
+  useEffect(() => { optionsRef.current = options; }, [options]);
   const [remoteMatchId, setRemoteMatchId] = useState<string | null>(() => {
     try {
       const raw = localStorage.getItem('redoapp_active_match');
@@ -139,8 +141,8 @@ export function useBlackjackGame(options?: {
       if (msg.includes('404') || msg.includes('not found') || msg.includes('concluded') || msg.includes('cancelled')) {
         try { localStorage.removeItem('redoapp_active_match'); } catch {}
         setRemoteMatchId(null);
-        if (options?.onMatchCancelled) {
-          options.onMatchCancelled();
+        if (optionsRef.current?.onMatchCancelled) {
+          optionsRef.current.onMatchCancelled();
         }
       }
       }
@@ -149,7 +151,7 @@ export function useBlackjackGame(options?: {
     try { await sync; } finally {
       if (remoteSyncInFlightRef.current === sync) remoteSyncInFlightRef.current = null;
     }
-  }, [remoteMatchId, options, applyRemoteState]);
+  }, [remoteMatchId, applyRemoteState]);
 
   const sendRemoteBlackjackAction = useCallback(async (action: 'hit' | 'stand' | 'double' | 'split' | 'surrender' | 'insurance' | 'next_hand' | 'place_bet', amount?: number) => {
     if (!remoteMatchId || remoteActionInFlightRef.current) return;
@@ -305,9 +307,9 @@ export function useBlackjackGame(options?: {
           if (isMatchOver) {
             if (humanWonMatch) {
               sound.playVictory();
-              options?.onSettlement?.(championPayout, true, false);
+              optionsRef.current?.onSettlement?.(championPayout, true, false);
             } else {
-              options?.onSettlement?.(0, false, false);
+              optionsRef.current?.onSettlement?.(0, false, false);
             }
           }
 
@@ -336,7 +338,7 @@ export function useBlackjackGame(options?: {
       const initialDealerPause = window.setTimeout(drawNextDealerCard, 1000);
       dealingTimeoutsRef.current.push(initialDealerPause);
     },
-    [gameState.currentHand, gameState.dealer.cards, gameState.maxHands, gameState.stake, options]
+    [gameState.currentHand, gameState.dealer.cards, gameState.maxHands, gameState.stake]
   );
 
   /**
@@ -848,9 +850,9 @@ export function useBlackjackGame(options?: {
             const isHumanWinner = bjState.matchChampion && humanPlayer && bjState.matchChampion.name === humanPlayer.name;
             if (isHumanWinner) {
               sound.playVictory();
-              options?.onSettlement?.(bjState.winningPayout || 0, true, false);
+              optionsRef.current?.onSettlement?.(bjState.winningPayout || 0, true, false);
             } else {
-              options?.onSettlement?.(0, false, false);
+              optionsRef.current?.onSettlement?.(0, false, false);
             }
           }
         }
@@ -870,8 +872,8 @@ export function useBlackjackGame(options?: {
         winner: null,
         logs: [],
       }));
-      if (options?.onMatchCancelled) {
-        options.onMatchCancelled();
+      if (optionsRef.current?.onMatchCancelled) {
+        optionsRef.current.onMatchCancelled();
       }
     });
 
@@ -890,7 +892,7 @@ export function useBlackjackGame(options?: {
         remoteMatchStreamRef.current = null;
       }
     };
-  }, [options, remoteMatchId, syncRemoteMatchState, applyRemoteState]);
+  }, [remoteMatchId, syncRemoteMatchState, applyRemoteState]);
 
   // Continuous Polling during Online Match Setup and Gameplay
   useEffect(() => {

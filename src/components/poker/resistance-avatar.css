@@ -1,0 +1,97 @@
+@import './poker-tokens.css';
+
+.resistance-avatar {
+  width: var(--resistance-avatar-size);
+  height: calc(var(--resistance-avatar-size) * .914);
+  position: relative;
+  flex: none;
+  isolation: isolate;
+  overflow: visible;
+  filter: drop-shadow(2px 2px 0 #000);
+  animation: resistance-avatar-build 240ms steps(5, end) both;
+}
+
+.resistance-avatar__hood {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+.resistance-avatar__hood--base { z-index: 1; }
+.resistance-avatar__hood--foreground { z-index: 3; }
+
+.resistance-avatar__face {
+  position: absolute;
+  z-index: 2;
+  left: 31%;
+  top: 24%;
+  width: 38%;
+  height: 54%;
+  overflow: hidden;
+  background: #020203;
+  clip-path: polygon(50% 0, 78% 10%, 94% 34%, 92% 70%, 72% 94%, 50% 100%, 28% 94%, 8% 70%, 6% 34%, 22% 10%);
+  box-shadow: inset 0 0 0 2px rgba(88,103,119,.6);
+}
+
+.resistance-avatar__photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: contrast(1.12) saturate(.78) brightness(.86);
+  image-rendering: pixelated;
+  transform: scale(1.08);
+}
+
+.resistance-avatar__fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  transform: scale(1.2);
+}
+
+.resistance-avatar__fallback > div { border: 0 !important; box-shadow: none !important; }
+
+.resistance-avatar__signal {
+  position: absolute;
+  z-index: 4;
+  right: 7%;
+  bottom: 5%;
+  width: max(4px, calc(var(--resistance-avatar-size) * .09));
+  aspect-ratio: 1;
+  background: var(--rp-online);
+  box-shadow: 0 0 0 2px #030405;
+}
+
+.resistance-avatar--active .resistance-avatar__face { animation: resistance-avatar-lock 420ms steps(5, end) both; }
+.resistance-avatar--folded { filter: grayscale(1) brightness(.58) drop-shadow(2px 2px 0 #000); }
+.resistance-avatar--disconnected .resistance-avatar__face { opacity: .38; animation: resistance-avatar-signal-loss 180ms steps(3, end) 2; }
+.resistance-avatar--disconnected .resistance-avatar__signal,
+.resistance-avatar--eliminated .resistance-avatar__signal { background: var(--rp-signal); }
+.resistance-avatar--eliminated .resistance-avatar__face { opacity: 0; }
+.resistance-avatar--winner { filter: drop-shadow(0 0 4px var(--rp-winner-shadow)) drop-shadow(2px 2px 0 var(--rp-shadow)); animation: none; }
+
+@keyframes resistance-avatar-lock {
+  0% { transform: scaleX(.1); filter: brightness(1.8); }
+  100% { transform: scaleX(1); filter: brightness(1); }
+}
+
+@keyframes resistance-avatar-build {
+  0% { opacity: 0; clip-path: inset(100% 0 0); transform: translateY(4px); }
+  100% { opacity: 1; clip-path: inset(0); transform: translateY(0); }
+}
+
+@keyframes resistance-avatar-signal-loss {
+  0%, 100% { transform: translateX(0); }
+  34% { transform: translateX(-2px); clip-path: inset(12% 0 44% 0); }
+  67% { transform: translateX(2px); clip-path: inset(55% 0 8% 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .resistance-avatar,
+  .resistance-avatar__face { animation-duration: 1ms !important; animation-iteration-count: 1 !important; }
+}

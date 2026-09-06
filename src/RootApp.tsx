@@ -86,16 +86,7 @@ function getSurfaceFromEnvironment(): AppSurface {
   );
   if (isTelegramLaunch) return 'game';
 
-  const isLocalHost = typeof window !== 'undefined' && (
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.hostname.startsWith('192.168.') ||
-    window.location.hostname.startsWith('10.') ||
-    window.location.hostname.startsWith('172.') ||
-    window.location.hostname.endsWith('.local')
-  );
-
-  return isLocalHost ? 'game' : 'story';
+  return 'story';
 }
 
 function SurfaceLoader({ surface }: { surface: AppSurface }) {

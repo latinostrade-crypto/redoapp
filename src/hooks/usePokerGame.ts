@@ -15,6 +15,7 @@ import { AvatarId } from '../types';
 import { createShuffledPokerDeck, evaluate7CardHand } from '../utils/pokerEvaluator';
 import { sound } from '../utils/sound';
 import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
+import { settlePracticeChips } from '../utils/pokerChipSettlement';
 
 const STARTING_CHIPS = 100;
 const SMALL_BLIND = 1;
@@ -315,6 +316,7 @@ export function usePokerGame(options?: {
 
       setGameState({
         stage: 'preflop',
+        visualEpoch: Date.now(),
         pot: initialPot,
         currentBet: BIG_BLIND,
         minRaise: BIG_BLIND,
@@ -396,6 +398,14 @@ export function usePokerGame(options?: {
           ...prev,
           stage: 'ended',
           winnerIds: [winner.id],
+          sidePots: [{ amount: prev.pot, eligiblePlayerIds: [winner.id] }],
+          chipAwards: (() => {
+            const returned = Math.max(0, winner.totalMatchInvested - Math.max(0, ...prev.players.filter(p => p.id !== winner.id).map(p => p.totalMatchInvested)));
+            return [
+              { playerId: winner.id, amount: prev.pot - returned, potIndex: 0, kind: 'win' as const },
+              { playerId: winner.id, amount: returned, potIndex: 0, kind: 'return' as const },
+            ].filter(a => a.amount > 0);
+          })(),
           winningCardIds: winner.holeCards.map((c) => c.id),
           winningHandDesc: 'Uncontested - All opponents folded',
           players: prev.players.map((p) => (p.id === winner.id ? { ...p, chips: p.chips + prev.pot } : p)),
@@ -433,33 +443,32 @@ export function usePokerGame(options?: {
         nextCommunity = [...prev.communityCards];
       }
 
+      // No betting remains once at most one live player has chips. Run out
+      // the board instead of searching forever for an actionable seat.
+      if (activePlayers.filter(p => !p.isAllIn).length <= 1) {
+        while (nextCommunity.length < 5 && nextDeck.length) nextCommunity.push(nextDeck.pop()!);
+        nextStage = 'showdown';
+      }
+
       if (nextStage === 'showdown') {
         isAdvancingRef.current = false;
         // Evaluate all hands
         let bestScore = -1;
-        let winners: PokerPlayerId[] = [];
         let bestDesc = '';
         let winningBestFive: PokerCard[] = [];
+        const scores = new Map<string, number>();
 
         for (const p of activePlayers) {
           const evalResult = evaluate7CardHand([...p.holeCards, ...nextCommunity]);
+          scores.set(p.id, evalResult.score);
           if (evalResult.score > bestScore) {
             bestScore = evalResult.score;
-            winners = [p.id];
             bestDesc = evalResult.description;
             winningBestFive = evalResult.bestFive;
-          } else if (evalResult.score === bestScore) {
-            winners.push(p.id);
           }
         }
 
-        const splitAmount = Math.floor(prev.pot / winners.length);
-        const finalPlayers = resetPlayers.map((p) => {
-          if (winners.includes(p.id)) {
-            return { ...p, chips: p.chips + splitAmount };
-          }
-          return p;
-        });
+        const settlement = settlePracticeChips(resetPlayers, scores, prev.dealerIndex);
 
         sound.playPop();
 
@@ -467,8 +476,7 @@ export function usePokerGame(options?: {
           ...prev,
           stage: 'ended',
           communityCards: nextCommunity,
-          players: finalPlayers,
-          winnerIds: winners,
+          ...settlement,
           winningCardIds: winningBestFive.map((c) => c.id),
           winningHandDesc: bestDesc,
         };
@@ -686,24 +694,26 @@ export function usePokerGame(options?: {
       const humanPlayer = updatedEliminated.find((p) => p.id === 'player');
 
       if (activeSurvivors.length <= 1 || (humanPlayer && humanPlayer.chips <= 0)) {
-        const winner = activeSurvivors[0] || prev.players[0];
+        // Human elimination ends this practice session, not necessarily the
+        // whole table. Seat order cannot identify a match champion.
+        const winner = activeSurvivors.length === 1 ? activeSurvivors[0] : undefined;
         const isHumanWinner = winner?.id === 'player';
         const matchPayout = isHumanWinner && prev.stake > 0
           ? Math.round(prev.stake * prev.players.length * 0.96 * 100) / 100
           : 0;
 
-        if (options?.onSettlement) {
-          options.onSettlement(matchPayout, isHumanWinner);
+        if (optionsRef.current?.onSettlement) {
+          optionsRef.current.onSettlement(matchPayout, isHumanWinner);
         }
 
         return {
           ...prev,
           stage: 'ended',
           isMatchOver: true,
-          matchWinnerName: winner?.name || 'Winner',
-          winnerIds: winner ? [winner.id] : [],
-          winningCardIds: [],
-          winningHandDesc: isHumanWinner ? 'MATCH CHAMPION! You won all the chips!' : `${winner?.name || 'Winner'} won the poker match!`,
+          matchWinnerName: winner?.name,
+          // Preserve the last hand's winners/cards; chipAwards still describe
+          // that hand even when the human has run out of chips.
+          winningHandDesc: prev.winningHandDesc,
         };
       }
 
@@ -715,7 +725,7 @@ export function usePokerGame(options?: {
       );
 
       const nextPlayers = updatedEliminated.map((p) => {
-        if (p.eliminated || p.chips <= 0) return { ...p, folded: true, holeCards: [] };
+        if (p.eliminated || p.chips <= 0) return { ...p, folded: true, holeCards: [], currentBet: 0, totalMatchInvested: 0 };
         return {
           ...p,
           currentBet: 0,
@@ -789,6 +799,9 @@ export function usePokerGame(options?: {
       return {
         ...prev,
         stage: 'preflop',
+        visualEpoch: (prev.visualEpoch || 1) + 1,
+        chipAwards: [],
+        sidePots: [],
         pot: sbPost + bbPost,
         currentBet: Math.max(sbPost, bbPost),
         minRaise: BIG_BLIND,
@@ -806,7 +819,7 @@ export function usePokerGame(options?: {
         isDealing: true,
       };
     });
-  }, [options, remoteMatchId, sendRemotePokerAction]);
+  }, [remoteMatchId, sendRemotePokerAction]);
 
   // SSE Stream Listener for Online Multiplayer
   useEffect(() => {

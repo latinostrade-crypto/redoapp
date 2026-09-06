@@ -43,6 +43,8 @@ export interface PokerPlayer {
   userId?: string;
   name: string;
   avatar: AvatarId;
+  /** Telegram profile photo when the authenticated multiplayer profile exposes one. */
+  photoUrl?: string | null;
   chips: number;
   currentBet: number;
   totalMatchInvested: number;
@@ -101,10 +103,19 @@ export interface PokerSidePot {
   eligiblePlayerIds: PokerPlayerId[];
 }
 
+/** Authoritative chip transfers, independent of ticket/wallet payouts. */
+export interface PokerChipAward {
+  playerId: PokerPlayerId;
+  amount: number;
+  potIndex: number;
+  kind: 'win' | 'return';
+}
+
 export interface PokerGameState {
   stage: PokerStage;
   pot: number;
   sidePots?: PokerSidePot[];
+  chipAwards?: PokerChipAward[];
   currentBet: number; // Minimum bet amount required to call in current betting round
   minRaise: number;
   communityCards: PokerCard[];
