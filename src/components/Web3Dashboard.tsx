@@ -1,3 +1,9 @@
+import { translateTableEvent } from '../i18n/tableEvent';
+import { translateGameLabel } from '../i18n/gameLabels';
+import { message as uiMessage, type UiMessage } from '../i18n/message';
+import { Trans } from 'react-i18next';
+import { questMessageKeys } from '../i18n/questMessages';
+import { useLanguage } from '../i18n/LanguageProvider';
 import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
@@ -646,6 +652,7 @@ type ReferralPageResponse = {
 };
 
 const EnergyCountdown = React.memo(function EnergyCountdown({ nextEnergyAt }: { nextEnergyAt?: number | null }) {
+  const { tr } = useLanguage();
   const [seconds, setSeconds] = useState(() => (nextEnergyAt ? Math.max(0, Math.ceil((nextEnergyAt - Date.now()) / 1000)) : 0));
 
   useEffect(() => {
@@ -659,8 +666,8 @@ const EnergyCountdown = React.memo(function EnergyCountdown({ nextEnergyAt }: { 
     return () => clearInterval(timer);
   }, [nextEnergyAt]);
 
-  if (!nextEnergyAt) return <>Power full</>;
-  return <>Next +1 {Math.floor(seconds / 60)}m {seconds % 60}s</>;
+  if (!nextEnergyAt) return <>{tr('powerFull')}</>;
+  return <>{tr('energyNextTime', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 })}</>;
 });
 
 const TournamentCountdown = React.memo(function TournamentCountdown({
@@ -739,10 +746,16 @@ export function Web3Dashboard({
   resetStats,
   onSpectateMatch,
 }: Web3DashboardProps) {
+  const { tr, locale, renderMessage, renderError } = useLanguage();
+  const formatLedgerValue = (value: string) => {
+    const parts = /^([+-]?[\d.]+) (Energy|CHIPS)$/.exec(value);
+    if (parts) return tr(parts[2] === 'Energy' ? 'transactionEnergy' : 'transactionChips', { value: parts[1] });
+    return value === '+1 Tournament Bracelet' ? tr('transactionBracelet') : value.replace(/ENG/g, '⚡');
+  };
   const prefersReducedMotion = useReducedMotion();
   const [dashboardNotice, setDashboardNotice] = useState<CasinoNotice | null>(null);
   const dashboardNoticeTimerRef = useRef<number | null>(null);
-  const showDashboardNotice = useCallback((message: string, tone: CasinoNotice['tone'] = 'neutral') => {
+  const showDashboardNotice = useCallback((message: UiMessage, tone: CasinoNotice['tone'] = 'neutral') => {
     if (dashboardNoticeTimerRef.current !== null) window.clearTimeout(dashboardNoticeTimerRef.current);
     const key = Date.now();
     setDashboardNotice({ key, message, tone });
@@ -1031,7 +1044,7 @@ export function Web3Dashboard({
 
   const [dailyXpClaimedToday, setDailyXpClaimedToday] = useState(false);
   const [dailyClaimStatus, setDailyClaimStatus] = useState<'idle' | 'checking' | 'success' | 'error'>('idle');
-  const [dailyClaimMessage, setDailyClaimMessage] = useState('');
+  const [dailyClaimMessage, setDailyClaimMessage] = useState<UiMessage>('');
   const [dailyReward, setDailyReward] = useState<{ streak: number; xp: number; tickets: number; energy: number } | null>(null);
   const [showXpDetails, setShowXpDetails] = useState(false);
   const [showReferralDetails, setShowReferralDetails] = useState(false);
@@ -1095,7 +1108,7 @@ export function Web3Dashboard({
         setTournamentData(res.tournament);
       }
     } catch (err: any) {
-      showDashboardNotice(err instanceof Error ? err.message : 'Could not update registration.', 'danger');
+      showDashboardNotice(err instanceof Error ? err.message : uiMessage('registrationFailed'), 'danger');
     } finally {
       setTournRegistering(false);
     }
@@ -1143,10 +1156,10 @@ export function Web3Dashboard({
       });
       if (res?.tournament) {
         setTournamentData(res.tournament);
-        showDashboardNotice('Tournament updated successfully!', 'signal');
+        showDashboardNotice(uiMessage('tournamentUpdated'), 'signal');
       }
     } catch (err: any) {
-      showDashboardNotice(err instanceof Error ? err.message : 'Failed to update tournament.', 'danger');
+      showDashboardNotice(err instanceof Error ? err.message : uiMessage('tournamentUpdateFailed'), 'danger');
     } finally {
       setAdminSubmitting(false);
     }
@@ -1163,7 +1176,7 @@ export function Web3Dashboard({
         method: 'POST',
       });
       if (res?.success) {
-        showDashboardNotice(res.message || `Tournament announcement sent to ${res.notifiedCount} Telegram users!`, 'signal');
+        showDashboardNotice(res.message || uiMessage('announcementSentCount', { count: res.notifiedCount }), 'signal');
       }
     } catch (err: any) {
       showDashboardNotice(cleanErrorMessage(err), 'danger');
@@ -1181,11 +1194,11 @@ export function Web3Dashboard({
   const [matchmakingState, setMatchmakingState] = useState<'idle' | 'joining' | 'searching' | 'success'>('idle');
   const [queueLength, setQueueLength] = useState(1);
   const [queueSearchDeadlineAt, setQueueSearchDeadlineAt] = useState(0);
-  const [publicQueueError, setPublicQueueError] = useState('');
+  const [publicQueueError, setPublicQueueError] = useState<UiMessage>('');
   const [publicQueueCanceling, setPublicQueueCanceling] = useState(false);
   const [buyingTickets, setBuyingTickets] = useState(false);
   const [depositFlowStatus, setDepositFlowStatus] = useState<DepositFlowStatus>('idle');
-  const [depositStatusMessage, setDepositStatusMessage] = useState('');
+  const [depositStatusMessage, setDepositStatusMessage] = useState<UiMessage>('');
   const [pendingDeposits, setPendingDeposits] = useState<PendingDepositView[]>([]);
   const [depositRecoveryAttempt, setDepositRecoveryAttempt] = useState(0);
 
@@ -1198,7 +1211,7 @@ export function Web3Dashboard({
   const [privateRoomStatus, setPrivateRoomStatus] = useState<'idle' | 'waiting' | 'ready'>('idle');
   const [privateRoomCreateState, setPrivateRoomCreateState] = useState<'idle' | 'creating' | 'recovering' | 'waiting' | 'error'>('idle');
   const [privateRoomCanceling, setPrivateRoomCanceling] = useState(false);
-  const [privateRoomError, setPrivateRoomError] = useState('');
+  const [privateRoomError, setPrivateRoomError] = useState<UiMessage>('');
   const [privateRoomPlayersCount, setPrivateRoomPlayersCount] = useState(0);
   const [privateRoomPlayersList, setPrivateRoomPlayersList] = useState<PrivateRoomPlayer[]>([]);
   const [privateRoomHostUserId, setPrivateRoomHostUserId] = useState<string>('');
@@ -1258,13 +1271,13 @@ export function Web3Dashboard({
   const [isOpeningLootbox, setIsOpeningLootbox] = useState(false);
   const [vaultCardChoice, setVaultCardChoice] = useState<number | null>(null);
   const [isDailyRunExpanded, setIsDailyRunExpanded] = useState(false);
-  const [lootboxClaimMessage, setLootboxClaimMessage] = useState('');
+  const [lootboxClaimMessage, setLootboxClaimMessage] = useState<UiMessage>('');
   const [lootboxReward, setLootboxReward] = useState<{ type: string; tickets: number; energy: number; xp?: number; message: string } | null>(null);
   const [nftCheckState, setNftCheckState] = useState<'idle' | 'signing' | 'checking' | 'verified' | 'missing' | 'error'>(() => {
     const stored = readNftEventVerifications();
     return rawAddress && stored[rawAddress] ? 'verified' : 'idle';
   });
-  const [nftCheckMessage, setNftCheckMessage] = useState('');
+  const [nftCheckMessage, setNftCheckMessage] = useState<UiMessage>('');
   const privateRoomStreamRef = useRef<EventSource | null>(null);
   const syncRequestKeyRef = useRef<string>('');
   const launchRoomConsumedRef = useRef(false);
@@ -1318,7 +1331,7 @@ export function Web3Dashboard({
     if (tournamentData?.matches) {
       const matchInTourn = tournamentData.matches.find((m) => m.matchId === result.matchId);
       if (matchInTourn && matchInTourn.status === 'completed') {
-        setPublicQueueError('This tournament match is already completed.');
+        setPublicQueueError(uiMessage('queueMatchCompleted'));
         return false;
       }
     }
@@ -1376,7 +1389,7 @@ export function Web3Dashboard({
       return true;
     } catch (error) {
       openingPublicMatchRef.current = '';
-      setPublicQueueError(error instanceof Error ? error.message : 'Could not open the matched table.');
+      setPublicQueueError(error instanceof Error ? error.message : uiMessage('queueOpenFailed'));
       return false;
     }
   }, [currentUserId, onStartGame, onStartPokerGame, onStartBlackjackGame, pvpGameTab, tournamentData?.matches]);
@@ -1411,11 +1424,11 @@ export function Web3Dashboard({
   const [withdrawAmount, setWithdrawAmount] = useState('0.5');
   const [withdrawRequestState, setWithdrawRequestState] = useState<'idle' | 'confirming' | 'submitting'>('idle');
   const [withdrawRequestId, setWithdrawRequestId] = useState('');
-  const [withdrawStatusMessage, setWithdrawStatusMessage] = useState('');
+  const [withdrawStatusMessage, setWithdrawStatusMessage] = useState<UiMessage>('');
   const [withdrawStatusTone, setWithdrawStatusTone] = useState<'idle' | 'success' | 'refund' | 'error'>('idle');
   const [pendingWithdrawal, setPendingWithdrawal] = useState<null | { id: string; ticketAmount: number; tonAmount: number; status: 'pending'; createdAt: number; notificationStatus: 'queued' | 'sent' | 'failed' | 'missing'; lastChainCheckAt?: number | null }>(null);
   const [accountRefreshState, setAccountRefreshState] = useState<'idle' | 'refreshing' | 'success' | 'error'>('idle');
-  const [accountRefreshMessage, setAccountRefreshMessage] = useState('');
+  const [accountRefreshMessage, setAccountRefreshMessage] = useState<UiMessage>('');
   const [showAccountRefresh, setShowAccountRefresh] = useState(() => Boolean(localStorage.getItem(PENDING_DEPOSIT_STORAGE_KEY)));
   const effectiveXp = Math.max(activeProfile?.xp ?? 0, playerXp ?? 0);
   const displayXpNeeded = 400;
@@ -1427,7 +1440,10 @@ export function Web3Dashboard({
     setProfile((prev) => prev ? { ...prev, energy: nextEnergy } : prev);
     setFullProfile((prev) => prev ? { ...prev, energy: nextEnergy } : prev);
   };
-  const quests = fullProfile?.quests ?? [];
+  const quests = (fullProfile?.quests ?? []).map(quest => {
+    const keys = questMessageKeys[quest.id];
+    return keys ? { ...quest, title: tr(keys[0]), description: tr(keys[1]) } : quest;
+  });
   const dailyQuests = quests.filter((quest) => quest.kind === 'daily');
   const activeDailyQuests = dailyQuests.filter((quest) => !quest.completed);
   const completedDailyQuests = dailyQuests.filter((quest) => quest.completed);
@@ -1509,13 +1525,13 @@ export function Web3Dashboard({
       setPendingWithdrawal(activeRequest);
       if (result.request?.status === 'pending') {
         setWithdrawStatusTone('success');
-        setWithdrawStatusMessage('Successful');
+        setWithdrawStatusMessage(uiMessage('withdrawSuccessful'));
       } else if (result.request?.status === 'completed') {
         setWithdrawStatusTone('success');
-        setWithdrawStatusMessage('Successful — payout sent to your wallet.');
+        setWithdrawStatusMessage(uiMessage('withdrawSent'));
       } else if (result.request?.status === 'rejected') {
         setWithdrawStatusTone('refund');
-        setWithdrawStatusMessage('Refunded — tickets returned to your balance.');
+        setWithdrawStatusMessage(uiMessage('withdrawRefunded'));
       }
       return activeRequest;
     } finally {
@@ -1600,7 +1616,7 @@ export function Web3Dashboard({
     const stored = readNftEventVerifications();
     if (stored[rawAddress]) {
       setNftCheckState('verified');
-      setNftCheckMessage('Sticker holder verified.');
+      setNftCheckMessage(uiMessage('stickerVerified'));
     } else {
       setNftCheckState('idle');
       setNftCheckMessage('');
@@ -1719,7 +1735,7 @@ export function Web3Dashboard({
         localStorage.removeItem('redoapp_active_match');
       } catch {}
       resetPrivateRoomState();
-      setPrivateRoomError(result.status === 'cancelled' ? 'The waiting room was cancelled by the host.' : 'The private room has concluded.');
+      setPrivateRoomError(result.status === 'cancelled' ? uiMessage('roomCancelledHost') : uiMessage('roomConcluded'));
       return;
     }
 
@@ -1825,18 +1841,14 @@ export function Web3Dashboard({
         {/* Header */}
         <div className="flex justify-between items-center border-b border-slate-800 pb-2">
           <div className="flex items-center gap-1.5">
-            <span className="px-2 py-0.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase rounded-sm border border-black">
-              ROOM #{resolvedCode || 'PENDING'}
+            <span className="px-2 py-0.5 bg-[#ffcc00] text-black font-black text-[9px] uppercase rounded-sm border border-black">{tr("roomNumberUpper")}{resolvedCode || 'PENDING'}
             </span>
             {isCurrentPlayerHost && (
-              <span className="px-1.5 py-0.5 bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/40 font-mono text-[7.5px] font-bold uppercase rounded-sm">
-                👑 HOST
-              </span>
+              <span className="px-1.5 py-0.5 bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/40 font-mono text-[7.5px] font-bold uppercase rounded-sm">{tr("roomHost")}</span>
             )}
           </div>
           <span className="text-[#00ff66] font-mono font-black text-[9px]">
-            {roomPlayerCount}/{roomTargetPlayers} PLAYERS
-          </span>
+            {roomPlayerCount}/{roomTargetPlayers}{' '}{tr("players")}</span>
         </div>
 
         {/* Status Alert Banner */}
@@ -1848,16 +1860,16 @@ export function Web3Dashboard({
               : 'bg-[#00d2ff]/10 border-[#00d2ff]/40 text-[#00d2ff] animate-pulse'
         }`}>
           {roomIsStarting ? (
-            <div className="flex items-center gap-1.5 font-bold"><span>⏳</span><span>Locking seats and preparing the table…</span></div>
+            <div className="flex items-center gap-1.5 font-bold"><span>⏳</span><span>{tr("lockingSeats")}</span></div>
           ) : isCurrentPlayerHost ? (
             <div className="flex items-center gap-1.5 font-bold">
               <span>⏳</span>
-              <span>Waiting for {remainingSeats} more {remainingSeats === 1 ? 'player' : 'players'} — the table starts automatically when full.</span>
+              <span>{tr('waitingRoom', { count: remainingSeats })}</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 font-bold">
               <span>⏳</span>
-              <span>Connected to Room #{resolvedCode}! The table starts automatically when all seats are filled.</span>
+              <span>{tr('connectedRoom', { code: resolvedCode })}</span>
             </div>
           )}
         </div>
@@ -1878,7 +1890,7 @@ export function Web3Dashboard({
             }}
             className="flex-1 py-2 bg-[#00ff66] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black shadow-[1px_1px_0_#000] flex items-center justify-center gap-1 cursor-pointer"
           >
-            <span>INVITE FRIEND</span>
+            <span>{tr("inviteFriendUpper")}</span>
             <span>➔</span>
           </button>
           <button
@@ -1887,13 +1899,11 @@ export function Web3Dashboard({
               sound.playPop();
               if (resolvedCode) {
                 await copyTextSafely(resolvedCode);
-                showDashboardNotice(`Room code ${resolvedCode} copied.`, 'signal');
+                showDashboardNotice(uiMessage('roomCopiedCode', { code: resolvedCode }), 'signal');
               }
             }}
             className="px-3 py-2 bg-[#00d2ff] text-black text-[9px] font-black uppercase pixel-btn-interactive border border-black shadow-[1px_1px_0_#000] cursor-pointer"
-          >
-            Copy Code
-          </button>
+          >{tr("copyCode")}</button>
         </div>
 
         {/* Player Slots */}
@@ -1917,12 +1927,10 @@ export function Web3Dashboard({
                   <Avatar id={player ? player.avatarId : 'koala'} size={22} />
                   <div className="flex flex-col truncate">
                     <span className={`text-[8.5px] truncate ${isJoined ? 'font-bold text-white' : 'text-slate-500 italic'}`}>
-                      {player ? `${player.username}${isSelf ? ' (You)' : ''}` : `Slot ${idx + 1}: Open seat`}
+                      {player ? `${player.username}${isSelf ? tr('youUpper') : ''}` : tr('openSlot', { number: idx + 1 })}
                     </span>
                     {!isJoined && (
-                      <span className="text-[6.5px] text-slate-500 font-mono">
-                        (can join anytime)
-                      </span>
+                      <span className="text-[6.5px] text-slate-500 font-mono">{tr("canJoinAnytime")}</span>
                     )}
                   </div>
                 </div>
@@ -1931,7 +1939,7 @@ export function Web3Dashboard({
                     ? (isSlotHost ? 'bg-[#ffcc00] text-black' : 'bg-[#00ff66]/20 text-[#00ff66] border border-[#00ff66]/30')
                     : 'text-slate-500 border border-slate-800'
                 }`}>
-                  {isJoined ? (isSlotHost ? 'HOST' : 'READY') : 'OPEN'}
+                  {isJoined ? (isSlotHost ? 'HOST' : 'READY') : tr("open")}
                 </span>
               </div>
             );
@@ -1940,12 +1948,10 @@ export function Web3Dashboard({
 
         {/* Every private table starts automatically at its selected capacity. */}
         {roomIsStarting ? (
-          <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase">
-            ⏳ Starting table…
-          </div>
+          <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase">{tr("startingTable")}</div>
         ) : (
           <div className="w-full py-2.5 bg-slate-900/80 text-[#00d2ff] border border-[#00d2ff]/30 text-[8.5px] font-mono text-center uppercase animate-pulse">
-            ⏳ Waiting for {remainingSeats} more {remainingSeats === 1 ? 'player' : 'players'} — auto-start when room is full.
+            ⏳ {tr('waitingRoom', { count: remainingSeats })}
           </div>
         )}
 
@@ -1955,7 +1961,7 @@ export function Web3Dashboard({
           disabled={privateRoomCanceling}
           className="w-full py-1.5 bg-red-950/60 hover:bg-red-900/80 text-red-300 border border-red-900 text-[8px] font-bold uppercase pixel-btn-interactive disabled:opacity-50 cursor-pointer"
         >
-          {privateRoomCanceling ? 'Leaving Room...' : (isCurrentPlayerHost ? 'Cancel Room' : 'Leave Room')}
+          {privateRoomCanceling ? tr("leavingRoom") : (isCurrentPlayerHost ? 'Cancel Room' : 'Leave Room')}
         </button>
       </div>
     );
@@ -1964,11 +1970,11 @@ export function Web3Dashboard({
   const joinPrivateRoomByCode = useCallback((roomCodeInput?: string) => {
     const roomCodeToUse = (roomCodeInput || privateJoinCode || privateRoomCode).trim().toUpperCase();
     if (!roomCodeToUse) {
-      setPrivateRoomError('Enter or generate a room code first.');
+      setPrivateRoomError(uiMessage('roomEnterGenerate'));
       return Promise.resolve(false);
     }
     if (!authReady) {
-      const message = 'Session is still syncing with the backend. Try again in a moment.';
+      const message = uiMessage('sessionSyncRetry');
       setPrivateRoomError(message);
       return Promise.resolve(false);
     }
@@ -1982,10 +1988,10 @@ export function Web3Dashboard({
     };
     return apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(roomCodeToUse)}`, { timeoutMs: 6_000 }).then(async (preview) => {
       if (preview.stake > 0 && !(await requestCasinoConfirmation({
-        title: 'Authorize private table',
-        message: `Reserve ${preview.stake} TKT to join this private ${preview.gameType.toUpperCase()} table?`,
-        detail: 'The backend holds the stake only after confirmation and releases it if the table does not start.',
-        confirmLabel: 'RESERVE & JOIN',
+        title: uiMessage('authorizePrivateTable'),
+        message: uiMessage('reservePrivateJoin', { stake: preview.stake, game: preview.gameType.toUpperCase() }),
+        detail: uiMessage('privateHoldDetails'),
+        confirmLabel: uiMessage('reserveJoin'),
         tone: 'danger',
       }))) {
         throw new Error('join_cancelled');
@@ -2018,7 +2024,7 @@ export function Web3Dashboard({
         applyPrivateRoomJoin(result, roomCodeToUse);
         return true;
       } catch {}
-      const message = error instanceof Error ? error.message : 'Failed to join private room.';
+      const message = error instanceof Error ? error.message : uiMessage('roomJoinFailed');
       setPrivateRoomError(message);
       return false;
     });
@@ -2092,10 +2098,10 @@ export function Web3Dashboard({
     };
     apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(code)}`, { timeoutMs: 6_000 }).then(async (preview) => {
       if (preview.stake > 0 && !(await requestCasinoConfirmation({
-        title: 'Authorize invited table',
-        message: `Reserve ${preview.stake} TKT to join this private ${preview.gameType.toUpperCase()} table?`,
-        detail: 'This invite opens the existing room; the server remains authoritative for the ticket hold.',
-        confirmLabel: 'RESERVE & JOIN',
+        title: uiMessage('authorizeInvitedTable'),
+        message: uiMessage('reservePrivateJoin', { stake: preview.stake, game: preview.gameType.toUpperCase() }),
+        detail: uiMessage('invitedHoldDetails'),
+        confirmLabel: uiMessage('reserveJoin'),
         tone: 'danger',
       }))) {
         throw new Error('join_cancelled');
@@ -2120,7 +2126,7 @@ export function Web3Dashboard({
       joinPrivateRoomViaBridge(joinPayload).then((result) => {
         applyPrivateRoomJoin(result, code);
       }).catch(() => {
-        const message = error instanceof Error ? error.message : 'Failed to join private room.';
+        const message = error instanceof Error ? error.message : uiMessage('roomJoinFailed');
         setPrivateRoomError(message);
       });
     });
@@ -2262,7 +2268,7 @@ export function Web3Dashboard({
 
   const createPrivateRoom = async (overrideStake?: unknown, overrideTargetPlayers?: unknown) => {
     if (!authReady) {
-      setPrivateRoomError('Session is still syncing with the backend. Try again in a moment.');
+      setPrivateRoomError(uiMessage('sessionSyncRetry'));
       return;
     }
     // React passes a MouseEvent to a bare onClick handler. Never let an event
@@ -2278,15 +2284,15 @@ export function Web3Dashboard({
       return;
     }
     if (effectiveStake > 0 && goldenTickets < effectiveStake) {
-      const message = `You need at least ${effectiveStake} tickets to create a room with this stake.`;
+      const message = uiMessage('roomTicketsRequired', { amount: effectiveStake });
       setPrivateRoomError(message);
       return;
     }
     if (effectiveStake > 0 && !(await requestCasinoConfirmation({
-      title: 'Authorize private room',
-      message: `Reserve ${effectiveStake} TKT to create a private ${pvpGameTab.toUpperCase()} table?`,
-      detail: `${effectiveStake} TKT is required per player. The hold is released if the room is cancelled before play.`,
-      confirmLabel: 'RESERVE & CREATE',
+      title: uiMessage('authorizePrivateRoom'),
+      message: uiMessage('reservePrivateCreate', { stake: effectiveStake, game: pvpGameTab.toUpperCase() }),
+      detail: uiMessage('reservePrivateDetail', { stake: effectiveStake }),
+      confirmLabel: uiMessage('reserveCreate'),
       tone: 'danger',
     }))) return;
     if (privateRoomCreateInFlightRef.current) return;
@@ -2297,7 +2303,7 @@ export function Web3Dashboard({
       const me = await apiRequest<PlayerProfile>('/api/me', { timeoutMs: 8_000, retryOnNetworkError: false });
       verifiedUserId = me.userId || verifiedUserId;
     } catch (error) {
-      setPrivateRoomError(cleanErrorMessage(error, 'private-room') || 'Could not verify your game session. Try again.');
+      setPrivateRoomError(cleanErrorMessage(error, 'private-room') || uiMessage('roomSessionFailed'));
       return;
     }
     try {
@@ -2428,7 +2434,7 @@ export function Web3Dashboard({
     reconcilePrivateRoomCreate(pending).then((room) => {
       if (!room) {
         setPrivateRoomCreateState('error');
-        setPrivateRoomError('Room creation was interrupted. Tap Create Room to try again.');
+        setPrivateRoomError(uiMessage('roomCreateInterrupted'));
         return;
       }
       if (typeof room.availableTickets === 'number') setGoldenTickets(room.availableTickets);
@@ -2437,7 +2443,7 @@ export function Web3Dashboard({
       clearPendingPrivateRoomCreate();
     }).catch(() => {
       setPrivateRoomCreateState('error');
-      setPrivateRoomError('Could not recover room creation. Check your connection and retry.');
+      setPrivateRoomError(uiMessage('roomRecoverFailed'));
     });
   // Recovery is intentionally keyed only by authenticated identity; the
   // persisted operation supplies all immutable create parameters.
@@ -2476,7 +2482,7 @@ export function Web3Dashboard({
         setHeldTickets(me.heldTickets);
       }
     } catch (error) {
-      setPrivateRoomError(error instanceof Error ? error.message : 'Could not cancel the waiting room.');
+      setPrivateRoomError(error instanceof Error ? error.message : uiMessage('roomCancelFailed'));
       resetPrivateRoomState();
     } finally {
       setPrivateRoomCanceling(false);
@@ -2519,7 +2525,7 @@ export function Web3Dashboard({
         // Keep session recovery alive below; a lost cancel response cannot
         // strand a player in an unobservable state.
       }
-      setPublicQueueError('Checking public match status…');
+      setPublicQueueError(uiMessage('queueChecking'));
       setMatchmakingState((state) => state === 'success' ? state : 'searching');
     } finally {
       setPublicQueueCanceling(false);
@@ -2531,28 +2537,28 @@ export function Web3Dashboard({
       setBootstrapAttempt((prev) => prev + 1);
     }
     if (selectedStake > 0 && !walletConnected && !isLocalNetwork) {
-      const message = 'Connect wallet first for ticket-stake public matches.';
+      const message = uiMessage('queueWalletRequired');
       setPublicQueueError(message);
       return;
     }
     const requiredEnergy = selectedStake === 0 ? PUBLIC_FREE_MATCH_ENERGY_COST : PUBLIC_STAKE_MATCH_ENERGY_COST;
     if (energy.energy < requiredEnergy) {
       const message = selectedStake === 0
-        ? `You need ${PUBLIC_FREE_MATCH_ENERGY_COST} energy to join a free public game.`
-        : `You need ${PUBLIC_STAKE_MATCH_ENERGY_COST} energy to join a public game.`;
+        ? uiMessage('queueEnergyFree', { amount: PUBLIC_FREE_MATCH_ENERGY_COST })
+        : uiMessage('queueEnergyPaid', { amount: PUBLIC_STAKE_MATCH_ENERGY_COST });
       setPublicQueueError(message);
       return;
     }
     if (selectedStake > 0 && goldenTickets < selectedStake) {
-      const message = `You need at least ${selectedStake} tickets to join this queue. Deposit through your wallet first.`;
+      const message = uiMessage('queueTicketsRequired', { amount: selectedStake });
       setPublicQueueError(message);
       return;
     }
     if (selectedStake > 0 && !(await requestCasinoConfirmation({
-      title: 'Authorize public queue',
-      message: `Reserve ${selectedStake} TKT for this ${pvpGameTab.toUpperCase()} matchmaking queue?`,
-      detail: 'Matchmaking holds the stake server-side and releases it if the queue expires before a match starts.',
-      confirmLabel: 'RESERVE & SEARCH',
+      title: uiMessage('authorizePublicQueue'),
+      message: uiMessage('reservePublicSearch', { stake: selectedStake, game: pvpGameTab.toUpperCase() }),
+      detail: uiMessage('publicHoldDetails'),
+      confirmLabel: uiMessage('reserveSearch'),
       tone: 'danger',
     }))) return;
     sound.playShuffle();
@@ -2657,7 +2663,7 @@ export function Web3Dashboard({
         // The server may have accepted the request even when its response was
         // lost by Telegram/Render. Stay in recoverable searching state until
         // the authoritative status endpoint says idle, ready or expired.
-        setPublicQueueError('Connection delayed — checking your match…');
+        setPublicQueueError(uiMessage('queueDelayed'));
         return 'searching';
       });
     });
@@ -2666,12 +2672,12 @@ export function Web3Dashboard({
   const confirmPendingDeposit = async (pending: PendingDepositState, options?: { silent?: boolean }) => {
     if (!authReady || !getSessionToken()) {
       setDepositFlowStatus('failed');
-      setDepositStatusMessage('Your session is reconnecting. Please retry the deposit once it is ready.');
+      setDepositStatusMessage(uiMessage('depositReconnect'));
       return false;
     }
     setBuyingTickets(true);
     setDepositFlowStatus('waiting_chain');
-    setDepositStatusMessage(`Waiting for TON confirmation of ${pending.ticketAmount.toFixed(2)} tickets...`);
+    setDepositStatusMessage(uiMessage('depositWaitingAmount', { amount: pending.ticketAmount.toFixed(2) }));
     try {
       const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
         method: 'POST',
@@ -2689,9 +2695,9 @@ export function Web3Dashboard({
       clearPendingDeposit();
       autoResumedDepositRef.current = '';
       setDepositFlowStatus('confirmed');
-      setDepositStatusMessage(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`);
+      setDepositStatusMessage(uiMessage('depositConfirmedAmount', { amount: pending.ticketAmount.toFixed(2) }));
       if (!options?.silent) {
-        showDashboardNotice(`Deposit confirmed: +${pending.ticketAmount.toFixed(2)} tickets.`, 'signal');
+        showDashboardNotice(uiMessage('depositConfirmedAmount', { amount: pending.ticketAmount.toFixed(2) }), 'signal');
       }
       return true;
     } catch (e) {
@@ -2700,7 +2706,7 @@ export function Web3Dashboard({
       const transient = isTransientApiError(e);
       setDepositFlowStatus(transient ? 'waiting_chain' : 'failed');
       setDepositStatusMessage(transient
-        ? 'Payment sent. Balance confirmation will continue automatically.'
+        ? uiMessage('depositAutoConfirm')
         : message);
       await refreshPendingDeposits();
       if (transient) {
@@ -2723,7 +2729,7 @@ export function Web3Dashboard({
     if (autoResumedDepositRef.current === pending.intentId) return;
     autoResumedDepositRef.current = pending.intentId;
     setDepositFlowStatus('waiting_chain');
-    setDepositStatusMessage(`Pending TON deposit found for ${pending.ticketAmount.toFixed(2)} tickets. Resuming confirmation...`);
+    setDepositStatusMessage(uiMessage('depositResumingAmount', { amount: pending.ticketAmount.toFixed(2) }));
     confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
   }, [walletConnected, currentUserId, buyingTickets, authReady, depositRecoveryAttempt]);
 
@@ -2943,7 +2949,7 @@ export function Web3Dashboard({
   const updateAccountBalance = async () => {
     if (accountRefreshState === 'refreshing') return;
     setAccountRefreshState('refreshing');
-    setAccountRefreshMessage('Checking blockchain payments, balance and activity...');
+    setAccountRefreshMessage(uiMessage('accountChecking'));
     try {
       const result = await apiRequest<{
         confirmedCount: number;
@@ -2975,16 +2981,16 @@ export function Web3Dashboard({
       setAccountRefreshState('success');
       setAccountRefreshMessage(
         result.confirmedCount > 0
-          ? `Payment confirmed. +${result.confirmedCount} deposit credited; balance and activity updated.`
-          : 'Balance, activity and daily streak are up to date.'
+          ? uiMessage('accountDepositsConfirmed', { count: result.confirmedCount })
+          : uiMessage('accountUpToDate')
       );
       if (result.confirmedCount > 0) {
         setDepositFlowStatus('confirmed');
-        setDepositStatusMessage('Blockchain payment confirmed and tickets credited.');
+        setDepositStatusMessage(uiMessage('depositCredited'));
       }
     } catch (error) {
       setAccountRefreshState('error');
-      setAccountRefreshMessage(error instanceof Error ? error.message : 'Could not update account data.');
+      setAccountRefreshMessage(error instanceof Error ? error.message : uiMessage('accountUpdateFailed'));
     }
   };
 
@@ -3047,7 +3053,7 @@ export function Web3Dashboard({
       stream.close();
       localStorage.removeItem('redoapp_active_match');
       resetPrivateRoomState();
-      setPrivateRoomError('The waiting room was cancelled by the host.');
+      setPrivateRoomError(uiMessage('roomCancelledHost'));
     });
 
     stream.addEventListener('private-room-completed', () => {
@@ -3257,7 +3263,7 @@ export function Web3Dashboard({
     sound.playShuffle();
     setIsClaimingDaily(true);
     setDailyClaimStatus('checking');
-    setDailyClaimMessage('Checking daily reward...');
+    setDailyClaimMessage(uiMessage('dailyChecking'));
     const claimId = typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `daily-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -3349,7 +3355,7 @@ export function Web3Dashboard({
         flushSync(() => {
           setDailyXpClaimedToday(true);
           setDailyClaimStatus('success');
-          setDailyClaimMessage(`Day ${result.streak} reward received.`);
+          setDailyClaimMessage(uiMessage('dayRewardReceived', { day: result.streak }));
           setDailyReward({
             streak: result.streak || 1,
             xp: result.xpAwarded,
@@ -3373,7 +3379,7 @@ export function Web3Dashboard({
         flushSync(() => {
           setDailyXpClaimedToday(true);
           setDailyClaimStatus('success');
-          setDailyClaimMessage('Already claimed today.');
+          setDailyClaimMessage(uiMessage('dailyAlreadyClaimed'));
           setIsClaimingDaily(false);
         });
       }
@@ -3388,8 +3394,8 @@ export function Web3Dashboard({
     } catch (error) {
       setDailyClaimStatus('error');
       setDailyClaimMessage(isTransientApiError(error)
-        ? 'Could not confirm yet. Tap Check-in to retry.'
-        : error instanceof Error ? error.message : 'Daily check-in failed.');
+        ? uiMessage('dailyRetry')
+        : error instanceof Error ? error.message : uiMessage('dailyFailed'));
     } finally {
       setIsClaimingDaily(false);
     }
@@ -3402,7 +3408,7 @@ export function Web3Dashboard({
     setDailyReward(null);
     setIsClaimingDaily(false);
     setDailyClaimStatus('success');
-    setDailyClaimMessage('Reward collected.');
+    setDailyClaimMessage(uiMessage('dailyCollected'));
 
     // Ledger/profile reconciliation is useful but non-blocking. Local state
     // already reflects the committed response, so a failed refresh is silent
@@ -3439,8 +3445,8 @@ export function Web3Dashboard({
     const claimSafetyTimer = window.setTimeout(() => {
       setIsClaimingDaily(false);
       setDailyClaimStatus((current) => current === 'checking' ? 'error' : current);
-      setDailyClaimMessage((current) => current === 'Checking daily reward...'
-        ? 'Confirmation is taking longer than expected. Tap Check-in to recover the saved reward.'
+      setDailyClaimMessage((current) => typeof current !== 'string' && current.id === 'dailyChecking'
+        ? uiMessage('dailyRecovery')
         : current);
     }, 12_000);
     return () => window.clearTimeout(claimSafetyTimer);
@@ -3456,7 +3462,7 @@ export function Web3Dashboard({
     sound.playShuffle();
     setVaultCardChoice(cardIndex);
     setIsOpeningLootbox(true);
-    setLootboxClaimMessage('Opening chest...');
+    setLootboxClaimMessage(uiMessage('chestOpening'));
     const claimId = typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `lootbox-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -3541,13 +3547,13 @@ export function Web3Dashboard({
       try {
         const refreshed = await fetchFullProfile();
         if (refreshed && !refreshed.lootboxAvailable && refreshed.lootboxClaimedAt) {
-          setLootboxClaimMessage('Chest collected. Balance and energy are up to date.');
+          setLootboxClaimMessage(uiMessage('chestCollected'));
           return;
         }
       } catch {
         // Keep the actionable claim error below the button.
       }
-      setLootboxClaimMessage(error instanceof Error ? error.message : 'Could not open the chest. Please try again.');
+      setLootboxClaimMessage(error instanceof Error ? error.message : uiMessage('chestFailed'));
     } finally {
       setIsOpeningLootbox(false);
     }
@@ -3580,15 +3586,15 @@ export function Web3Dashboard({
         stored[rawAddress] = true;
         localStorage.setItem(NFT_EVENT_VERIFICATION_STORAGE_KEY, JSON.stringify(stored));
         setNftCheckState('verified');
-        setNftCheckMessage('Ayanami Plush sticker holder verified.');
+        setNftCheckMessage(uiMessage('ayanamiVerified'));
         return;
       }
 
       setNftCheckState('missing');
-      setNftCheckMessage('No Ayanami Plush sticker NFT was found on this wallet.');
+      setNftCheckMessage(uiMessage('ayanamiMissing'));
     } catch (error) {
       setNftCheckState('error');
-      setNftCheckMessage(error instanceof Error ? error.message : 'NFT verification failed.');
+      setNftCheckMessage(error instanceof Error ? error.message : uiMessage('nftFailed'));
     }
   };
 
@@ -3615,7 +3621,7 @@ export function Web3Dashboard({
               setPvpGameTab('uno');
               setCurrentTab('events');
               setEventsSubTab('stickers');
-              showDashboardNotice('Ayanami Plush is no longer detected in your wallet. Poker and Blackjack access is paused.', 'danger');
+              showDashboardNotice(uiMessage('ayanamiAccessPaused'), 'danger');
             }
           }
         } else {
@@ -3633,19 +3639,19 @@ export function Web3Dashboard({
 
   const buyTicketsWithTon = async () => {
     if (!walletConnected) {
-      showDashboardNotice('Please connect your wallet first.', 'danger');
+      showDashboardNotice(uiMessage('connectWalletNotice'), 'danger');
       return;
     }
     const amount = Number(depositAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      showDashboardNotice('Enter a deposit amount greater than 0.', 'danger');
+      showDashboardNotice(uiMessage('depositPositive'), 'danger');
       return;
     }
     sound.playPop();
     setShowAccountRefresh(true);
     setBuyingTickets(true);
     setDepositFlowStatus('creating');
-    setDepositStatusMessage('Preparing deposit request...');
+    setDepositStatusMessage(uiMessage('depositPreparing'));
     try {
       const intentPayload = { walletAddress: rawAddress, ticketAmount: amount };
       const bridgeIntent = createDepositIntentViaBridge(intentPayload);
@@ -3671,7 +3677,7 @@ export function Web3Dashboard({
         })
         .finally(() => window.clearTimeout(directIntentTimer));
       setDepositFlowStatus('awaiting_wallet');
-      setDepositStatusMessage(`Confirm ${intent.tonAmount.toFixed(2)} TON in your wallet for ${intent.ticketAmount.toFixed(2)} tickets.`);
+      setDepositStatusMessage(uiMessage('depositWalletAmount', { ton: intent.tonAmount.toFixed(2), tickets: intent.ticketAmount.toFixed(2) }));
       const transaction = await tonConnectUI.sendTransaction({
         // Keep this request browser-only: importing @ton/core into the Mini App
         // bundle pulls in Node Buffer assumptions and can crash older Telegram
@@ -3700,7 +3706,7 @@ export function Web3Dashboard({
       const transient = isTransientApiError(e) || message.includes('timed out') || message.includes('bridge failed');
       setDepositFlowStatus('failed');
       setDepositStatusMessage(transient
-        ? 'Could not prepare the deposit yet. No TON was sent. Tap Deposit to retry safely.'
+        ? uiMessage('depositPrepareRetry')
         : message);
       if (!transient) showDashboardNotice(message, 'danger');
     } finally {
@@ -3714,22 +3720,22 @@ export function Web3Dashboard({
     setWithdrawStatusTone('idle');
     if (pendingWithdrawal) {
       setWithdrawStatusTone('success');
-      setWithdrawStatusMessage('Successful');
+      setWithdrawStatusMessage(uiMessage('withdrawSuccessful'));
       return;
     }
     if (!walletConnected || !rawAddress) {
       setWithdrawStatusTone('error');
-      setWithdrawStatusMessage('Connect wallet first.');
+      setWithdrawStatusMessage(uiMessage('withdrawConnect'));
       return;
     }
     if (!Number.isFinite(amount) || amount < 0.5) {
       setWithdrawStatusTone('error');
-      setWithdrawStatusMessage('Minimum withdrawal is 0.5 tickets.');
+      setWithdrawStatusMessage(uiMessage('withdrawMinimum'));
       return;
     }
     if (amount > goldenTickets) {
       setWithdrawStatusTone('error');
-      setWithdrawStatusMessage('Insufficient available tickets.');
+      setWithdrawStatusMessage(uiMessage('withdrawInsufficient'));
       return;
     }
     const suffix = typeof crypto?.randomUUID === 'function'
@@ -3745,7 +3751,7 @@ export function Web3Dashboard({
     setShowAccountRefresh(true);
     setWithdrawRequestState('submitting');
     setWithdrawStatusTone('idle');
-    setWithdrawStatusMessage('Processing withdrawal request...');
+    setWithdrawStatusMessage(uiMessage('withdrawProcessing'));
     try {
       const created = await apiRequest<{ requestId: string; status: 'pending'; tonAmount: number }>('/api/tickets/withdraw-request', {
         method: 'POST',
@@ -3767,7 +3773,7 @@ export function Web3Dashboard({
         lastChainCheckAt: null,
       });
       setWithdrawStatusTone('success');
-      setWithdrawStatusMessage('Successful');
+      setWithdrawStatusMessage(uiMessage('withdrawSuccessful'));
       setWithdrawAmount('1');
       setWithdrawRequestState('idle');
       setWithdrawRequestId('');
@@ -3784,20 +3790,20 @@ export function Web3Dashboard({
       const transient = isTransientApiError(error);
       setWithdrawStatusTone(transient ? 'idle' : 'error');
       setWithdrawStatusMessage(transient
-        ? 'Checking request status...'
-        : error instanceof Error ? error.message : 'Could not create withdrawal request.');
+        ? uiMessage('withdrawChecking')
+        : error instanceof Error ? error.message : uiMessage('withdrawCreateFailed'));
       refreshPendingWithdrawal().then((recovered) => {
         if (recovered?.id === failedRequestId) {
           setWithdrawStatusTone('success');
-          setWithdrawStatusMessage('Successful');
+          setWithdrawStatusMessage(uiMessage('withdrawSuccessful'));
         } else if (recovered) {
           setWithdrawStatusTone('success');
-          setWithdrawStatusMessage('Successful');
+          setWithdrawStatusMessage(uiMessage('withdrawSuccessful'));
         }
       }).catch(() => {
         if (transient) {
           setWithdrawStatusTone('error');
-          setWithdrawStatusMessage('Could not confirm the request. Tap Withdraw to retry.');
+          setWithdrawStatusMessage(uiMessage('withdrawRetry'));
         }
       });
     }
@@ -3856,7 +3862,7 @@ export function Web3Dashboard({
         publicJoinAttemptRef.current += 1;
         setMatchmakingState('idle');
         setQueueSearchDeadlineAt(0);
-        setPublicQueueError('Matchmaking connection lost or timed out. Please try joining again.');
+        setPublicQueueError(uiMessage('queueConnectionLost'));
       }
     };
 
@@ -3978,10 +3984,10 @@ export function Web3Dashboard({
     ? Math.round((stats.gamesWon / stats.gamesPlayed) * 100) 
     : 0;
   const dashboardTabs = [
-    { id: 'profile', label: 'ME' },
-    { id: 'events', label: 'EVENTS' },
-    { id: 'pvp', label: 'PVP' },
-    { id: 'rewards', label: 'SHOP' },
+    { id: 'profile', label: tr('tabProfile') },
+    { id: 'events', label: tr('tabEvents') },
+    { id: 'pvp', label: tr('tabPvp') },
+    { id: 'rewards', label: tr('tabShop') },
   ] as const;
   const selectDashboardTab = (tabId: typeof currentTab) => {
     if (currentTab === tabId) return;
@@ -3993,7 +3999,7 @@ export function Web3Dashboard({
     <div style={pixelMaskStyle} data-network-section={currentTab} className="resistance-network rp-menu-shell w-full text-[#f8fafc] relative flex flex-col select-none">
       
       {/* 1. Tabs (Swapped to the top of the card) */}
-      <nav className="rp-network-nav" aria-label="Main menu">
+      <nav className="rp-network-nav" aria-label={tr("mainMenu")}>
         {dashboardTabs.map((tab) => {
           const active = currentTab === tab.id;
           return (
@@ -4016,7 +4022,7 @@ export function Web3Dashboard({
       </nav>
 
       <MenuProfile bannerTarget={currentTab === 'pvp' ? pvpGameTab : undefined} name={tgProfileName || userName || 'Guest'} photoUrl={tgPhotoUrl} avatar={selectedAvatar} level={displayLevel} xp={displayCurrentLevelXp} xpNeeded={displayXpNeeded} tickets={goldenTickets} chips={Math.round(activeProfile?.casinoChips || 0)}>
-        <div className="rp-menu-energy"><Zap aria-hidden="true" />ENERGY {energy.energy}/{energy.maxEnergy}</div>
+        <div className="rp-menu-energy"><Zap aria-hidden="true" />{tr("energy")}{' '}{energy.energy}/{energy.maxEnergy}</div>
         <div className="rp-account-actions">
           {onOpenRules && (
             <button
@@ -4026,9 +4032,7 @@ export function Web3Dashboard({
                 onOpenRules();
               }}
               className="px-2 py-1.5 bg-black text-[#00d2ff] border-2 border-black pixel-btn-interactive text-[9px] font-black uppercase font-mono tracking-wider"
-            >
-              Rules
-            </button>
+            >{tr("rules")}</button>
           )}
           {walletConnected && !dailyXpClaimedToday && (
             <button
@@ -4036,10 +4040,10 @@ export function Web3Dashboard({
               onClick={claimDailyXp}
               disabled={!authReady || isClaimingDaily}
               className="p-1 bg-[#00ff66] text-black border-2 border-black pixel-btn-interactive text-[8px] font-black uppercase font-mono tracking-wider flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-wait"
-              title="Claim daily XP check-in"
+              title={tr("claimDailyXP")}
             >
               {isClaimingDaily ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Gift className="w-3.5 h-3.5" />}
-              <span>{!authReady ? 'SYNC' : isClaimingDaily ? 'WAIT' : 'CLAIM'}</span>
+              <span>{!authReady ? tr("sync") : isClaimingDaily ? tr("wait") : tr("claimUpper")}</span>
             </button>
           )}
           <button
@@ -4055,18 +4059,14 @@ export function Web3Dashboard({
           >
             {isConnecting ? (
               <>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                SYNCING...
-              </>
+                <Loader2 className="w-3 h-3 animate-spin" />{tr("syncingUpper")}</>
             ) : walletConnected ? (
               <>
                 <Wallet className="w-3.5 h-3.5 text-black drop-shadow-[0_0_4px_rgba(0,255,102,0.95)]" />
               </>
             ) : (
               <>
-                <Wallet className="w-3 h-3 text-black" />
-                CONNECT
-              </>
+                <Wallet className="w-3 h-3 text-black" />{tr("connect")}</>
             )}
           </button>
         </div>
@@ -4074,7 +4074,7 @@ export function Web3Dashboard({
 
       {bootstrapState === 'error' && (
         <div className="flex items-center gap-2 bg-[#2a0d0d] border border-black px-3 py-2 text-[8px] leading-relaxed text-[#ffb3b3] font-mono">
-          <span className="flex-1">{cleanErrorMessage(bootstrapError, 'bootstrap')}</span>
+          <span className="flex-1">{translateGameLabel(cleanErrorMessage(bootstrapError, 'bootstrap'), tr)}</span>
           <button
             type="button"
             onClick={() => {
@@ -4082,9 +4082,7 @@ export function Web3Dashboard({
               setBootstrapAttempt((attempt) => attempt + 1);
             }}
             className="shrink-0 bg-[#ffcc00] px-2 py-1 text-black font-black uppercase border border-black"
-          >
-            Retry
-          </button>
+          >{tr("retry")}</button>
         </div>
       )}
 
@@ -4120,12 +4118,9 @@ export function Web3Dashboard({
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-lg shrink-0">🎮</span>
               <div className="min-w-0">
-                <div className="text-[10px] font-black uppercase text-[#00ff66] font-mono truncate">
-                  MATCH IN PROGRESS ({((matchToRejoin as any).gameType || 'uno').toUpperCase()})
+                <div className="text-[10px] font-black uppercase text-[#00ff66] font-mono truncate">{tr("matchProgressPrefix")}{((matchToRejoin as any).gameType || 'uno').toUpperCase()})
                 </div>
-                <div className="text-[8px] text-slate-300 font-mono truncate">
-                  Stake: {matchToRejoin.stake} TKT • Tap to rejoin table!
-                </div>
+                <div className="text-[8px] text-slate-300 font-mono truncate">{tr("stakeLabel")}{' '}{matchToRejoin.stake}{' '}{tr("tapRejoin")}</div>
               </div>
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -4144,13 +4139,11 @@ export function Web3Dashboard({
                   }, matchToRejoin!.stake);
                 }}
                 className="px-3 py-1.5 bg-[#00ff66] text-black font-black text-[9px] uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000] cursor-pointer"
-              >
-                RECONNECT ➔
-              </button>
+              >{tr("reconnect")}</button>
               <button
                 type="button"
                 onClick={handleDismissStaleMatch}
-                title="Dismiss match"
+                title={tr("dismissMatch")}
                 className="px-2 py-1.5 bg-red-900/60 hover:bg-red-800 text-white font-mono text-[9px] font-bold border border-black cursor-pointer"
               >
                 ✕
@@ -4173,11 +4166,11 @@ export function Web3Dashboard({
               <div className="rp-menu-me__modules space-y-3">
                 
                 <header className="rp-menu-operative-strip">
-                  <span><MenuIcon name="user" />OPERATIVE PROFILE</span>
-                  <strong>{tgProfileName ? `@${tgProfileName}` : 'Guest'}</strong>
-                  <small>OPERATIVE ID: {currentUserId}</small>
-                  {walletConnected && <span className="rp-menu-verified"><Wallet />Wallet connected</span>}
-                  {nftCheckState === 'verified' && <span className="rp-menu-verified"><Trophy />NFT holder verified</span>}
+                  <span><MenuIcon name="user" />{tr("operativeProfile")}</span>
+                  <strong>{tgProfileName ? `@${tgProfileName}` : tr("guest")}</strong>
+                  <small>{tr("operativeId")}{' '}{currentUserId}</small>
+                  {walletConnected && <span className="rp-menu-verified"><Wallet />{tr("walletConnected")}</span>}
+                  {nftCheckState === 'verified' && <span className="rp-menu-verified"><Trophy />{tr("nftVerified")}</span>}
                   <button
                     type="button"
                     onClick={connectWallet}
@@ -4185,7 +4178,7 @@ export function Web3Dashboard({
                     className="rp-menu-operative-wallet"
                   >
                     <Wallet aria-hidden="true" />
-                    {isConnecting ? 'SYNCING...' : walletConnected ? 'Disconnect Wallet' : 'Connect Wallet'}
+                    {isConnecting ? tr("syncingUpper") : walletConnected ? tr("disconnectWallet") : tr("connectWallet")}
                   </button>
                 </header>
 
@@ -4199,15 +4192,15 @@ export function Web3Dashboard({
                     }}
                     className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#00d2ff] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
                   >
-                    <span>XP PROGRESS & STATS</span>
-                    <span className="text-[6px] text-slate-400">{showXpDetails ? '▲ COLLAPSE' : '▼ SHOW'}</span>
+                    <span>{tr("xpStats")}</span>
+                    <span className="text-[6px] text-slate-400">{showXpDetails ? tr("collapse") : tr("show")}</span>
                   </button>
                   {showXpDetails && (
                     <div className="space-y-2 p-1.5 bg-slate-950/40 border border-t-0 border-black animate-fade-in">
                       <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
                         <div className="space-y-0.5">
                           <div className="flex justify-between items-center text-[6.5px] font-bold">
-                            <span className="text-slate-550 uppercase">XP Progress</span>
+                            <span className="text-slate-550 uppercase">{tr("xpProgress")}</span>
                             <span className="text-[#00d2ff]">{displayCurrentLevelXp}/{displayXpNeeded}</span>
                           </div>
                           <div className="w-full bg-slate-900 h-1.5 border border-black overflow-hidden">
@@ -4219,7 +4212,7 @@ export function Web3Dashboard({
                         </div>
                         <div className="text-right text-[6.5px] leading-tight font-mono">
                           <div className="text-slate-400">M {stats.gamesPlayed} · W {stats.gamesWon}</div>
-                          <div className="text-[#ffcc00]">WR {winRate}% · PVP {stats.realPvpGamesWon}</div>
+                          <div className="text-[#ffcc00]">{tr("winRateShort")}{' '}{winRate}% · PVP {stats.realPvpGamesWon}</div>
                         </div>
                       </div>
                       <div className="text-[6.5px] text-slate-550 text-left">
@@ -4231,8 +4224,8 @@ export function Web3Dashboard({
 
                 <div className="bg-black p-2 border border-black space-y-1.5">
                   <div className="flex justify-between items-center text-left">
-                    <span className="text-[7px] uppercase font-bold text-slate-400">Referral Program</span>
-                    <span className="text-[8px] font-black text-[#ffcc00]">{fullProfile?.referrals?.referralsActivated ?? 0} active</span>
+                    <span className="text-[7px] uppercase font-bold text-slate-400">{tr("referralProgram")}</span>
+                    <span className="text-[8px] font-black text-[#ffcc00]">{fullProfile?.referrals?.referralsActivated ?? 0}{' '}{tr("active")}</span>
                   </div>
                   <button
                     type="button"
@@ -4250,8 +4243,8 @@ export function Web3Dashboard({
                     }}
                     className="w-full py-1 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#ffcc00] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
                   >
-                    <span>INVITE LINK & STATS</span>
-                    <span className="text-[6px] text-slate-400">{showReferralDetails ? '▲ COLLAPSE' : '▼ SHOW'}</span>
+                    <span>{tr("inviteLinkStats")}</span>
+                    <span className="text-[6px] text-slate-400">{showReferralDetails ? tr("collapse") : tr("show")}</span>
                   </button>
                   {showReferralDetails && (
                     <div className="space-y-1.5 p-1.5 bg-slate-950/40 border border-t-0 border-black animate-fade-in">
@@ -4263,15 +4256,15 @@ export function Web3Dashboard({
                           }}
                           className="w-full py-1 bg-slate-900 text-[#9ed8ff] border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer"
                         >
-                          {fullProfileLoading ? 'Loading Details...' : 'Load Profile & Quests'}
+                          {fullProfileLoading ? tr("loadingDetails") : tr("loadProfileQuests")}
                         </button>
                       )}
                       <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                        <span className="text-slate-400 uppercase">Referral TKT Earnings</span>
+                        <span className="text-slate-400 uppercase">{tr("referralEarnings")}</span>
                         <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
                       </div>
                       <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                        <span className="text-slate-400 uppercase">Poker Referral Chips</span>
+                        <span className="text-slate-400 uppercase">{tr("pokerReferralChips")}</span>
                         <ChipValue amount={Math.round(pokerReferralChipEarnings)} iconClassName="w-3 h-3" className="font-black text-[#ffcc00]" />
                       </div>
                       
@@ -4285,46 +4278,42 @@ export function Web3Dashboard({
                             onClick={() => {
                               navigator.clipboard.writeText(activeProfile.referralLink);
                               sound.playPop();
-                              showDashboardNotice('Referral link copied.', 'signal');
+                              showDashboardNotice(uiMessage('referralCopied'), 'signal');
                             }}
                             className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
-                          >
-                            Copy
-                          </button>
+                          >{tr("copy")}</button>
                         </div>
                       ) : (
-                        <div className="text-[7px] text-slate-500 text-left">Sync Telegram to generate invite link</div>
+                        <div className="text-[7px] text-slate-500 text-left">{tr("syncInviteLink")}</div>
                       )}
 
                       <div className="space-y-1">
                         {fullProfileLoading && !fullProfile ? (
-                          <div className="text-[7.5px] text-slate-500 text-left">Loading referrals...</div>
+                          <div className="text-[7.5px] text-slate-500 text-left">{tr("loadingReferrals")}</div>
                         ) : !referralStats || referralStats.totalInvited === 0 ? (
-                          <div className="text-[7.5px] text-slate-550 text-left">No referrals yet.</div>
+                          <div className="text-[7.5px] text-slate-550 text-left">{tr("noReferrals")}</div>
                         ) : (
                           <>
                             <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                              <span className="text-slate-400 uppercase">Total Referral Network</span>
+                              <span className="text-slate-400 uppercase">{tr("referralNetwork")}</span>
                               <span className="text-slate-100 font-black">{referralStats.totalInvited}</span>
                             </div>
                             <div className="grid grid-cols-2 gap-1 text-[7px]">
                               <div className="bg-slate-950 border border-black px-1.5 py-1 text-left">
-                                <div className="text-[#00ff66] font-black uppercase text-[6.5px]">L1 Direct (2% Share)</div>
+                                <div className="text-[#00ff66] font-black uppercase text-[6.5px]">{tr("referralL1")}</div>
                                 <div className="text-slate-300 font-bold mt-0.5">
-                                  <span className="text-[#00ff66]">{referralStats.level1?.activated ?? 0}</span> / {referralStats.level1?.total ?? 0} active
-                                </div>
+                                  <span className="text-[#00ff66]">{referralStats.level1?.activated ?? 0}</span> / {referralStats.level1?.total ?? 0}{' '}{tr("active")}</div>
                               </div>
                               <div className="bg-slate-950 border border-black px-1.5 py-1 text-left">
-                                <div className="text-[#ffcc00] font-black uppercase text-[6.5px]">L2 Team (1% Share)</div>
+                                <div className="text-[#ffcc00] font-black uppercase text-[6.5px]">{tr("referralL2")}</div>
                                 <div className="text-slate-300 font-bold mt-0.5">
-                                  <span className="text-[#00ff66]">{referralStats.level2?.activated ?? 0}</span> / {referralStats.level2?.total ?? 0} active
-                                </div>
+                                  <span className="text-[#00ff66]">{referralStats.level2?.activated ?? 0}</span> / {referralStats.level2?.total ?? 0}{' '}{tr("active")}</div>
                               </div>
                             </div>
                             <div className="pt-1 space-y-1 text-left">
-                              <div className="text-[6.5px] uppercase font-bold text-slate-500">Network invited players</div>
+                              <div className="text-[6.5px] uppercase font-bold text-slate-500">{tr("invitedPlayers")}</div>
                               {referralInvites.length === 0 && !referralInvitesLoading ? (
-                                <div className="text-[7px] text-slate-500">The invite records are being restored or no detailed names are available yet.</div>
+                                <div className="text-[7px] text-slate-500">{tr("invitesRestoring")}</div>
                               ) : referralInvites.map((invite) => (
                                 <div key={invite.userId} className="flex items-center justify-between gap-2 bg-slate-950 border border-black px-1.5 py-1 text-[7px]">
                                   <div className="flex items-center gap-1.5 min-w-0">
@@ -4334,22 +4323,18 @@ export function Web3Dashboard({
                                     <span className="min-w-0 truncate text-slate-200">{invite.username}</span>
                                   </div>
                                   <span className={invite.status === 'activated' ? 'font-black text-[#00ff66]' : invite.status === 'pending' ? 'font-black text-[#ffcc00]' : 'font-black text-slate-400'}>
-                                    {invite.status === 'activated' ? 'ACTIVE' : invite.status.toUpperCase()}
+                                    {invite.status === 'activated' ? tr("activeUpper") : tr(invite.status === 'pending' ? 'referralPending' : 'referralRejected')}
                                   </span>
                                 </div>
                               ))}
                               {referralInvitesLoading && (
-                                <div className="text-[7px] text-slate-500">Loading invited players (up to 8 seconds)...</div>
+                                <div className="text-[7px] text-slate-500">{tr("loadingInvites")}</div>
                               )}
                               {referralInvitesError && (
-                                <button type="button" onClick={() => loadReferralInvites()} className="text-left text-[7px] text-[#ff8b8b] underline">
-                                  Could not load invite list. Tap to retry.
-                                </button>
+                                <button type="button" onClick={() => loadReferralInvites()} className="text-left text-[7px] text-[#ff8b8b] underline">{tr("inviteListFailed")}</button>
                               )}
                               {referralInviteCursor && !referralInvitesLoading && (
-                                <button type="button" onClick={() => loadReferralInvites(referralInviteCursor)} className="w-full border border-black bg-slate-900 py-1 text-[7px] font-black text-[#9ed8ff] uppercase pixel-btn-interactive">
-                                  Load more
-                                </button>
+                                <button type="button" onClick={() => loadReferralInvites(referralInviteCursor)} className="w-full border border-black bg-slate-900 py-1 text-[7px] font-black text-[#9ed8ff] uppercase pixel-btn-interactive">{tr("loadMore")}</button>
                               )}
                             </div>
                           </>
@@ -4366,18 +4351,18 @@ export function Web3Dashboard({
                     aria-expanded={isDailyRunExpanded}
                     className="w-full min-h-7 flex items-center justify-between gap-2 text-[7px] uppercase font-bold text-slate-400 text-left pixel-btn-interactive"
                   >
-                    <span>Daily Run · <strong className="text-[#00d2ff]">{completedDailyQuests.length}/6</strong></span>
+                    <span>{tr("dailyRun")}{' '}<strong className="text-[#00d2ff]">{completedDailyQuests.length}/6</strong></span>
                     <span className="flex items-center gap-2">
                       {(activeProfile?.tournamentBracelets || 0) > 0 && <span className="text-[#ffcc00]">⌁ ×{activeProfile?.tournamentBracelets}</span>}
-                      <span className="text-slate-200">{isDailyRunExpanded ? '⌃ Hide' : '⌄ Show all'}</span>
+                      <span className="text-slate-200">{isDailyRunExpanded ? tr("hide") : tr("showAll")}</span>
                     </span>
                   </button>
 
                   {false && (
                   <div className="border border-black bg-slate-950 p-2 text-left font-mono space-y-1.5">
                     <div className="flex justify-between items-center">
-                      <span className="text-[7px] font-bold text-slate-300">DAILY CHECK-IN</span>
-                      <span className="text-[6.5px] text-[#ffcc00]">STREAK: {activeProfile?.dailyStreak || 0}/7 DAYS</span>
+                      <span className="text-[7px] font-bold text-slate-300">{tr("dailyCheckinUpper")}</span>
+                      <span className="text-[6.5px] text-[#ffcc00]">{tr("streakLabel")}{' '}{activeProfile?.dailyStreak || 0}{tr("sevenDays")}</span>
                     </div>
                     <div className="grid grid-cols-7 gap-1">
                       {Array.from({ length: 7 }, (_, i) => {
@@ -4412,12 +4397,12 @@ export function Web3Dashboard({
                     <div className="bg-[#171027] border-2 border-[#9b51e0] p-2 font-mono shadow-[3px_3px_0_#000]">
                       <div className="flex items-start justify-between gap-2">
                         <div className="text-left leading-tight">
-                          <span className="text-[9px] font-black text-[#ffcc00] uppercase">Daily Vault unlocked</span>
-                          <p className="text-[6.5px] text-slate-300 mt-0.5">Choose 1 of 6 cards. Rare TKT: 0.1% · Bracelet: 0.5%</p>
+                          <span className="text-[9px] font-black text-[#ffcc00] uppercase">{tr("vaultUnlocked")}</span>
+                          <p className="text-[6.5px] text-slate-300 mt-0.5">{tr("vaultChances")}</p>
                         </div>
                         <span className="text-lg leading-none">🗝️</span>
                       </div>
-                      <div className="grid grid-cols-6 gap-1 mt-2" aria-label="Choose a Daily Vault card">
+                      <div className="grid grid-cols-6 gap-1 mt-2" data-vault="choose" aria-label={tr("chooseVaultCard")}>
                         {Array.from({ length: 6 }, (_, cardIndex) => {
                           const chosen = vaultCardChoice === cardIndex;
                           return (
@@ -4426,7 +4411,7 @@ export function Web3Dashboard({
                               type="button"
                               disabled={isOpeningLootbox || vaultCardChoice !== null}
                               onClick={() => openLootboxChest(cardIndex)}
-                              aria-label={`Choose vault card ${cardIndex + 1}`}
+                              aria-label={tr('chooseVaultCardNumber', { number: cardIndex + 1 })}
                               aria-pressed={chosen}
                               initial={prefersReducedMotion ? false : { opacity: 0, y: -24, rotate: (cardIndex - 2.5) * 4 }}
                               animate={prefersReducedMotion
@@ -4444,19 +4429,19 @@ export function Web3Dashboard({
                         })}
                       </div>
                       {lootboxClaimMessage && (
-                        <p className={`mt-1 text-[6px] leading-tight ${lootboxClaimMessage.includes('[') ? 'text-[#ff6666]' : 'text-[#00d2ff]'}`}>
-                          {lootboxClaimMessage}
+                        <p className={`mt-1 text-[6px] leading-tight ${(typeof lootboxClaimMessage === 'string' && lootboxClaimMessage.includes('[')) ? 'text-[#ff6666]' : 'text-[#00d2ff]'}`}>
+                          {renderMessage(lootboxClaimMessage)}
                         </p>
                       )}
                     </div>
                   )}
 
                   {!lootboxReady && dailyQuests.length > 0 && (
-                    <div className="border border-slate-800 bg-[#0d1020] px-2 py-1.5 font-mono overflow-hidden" aria-label="Locked Daily Vault">
+                    <div className="border border-slate-800 bg-[#0d1020] px-2 py-1.5 font-mono overflow-hidden" data-vault="locked" aria-label={tr("vaultLocked")}>
                       <div className="flex items-center justify-between gap-2">
                         <div className="text-left leading-tight">
-                          <span className="text-[8px] font-black text-slate-300 uppercase">Daily Vault</span>
-                          <p className="text-[6.5px] text-slate-500 mt-0.5">{6 - completedDailyQuests.length} more missions → choose 1 card.</p>
+                          <span className="text-[8px] font-black text-slate-300 uppercase">{tr("dailyVault")}</span>
+                          <p className="text-[6.5px] text-slate-500 mt-0.5">{tr('vaultMissions', { count: 6 - completedDailyQuests.length })}</p>
                         </div>
                         <span className="text-base opacity-50">🔒</span>
                       </div>
@@ -4473,9 +4458,9 @@ export function Web3Dashboard({
 
                   <div className="grid grid-cols-1 gap-1.5">
                     {fullProfileLoading && !fullProfile ? (
-                      <div className="text-[7.5px] text-slate-500 text-left">Loading quests...</div>
+                      <div className="text-[7.5px] text-slate-500 text-left">{tr("loadingQuests")}</div>
                     ) : quests.length === 0 ? (
-                      <div className="text-[7.5px] text-slate-500 text-left">No quests loaded.</div>
+                      <div className="text-[7.5px] text-slate-500 text-left">{tr("noQuests")}</div>
                     ) : (
                       <>
                         {primaryDailyQuest && (
@@ -4486,10 +4471,10 @@ export function Web3Dashboard({
                             transition={{ duration: 0.32 }}
                             className="border-2 border-[#00d2ff] bg-[#071827] p-2 text-left font-mono shadow-[2px_2px_0_#000]"
                           >
-                            <div className="flex justify-between items-center gap-2 text-[6.5px] font-black uppercase text-[#00d2ff]"><span>Next mission</span><span>{primaryDailyQuest.progress}/{primaryDailyQuest.target}</span></div>
+                            <div className="flex justify-between items-center gap-2 text-[6.5px] font-black uppercase text-[#00d2ff]"><span>{tr("nextMission")}</span><span>{primaryDailyQuest.progress}/{primaryDailyQuest.target}</span></div>
                             <div className="mt-1 flex items-center justify-between gap-2">
                               <div className="min-w-0"><div className="text-[9px] font-black text-white truncate">{primaryDailyQuest.title}</div><div className="text-[6.5px] text-slate-400 mt-0.5 leading-tight">{primaryDailyQuest.description}</div></div>
-                              <button type="button" onClick={() => launchDailyQuest(primaryDailyQuest.metric)} className="shrink-0 min-h-7 px-2.5 bg-[#00d2ff] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive">{primaryDailyQuest.metric === 'daily_checkin' ? 'Claim' : 'Play'}</button>
+                              <button type="button" onClick={() => launchDailyQuest(primaryDailyQuest.metric)} className="shrink-0 min-h-7 px-2.5 bg-[#00d2ff] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive">{primaryDailyQuest.metric === 'daily_checkin' ? tr("claim") : tr("play")}</button>
                             </div>
                             <div className="mt-1 text-[6.5px] text-[#8ceaff]">+{primaryDailyQuest.rewardXp} XP / +{formatEnergyValue(primaryDailyQuest.rewardEnergy)}</div>
                           </motion.div>
@@ -4501,13 +4486,13 @@ export function Web3Dashboard({
                           </button>
                         ))}
                         {!isDailyRunExpanded && queuedDailyQuests.length > visibleQueuedDailyQuests.length && (
-                          <button type="button" onClick={() => setIsDailyRunExpanded(true)} className="min-h-7 text-[6.5px] font-black uppercase text-slate-400 border border-slate-800 bg-black pixel-btn-interactive">+ {queuedDailyQuests.length - visibleQueuedDailyQuests.length} more missions</button>
+                          <button type="button" onClick={() => setIsDailyRunExpanded(true)} className="min-h-7 text-[6.5px] font-black uppercase text-slate-400 border border-slate-800 bg-black pixel-btn-interactive">{tr('moreMissions', { count: queuedDailyQuests.length - visibleQueuedDailyQuests.length })}</button>
                         )}
                         {isDailyRunExpanded && completedDailyQuests.length > 0 && (
-                          <div className="pt-1 text-[6.5px] font-black uppercase text-[#00ff66] tracking-wider">Completed today · {completedDailyQuests.length}</div>
+                          <div className="pt-1 text-[6.5px] font-black uppercase text-[#00ff66] tracking-wider">{tr("completedToday")}{' '}{completedDailyQuests.length}</div>
                         )}
                         {isDailyRunExpanded && completedDailyQuests.map((quest) => (
-                          <div key={quest.id} className="min-h-8 border border-[#00ff66]/30 bg-[#07301f] px-2 flex items-center justify-between gap-2 text-left font-mono"><span className="text-[7px] font-black text-slate-200 truncate">{quest.title}</span><span className="text-[6.5px] text-[#00ff66] shrink-0">✓ COMPLETE</span></div>
+                          <div key={quest.id} className="min-h-8 border border-[#00ff66]/30 bg-[#07301f] px-2 flex items-center justify-between gap-2 text-left font-mono"><span className="text-[7px] font-black text-slate-200 truncate">{quest.title}</span><span className="text-[6.5px] text-[#00ff66] shrink-0">{tr("completeCheck")}</span></div>
                         ))}
                       </>
                     )}
@@ -4534,7 +4519,7 @@ export function Web3Dashboard({
                   className="w-full py-1.5 bg-[#00d2ff] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {accountRefreshState === 'refreshing' && <Loader2 className="w-3 h-3 animate-spin" />}
-                  {accountRefreshState === 'refreshing' ? 'Updating Account...' : 'Update Balance & Activity'}
+                  {accountRefreshState === 'refreshing' ? tr("updatingAccount") : tr("updateAccount")}
                 </button>
                 {accountRefreshMessage && (
                   <div className={`text-[7px] leading-relaxed ${
@@ -4544,7 +4529,7 @@ export function Web3Dashboard({
                         ? 'text-[#8dffaf]'
                         : 'text-[#9ed8ff]'
                   }`}>
-                    {accountRefreshMessage}
+                    {renderMessage(accountRefreshMessage)}
                   </div>
                 )}
               </div>}
@@ -4556,18 +4541,12 @@ export function Web3Dashboard({
                     <Gift className="w-4 h-4" />
                   </div>
                   <div className="flex-1 leading-tight text-left">
-                    <h3 className="font-black text-[9px] text-slate-100 uppercase">
-                      Daily Check-in
-                    </h3>
-                    <p className="text-[7.5px] text-slate-400 font-sans mt-0.5">
-                      Check in daily to build your streak and get XP + Energy!
-                    </p>
+                    <h3 className="font-black text-[9px] text-slate-100 uppercase">{tr("dailyCheckin")}</h3>
+                    <p className="text-[7.5px] text-slate-400 font-sans mt-0.5">{tr("dailyCheckinDescription")}</p>
                   </div>
                   <div className="flex-shrink-0">
                     {dailyXpClaimedToday ? (
-                      <span className="text-[7px] text-[#00ff66] bg-slate-950 px-1.5 py-1 border border-black/40 uppercase font-black block">
-                        Claimed
-                      </span>
+                      <span className="text-[7px] text-[#00ff66] bg-slate-950 px-1.5 py-1 border border-black/40 uppercase font-black block">{tr("claimed")}</span>
                     ) : (
                       <button
                         type="button"
@@ -4576,7 +4555,7 @@ export function Web3Dashboard({
                         className="px-2 py-1 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black cursor-pointer disabled:opacity-60 disabled:cursor-wait flex items-center gap-1"
                       >
                         {isClaimingDaily && <Loader2 className="h-3 w-3 animate-spin" />}
-                        {!authReady ? 'Syncing' : isClaimingDaily ? 'Checking' : 'Check-in'}
+                        {!authReady ? tr("syncing") : isClaimingDaily ? tr("checking") : tr("checkin")}
                       </button>
                     )}
                   </div>
@@ -4590,15 +4569,15 @@ export function Web3Dashboard({
                         ? 'bg-[#062b12] text-[#8dffaf]'
                         : 'bg-[#08131f] text-[#9ed8ff]'
                   }`}>
-                    {dailyClaimMessage}
+                    {renderMessage(dailyClaimMessage)}
                   </div>
                 )}
 
                 {/* Daily Streak Grid */}
                 <div className="bg-slate-950 p-2 border border-black font-mono space-y-1.5">
                   <div className="flex justify-between items-center text-[7.5px] text-slate-400 font-black">
-                    <span>DAILY STREAK BOARD</span>
-                    <span className="text-[#00ff66]">CURRENT: {getStreakState().streak} DAYS</span>
+                    <span>{tr("streakBoard")}</span>
+                    <span className="text-[#00ff66]">{tr("currentLabel")}{' '}{getStreakState().streak}{' '}{tr("days")}</span>
                   </div>
                   <div className="grid grid-cols-7 gap-1">
                     {[1, 2, 3, 4, 5, 6, 7].map((day) => {
@@ -4622,7 +4601,7 @@ export function Web3Dashboard({
                               : 'bg-black border-black text-slate-600'
                           }`}
                         >
-                          <div className="text-[7px] font-black leading-none">DAY {day}</div>
+                          <div className="text-[7px] font-black leading-none">{tr("day")}{' '}{day}</div>
                           <div className="text-[5.5px] font-extrabold leading-none mt-1 scale-90 origin-center truncate text-slate-400" title={dayRewardText}>
                             {day === 7 ? '⚡ MAX' : `+${day === 1 || day === 2 ? 1 : day === 3 || day === 4 ? 2 : 3}E`}
                           </div>
@@ -4636,7 +4615,7 @@ export function Web3Dashboard({
               {/* Compressed Balance and Withdraw */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
                 <div className="space-y-1.5">
-                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">Withdraw Tickets</div>
+                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">{tr("withdrawTickets")}</div>
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -4654,7 +4633,7 @@ export function Web3Dashboard({
                         setWithdrawStatusMessage('');
                       }}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
-                      placeholder="Amount"
+                      placeholder={tr("amount")}
                     />
                     <button
                       type="button"
@@ -4662,13 +4641,13 @@ export function Web3Dashboard({
                       disabled={withdrawRequestState === 'submitting' || !!pendingWithdrawal}
                       className="px-3 py-1 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      {pendingWithdrawal ? 'Pending' : withdrawRequestState === 'submitting' ? 'Sending' : 'Withdraw'}
+                      {pendingWithdrawal ? tr("pending") : withdrawRequestState === 'submitting' ? tr("sending") : tr("withdraw")}
                     </button>
                   </div>
                   {withdrawRequestState === 'confirming' && (
                     <div className="space-y-1.5 border border-[#ffcc00] bg-[#231b05] p-2 text-[7px] text-[#ffe680]">
                       <div>
-                        Confirm withdrawal of <strong>{Number(withdrawAmount).toFixed(2)} TKT</strong> to the connected wallet?
+                        <Trans ns="game" i18nKey="withdrawalQuestion" values={{ amount: Number(withdrawAmount).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} components={{ strong: <strong /> }} />
                       </div>
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
@@ -4680,16 +4659,12 @@ export function Web3Dashboard({
                             setWithdrawStatusMessage('');
                           }}
                           className="border border-black bg-slate-800 py-1 text-[7px] font-black uppercase text-slate-200 pixel-btn-interactive"
-                        >
-                          Cancel
-                        </button>
+                        >{tr("cancelSentence")}</button>
                         <button
                           type="button"
                           onClick={confirmWithdrawal}
                           className="border border-black bg-[#ffcc00] py-1 text-[7px] font-black uppercase text-black pixel-btn-interactive"
-                        >
-                          Confirm withdrawal
-                        </button>
+                        >{tr("confirmWithdrawal")}</button>
                       </div>
                     </div>
                   )}
@@ -4703,13 +4678,13 @@ export function Web3Dashboard({
                             ? 'bg-[#062b12] text-[#8dffaf]'
                             : 'bg-[#08131f] text-[#9ed8ff]'
                     }`}>
-                      {withdrawStatusMessage}
+                      {renderError(withdrawStatusMessage)}
                     </div>
                   )}
                 </div>
 
                 <div className="pt-2 border-t border-black space-y-1.5">
-                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">Exchange</div>
+                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">{tr("exchange")}</div>
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -4718,14 +4693,14 @@ export function Web3Dashboard({
                       value={exchangeAmount}
                       onChange={(e) => setExchangeAmount(e.target.value)}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
-                      placeholder="Amount in TKT"
+                      placeholder={tr("amountTkt")}
                     />
                     <button
                       type="button"
                       disabled={!authReady || accountRefreshState === 'refreshing'}
                       onClick={() => {
                         const amount = Number(exchangeAmount);
-                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice('Enter a valid amount.', 'danger');
+                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice(uiMessage('validAmountNotice'), 'danger');
                         apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
                           method: 'POST',
                           body: JSON.stringify({ direction: 'tkt_to_chips', amount }),
@@ -4734,20 +4709,18 @@ export function Web3Dashboard({
                             setGoldenTickets(res.availableTickets);
                             if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
                             if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
-                            showDashboardNotice(`Exchanged ${amount} TKT for ${amount * 100} chips.`, 'signal');
+                            showDashboardNotice(uiMessage('exchangeToChips', { tickets: amount, chips: amount * 100 }), 'signal');
                           }
                         }).catch(e => showDashboardNotice(e.message, 'danger'));
                       }}
                       className="px-2 bg-purple-600 hover:bg-purple-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
-                    >
-                      Buy Chips
-                    </button>
+                    >{tr("buyChips")}</button>
                     <button
                       type="button"
                       disabled={!authReady || accountRefreshState === 'refreshing'}
                       onClick={() => {
                         const amount = Number(exchangeAmount);
-                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice('Enter a valid amount.', 'danger');
+                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice(uiMessage('validAmountNotice'), 'danger');
                         apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
                           method: 'POST',
                           body: JSON.stringify({ direction: 'chips_to_tkt', amount }),
@@ -4756,20 +4729,18 @@ export function Web3Dashboard({
                             setGoldenTickets(res.availableTickets);
                             if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
                             if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
-                            showDashboardNotice(`Exchanged ${amount * 100} chips for ${amount} TKT.`, 'signal');
+                            showDashboardNotice(uiMessage('exchangeToTickets', { tickets: amount, chips: amount * 100 }), 'signal');
                           }
                         }).catch(e => showDashboardNotice(e.message, 'danger'));
                       }}
                       className="px-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
-                    >
-                      Sell Chips
-                    </button>
+                    >{tr("sellChips")}</button>
                   </div>
-                  <div className="text-[6px] text-slate-500 uppercase">Rate: 1 TKT = 100 Chips</div>
+                  <div className="text-[6px] text-slate-500 uppercase">{tr("exchangeRate")}</div>
                 </div>
 
                 <div className="pt-2 border-t border-black space-y-1.5">
-                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">Deposit Tickets</div>
+                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">{tr("depositTickets")}</div>
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -4778,7 +4749,7 @@ export function Web3Dashboard({
                       value={depositAmount}
                       onChange={(e) => setDepositAmount(e.target.value)}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
-                      placeholder="Amount"
+                      placeholder={tr("amount")}
                     />
                     <button
                       type="button"
@@ -4790,7 +4761,7 @@ export function Web3Dashboard({
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
                         <>
-                          <span>DEPOSIT</span>
+                          <span>{tr("depositUpper")}</span>
                           <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
                         </>
                       )}
@@ -4806,23 +4777,21 @@ export function Web3Dashboard({
                         ? 'bg-[#2a0d0d] text-[#ff9a9a]'
                         : 'bg-[#08131f] text-[#9ed8ff]'
                   }`}>
-                    {depositStatusMessage}
+                    {renderError(depositStatusMessage)}
                   </div>
                 )}
 
                 {pendingDeposits.length > 0 && (
                   <div className="bg-[#12091e] border border-black p-2 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[8px] font-black uppercase text-[#d8a8ff]">Pending blockchain deposits</span>
+                      <span className="text-[8px] font-black uppercase text-[#d8a8ff]">{tr("pendingDeposits")}</span>
                       <button
                         type="button"
                         onClick={() => {
                           refreshPendingDeposits().catch(() => undefined);
                         }}
                         className="text-[7px] uppercase text-[#9ed8ff]"
-                      >
-                        Refresh
-                      </button>
+                      >{tr("refresh")}</button>
                     </div>
                     <div className="space-y-1.5">
                       {pendingDeposits.map((deposit) => {
@@ -4832,11 +4801,11 @@ export function Web3Dashboard({
                           <div key={deposit.id} className="border border-black bg-black/60 px-2 py-1.5 text-[7px] text-slate-250 space-y-1">
                             <div className="flex justify-between gap-2">
                               <span>{deposit.ticketAmount.toFixed(2)} TKT / {deposit.tonAmount.toFixed(2)} TON</span>
-                              <span className="text-[#ffcc99]">{deposit.confirmationAttempts} checks</span>
+                              <span className="text-[#ffcc99]">{deposit.confirmationAttempts}{' '}{tr("checks")}</span>
                             </div>
                             <div className="flex justify-between gap-2">
-                              <span>Created: {new Date(deposit.createdAt).toLocaleTimeString()}</span>
-                              <span>Expires: {new Date(deposit.expiresAt).toLocaleTimeString()}</span>
+                              <span>{tr("createdLabel")}{' '}{new Date(deposit.createdAt).toLocaleTimeString(locale)}</span>
+                              <span>{tr("expiresLabel")}{' '}{new Date(deposit.expiresAt).toLocaleTimeString(locale)}</span>
                             </div>
                             {deposit.lastVerificationError && (
                               <div className="text-[#ff9a9a]">{deposit.lastVerificationError}</div>
@@ -4850,9 +4819,7 @@ export function Web3Dashboard({
                                     confirmPendingDeposit(localPending).catch(() => undefined);
                                   }}
                                   className="px-2 py-1 bg-[#17324d] border border-black text-[#9ed8ff] uppercase"
-                                >
-                                  Retry now
-                                </button>
+                                >{tr("retryNow")}</button>
                               )}
                             </div>
                           </div>
@@ -4867,17 +4834,13 @@ export function Web3Dashboard({
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-1.5 font-mono text-[9px] flex-1 flex flex-col min-h-0">
                 <div className="flex justify-between items-center uppercase font-bold text-slate-450 pb-1 border-b border-black">
                   <span className="flex items-center gap-1.5 text-[8.5px]">
-                    <History className="w-3.5 h-3.5 text-[#00d2ff]" />
-                    Activity Log
-                  </span>
+                    <History className="w-3.5 h-3.5 text-[#00d2ff]" />{tr("activityLog")}</span>
                   <Globe className="w-3 h-3 text-slate-655" />
                 </div>
 
                 <div className="space-y-1 overflow-y-auto custom-scroll flex-1 max-h-[100px] pr-0.5">
                   {transactions.length === 0 ? (
-                    <div className="text-center py-4 text-slate-600 text-[8px] uppercase">
-                      No activity recorded yet
-                    </div>
+                    <div className="text-center py-4 text-slate-600 text-[8px] uppercase">{tr("noActivity")}</div>
                   ) : (
                     transactions.map((tx: any) => (
                       <div key={tx.id} className="flex justify-between items-center p-1 bg-black border border-black leading-tight text-[8px]">
@@ -4890,13 +4853,13 @@ export function Web3Dashboard({
                                 : 'bg-[#ff4b4b]'
                           }`}></span>
                           <div>
-                            <span className="text-slate-300 block">{tx.event}</span>
+                            <span className="text-slate-300 block">{translateGameLabel(String(tx.event || ''), tr)}</span>
                             <span className="text-slate-500 text-[7px]">
-                              {tx.time || (tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')}
+                              {tx.time || (tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : '')}
                             </span>
                           </div>
                         </div>
-                        <span className="font-extrabold text-slate-200">{String(tx.value).replace(/ENG/g, '⚡')}</span>
+                        <span className="font-extrabold text-slate-200">{formatLedgerValue(String(tx.value))}</span>
                       </div>
                     ))
                   )}
@@ -4927,9 +4890,7 @@ export function Web3Dashboard({
                       ? 'bg-[#00ff66]/20 text-[#00ff66] border-[#00ff66]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-black'
                       : 'text-slate-400 border-transparent hover:text-slate-200'
                   }`}
-                >
-                  ⚡ Ayanami event
-                </button>
+                >{tr("ayanamiEvent")}</button>
                 <button
                   type="button"
                   aria-pressed={eventsSubTab === 'tournaments'}
@@ -4942,9 +4903,7 @@ export function Web3Dashboard({
                       ? 'bg-[#ffcc00]/20 text-[#ffcc00] border-[#ffcc00]/40 shadow-[inset_1px_1px_rgba(255,255,255,0.1)] font-black'
                       : 'text-slate-400 border-transparent hover:text-slate-200'
                   }`}
-                >
-                  🏆 Tournaments
-                </button>
+                >{tr("tournaments")}</button>
               </div>
 
               {eventsSubTab === 'quests' ? (
@@ -4955,16 +4914,14 @@ export function Web3Dashboard({
                 <div className="relative mx-auto w-full max-w-[280px] aspect-square rounded bg-slate-950 border-2 border-black overflow-hidden shadow-[inset_0_0_15px_rgba(0,210,255,0.3)] group">
                   <img
                     src="/ayanami-plush.png"
-                    alt="Ayanami Plush Sticker Collection"
+                    alt={tr("ayanamiCollection")}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = '/logo-for-events.png';
                     }}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/30 to-transparent flex flex-col justify-end p-3 text-left">
-                    <span className="text-[8px] font-black text-[#00d2ff] font-mono uppercase tracking-wider">
-                      OFFICIAL NFT COLLECTION
-                    </span>
+                    <span className="text-[8px] font-black text-[#00d2ff] font-mono uppercase tracking-wider">{tr("officialCollection")}</span>
                     <h2 className="text-sm font-black text-white font-mono uppercase tracking-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
                       AYANAMI PLUSH
                     </h2>
@@ -4973,26 +4930,20 @@ export function Web3Dashboard({
 
                 {/* Title & Subtitle */}
                 <div className="space-y-1.5 font-mono">
-                  <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wide">
-                    AYANAMI PLUSH STICKER TOURNAMENT
-                  </h3>
-                  <p className="text-[9px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
-                    Exclusive seasonal championship for holders of at least 1 sticker NFT from the official Ayanami Plush collection on TON!
-                  </p>
+                  <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wide">{tr("ayanamiStickerTournament")}</h3>
+                  <p className="text-[9px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">{tr("ayanamiDescription")}</p>
                 </div>
 
                 {/* Winner Prize Pool Condition (Highlight Text in Red) */}
                 <div className="bg-red-950/40 border-2 border-red-600/70 p-3 rounded-sm text-center font-mono shadow-[inset_0_0_8px_rgba(255,0,0,0.2)]">
-                  <p className="text-[10px] font-black text-red-500 uppercase tracking-wide leading-relaxed drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
-                    The winners will share the prize pool generated from fees.
-                  </p>
+                  <p className="text-[10px] font-black text-red-500 uppercase tracking-wide leading-relaxed drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">{tr("winnersShare")}</p>
                 </div>
 
                 {/* Contract & Verification Section */}
                 <div className="bg-black/90 p-3 border border-black text-left text-[8px] font-mono space-y-2 text-slate-300 shadow-[inset_0_0_10px_rgba(0,0,0,0.5)]">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-400 font-mono">Target Collection:</span>
-                    <span className="text-[#00ff66] font-bold">1+ Sticker NFT</span>
+                    <span className="text-slate-400 font-mono">{tr("targetCollection")}</span>
+                    <span className="text-[#00ff66] font-bold">{tr("oneSticker")}</span>
                   </div>
                   <div className="pt-1.5 border-t border-slate-800 space-y-1.5">
                     <button
@@ -5003,8 +4954,8 @@ export function Web3Dashboard({
                       }}
                       className="w-full py-1.5 px-2 bg-slate-950 hover:bg-slate-900 border border-black text-[7.5px] text-[#00d2ff] font-mono font-bold flex justify-between items-center cursor-pointer select-none"
                     >
-                      <span>CONTRACT ADDRESS</span>
-                      <span className="text-[6px] text-slate-400">{showCollectionAddress ? '▲ COLLAPSE' : '▼ SHOW'}</span>
+                      <span>{tr("contractAddress")}</span>
+                      <span className="text-[6px] text-slate-400">{showCollectionAddress ? tr("collapse") : tr("show")}</span>
                     </button>
                     {showCollectionAddress && (
                       <div className="bg-slate-950 p-2 border border-black break-all leading-relaxed flex gap-2 items-center">
@@ -5016,12 +4967,10 @@ export function Web3Dashboard({
                           onClick={() => {
                             navigator.clipboard.writeText(NFT_COLLECTION_ADDRESS);
                             sound.playPop();
-                            showDashboardNotice('Collection address copied.', 'signal');
+                            showDashboardNotice(uiMessage('collectionCopied'), 'signal');
                           }}
                           className="px-2 py-0.5 bg-[#ffcc00] text-black border border-black text-[7px] font-black uppercase pixel-btn-interactive cursor-pointer flex-shrink-0"
-                        >
-                          Copy
-                        </button>
+                        >{tr("copy")}</button>
                       </div>
                     )}
                   </div>
@@ -5038,12 +4987,12 @@ export function Web3Dashboard({
                     }`}
                   >
                     {nftCheckState === 'signing'
-                      ? 'Signing...'
+                      ? tr("signing")
                       : nftCheckState === 'checking'
-                      ? 'Checking...'
+                      ? tr("checkingDots")
                       : nftCheckState === 'verified'
-                      ? '✓ Verified Holder'
-                      : 'Check Eligibility'}
+                      ? tr("verifiedHolder")
+                      : tr("checkEligibility")}
                   </button>
                   <button
                     type="button"
@@ -5052,16 +5001,14 @@ export function Web3Dashboard({
                       window.open(NFT_COLLECTION_URL, '_blank', 'noopener,noreferrer');
                     }}
                     className="py-2.5 bg-[#00d2ff] hover:bg-[#33dcff] text-black font-black text-[9.5px] uppercase tracking-wider pixel-btn-interactive border-2 border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000] font-mono"
-                  >
-                    Getgems Collection
-                  </button>
+                  >{tr("getgemsCollection")}</button>
                 </div>
 
                 {nftCheckMessage && (
                   <div className={`bg-black border border-black px-2.5 py-2 text-[8px] leading-relaxed font-mono text-left ${
                     nftCheckState === 'verified' ? 'text-[#00ff66]' : nftCheckState === 'missing' ? 'text-[#ffcc00]' : 'text-[#ffb3b3]'
                   }`}>
-                    {nftCheckMessage}
+                    {renderError(nftCheckMessage)}
                   </div>
                 )}
               </div>
@@ -5073,7 +5020,7 @@ export function Web3Dashboard({
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-[#ffcc00] font-black text-[9px] uppercase">
                       <Trophy className="w-3.5 h-3.5 text-[#ffcc00]" />
-                      <span>CHAMPIONS LEADERBOARD</span>
+                      <span>{tr("championsLeaderboard")}</span>
                     </div>
                     {tournamentLeaderboard.length > 0 && (
                       <button
@@ -5083,16 +5030,13 @@ export function Web3Dashboard({
                           setShowAllLeaderboardModal(true);
                         }}
                         className="text-[7.5px] font-bold text-[#00d2ff] hover:underline uppercase"
-                      >
-                        Show All ({tournamentLeaderboard.length}) ➔
+                      >{tr("showAllPrefix")}{tournamentLeaderboard.length}) ➔
                       </button>
                     )}
                   </div>
 
                   {tournamentLeaderboard.length === 0 ? (
-                    <div className="text-[7.5px] text-slate-400 italic py-1">
-                      No tournament victories recorded yet. Be the first champion!
-                    </div>
+                    <div className="text-[7.5px] text-slate-400 italic py-1">{tr("noChampions")}</div>
                   ) : (
                     <div className="grid grid-cols-3 gap-1.5 pt-1">
                       {tournamentLeaderboard.slice(0, 3).map((entry, idx) => {
@@ -5111,7 +5055,7 @@ export function Web3Dashboard({
                               {entry.username}
                             </span>
                             <span className="text-[7px] font-black text-[#00ff66]">
-                              {entry.winsCount} {entry.winsCount === 1 ? 'WIN' : 'WINS'}
+                              {entry.winsCount} {entry.winsCount === 1 ? tr("win") : tr("wins")}
                             </span>
                           </div>
                         );
@@ -5142,10 +5086,10 @@ export function Web3Dashboard({
                               ? 'bg-slate-700 text-white'
                               : 'bg-[#ffcc00] text-black'
                           }`}>
-                            {tournamentData.status === 'in_progress' ? 'LIVE NOW · IN PROGRESS' : tournamentData.status === 'finished' ? 'COMPLETED' : 'UPCOMING'}
+                            {tournamentData.status === 'in_progress' ? tr("tournamentLive") : tournamentData.status === 'finished' ? tr("completedUpper") : tr("upcoming")}
                           </span>
                         </div>
-                        <span className="rp-network-eyebrow">TRANSMISSION · TOURNAMENT</span>
+                        <span className="rp-network-eyebrow">{tr("tournamentTransmission")}</span>
                         <h2 className="text-xs font-black text-white uppercase">
                           {tournamentData.title}
                         </h2>
@@ -5156,7 +5100,7 @@ export function Web3Dashboard({
                     {/* Countdown Timer or Status */}
                     {tournamentData.status === 'upcoming' && (
                       <div className="bg-slate-950 p-3 border border-black text-center space-y-1">
-                        <span className="text-[7.5px] text-slate-400 uppercase font-mono">Starts in:</span>
+                        <span className="text-[7.5px] text-slate-400 uppercase font-mono">{tr("startsIn")}</span>
                         <div className="text-sm font-black text-[#00ff66] tracking-widest font-mono">
                           <TournamentCountdown startAt={tournamentData.startAt} onExpire={fetchTournamentData} />
                         </div>
@@ -5166,26 +5110,24 @@ export function Web3Dashboard({
                     {/* Rules & prize details */}
                     <div className="bg-black/80 p-2.5 border border-black space-y-1.5 text-[8px] text-slate-300">
                       <div className="flex justify-between items-center text-[#00d2ff]">
-                        <span className="font-bold uppercase">{tournamentData.prizeType === 'bear' ? 'PRIZE:' : 'NFT AWARD:'}</span>
+                        <span className="font-bold uppercase">{tournamentData.prizeType === 'bear' ? tr("prizeLabel") : tr("nftAward")}</span>
                         {tournamentData.prizeType === 'bear' ? (
-                          <span className="text-xl leading-none" role="img" aria-label="Teddy bear prize">🧸</span>
+                          <span className="text-xl leading-none" role="img" aria-label={tr("teddyPrize")}>🧸</span>
                         ) : (
                           <a
                             href={tournamentData.nftLink}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="underline hover:text-white font-bold"
-                          >
-                            View Prize NFT ➔
-                          </a>
+                          >{tr("viewPrize")}</a>
                         )}
                       </div>
                       <p className="text-slate-400 leading-relaxed font-sans">
                         {tournamentData.rules}
                       </p>
                       <div className="flex justify-between items-center text-[7.5px] pt-1 text-slate-400 border-t border-slate-900">
-                        <span>Entry Fee: <strong className={tournamentData.entryTicketCost > 0 ? "text-[#ffcc00]" : "text-[#00ff66]"}>{tournamentData.entryTicketCost > 0 ? `${tournamentData.entryTicketCost} TKT` : 'FREE ENTRY'}</strong></span>
-                        <span>Participants: <strong>{tournamentData.participants.length} / {tournamentData.maxPlayers}</strong></span>
+                        <span>{tr("entryFee")}{' '}<strong className={tournamentData.entryTicketCost > 0 ? "text-[#ffcc00]" : "text-[#00ff66]"}>{tournamentData.entryTicketCost > 0 ? `${tournamentData.entryTicketCost} TKT` : tr("freeEntry")}</strong></span>
+                        <span>{tr("participants")}{' '}<strong>{tournamentData.participants.length} / {tournamentData.maxPlayers}</strong></span>
                       </div>
                     </div>
 
@@ -5195,12 +5137,12 @@ export function Web3Dashboard({
                         <div className="flex items-center gap-2">
                           <ResistanceAvatar name={tournamentData.winnerName} fallbackAvatar={(tournamentData.winnerAvatar as any) || 'rabbit'} state="winner" size={34} />
                           <div>
-                            <span className="text-[7px] text-[#00ff66] font-bold block uppercase">PREVIOUS CHAMPION</span>
+                            <span className="text-[7px] text-[#00ff66] font-bold block uppercase">{tr("previousChampion")}</span>
                             <span className="text-[9px] font-black text-white">{tournamentData.winnerName}</span>
                           </div>
                         </div>
                         {tournamentData.prizeType === 'bear' ? (
-                          <span className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase border border-black" role="img" aria-label="Teddy bear prize">
+                          <span className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase border border-black" role="img" aria-label={tr("teddyPrize")}>
                             🧸
                           </span>
                         ) : (
@@ -5209,9 +5151,7 @@ export function Web3Dashboard({
                             target="_blank"
                             rel="noopener noreferrer"
                             className="px-2 py-1 bg-[#00ff66] text-black text-[7.5px] font-black uppercase pixel-btn-interactive border border-black"
-                          >
-                            Claimed Prize 🎁
-                          </a>
+                          >{tr("claimedPrize")}</a>
                         )}
                       </div>
                     )}
@@ -5221,11 +5161,9 @@ export function Web3Dashboard({
                       <div className="space-y-2 pt-2 border-t border-slate-800">
                         <div className="flex items-center justify-between">
                           <span className="text-[9px] font-black uppercase text-[#ffcc00] flex items-center gap-1">
-                            <Trophy className="w-3.5 h-3.5" /> ROUND {tournamentData.currentRound || 1} MATCH TABLES
-                          </span>
+                            <Trophy className="w-3.5 h-3.5" />{' '}{tr("round")}{' '}{tournamentData.currentRound || 1}{' '}{tr("matchTables")}</span>
                           <span className="text-[7.5px] text-slate-400 font-mono">
-                            {tournamentData.matches.length} TABLES LIVE
-                          </span>
+                            {tournamentData.matches.length}{' '}{tr("tablesLive")}</span>
                         </div>
 
                         <div className="space-y-2">
@@ -5250,18 +5188,16 @@ export function Web3Dashboard({
                                         : isMyMatch
                                         ? 'bg-[#00ff66] text-black border-black font-bold'
                                         : 'bg-slate-800 text-slate-300 border-slate-700'
-                                    }`}>
-                                      TABLE #{match.tableIndex} {match.round === 2 ? '(FINAL)' : `(R${match.round})`}
+                                    }`}>{tr("tableNumber")}{match.tableIndex} {match.round === 2 ? tr("final") : `(R${match.round})`}
                                     </span>
                                     {match.status === 'completed' ? (
-                                      <span className="text-[#00ff66] font-bold">✓ COMPLETED</span>
+                                      <span className="text-[#00ff66] font-bold">{tr("completedCheck")}</span>
                                     ) : (
-                                      <span className="text-[#ffcc00] animate-pulse">● PLAYING</span>
+                                      <span className="text-[#ffcc00] animate-pulse">{tr("playing")}</span>
                                     )}
                                   </div>
                                   <span className="text-slate-400">
-                                    {match.playerIds.length} Players
-                                  </span>
+                                    {match.playerIds.length}{' '}{tr("playersSentence")}</span>
                                 </div>
 
                                 {/* Table Players List */}
@@ -5292,11 +5228,11 @@ export function Web3Dashboard({
                                         <div className="flex items-center gap-1 truncate">
                                           <ResistanceAvatar name={pObj?.username || pid} fallbackAvatar={(pObj?.avatarId as any) || 'rabbit'} state={isWinner ? 'winner' : 'online'} size={24} />
                                           <span className="truncate font-bold">
-                                            {pObj?.username || pid.replace(/^tg:/, '')} {isMe ? '(You)' : ''}
+                                            {pObj?.username || pid.replace(/^tg:/, '')} {isMe ? tr("you") : ''}
                                           </span>
                                         </div>
                                         {isWinner ? (
-                                          <span className="font-black text-[7px] bg-[#00ff66] text-black px-1 py-0.2 rounded-xs">WIN</span>
+                                          <span className="font-black text-[7px] bg-[#00ff66] text-black px-1 py-0.2 rounded-xs">{tr("win")}</span>
                                         ) : wins > 0 ? (
                                           <span className="text-[7px] text-[#ffcc00] font-bold">{wins}W</span>
                                         ) : null}
@@ -5338,7 +5274,7 @@ export function Web3Dashboard({
                                     }}
                                     className="w-full py-2 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
                                   >
-                                    <span>🎮</span> ENTER MATCH TABLE #{match.tableIndex} ➔
+                                    <span>🎮</span>{' '}{tr("enterMatchTable")}{match.tableIndex} ➔
                                   </button>
                                 )}
 
@@ -5351,7 +5287,7 @@ export function Web3Dashboard({
                                     }}
                                     className="w-full py-1.5 bg-[#ffcc00] hover:bg-[#e6b800] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] flex items-center justify-center gap-1.5"
                                   >
-                                    <span>👁️</span> SPECTATE TABLE #{match.tableIndex} ➔
+                                    <span>👁️</span>{' '}{tr("spectateTable")}{match.tableIndex} ➔
                                   </button>
                                 )}
                               </div>
@@ -5374,10 +5310,10 @@ export function Web3Dashboard({
                         }`}
                       >
                         {tournRegistering
-                          ? 'Updating...'
+                          ? tr("updating")
                           : tournamentData.isRegistered
-                          ? `Cancel Registration ${tournamentData.entryTicketCost > 0 ? `(Refund ${tournamentData.entryTicketCost} TKT)` : ''}`
-                          : `Register for Tournament ${tournamentData.entryTicketCost > 0 ? `(${tournamentData.entryTicketCost} TKT)` : '(FREE)'}`}
+                          ? tr(tournamentData.entryTicketCost > 0 ? 'cancelTournamentPaid' : 'cancelTournamentFree', { amount: tournamentData.entryTicketCost })
+                          : tr(tournamentData.entryTicketCost > 0 ? 'registerTournamentPaid' : 'registerTournamentFree', { amount: tournamentData.entryTicketCost })}
                       </button>
                     ) : (() => {
                       const myActiveMatch = tournamentData.matches?.find(
@@ -5421,7 +5357,7 @@ export function Web3Dashboard({
                             }}
                             className="w-full py-2.5 bg-[#00ff66] text-black font-black text-[9.5px] uppercase pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000] animate-pulse"
                           >
-                            <span>🎮</span> ENTER {myActiveMatch.round === 2 ? 'FINAL TABLE' : `MATCH TABLE #${myActiveMatch.tableIndex}`} ➔
+                            <span>🎮</span>{' '}{tr("enter")}{' '}{myActiveMatch.round === 2 ? tr("finalTable") : tr('matchTableNumber', { number: myActiveMatch.tableIndex })} ➔
                           </button>
                         );
                       }
@@ -5429,22 +5365,20 @@ export function Web3Dashboard({
                       if (myCompletedMatch) {
                         return (
                           <div className="text-center py-2 text-slate-400 text-[8px] uppercase font-mono bg-black/50 border border-slate-800 rounded">
-                            {myCompletedMatch.winnerId === currentUserId ? '🏆 You won your table! Waiting for next round...' : '❌ Match completed. You were eliminated.'}
+                            {myCompletedMatch.winnerId === currentUserId ? tr("wonTable") : tr("eliminatedNotice")}
                           </div>
                         );
                       }
 
                       return (
-                        <div className="text-center py-2 text-slate-400 text-[8px] uppercase font-mono bg-black/50 border border-slate-800 rounded">
-                          👀 SPECTATING LIVE TOURNAMENT BRACKET
-                        </div>
+                        <div className="text-center py-2 text-slate-400 text-[8px] uppercase font-mono bg-black/50 border border-slate-800 rounded">{tr("spectatingBracket")}</div>
                       );
                     })()}
                   </>
                 ) : (
                   <div className="text-center py-6 text-slate-400 text-[9px] uppercase font-mono space-y-2 bg-slate-950/60 p-4 border border-slate-800 rounded">
-                    <div className="text-xs font-black text-[#ffcc00]">⏳ NO ACTIVE TOURNAMENT</div>
-                    <p className="text-[8px] text-slate-400">There is currently no active or upcoming tournament. The admin will schedule and launch the next tournament.</p>
+                    <div className="text-xs font-black text-[#ffcc00]">{tr("noTournament")}</div>
+                    <p className="text-[8px] text-slate-400">{tr("noTournamentDescription")}</p>
                   </div>
                 )}
 
@@ -5452,13 +5386,13 @@ export function Web3Dashboard({
                 {isUserAdmin(profile?.telegramUsername) && (
                   <div className="mt-4 pt-3 border-t-2 border-[#ffcc00] space-y-2 bg-[#1a1608] p-3 border border-black font-mono">
                     <div className="flex items-center justify-between text-[#ffcc00] font-black text-[9px] uppercase">
-                      <span>⚙️ Admin Tournament Manager</span>
+                      <span>{tr("adminTournament")}</span>
                       <span>@allin_gram</span>
                     </div>
                     <div className="space-y-2 text-[8px]">
                       {/* Tournament Game Discipline Selector */}
                       <div>
-                        <label className="text-[7px] text-slate-400 block mb-0.5 font-bold">TOURNAMENT DISCIPLINE (GAME TYPE)</label>
+                        <label className="text-[7px] text-slate-400 block mb-0.5 font-bold">{tr("tournamentDiscipline")}</label>
                         <div className="grid grid-cols-3 gap-1 font-bold text-[7.5px]">
                           <button
                             type="button"
@@ -5519,35 +5453,31 @@ export function Web3Dashboard({
 
                       <input
                         type="text"
-                        placeholder="Tournament Title (e.g. WEEKLY SMASH CHAMPIONSHIP)"
+                        placeholder={tr("tournamentTitlePlaceholder")}
                         value={adminTitle}
                         onChange={(e) => setAdminTitle(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
                       />
                       <div>
-                        <label className="text-[7px] text-slate-400 block mb-0.5 font-bold">PRIZE TYPE</label>
+                        <label className="text-[7px] text-slate-400 block mb-0.5 font-bold">{tr("prizeType")}</label>
                         <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
                           <button
                             type="button"
                             aria-pressed={adminPrizeType === 'nft'}
                             onClick={() => setAdminPrizeType('nft')}
                             className={`min-h-11 border transition-all cursor-pointer ${adminPrizeType === 'nft' ? 'bg-[#00d2ff] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
-                          >
-                            NFT PRIZE
-                          </button>
+                          >{tr("nftPrize")}</button>
                           <button
                             type="button"
                             aria-pressed={adminPrizeType === 'bear'}
                             onClick={() => setAdminPrizeType('bear')}
                             className={`min-h-11 border transition-all cursor-pointer ${adminPrizeType === 'bear' ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
-                          >
-                            🧸 TEDDY BEAR
-                          </button>
+                          >{tr("teddyBear")}</button>
                         </div>
                       </div>
                       <input
                         type="text"
-                        placeholder="NFT prize link (e.g. https://t.me/...)"
+                        placeholder={tr("nftLinkPlaceholder")}
                         value={adminNftLink}
                         onChange={(e) => setAdminNftLink(e.target.value)}
                         disabled={adminPrizeType === 'bear'}
@@ -5555,7 +5485,7 @@ export function Web3Dashboard({
                       />
                       <div className="grid grid-cols-2 gap-1.5">
                         <div>
-                          <label className="text-[7px] text-slate-400 block mb-0.5">START TIMER (MINUTES)</label>
+                          <label className="text-[7px] text-slate-400 block mb-0.5">{tr("startTimer")}</label>
                           <input
                             type="number"
                             placeholder="60"
@@ -5565,11 +5495,11 @@ export function Web3Dashboard({
                           />
                         </div>
                         <div>
-                          <label className="text-[7px] text-slate-400 block mb-0.5">ENTRY FEE (TICKETS / TKT)</label>
+                          <label className="text-[7px] text-slate-400 block mb-0.5">{tr("entryFeeTickets")}</label>
                           <input
                             type="number"
                             step="0.1"
-                            placeholder="0 = Free"
+                            placeholder={tr("zeroFree")}
                             value={adminTicketCost}
                             onChange={(e) => setAdminTicketCost(e.target.value)}
                             className="w-full bg-black border border-black text-[#00ff66] font-bold px-2 py-1 focus:outline-none"
@@ -5578,30 +5508,26 @@ export function Web3Dashboard({
                       </div>
 
                       <div>
-                        <label className="text-[7px] text-slate-400 block mb-0.5">MATCH FORMAT (WINS TO ADVANCE)</label>
+                        <label className="text-[7px] text-slate-400 block mb-0.5">{tr("matchFormat")}</label>
                         <div className="grid grid-cols-2 gap-1 font-bold text-[7.5px]">
                           <button
                             type="button"
                             aria-pressed={adminWinsRequired === 1}
                             onClick={() => setAdminWinsRequired(1)}
                             className={`py-1 border text-center ${adminWinsRequired === 1 ? 'bg-[#00ff66] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
-                          >
-                            1 WIN (SINGLE)
-                          </button>
+                          >{tr("singleWin")}</button>
                           <button
                             type="button"
                             aria-pressed={adminWinsRequired === 2}
                             onClick={() => setAdminWinsRequired(2)}
                             className={`py-1 border text-center ${adminWinsRequired === 2 ? 'bg-[#ffcc00] text-black border-black font-black' : 'bg-black text-slate-400 border-slate-800'}`}
-                          >
-                            2 WINS (BEST OF 3)
-                          </button>
+                          >{tr("twoWins")}</button>
                         </div>
                       </div>
 
                       {/* Quick Timer Presets */}
                       <div className="flex gap-1 items-center pt-0.5 flex-wrap">
-                        <span className="text-[7px] text-slate-400">Timer:</span>
+                        <span className="text-[7px] text-slate-400">{tr("timerLabel")}</span>
                         <button
                           type="button"
                             aria-pressed={adminMinutes === '5'}
@@ -5638,15 +5564,13 @@ export function Web3Dashboard({
 
                       {/* Quick Ticket Presets */}
                       <div className="flex gap-1 items-center pt-0.5 flex-wrap">
-                        <span className="text-[7px] text-slate-400">Fee:</span>
+                        <span className="text-[7px] text-slate-400">{tr("feeLabel")}</span>
                         <button
                           type="button"
                             aria-pressed={adminTicketCost === '0'}
                             onClick={() => setAdminTicketCost('0')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0' ? 'bg-[#00ff66] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
-                        >
-                          Free
-                        </button>
+                        >{tr("free")}</button>
                         <button
                           type="button"
                             aria-pressed={adminTicketCost === '0.5'}
@@ -5675,7 +5599,7 @@ export function Web3Dashboard({
 
                       <input
                         type="text"
-                        placeholder="Rules / Conditions (e.g. 10s turn timer. Single elimination)"
+                        placeholder={tr("rulesPlaceholder")}
                         value={adminRules}
                         onChange={(e) => setAdminRules(e.target.value)}
                         className="w-full bg-black border border-black text-slate-200 px-2 py-1.5 focus:outline-none"
@@ -5687,7 +5611,7 @@ export function Web3Dashboard({
                           disabled={adminSubmitting}
                           className="w-full py-2 bg-[#ffcc00] text-black font-black text-[7.5px] min-[360px]:text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
                         >
-                          {adminSubmitting ? 'Updating...' : tournamentData ? 'Update Tourn' : 'Create Tourn'}
+                          {adminSubmitting ? tr("updating") : tournamentData ? tr("updateTournament") : tr("createTournament")}
                         </button>
                       </div>
 
@@ -5697,7 +5621,7 @@ export function Web3Dashboard({
                         disabled={adminNotifying || adminSubmitting}
                         className="w-full py-2 bg-[#00d2ff] text-black font-black text-[8px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50"
                       >
-                        {adminNotifying ? 'Sending Notification...' : '📢 Send Tournament Notification (Telegram)'}
+                        {adminNotifying ? tr("sendingNotification") : tr("sendTournamentNotification")}
                       </button>
                     </div>
                   </div>
@@ -5708,11 +5632,9 @@ export function Web3Dashboard({
                   <div className="mt-4 pt-3 border-t-2 border-slate-800 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[9px] font-black uppercase text-[#00d2ff] flex items-center gap-1">
-                        <Trophy className="w-3.5 h-3.5 text-[#00d2ff]" /> PAST TOURNAMENTS & CHAMPIONS
-                      </span>
+                        <Trophy className="w-3.5 h-3.5 text-[#00d2ff]" />{' '}{tr("pastTournaments")}</span>
                       <span className="text-[7.5px] text-slate-400 font-mono">
-                        {pastTournaments.length} COMPLETED
-                      </span>
+                        {pastTournaments.length}{' '}{tr("completedUpper")}</span>
                     </div>
 
                     <div className="space-y-2">
@@ -5732,20 +5654,18 @@ export function Web3Dashboard({
                               <span className="font-bold text-white uppercase truncate">{past.title}</span>
                             </div>
                             <span className="text-slate-400 flex-shrink-0 text-[7px]">
-                              {past.finishedAt ? new Date(past.finishedAt).toLocaleDateString() : 'Completed'}
+                              {past.finishedAt ? new Date(past.finishedAt).toLocaleDateString(locale) : tr("completed")}
                             </span>
                           </div>
                           <div className="flex items-center justify-between text-[8px] bg-black/60 p-1.5 border border-slate-900 rounded">
                             <div className="flex items-center gap-1.5">
                               <ResistanceAvatar name={past.winnerName || 'Champion'} fallbackAvatar={(past.winnerAvatar as any) || 'rabbit'} state="winner" size={28} />
                               <div>
-                                <span className="text-[7px] text-[#ffcc00] font-bold block uppercase">CHAMPION WINNER</span>
+                                <span className="text-[7px] text-[#ffcc00] font-bold block uppercase">{tr("championWinner")}</span>
                                 <span className="text-[8.5px] font-black text-white">{past.winnerName || 'Unknown Winner'}</span>
                               </div>
                             </div>
-                            <div className="px-2 py-0.5 bg-slate-800 text-slate-400 text-[7px] font-black uppercase border border-black">
-                              COMPLETED
-                            </div>
+                            <div className="px-2 py-0.5 bg-slate-800 text-slate-400 text-[7px] font-black uppercase border border-black">{tr("completedUpper")}</div>
                           </div>
                         </div>
                       ))}
@@ -5767,7 +5687,7 @@ export function Web3Dashboard({
               exit={{ opacity: 0 }}
               className="w-full space-y-3 py-2 text-left"
             >
-      <nav className="rp-menu-games" aria-label="Choose game">
+      <nav className="rp-menu-games" aria-label={tr("chooseGame")}>
         {(['poker', 'uno', 'blackjack'] as const).map(game => <button key={game} type="button" aria-pressed={pvpGameTab === game} onClick={() => {
           sound.playPop();
           if (game !== pvpGameTab) transitionMenuBanner(true, true, () => setPvpGameTab(game));
@@ -5791,17 +5711,17 @@ export function Web3Dashboard({
                       <div className="space-y-0.5">
                         <h3 className="font-black text-[9px] text-[#00ff66] uppercase">
                           {matchmakingState === 'joining'
-                            ? 'CONNECTING TO QUEUE'
-                            : queueLength >= 2 ? 'TABLE FOUND — OPENING UNO TABLE' : 'SEARCHING FOR UNO PLAYERS'}
+                            ? tr("connectingQueue")
+                            : queueLength >= 2 ? tr("tableFound") : tr("searchingUno")}
                         </h3>
                         <p className="text-[8px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
                           {matchmakingState === 'joining'
-                            ? 'Connecting to the match server…'
+                            ? tr("connectingServer")
                             : queueLength >= 2
-                            ? 'Everyone is joining the same table. It will recruit up to 4 players for 10 seconds.'
+                            ? tr("recruitingDescription")
                             : selectedStake === 0
-                              ? `Searching for a free UNO table: ${queueLength}/2 players needed to open it.`
-                              : `Searching for a ${selectedStake} TKT UNO table: ${queueLength}/2 players needed to open it.`}
+                              ? tr('searchFreeUnoCount', { count: queueLength })
+                              : tr('searchPaidUnoCount', { count: queueLength, stake: selectedStake })}
                         </p>
                       </div>
                       <button
@@ -5810,24 +5730,23 @@ export function Web3Dashboard({
                         disabled={publicQueueCanceling}
                         className="w-full py-1.5 bg-[#ff4b4b] text-black border border-black text-[9px] uppercase font-black pixel-btn-interactive"
                       >
-                        {publicQueueCanceling ? 'Checking…' : 'Cancel Queue'}
+                        {publicQueueCanceling ? tr("checkingEllipsis") : tr("cancelQueue")}
                       </button>
                     </div>
                   ) : matchmakingState === 'success' ? (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-2 font-mono">
-                      <h3 className="font-black text-[10px] text-[#00ff66] uppercase">OPENING UNO TABLE…</h3>
+                      <h3 className="font-black text-[10px] text-[#00ff66] uppercase">{tr("openingUno")}</h3>
                     </div>
                   ) : (
                     <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                       <div className="flex justify-between items-center text-[9px]">
                         <h3 className="font-black text-slate-100 uppercase">
-                          <MenuIcon name="uno" /> PUBLIC UNO MATCHES
-                        </h3>
+                          <MenuIcon name="uno" />{' '}{tr("publicUno")}</h3>
                         <span className="text-[8px] text-[#ffcc00] bg-black px-1.5 py-0.5 border border-black">
                           {selectedStake === 0 ? (
                             <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#ffcc00]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
                           ) : (
-                            <>BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT</>
+                            <>{tr("balanceShort")}{' '}<strong>{goldenTickets.toFixed(2)}</strong> TKT</>
                           )}
                         </span>
                       </div>
@@ -5849,17 +5768,17 @@ export function Web3Dashboard({
                                 : 'bg-black border-black text-slate-450'
                             }`}
                           >
-                            <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
-                            <span className="text-[6px] block mt-0.5">{stake === 0 ? formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST) : 'stake'}</span>
+                            <span className="text-[9px] font-black">{stake === 0 ? tr("freeUpper") : `${stake}TKT`}</span>
+                            <span className="text-[6px] block mt-0.5">{stake === 0 ? formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST) : tr("stake")}</span>
                           </button>
                         ))}
                       </div>
                       <div className="bg-black p-2 border border-black text-[7.5px] leading-relaxed space-y-1.5 text-slate-450">
                         <div className="flex justify-between items-center text-slate-350">
-                          <span className="font-bold">{selectedStake === 0 ? 'Free Cost:' : 'Prize Pool:'}</span>
+                          <span className="font-bold">{selectedStake === 0 ? tr("freeCost") : tr("prizePoolLabel")}</span>
                           <span className="text-[#00ff66] font-bold">
                             {selectedStake === 0
-                              ? `${formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST)} / game`
+                              ? tr('energyPerGame', { energy: formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST) })
                               : `${calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - ${calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT`}
                           </span>
                         </div>
@@ -5873,22 +5792,22 @@ export function Web3Dashboard({
                               }}
                               className="text-[7px] text-[#00d2ff] hover:underline uppercase font-bold focus:outline-none cursor-pointer"
                             >
-                              {showPayoutDetails ? 'Hide Payouts ▲' : 'Show Payouts ▼'}
+                              {showPayoutDetails ? tr("hidePayouts") : tr("showPayouts")}
                             </button>
                           </div>
                         )}
                         {selectedStake > 0 && showPayoutDetails && (
                           <div className="space-y-1 pt-1.5 border-t border-slate-900 animate-fade-in text-[7.5px]">
                             <div className="flex justify-between">
-                              <span>2 players:</span>
+                              <span>{tr("twoPlayers")}</span>
                               <span className="text-slate-300">{formatPayoutRow(selectedStake, 2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span>3 players:</span>
+                              <span>{tr("threePlayers")}</span>
                               <span className="text-slate-300">{formatPayoutRow(selectedStake, 3)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span>4 players:</span>
+                              <span>{tr("fourPlayers")}</span>
                               <span className="text-slate-300">{formatPayoutRow(selectedStake, 4)}</span>
                             </div>
                           </div>
@@ -5906,7 +5825,7 @@ export function Web3Dashboard({
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
                             className="flex-1 bg-black border border-black text-slate-200 px-2 py-1.5 text-[9px] font-mono min-w-0"
-                            placeholder="Deposit tickets"
+                            placeholder={tr("depositTicketsSentence")}
                           />
                           <button
                             type="button"
@@ -5918,7 +5837,7 @@ export function Web3Dashboard({
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             ) : (
                               <>
-                                <span>DEPOSIT</span>
+                                <span>{tr("depositUpper")}</span>
                                 <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
                               </>
                             )}
@@ -5932,17 +5851,13 @@ export function Web3Dashboard({
                                 confirmPendingDeposit(pending).catch(() => undefined);
                               }}
                               className="py-1.5 px-2 bg-[#3a1200] text-[#ffcc99] border border-black text-[8px] font-black uppercase"
-                            >
-                              RETRY
-                            </button>
+                            >{tr("retryUpper")}</button>
                           )}
                         </div>
                         )}
 
                         {selectedStake > 0 && !walletConnected && (
-                          <div className="bg-[#08131f] border border-black p-2 text-[7.5px] text-slate-300 leading-relaxed">
-                            Connect TON wallet for ticket-stake public matches. FREE public uses energy only.
-                          </div>
+                          <div className="bg-[#08131f] border border-black p-2 text-[7.5px] text-slate-300 leading-relaxed">{tr("publicWalletDescription")}</div>
                         )}
 
                         {/* Matchmaking Queue Button */}
@@ -5951,12 +5866,12 @@ export function Web3Dashboard({
                           onClick={handleStartMatchmakingQueue}
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[10px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {selectedStake === 0 ? 'JOIN FREE PUBLIC' : 'JOIN REAL QUEUE'}
+                          {selectedStake === 0 ? tr("joinFreePublic") : tr("joinQueue")}
                         </button>
 
-                        {publicQueueError && !publicQueueError.includes('expired') && !publicQueueError.includes('No compatible opponent') && !publicQueueError.includes('Previous matchmaking') && (
+                        {publicQueueError && (typeof publicQueueError !== 'string' || (!publicQueueError.includes('expired') && !publicQueueError.includes('No compatible opponent') && !publicQueueError.includes('Previous matchmaking'))) && (
                           <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
-                            {cleanErrorMessage(publicQueueError, 'matchmaker')}
+                            {renderError(publicQueueError)}
                           </div>
                         )}
                       </div>
@@ -5969,23 +5884,21 @@ export function Web3Dashboard({
                               ? 'bg-[#2a0d0d] text-[#ff9a9a]'
                               : 'bg-[#08131f] text-[#9ed8ff]'
                         }`}>
-                          {depositStatusMessage}
+                          {renderError(depositStatusMessage)}
                         </div>
                       )}
 
                       {pendingDeposits.length > 0 && (
                         <div className="bg-[#12091e] border border-black p-2 space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="text-[8px] font-black uppercase text-[#d8a8ff]">Pending blockchain deposits</span>
+                            <span className="text-[8px] font-black uppercase text-[#d8a8ff]">{tr("pendingDeposits")}</span>
                             <button
                               type="button"
                               onClick={() => {
                                 refreshPendingDeposits().catch(() => undefined);
                               }}
                               className="text-[7px] uppercase text-[#9ed8ff]"
-                            >
-                              Refresh
-                            </button>
+                            >{tr("refresh")}</button>
                           </div>
                           <div className="space-y-1.5">
                             {pendingDeposits.map((deposit) => {
@@ -5995,11 +5908,11 @@ export function Web3Dashboard({
                                 <div key={deposit.id} className="border border-black bg-black/60 px-2 py-1.5 text-[7px] text-slate-250 space-y-1">
                                   <div className="flex justify-between gap-2">
                                     <span>{deposit.ticketAmount.toFixed(2)} TKT / {deposit.tonAmount.toFixed(2)} TON</span>
-                                    <span className="text-[#ffcc99]">{deposit.confirmationAttempts} checks</span>
+                                    <span className="text-[#ffcc99]">{deposit.confirmationAttempts}{' '}{tr("checks")}</span>
                                   </div>
                                   <div className="flex justify-between gap-2">
-                                    <span>Created: {new Date(deposit.createdAt).toLocaleTimeString()}</span>
-                                    <span>Expires: {new Date(deposit.expiresAt).toLocaleTimeString()}</span>
+                                    <span>{tr("createdLabel")}{' '}{new Date(deposit.createdAt).toLocaleTimeString(locale)}</span>
+                                    <span>{tr("expiresLabel")}{' '}{new Date(deposit.expiresAt).toLocaleTimeString(locale)}</span>
                                   </div>
                                   {deposit.lastVerificationError && (
                                     <div className="text-[#ff9a9a]">{deposit.lastVerificationError}</div>
@@ -6013,9 +5926,7 @@ export function Web3Dashboard({
                                           confirmPendingDeposit(localPending).catch(() => undefined);
                                         }}
                                         className="px-2 py-1 bg-[#17324d] border border-black text-[#9ed8ff] uppercase"
-                                      >
-                                        Retry now
-                                      </button>
+                                      >{tr("retryNow")}</button>
                                     )}
                                   </div>
                                 </div>
@@ -6034,20 +5945,16 @@ export function Web3Dashboard({
                   {showRoomDisclaimer ? (
                     <div className="bg-[#0c0f12] border-2 border-[#ff4b4b] pixel-box-sm p-3 text-center space-y-2 font-mono text-[8px]">
                       <h3 className="font-black text-[9px] text-[#ff4b4b] uppercase">
-                        {privateStakeRequiresWallet ? 'Private Stake Match' : 'Free Private Match'}
+                        {privateStakeRequiresWallet ? tr("privateStakeMatch") : tr("freePrivateMatch")}
                       </h3>
                       <div className="text-[7.5px] text-slate-355 leading-relaxed text-left bg-black p-2 border border-black space-y-1">
                         <p>
-                          <strong>{privateStakeRequiresWallet ? 'You are joining a PRIVATE stake table.' : 'You are joining a FREE private table.'}</strong>
+                          <strong>{privateStakeRequiresWallet ? tr("joiningPrivateStake") : tr("joiningPrivateFree")}</strong>
                         </p>
                         {privateStakeRequiresWallet ? (
-                          <p className="text-[#ffcc00] font-bold">
-                            Rewards are paid for every place. Commission details are listed in the rules.
-                          </p>
+                          <p className="text-[#ffcc00] font-bold">{tr("allPlacesPaid")}</p>
                         ) : (
-                          <p className="text-[#00ff66] font-bold">
-                            This room uses 0 TKT stake, so no ticket hold or payout is applied.
-                          </p>
+                          <p className="text-[#00ff66] font-bold">{tr("zeroStakeDescription")}</p>
                         )}
                       </div>
                       <div className="flex gap-2">
@@ -6058,9 +5965,7 @@ export function Web3Dashboard({
                             setShowRoomDisclaimer(false);
                           }}
                           className="flex-1 py-1 bg-black text-slate-455 border border-black uppercase font-bold pixel-btn-interactive text-[8px]"
-                        >
-                          Exit
-                        </button>
+                        >{tr("exit")}</button>
                         <button
                           type="button"
                           onClick={() => {
@@ -6072,28 +5977,23 @@ export function Web3Dashboard({
                             joinPrivateRoomByCode().catch(() => undefined);
                           }}
                           className="flex-1 py-1 bg-[#ff4b4b] text-black uppercase font-black pixel-btn-interactive border border-black text-[8px]"
-                        >
-                          Confirm
-                        </button>
+                        >{tr("confirm")}</button>
                       </div>
                     </div>
                   ) : (
                     initialLaunchRoomParsedRef.current.code && !privateRoomSnapshot && !privateRoomError ? (
                       <div className="bg-[#08131f] border border-[#00d2ff]/50 pixel-box-sm p-5 text-center space-y-2 font-mono">
-                        <div className="text-[#00d2ff] text-[10px] font-black uppercase">Joining private table…</div>
-                        <div className="text-slate-400 text-[8px]">Room #{initialLaunchRoomParsedRef.current.code}</div>
-                        <div className="text-slate-500 text-[7px]">Confirming your seat with the game server.</div>
+                        <div className="text-[#00d2ff] text-[10px] font-black uppercase">{tr("joiningPrivate")}</div>
+                        <div className="text-slate-400 text-[8px]">{tr("roomNumber")}{initialLaunchRoomParsedRef.current.code}</div>
+                        <div className="text-slate-500 text-[7px]">{tr("confirmingSeat")}</div>
                       </div>
                     ) : generatedLink || privateRoomStatus === 'waiting' ? (
                       renderPrivateWaitingRoomLobby('UNO')
                     ) : (
                       <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                         <div className="flex justify-between items-center text-[9px]">
-                          <h3 className="font-black text-slate-100 uppercase">
-                            PRIVATE ROOM
-                          </h3>
-                          <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
-                            BAL: <strong>{goldenTickets.toFixed(2)}</strong> TKT
+                          <h3 className="font-black text-slate-100 uppercase">{tr("privateRoom")}</h3>
+                          <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">{tr("balanceShort")}{' '}<strong>{goldenTickets.toFixed(2)}</strong> TKT
                           </span>
                         </div>
 
@@ -6102,13 +6002,13 @@ export function Web3Dashboard({
                             privateStakeRequiresWallet ? 'bg-[#1c1010] text-[#ffb3b3]' : 'bg-[#08131f] text-[#9ed8ff]'
                           }`}>
                             {privateStakeRequiresWallet
-                              ? 'Paid private rooms still require a wallet connection. Switch stake to FREE or connect your wallet.'
-                              : 'FREE private rooms are open without wallet connection. Invite friends with a room code and play at 0 TKT stake.'}
+                              ? tr("paidPrivateWallet")
+                              : tr("freePrivateWallet")}
                           </div>
                         )}
 
                         <div className="space-y-1">
-                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Select Room Stake</label>
+                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">{tr("selectRoomStake")}</label>
                           <div className="grid grid-cols-4 gap-1">
                             {PRIVATE_STAKE_OPTIONS.map((stake) => (
                               <button
@@ -6131,15 +6031,15 @@ export function Web3Dashboard({
                                     : 'bg-black border-black text-slate-450'
                                 }`}
                               >
-                                <span className="text-[9px] font-black">{stake === 0 ? 'FREE' : `${stake}TKT`}</span>
-                                <span className="text-[6px] block mt-0.5">{stake === 0 ? '0 stake' : 'stake'}</span>
+                                <span className="text-[9px] font-black">{stake === 0 ? tr("freeUpper") : `${stake}TKT`}</span>
+                                <span className="text-[6px] block mt-0.5">{stake === 0 ? tr("zeroStake") : tr("stake")}</span>
                               </button>
                             ))}
                           </div>
                         </div>
 
                         <div className="space-y-1">
-                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Players In Room</label>
+                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">{tr("playersInRoom")}</label>
                           <div className="grid grid-cols-3 gap-1">
                             {([2, 3, 4] as const).map((count) => (
                               <button
@@ -6162,8 +6062,7 @@ export function Web3Dashboard({
                                     : 'bg-black border-black text-slate-450'
                                 }`}
                               >
-                                <span className="text-[9px] font-black">{count}</span>
-                                <span className="text-[6px] block mt-0.5">players</span>
+                                <span className="text-[9px] font-black">{tr("playerCount", { count })}</span>
                               </button>
                             ))}
                           </div>
@@ -6172,13 +6071,13 @@ export function Web3Dashboard({
                         <div className="bg-black p-2 border border-black font-mono text-[8px] leading-relaxed">
                           {privateRoomStake === 0 ? (
                             <div className="flex justify-between text-slate-400">
-                              <span>Room reward</span>
-                              <span className="font-black text-[#00d2ff]">FREE · XP ONLY</span>
+                              <span>{tr("roomReward")}</span>
+                              <span className="font-black text-[#00d2ff]">{tr("freeXpOnly")}</span>
                             </div>
                           ) : (
                             <>
                               <div className="flex justify-between mb-1">
-                                <span className="text-slate-400">Prize pool</span>
+                                <span className="text-slate-400">{tr("prizePool")}</span>
                                 <span className="font-black text-[#00ff66]">
                                   {calculateTicketPayouts(privateRoomStake, privateRoomTargetPlayers).netPrizePool.toFixed(2)} TKT
                                 </span>
@@ -6191,13 +6090,13 @@ export function Web3Dashboard({
                         </div>
 
                         <div className="space-y-1">
-                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">Join By Room Code</label>
+                          <label className="text-[7px] font-bold text-slate-400 uppercase font-mono">{tr("joinRoomCode")}</label>
                           <input
                             type="text"
                             value={privateJoinCode}
                             onChange={(e) => setPrivateJoinCode(e.target.value.toUpperCase())}
-                            placeholder="ROOM CODE"
-                            aria-label="UNO room code"
+                            placeholder={tr("roomCode")}
+                            aria-label={tr("unoRoomCode")}
                             className="w-full bg-black border border-black text-slate-200 px-2 py-2 text-[9px] font-mono tracking-widest uppercase"
                           />
                         </div>
@@ -6207,7 +6106,7 @@ export function Web3Dashboard({
                           onClick={() => {
                             const normalizedCode = privateJoinCode.trim().toUpperCase();
                             if (!normalizedCode) {
-                              showDashboardNotice('Enter a room code first.', 'danger');
+                              showDashboardNotice(uiMessage('roomCodeRequired'), 'danger');
                               return;
                             }
                             sound.playPop();
@@ -6215,21 +6114,19 @@ export function Web3Dashboard({
                             setShowRoomDisclaimer(true);
                           }}
                           className="w-full py-2 bg-[#ffcc00] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          Join By Code
-                        </button>
+                        >{tr("joinCode")}</button>
 
                         {privateRoomError && (
                           <div className="bg-[#2a0d0d] border border-black px-2 py-1.5 text-[7.5px] leading-relaxed text-[#ffb3b3] font-mono">
-                            {cleanErrorMessage(privateRoomError, 'private-room')}
+                            {renderError(privateRoomError)}
                           </div>
                         )}
 
                         {(privateRoomCreateState === 'creating' || privateRoomCreateState === 'recovering') && (
                           <div className="bg-[#08131f] border border-[#00d2ff]/40 px-2 py-1.5 text-[7.5px] leading-relaxed text-[#9ed8ff] font-mono" role="status">
                             {privateRoomCreateState === 'recovering'
-                              ? 'Checking whether your room was already created…'
-                              : 'Creating your room. This is safe to retry if the connection is interrupted.'}
+                              ? tr("checkingCreatedRoom")
+                              : tr("creatingRoomDescription")}
                           </div>
                         )}
 
@@ -6240,14 +6137,14 @@ export function Web3Dashboard({
                           className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase pixel-btn-interactive border border-black shadow-[2px_2px_0_#000] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {!authReady
-                            ? 'Syncing Session...'
+                            ? tr("syncingSession")
                             : privateRoomCreateState === 'creating'
-                            ? 'Creating Room...'
+                            ? tr("creatingRoom")
                             : privateRoomCreateState === 'recovering'
-                            ? 'Recovering Room...'
+                            ? tr("recoveringRoom")
                             : privateRoomCreateState === 'error'
-                            ? 'Retry / Recover Room'
-                            : privateStakeRequiresWallet ? 'Generate Invite Link' : 'Create Free Room'}
+                            ? tr("recoverRoom")
+                            : privateStakeRequiresWallet ? tr("generateInvite") : tr("createFreeRoom")}
                         </button>
                       </div>
                     )
@@ -6257,9 +6154,7 @@ export function Web3Dashboard({
 
               {pvpSubMode === 'practice' && (
                 <div className="bg-[#18181c] border border-black pixel-box-sm p-4 text-center space-y-3 font-mono">
-                  <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">
-                    Practice card matches against bots. Practice gives reduced XP and never touches your ticket balance.
-                  </p>
+                  <p className="text-[8px] text-slate-350 leading-relaxed font-sans max-w-xs mx-auto">{tr("practiceDescription")}</p>
                   
                   <button
                     type="button"
@@ -6269,9 +6164,7 @@ export function Web3Dashboard({
                     }}
                     className="w-full py-3 bg-[#00ff66] text-black font-black text-[10px] uppercase tracking-wider pixel-btn-interactive border border-black flex items-center justify-center gap-1.5 shadow-[2px_2px_0_#000]"
                   >
-                    <Play className="w-3.5 h-3.5 fill-black text-black" />
-                    PLAY FOR FREE (VS BOTS)
-                  </button>
+                    <Play className="w-3.5 h-3.5 fill-black text-black" />{tr("playBots")}</button>
                 </div>
               )}
             </UnoLobbyMenu>
@@ -6342,9 +6235,7 @@ export function Web3Dashboard({
               className="w-full max-w-sm bg-[#12161a] border-4 border-black p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg flex flex-col gap-4 text-center"
             >
               {/* Retro top decoration bar */}
-              <div className="absolute -top-3 left-6 bg-[#00d2ff] text-black text-[7px] font-black uppercase px-2 py-0.5 border-2 border-black">
-                SECURE GATEWAY
-              </div>
+              <div className="absolute -top-3 left-6 bg-[#00d2ff] text-black text-[7px] font-black uppercase px-2 py-0.5 border-2 border-black">{tr("secureGateway")}</div>
 
               {/* Large pulsing TON Connect Icon */}
               <div className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#00d2ff] relative overflow-hidden shadow-[inset_0_0_10px_rgba(0,210,255,0.2)] mt-2">
@@ -6352,27 +6243,23 @@ export function Web3Dashboard({
               </div>
 
               <div className="space-y-2">
-                <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wider">
-                  Sync TON Wallet
-                </h3>
-                <p className="text-[9px] min-[370px]:text-[10px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">
-                  Connect your TON wallet to sync progress, enter stake-based tables, and unlock reward flows that refill your energy through quests.
-                </p>
+                <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wider">{tr("syncWallet")}</h3>
+                <p className="text-[9px] min-[370px]:text-[10px] text-slate-400 leading-relaxed font-sans max-w-xs mx-auto">{tr("syncWalletDescription")}</p>
               </div>
 
               {/* Benefit list */}
               <div className="bg-slate-950 p-3 border border-black text-left text-[8px] min-[370px]:text-[9px] space-y-2 text-slate-300">
                 <div className="flex gap-2 items-start">
                   <span className="text-[#00ff66]">✓</span>
-                  <span>Access PVP Arena with stakes from 0.3 to 30 tickets.</span>
+                  <span>{tr("stakeRange")}</span>
                 </div>
                 <div className="flex gap-2 items-start">
                   <span className="text-[#00ff66]">✓</span>
-                  <span>Instant deposits and secure payout distribution.</span>
+                  <span>{tr("depositsDescription")}</span>
                 </div>
                 <div className="flex gap-2 items-start">
                   <span className="text-[#00ff66]">✓</span>
-                  <span>Zero passwords needed. Sign transactions directly.</span>
+                  <span>{tr("noPasswords")}</span>
                 </div>
               </div>
 
@@ -6381,9 +6268,7 @@ export function Web3Dashboard({
                   type="button"
                   onClick={handleActualConnect}
                   className="w-full py-2.5 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-                >
-                  Sync with TON Connect
-                </button>
+                >{tr("syncTonConnect")}</button>
                 <button
                   type="button"
                   onClick={() => {
@@ -6391,9 +6276,7 @@ export function Web3Dashboard({
                     setShowConnectModal(false);
                   }}
                   className="w-full py-2 bg-slate-950 hover:bg-slate-900 text-slate-400 border border-black/40 pixel-btn-interactive text-[10px] font-bold uppercase font-mono"
-                >
-                  Cancel
-                </button>
+                >{tr("cancelSentence")}</button>
               </div>
             </motion.div>
           </motion.div>
@@ -6418,9 +6301,7 @@ export function Web3Dashboard({
               onClick={(event) => event.stopPropagation()}
               className="w-full max-w-xs bg-[#101b16] border-4 border-[#00ff66] p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg text-center"
             >
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap bg-[#00ff66] text-black text-[7px] font-black uppercase px-3 py-0.5 border-2 border-black">
-                DAY {dailyReward.streak} COMPLETE
-              </div>
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap bg-[#00ff66] text-black text-[7px] font-black uppercase px-3 py-0.5 border-2 border-black">{tr("day")}{' '}{dailyReward.streak}{' '}{tr("complete")}</div>
               <motion.div
                 initial={{ rotate: -12, scale: 0.6 }}
                 animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.15, 1] }}
@@ -6429,7 +6310,7 @@ export function Web3Dashboard({
               >
                 <Gift className="w-9 h-9" />
               </motion.div>
-              <h3 className="mt-3 text-sm font-black text-[#00ff66] uppercase tracking-wider">Reward received!</h3>
+              <h3 className="mt-3 text-sm font-black text-[#00ff66] uppercase tracking-wider">{tr("rewardReceived")}</h3>
               <div className="mt-3 grid grid-cols-2 gap-2 text-[9px] font-black">
                 <div className="bg-slate-950 border-2 border-black p-2 text-[#00d2ff] flex items-center justify-center gap-1">
                   <Sparkles className="w-3.5 h-3.5" /> +{dailyReward.xp} XP
@@ -6451,9 +6332,7 @@ export function Web3Dashboard({
                 }}
                 style={{ touchAction: 'manipulation', WebkitTapHighlightColor: 'transparent' }}
                 className="mt-4 w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-              >
-                Collect reward
-              </button>
+              >{tr("collectReward")}</button>
             </motion.div>
           </motion.div>
         )}
@@ -6474,9 +6353,7 @@ export function Web3Dashboard({
               exit={{ scale: 0.9, y: 20 }}
               className="w-full max-w-sm bg-[#1b122c] border-4 border-[#9b51e0] p-5 relative shadow-[6px_6px_0_#000] pixel-box-lg flex flex-col gap-4 text-center"
             >
-              <div className="absolute -top-3 left-6 bg-[#9b51e0] text-white text-[7px] font-black uppercase px-2 py-0.5 border-2 border-black">
-                REWARD OPENED
-              </div>
+              <div className="absolute -top-3 left-6 bg-[#9b51e0] text-white text-[7px] font-black uppercase px-2 py-0.5 border-2 border-black">{tr("rewardOpened")}</div>
 
               <motion.div
                 initial={prefersReducedMotion ? false : { rotateY: 90, scale: 0.82 }}
@@ -6490,10 +6367,10 @@ export function Web3Dashboard({
 
               <div className="space-y-2">
                 <h3 className="font-black text-xs min-[370px]:text-sm text-slate-100 uppercase tracking-wider">
-                  {lootboxReward.type === 'bracelet' ? 'Tournament Bracelet' : lootboxReward.type === 'tickets' ? 'Rare TKT Drop!' : 'Daily Vault Reward'}
+                  {lootboxReward.type === 'bracelet' ? tr("tournamentBracelet") : lootboxReward.type === 'tickets' ? tr("rareDrop") : tr("vaultReward")}
                 </h3>
                 <p className="text-[9px] min-[370px]:text-[10px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
-                  {lootboxReward.message}
+                  {translateTableEvent(lootboxReward.message, tr)}
                 </p>
               </div>
 
@@ -6506,9 +6383,7 @@ export function Web3Dashboard({
                     setVaultCardChoice(null);
                   }}
                   className="w-full py-2.5 bg-[#ffcc00] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-                >
-                  Collect Drops
-                </button>
+                >{tr("collectDrops")}</button>
               </div>
             </motion.div>
           </motion.div>
@@ -6544,7 +6419,7 @@ export function Web3Dashboard({
               <div className="relative mx-auto mt-1 w-full max-w-[170px] aspect-square rounded bg-slate-950 border-2 border-black overflow-hidden shadow-[inset_0_0_10px_rgba(0,210,255,0.3)]">
                 <img
                   src="/ayanami-plush.png"
-                  alt="Ayanami Plush Sticker Collection"
+                  alt={tr("ayanamiCollection")}
                   className="w-full h-full object-cover"
                   onError={(e) => {
                     (e.target as HTMLImageElement).src = '/logo-for-events.png';
@@ -6554,19 +6429,15 @@ export function Web3Dashboard({
 
               {/* Title & Description */}
               <div className="space-y-1">
-                <h3 className="font-black text-xs text-slate-100 uppercase tracking-wide">
-                  AYANAMI PLUSH TOURNAMENT
-                </h3>
+                <h3 className="font-black text-xs text-slate-100 uppercase tracking-wide">{tr("ayanamiTournament")}</h3>
                 <p className="text-[8.5px] text-slate-300 leading-relaxed font-sans max-w-xs mx-auto">
-                  Holders of at least <strong className="text-[#00ff66]">1 Ayanami Plush NFT sticker</strong> get exclusive access to the tournament!
+                  <Trans ns="game" i18nKey="ayanamiAccess" components={{ strong: <strong className="text-[#00ff66]" /> }} />
                 </p>
               </div>
 
               {/* Winner Prize Pool Condition Box */}
               <div className="bg-red-950/40 border border-red-600/60 p-2.5 rounded-sm text-center font-mono">
-                <p className="text-[9px] font-black text-red-500 uppercase tracking-wide leading-relaxed">
-                  The winners will share the prize pool generated from fees.
-                </p>
+                <p className="text-[9px] font-black text-red-500 uppercase tracking-wide leading-relaxed">{tr("winnersShare")}</p>
               </div>
 
               {/* Buttons */}
@@ -6575,16 +6446,12 @@ export function Web3Dashboard({
                   type="button"
                   onClick={() => dismissPromoModal(true)}
                   className="w-full py-2 bg-[#00ff66] hover:bg-[#00e55b] text-black font-black text-[10px] uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-                >
-                  Explore Event & Verify
-                </button>
+                >{tr("exploreEvent")}</button>
                 <button
                   type="button"
                   onClick={() => dismissPromoModal(false)}
                   className="w-full py-1.5 bg-slate-950 hover:bg-slate-900 text-slate-400 border border-slate-800 pixel-btn-interactive text-[8.5px] font-bold uppercase font-mono"
-                >
-                  Close
-                </button>
+                >{tr("closeSentence")}</button>
               </div>
             </motion.div>
           </motion.div>
@@ -6598,7 +6465,7 @@ export function Web3Dashboard({
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <div className="flex items-center gap-1.5 text-[#ffcc00] font-black text-[10px] uppercase">
                 <Trophy className="w-4 h-4 text-[#ffcc00]" />
-                <span>ALL TOURNAMENT CHAMPIONS</span>
+                <span>{tr("allChampions")}</span>
               </div>
               <button
                 type="button"
@@ -6621,7 +6488,7 @@ export function Web3Dashboard({
                     <span className="text-slate-200 font-bold truncate">{entry.username}</span>
                   </div>
                   <span className="font-black text-[#00ff66] text-[9px] px-1.5 py-0.5 bg-[#00ff66]/10 border border-[#00ff66]/30 rounded">
-                    🏆 {entry.winsCount} {entry.winsCount === 1 ? 'WIN' : 'WINS'}
+                    🏆 {entry.winsCount} {entry.winsCount === 1 ? tr("win") : tr("wins")}
                   </span>
                 </div>
               ))}
@@ -6631,9 +6498,7 @@ export function Web3Dashboard({
               type="button"
               onClick={() => setShowAllLeaderboardModal(false)}
               className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white font-black text-[9px] uppercase border border-black"
-            >
-              Close Leaderboard
-            </button>
+            >{tr("closeLeaderboard")}</button>
           </div>
         </div>
       )}

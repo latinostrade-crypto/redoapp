@@ -90,7 +90,7 @@
 }
 
 .rp-table-grid::after {
-  content: "TABLE // 01   SECURE CHANNEL";
+  content: attr(data-label);
   position: absolute;
   left: 14px;
   bottom: 9px;

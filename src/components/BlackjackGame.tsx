@@ -1,3 +1,6 @@
+import { message as uiMessage, type UiMessage } from '../i18n/message';
+import { translateTableEvent } from '../i18n/tableEvent';
+import { LanguageSwitch, useLanguage } from '../i18n/LanguageProvider';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -74,12 +77,13 @@ function BlackjackCardView({
   isDealerHoleCard?: boolean;
   key?: string | number;
 }) {
+  const { tr } = useLanguage();
   if (hidden || card.hidden) {
     return (
       <div className="w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 bg-[#e63946] border-2 border-black rounded-md shadow-md flex items-center justify-center relative overflow-hidden select-none shrink-0">
         <img
           src="/card-thumbs/back.jpeg"
-          alt="Card Back"
+          alt={tr("cardBack")}
           className="w-full h-full object-cover select-none pointer-events-none rounded-[3px]"
           style={{ imageRendering: 'pixelated' }}
           onError={(e) => {
@@ -130,6 +134,7 @@ export function BlackjackGame({
   onReturnToLobby,
   onInvite,
 }: BlackjackGameProps) {
+  const { tr, renderMessage, renderError } = useLanguage();
   const { playback, revealedCardIds, isReplaying } = useTableVisualEvents(gameState.visualEvents, gameState.visualEpoch);
   const [muted, setMuted] = useState(sound.getMuted());
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
@@ -161,7 +166,7 @@ export function BlackjackGame({
   const [exchangeAmount, setExchangeAmount] = useState(1);
   const [isExchanging, setIsExchanging] = useState(false);
   const [isJoiningSeat, setIsJoiningSeat] = useState(false);
-  const [seatJoinError, setSeatJoinError] = useState('');
+  const [seatJoinError, setSeatJoinError] = useState<UiMessage>('');
   const seatRequestIdRef = useRef('');
   const { profile, fetchProfile } = useUserProfile();
 
@@ -182,7 +187,7 @@ export function BlackjackGame({
         await fetchProfile();
         setExchangeAmount(1);
       } else {
-        alert('Exchange failed');
+        alert(tr('exchangeFailed'));
       }
     } catch (e) {
       console.error(e);
@@ -214,7 +219,7 @@ export function BlackjackGame({
       console.error(err);
       const message = err instanceof Error ? err.message : '';
       if (/timed out|interrupted/i.test(message) && gameState.matchId) {
-        setSeatJoinError('Checking whether your seat was reserved…');
+        setSeatJoinError(uiMessage('seatReservationChecking'));
         try {
           const recovered = await apiRequest<{ seated: boolean }>(`/api/casino/my-seat/${encodeURIComponent(gameState.matchId)}`, {
             timeoutMs: 8_000,
@@ -232,7 +237,7 @@ export function BlackjackGame({
           console.error('Blackjack seat reconciliation failed', recoveryError);
         }
       }
-      setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : 'Could not take a seat. Please retry.');
+      setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : uiMessage('seatTakeFailed'));
     } finally {
       setIsJoiningSeat(false);
     }
@@ -324,13 +329,13 @@ export function BlackjackGame({
             exit={{ opacity: 0, y: -8 }}
             className="absolute top-10 left-1/2 -translate-x-1/2 z-[70] max-w-[85%] bg-black/95 border-2 border-[#ffcc00] px-3 py-1.5 rounded-full text-center text-[9px] font-black uppercase text-[#ffcc00] shadow-[0_0_18px_rgba(255,204,0,0.65)]"
           >
-            {playback.message}
+            {translateTableEvent(playback.message, tr)}
           </motion.div>
         )}
       </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
-      <header className="flex justify-between items-center bg-slate-950 border border-black px-2 py-1 z-20 rounded">
+      <header className="flex justify-between items-center bg-slate-950 border border-black px-2 py-1 z-20 rounded flex-wrap gap-1">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -338,22 +343,22 @@ export function BlackjackGame({
             className="px-2 py-0.5 bg-red-950 border border-red-500/40 hover:bg-red-900 text-red-300 text-[8px] font-black uppercase flex items-center gap-1 pixel-btn-interactive cursor-pointer"
           >
             <RotateCcw className="w-3 h-3" />
-            <span>LOBBY</span>
+            <span>{tr("lobby")}</span>
           </button>
-          {onInvite && <button type="button" onClick={onInvite} className="px-2 py-0.5 bg-[#1da1f2] text-white border border-black text-[8px] font-black uppercase pixel-btn-interactive">INVITE</button>}
+          {onInvite && <button type="button" onClick={onInvite} className="px-2 py-0.5 bg-[#1da1f2] text-white border border-black text-[8px] font-black uppercase pixel-btn-interactive">{tr("invite")}</button>}
           <span className="text-[8px] font-black text-[#00ff66] uppercase bg-black px-1.5 py-0.5 border border-black">
-            {gameState.isPersistentTable ? 'LIVE TABLE' : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5}`}
+            {gameState.isPersistentTable ? tr("liveTable") : tr('handNumberTotal', { hand: gameState.currentHand || 1, total: gameState.maxHands || 5 })}
           </span>
           <span className="text-[7.5px] font-black text-[#ffcc00] uppercase bg-black px-1.5 py-0.5 border border-black">
             {gameState.isPersistentTable
-              ? (gameState.stake === 0 ? 'FREE · 2 ENERGY ENTRY' : <span className="inline-flex items-center gap-1">CASH TABLE · CASH OUT <ChipStackIcon className="w-3 h-3" /></span>)
-              : `PRIZE: ${gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT`}`}
+              ? (gameState.stake === 0 ? 'FREE · 2 ENERGY ENTRY' : <span className="inline-flex items-center gap-1">{tr("cashTable")}{' '}<ChipStackIcon className="w-3 h-3" /></span>)
+              : tr('prizeValue', { value: gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT` })}
           </span>
         </div>
 
         <div className="flex items-center gap-1.5">
           <span className="text-[8px] font-black text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">
-            <span className="inline-flex items-center gap-1">BANKROLL <ChipStackIcon className="w-3 h-3" /> {humanPlayer?.chips ?? 100}</span>
+            <span className="inline-flex items-center gap-1">{tr("bankroll")}{' '}<ChipStackIcon className="w-3 h-3" /> {humanPlayer?.chips ?? 100}</span>
           </span>
 
           <button
@@ -366,8 +371,9 @@ export function BlackjackGame({
             {muted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
           </button>
         </div>
+      <LanguageSwitch />
       </header>
-      {isSpectator && <div className="bg-[#ffcc00] text-black text-center text-[8px] font-black py-1 border border-black">👁 SPECTATING · CARDS HIDDEN</div>}
+      {isSpectator && <div className="bg-[#ffcc00] text-black text-center text-[8px] font-black py-1 border border-black">{tr("spectatingHidden")}</div>}
 
       {/* 2. CASINO FELT TABLE WITH MULTI-SEAT PLAYERS */}
       <div className="w-full h-[410px] min-[380px]:h-[440px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[40px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-between p-2 z-10 shrink-0">
@@ -381,11 +387,9 @@ export function BlackjackGame({
             {/* Dealer Avatar */}
             <div className="relative p-1 bg-slate-950 border border-black rounded flex flex-col items-center min-w-[44px] shadow-md">
               <Avatar id={gameState.dealer.avatar} emotion={gameState.dealer.isBusted ? 'worried' : 'happy'} size={24} />
-              <span className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight mt-0.5">
-                DEALER
-              </span>
+              <span className="text-[7px] font-black text-white truncate max-w-[42px] leading-tight mt-0.5">{tr("dealer")}</span>
               <span className="text-[7px] font-black text-[#00d2ff] leading-tight">
-                {gameState.stage === 'player_turn' ? 'SCORE: ?' : `SCORE: ${gameState.dealer.score}`}
+                {gameState.stage === 'player_turn' ? tr("unknownScore") : tr('scoreValue', { score: gameState.dealer.score })}
               </span>
             </div>
 
@@ -404,7 +408,7 @@ export function BlackjackGame({
             {/* Visual Casino Deck Shoe */}
             <div className="relative w-6 h-9 min-[380px]:w-7 min-[380px]:h-11 bg-slate-950 border border-black rounded shadow-md overflow-hidden shrink-0 ml-1">
               <div className="absolute inset-0 bg-slate-900 translate-x-0.5 translate-y-0.5 rounded" />
-              <img src="/card-thumbs/back.jpeg" alt="Deck" className="w-full h-full object-cover relative z-10 rounded-[2px]" />
+              <img src="/card-thumbs/back.jpeg" alt={tr("deck")} className="w-full h-full object-cover relative z-10 rounded-[2px]" />
             </div>
           </div>
         </div>
@@ -415,16 +419,15 @@ export function BlackjackGame({
             <div className="bg-slate-950/95 border-2 border-amber-400 px-3 py-1.5 rounded-xl shadow-[0_0_15px_rgba(255,204,0,0.4)] flex items-center gap-2 animate-pulse">
               <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
               <span className="text-[9px] font-black text-amber-300 uppercase tracking-wider">
-                {gameState.waitingForOpponent ? 'WAITING FOR ONE MORE PLAYER...' : 'WAITING FOR PLAYERS TO CONNECT...'}
+                {gameState.waitingForOpponent ? tr("waitingOnePlayer") : tr("waitingConnections")}
               </span>
             </div>
           ) : (
             <>
               <div className="flex items-center gap-1.5">
-                <ChipStack amount={gameState.pot} label="ROUND POT" />
+                <ChipStack amount={gameState.pot} label={tr('roundPotLabel')} />
                 {chipLeader && (
-                  <span className="bg-black/90 border border-amber-400/80 px-2 py-0.5 rounded text-[8px] font-black text-amber-300">
-                    👑 LEADER: {chipLeader.name} ({chipLeader.chips} 💰)
+                  <span className="bg-black/90 border border-amber-400/80 px-2 py-0.5 rounded text-[8px] font-black text-amber-300">{tr("leader")}{' '}{chipLeader.name} ({chipLeader.chips} 💰)
                   </span>
                 )}
               </div>
@@ -466,7 +469,7 @@ export function BlackjackGame({
                   }`}
                 >
                   <Timer className={`w-3 h-3 ${turnTimeLeft <= 5 ? 'text-red-400 animate-spin' : ''}`} />
-                  <span>{activePlayer?.id === 'player' ? 'YOUR TURN' : `${(activePlayer?.name || 'PLAYER').toUpperCase()}'S TURN`}: {turnTimeLeft}S</span>
+                  <span>{activePlayer?.id === 'player' ? tr("yourTurn") : tr('playerTurnName', { name: activePlayer?.name || tr('players') })}: {turnTimeLeft}S</span>
                 </motion.div>
               )}
 
@@ -477,7 +480,7 @@ export function BlackjackGame({
                   className="px-3 py-0.5 rounded-full border border-blue-400 bg-blue-950/90 font-black text-[9px] text-blue-300 flex items-center gap-1 uppercase backdrop-blur-md shadow-[0_0_12px_rgba(0,180,255,0.4)]"
                 >
                   <Sparkles className="w-3 h-3 animate-spin" />
-                  <span>DEALER IS DRAWING CARDS...</span>
+                  <span>{tr("dealerDrawing")}</span>
                 </motion.div>
               )}
             </>
@@ -487,9 +490,7 @@ export function BlackjackGame({
         {/* BOTTOM / SEATS: 4 SEATED PLAYERS TABLE LAYOUT */}
         <div className="w-full grid grid-cols-4 gap-1.5 min-[380px]:gap-2 z-30 pb-2 px-1">
           {gameState.players.length === 0 ? (
-            <div className="w-full py-4 text-center text-[9px] font-black text-amber-300 animate-pulse">
-              CONNECTING SEATS TO CASINO TABLE...
-            </div>
+            <div className="w-full py-4 text-center text-[9px] font-black text-amber-300 animate-pulse">{tr("connectingSeats")}</div>
           ) : (
             gameState.players.map((p, idx) => {
               const isTurn = gameState.stage === 'player_turn' && gameState.currentPlayerIndex === idx;
@@ -533,7 +534,7 @@ export function BlackjackGame({
                           : 'bg-slate-900 border-slate-500 text-slate-300'
                       }`}
                     >
-                      {p.lastProfit > 0 ? `+${p.lastProfit} 💰` : p.lastProfit < 0 ? `${p.lastProfit} 💸` : 'PUSH 🤝'}
+                      {p.lastProfit > 0 ? `+${p.lastProfit} 💰` : p.lastProfit < 0 ? `${p.lastProfit} 💸` : tr("push")}
                     </motion.div>
                   )}
 
@@ -542,16 +543,12 @@ export function BlackjackGame({
                     {isEliminated ? (
                       <div className="text-[8px] font-black text-red-400 flex items-center gap-0.5 bg-black/80 px-1.5 py-1 rounded border border-red-900">
                         <Skull className="w-3 h-3" />
-                        <span>BUSTED OUT</span>
+                        <span>{tr("bustedOut")}</span>
                       </div>
                     ) : isSpectator ? (
-                      <button onClick={handleTakeSeat} className="bg-[#00ff66] text-black border-2 border-black px-4 py-2 rounded shadow hover:bg-green-400 font-black uppercase text-[10px]">
-                        TAKE A SEAT
-                      </button>
+                      <button onClick={handleTakeSeat} className="bg-[#00ff66] text-black border-2 border-black px-4 py-2 rounded shadow hover:bg-green-400 font-black uppercase text-[10px]">{tr("takeSeat")}</button>
                     ) : playerCards.length === 0 ? (
-                      <div className="bg-black/80 border border-[#00ff66] px-3 py-1 rounded text-[8px] text-[#00ff66] font-black uppercase tracking-widest flex items-center justify-center whitespace-nowrap min-w-[80px]">
-                        Waiting for next hand...
-                      </div>
+                      <div className="bg-black/80 border border-[#00ff66] px-3 py-1 rounded text-[8px] text-[#00ff66] font-black uppercase tracking-widest flex items-center justify-center whitespace-nowrap min-w-[80px]">{tr("waitingNextHand")}</div>
                     ) : (
                       <>
                         <div className="flex -space-x-3">
@@ -570,21 +567,20 @@ export function BlackjackGame({
                   <div className="flex flex-col items-center">
                     <Avatar id={p.avatar || 'rabbit'} emotion={isEliminated ? 'worried' : p.isBusted ? 'worried' : p.hasBlackjack ? 'happy' : isTurn ? 'thinking' : 'happy'} size={24} />
                     <span className="text-[7px] font-black text-white truncate max-w-[48px] leading-tight mt-0.5">
-                      {p.name || 'Player'} {isMe ? '(YOU)' : ''}
+                      {p.name || 'Player'} {isMe ? tr("youUpper") : ''}
                     </span>
                     <div className="text-[7px] font-black leading-tight">
                       {isEliminated ? (
-                        <span className="text-slate-500">OUT</span>
+                        <span className="text-slate-500">{tr("out")}</span>
                       ) : p.isBusted ? (
-                        <span className="text-red-400 bg-red-950/80 px-1 py-0.2 rounded border border-red-500/40">
-                          💥 BUST ({p.score ?? 0})
+                        <span className="text-red-400 bg-red-950/80 px-1 py-0.2 rounded border border-red-500/40">{tr("bustScore")}{p.score ?? 0})
                         </span>
                       ) : p.hasBlackjack ? (
                         <span className="text-[#ffcc00] bg-amber-950/80 px-1 py-0.2 rounded border border-amber-400/60 shadow-[0_0_8px_rgba(255,204,0,0.5)] animate-pulse">
                           🔥 21 (+15)
                         </span>
                       ) : (
-                        <span className="text-[#00ff66]">SCORE: {p.score ?? 0} (BET: {p.bet ?? 0})</span>
+                        <span className="text-[#00ff66]">{tr("scoreLabel")}{' '}{p.score ?? 0}{' '}{tr("betPrefix")}{' '}{p.bet ?? 0})</span>
                       )}
                     </div>
                   </div>
@@ -610,25 +606,25 @@ export function BlackjackGame({
                 <Trophy className="w-4 h-4 text-[#ffcc00] animate-bounce" />
                 <h2 className="text-[10px] font-black uppercase tracking-wider text-[#00ff66]">
                   {gameState.stage === 'match_ended'
-                    ? `🏆 ${gameState.matchChampion?.name?.toUpperCase() || gameState.winner?.toUpperCase() || 'PLAYER'} WINS!`
-                    : gameState.isPersistentTable ? 'ROUND RESULTS' : `HAND ${gameState.currentHand || 1}/${gameState.maxHands || 5} RESULTS`}
+                    ? `🏆 ${tr('playerWinsName', { name: gameState.matchChampion?.name || gameState.winner || tr('players') })}`
+                    : gameState.isPersistentTable ? tr("roundResults") : tr('handResultsNumber', { hand: gameState.currentHand || 1, total: gameState.maxHands || 5 })}
                 </h2>
               </div>
 
               {/* Compact result: hand value, winner and what happens next. */}
               <div className="space-y-0.5 bg-black/60 border border-slate-800 p-1.5 rounded text-[7.5px] font-bold max-h-[90px] overflow-y-auto">
                 <div className="text-slate-400 text-[6.5px] uppercase tracking-wider flex justify-between border-b border-slate-800 pb-0.5">
-                  <span>PLAYER</span>
-                  <span>HAND</span>
+                  <span>{tr("player")}</span>
+                  <span>{tr("hand")}</span>
                 </div>
                 {sortedByChips.map((p, rankIdx) => (
                   <div key={p.id} className="flex justify-between items-center py-0.5">
                     <span className="text-white truncate max-w-[110px]">
                       {rankIdx === 0 ? '🥇 ' : rankIdx === 1 ? '🥈 ' : rankIdx === 2 ? '🥉 ' : '4. '}
-                      {p.name} {p.id === 'player' ? '(You)' : ''}
+                      {p.name} {p.id === 'player' ? tr("you") : ''}
                     </span>
                     <span className={p.isBusted ? "text-red-400 font-black" : "text-[#ffcc00] font-black"}>
-                      {p.isBusted ? 'BUST' : p.hasBlackjack ? 'BLACKJACK' : p.score}
+                      {p.isBusted ? tr("bust") : p.hasBlackjack ? 'BLACKJACK' : p.score}
                     </span>
                   </div>
                 ))}
@@ -637,7 +633,7 @@ export function BlackjackGame({
               {gameState.stage === 'match_ended' && gameState.winningPayout && gameState.winningPayout > 0 && (
                 <div className="bg-amber-950/70 border border-amber-500/50 p-1 rounded text-[8px] font-black text-[#ffcc00] flex items-center justify-center gap-1">
                   <Coins className="w-3 h-3" />
-                  <span>CHAMPION PRIZE: +{gameState.winningPayout} TKT</span>
+                  <span>{tr("championPrize")}{gameState.winningPayout} TKT</span>
                 </div>
               )}
 
@@ -650,13 +646,13 @@ export function BlackjackGame({
                     className="w-full py-1.5 bg-[#00ff66] text-black border border-black font-black text-[9px] uppercase pixel-btn-interactive shadow flex items-center justify-center gap-1 cursor-pointer"
                   >
                     <Play className="w-3 h-3 fill-black text-black" />
-                    <span>NEXT HAND ({nextHandCountdown}S)</span>
+                    <span>{tr("nextHandPrefix")}{nextHandCountdown}S)</span>
                   </button>
                 )}
 
                 {gameState.mode !== 'offline' && gameState.stage === 'round_ended' && (
                   <div className="w-full py-1.5 bg-cyan-950/60 border border-cyan-400/60 text-cyan-200 font-black text-[8px] uppercase rounded">
-                    {gameState.nextRoundStartsAt ? `NEXT HAND STARTS IN ${nextHandCountdown}S` : 'WAITING FOR AN OPPONENT TO START THE NEXT HAND'}
+                    {gameState.nextRoundStartsAt ? tr('nextHandSeconds', { seconds: nextHandCountdown }) : tr("waitingOpponent")}
                   </div>
                 )}
 
@@ -664,9 +660,7 @@ export function BlackjackGame({
                   type="button"
                   onClick={onReturnToLobby}
                   className="w-full py-1 bg-red-950/80 text-red-200 border border-red-500/60 font-bold text-[8px] uppercase pixel-btn-interactive cursor-pointer"
-                >
-                  RETURN TO LOBBY
-                </button>
+                >{tr("returnLobby")}</button>
               </div>
             </div>
           </motion.div>
@@ -677,12 +671,12 @@ export function BlackjackGame({
       {gameState.stage === 'player_turn' && !gameState.isDealing && (
         <div className="bg-slate-950 border border-black p-2 rounded-lg z-20 flex flex-col gap-1.5 shadow-lg">
           <div className="flex justify-between items-center text-[8.5px] font-bold text-[#00ff66]">
-            <span>{canPlay ? '👉 YOUR TURN - CHOOSE ACTION:' : `⏳ WAITING FOR ${activePlayer?.name?.toUpperCase()}...`}</span>
+            <span>{canPlay ? tr("chooseAction") : tr('waitingForPlayerName', { name: activePlayer?.name || '' })}</span>
             {humanPlayer && (
               <div className="flex items-center gap-1 text-white">
                 <ChipStackIcon className="w-3 h-3" />
                 <strong className="text-[#ffcc00] text-[9.5px]">{humanPlayer.chips}</strong>
-                <span className="ml-1">SCORE:</span>
+                <span className="ml-1">{tr("scoreLabel")}</span>
                 <strong className="text-[#00d2ff] text-[9.5px]">{humanPlayer.score}</strong>
               </div>
             )}
@@ -700,7 +694,7 @@ export function BlackjackGame({
                 <Plus className="w-3 h-3" />
                 <span>HIT</span>
               </div>
-              <span className="text-[6.5px] text-emerald-300/80 font-normal mt-0.5">+1 card</span>
+              <span className="text-[6.5px] text-emerald-300/80 font-normal mt-0.5">{tr("oneMoreCard")}</span>
             </button>
 
             {/* STAND (STOP) */}
@@ -714,7 +708,7 @@ export function BlackjackGame({
                 <Hand className="w-3 h-3" />
                 <span>STAND</span>
               </div>
-              <span className="text-[6.5px] text-red-300/80 font-normal mt-0.5">hold score</span>
+              <span className="text-[6.5px] text-red-300/80 font-normal mt-0.5">{tr("holdScore")}</span>
             </button>
 
             {/* DOUBLE DOWN (2X BET) */}
@@ -728,7 +722,7 @@ export function BlackjackGame({
                 <Coins className="w-3 h-3" />
                 <span>DOUBLE</span>
               </div>
-              <span className="text-[6.5px] text-amber-300/80 font-normal mt-0.5">2x bet</span>
+              <span className="text-[6.5px] text-amber-300/80 font-normal mt-0.5">{tr("doubleBet")}</span>
             </button>
           </div>
           <div className="grid grid-cols-3 gap-1.5">
@@ -736,25 +730,25 @@ export function BlackjackGame({
               type="button"
               disabled={!canSplit}
               onClick={onSplit}
-              className="py-2 px-1 bg-violet-950/70 border border-violet-400/70 text-violet-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px]"
+              className="py-2 px-1 bg-violet-950/70 border border-violet-400/70 text-violet-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px] flex-col gap-1"
             >
-              SPLIT <span className="block text-[6.5px] font-normal">pair → 2 hands</span>
+              SPLIT <span className="block text-[6.5px] font-normal">{tr("splitPair")}</span>
             </button>
             <button
               type="button"
               disabled={!canSurrender}
               onClick={onSurrender}
-              className="py-2 px-1 bg-slate-900 border border-slate-500 text-slate-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px]"
+              className="py-2 px-1 bg-slate-900 border border-slate-500 text-slate-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px] flex-col gap-1"
             >
-              SURRENDER <span className="block text-[6.5px] font-normal">return 50%</span>
+              SURRENDER <span className="block text-[6.5px] font-normal">{tr("returnHalf")}</span>
             </button>
             <button
               type="button"
               disabled={!canInsurance}
               onClick={onInsurance}
-              className="py-2 px-1 bg-blue-950/70 border border-blue-400/70 text-blue-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px]"
+              className="py-2 px-1 bg-blue-950/70 border border-blue-400/70 text-blue-200 font-black rounded pixel-btn-interactive disabled:opacity-30 disabled:pointer-events-none min-h-[44px] text-[9px] flex-col gap-1"
             >
-              INSURE <span className="block text-[6.5px] font-normal">dealer Ace</span>
+              INSURE <span className="block text-[6.5px] font-normal">{tr("dealerAce")}</span>
             </button>
           </div>
         </div>
@@ -764,8 +758,8 @@ export function BlackjackGame({
       {(gameState.stage === 'round_ended' || gameState.stage === 'idle') && humanPlayer && !humanPlayer.eliminated && (
         <div className="bg-slate-950/90 border border-[#ffcc00]/50 p-2 rounded-lg z-20 flex flex-col gap-1 shadow-md">
           <div className="flex justify-between items-center text-[8px] font-black text-amber-300">
-            <span>⚙️ ADJUST BET FOR NEXT HAND:</span>
-            <span className="text-[#ffcc00]">CURRENT BET: {currentBetAmount} 💰</span>
+            <span>{tr("adjustNextBet")}</span>
+            <span className="text-[#ffcc00]">{tr("currentBet")}{' '}{currentBetAmount} 💰</span>
           </div>
 
           <div className="flex items-center justify-between gap-1">
@@ -821,33 +815,29 @@ export function BlackjackGame({
             className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 font-mono"
           >
             <div className="bg-[#18181c] border-2 border-[#00ff66] pixel-box-sm p-4 flex flex-col items-center gap-3 w-72 shadow-[0_0_20px_rgba(0,255,102,0.3)]">
-              <h2 className="text-[#00ff66] font-black text-xs uppercase text-center w-full border-b border-[#00ff66]/30 pb-2">Buy In</h2>
+              <h2 className="text-[#00ff66] font-black text-xs uppercase text-center w-full border-b border-[#00ff66]/30 pb-2">{tr("buyIn")}</h2>
               <div className="text-center w-full space-y-1">
-                <div className="text-[9px] text-slate-300">Balance: <span className="text-[#00ff66] font-bold">{(profile?.casinoChips || 0).toFixed(0)} Chips</span></div>
-                <div className="text-[9px] text-slate-300">Tickets: <span className="text-pink-400 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
+                <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-[#00ff66] font-bold">{(profile?.casinoChips || 0).toFixed(0)}{' '}{tr("chips")}</span></div>
+                <div className="text-[9px] text-slate-300">{tr("tickets")}{' '}<span className="text-pink-400 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
               </div>
 
               {gameState.matchId.includes('-free-') ? (
                 <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
-                  <p className="text-white text-[10px]">
-                    Cost: <span className="text-[#00ff66] font-black">⚡ 2 Energy</span>
+                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-[#00ff66] font-black">{tr("twoEnergy")}</span>
                   </p>
-                  <p className="text-white text-[10px]">
-                    You receive: <span className="text-[#00ff66] font-black">100 Free Chips</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#00ff66] font-black">{tr("freeChips")}</span>
                   </p>
                 </div>
               ) : gameState.matchId.includes('-practice-') ? (
                 <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
-                  <p className="text-white text-[10px]">
-                    Cost: <span className="text-[#00ff66] font-black">Free</span>
+                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-[#00ff66] font-black">{tr("free")}</span>
                   </p>
-                  <p className="text-white text-[10px]">
-                    You receive: <span className="text-[#00ff66] font-black">1000 Practice Chips</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#00ff66] font-black">{tr("practiceChips")}</span>
                   </p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
-                  <div className="text-[8px] text-slate-400 mb-1 font-bold">Convert TKT to Chips (1 TKT = 100 Chips):</div>
+                  <div className="text-[8px] text-slate-400 mb-1 font-bold">{tr("convertDescription")}</div>
                   <div className="flex gap-2">
                     <input
                       type="number"
@@ -861,16 +851,14 @@ export function BlackjackGame({
                       onClick={handleExchange} 
                       disabled={isExchanging}
                       className="px-2 py-1 bg-pink-900 text-pink-200 text-[8px] border border-pink-700 font-bold uppercase hover:bg-pink-800 disabled:opacity-50 whitespace-nowrap"
-                    >
-                      Convert
-                    </button>
+                    >{tr("convert")}</button>
                   </div>
                 </div>
               )}
 
               {gameState.matchId.includes('-public-') && (
                 <div className="flex flex-col gap-1 w-full mt-2">
-                  <div className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</div>
+                  <div className="text-[8px] text-slate-400 font-bold">{tr("tableChips")}</div>
                   <input
                     type="number"
                     min={50}
@@ -882,7 +870,7 @@ export function BlackjackGame({
                 </div>
               )}
               <div className="flex gap-2 w-full mt-2">
-                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">{isJoiningSeat ? 'Continue in background' : 'Cancel'}</button>
+                <button onClick={() => setShowBuyInModal(false)} className="flex-1 px-2 py-2 bg-slate-700 text-white text-[9px] border border-black font-bold uppercase hover:bg-slate-600">{isJoiningSeat ? tr("background") : tr("cancelSentence")}</button>
                 <button 
                   disabled={isJoiningSeat}
                   onClick={() => {
@@ -893,10 +881,10 @@ export function BlackjackGame({
                   }}
                   className="flex-1 px-2 py-2 bg-[#00ff66] text-black text-[9px] border border-black font-bold uppercase hover:bg-green-400 disabled:opacity-60"
                 >
-                  {isJoiningSeat ? <><Loader2 className="inline w-3 h-3 animate-spin mr-1" />JOINING…</> : 'Join Table'}
+                  {isJoiningSeat ? <><Loader2 className="inline w-3 h-3 animate-spin mr-1" />{tr("joining")}</> : tr("joinTable")}
                 </button>
               </div>
-              {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{seatJoinError}</div>}
+              {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{renderError(seatJoinError)}</div>}
             </div>
           </motion.div>
         )}

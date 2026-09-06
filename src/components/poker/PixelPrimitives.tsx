@@ -1,3 +1,4 @@
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { pixelMaskStyle } from './motion/pixelMasks';
 
@@ -29,12 +30,13 @@ export function PixelCounter({ value, className = '' }: { value: number; classNa
 }
 
 export function PixelTimer({ value, max, danger = false }: { value: number; max: number; danger?: boolean }) {
+  const { tr } = useLanguage();
   const progress = Math.max(0, Math.min(1, value / Math.max(1, max)));
   return (
     <span
       className={`rp-pixel-timer${danger ? ' rp-pixel-timer--danger' : ''}`}
       style={{ '--rp-timer-progress': progress } as React.CSSProperties}
-      aria-label={`${value} seconds remaining`}
+      aria-label={tr('secondsRemainingLabel', { count: value })}
     >
       <i aria-hidden="true" />
       <strong>{value}S</strong>

@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
 import './root.css';
 import { cleanErrorMessage } from './utils/api';
+import { CommonText, LanguageProvider, useLanguage } from './i18n/LanguageProvider';
 
 if (typeof window !== 'undefined') {
   const originalAlert = window.alert;
@@ -89,11 +90,16 @@ function getSurfaceFromEnvironment(): AppSurface {
   return 'story';
 }
 
+function GameLoadingText() {
+  const { t } = useLanguage();
+  return <>{t('DEALING THE TABLE…')}</>;
+}
+
 function SurfaceLoader({ surface }: { surface: AppSurface }) {
   return (
     <div className="surface-loader" role="status" aria-live="polite">
       <img src="/text(logo).jpg" alt="Redoapp" width={938} height={201} />
-      <span>{surface === 'story' ? 'ASSEMBLING THE STORY…' : 'DEALING THE TABLE…'}</span>
+      <span>{surface === 'story' ? 'ASSEMBLING THE STORY…' : <GameLoadingText />}</span>
       <i aria-hidden="true" />
     </div>
   );
@@ -101,6 +107,7 @@ function SurfaceLoader({ surface }: { surface: AppSurface }) {
 
 interface ErrorBoundaryProps {
   children: ReactNode;
+  localized?: boolean;
 }
 
 interface ErrorBoundaryState {
@@ -133,15 +140,15 @@ class RootErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundar
       return (
         <div className="surface-loader flex flex-col items-center justify-center p-6 text-center bg-[#0c0f12] text-white">
           <img src="/text(logo).jpg" alt="Redoapp" width={938} height={201} className="max-w-[200px] mb-4" />
-          <h2 className="text-base font-black text-[#ff3366] uppercase mb-2">Connection Issue</h2>
+          <h2 className="text-base font-black text-[#ff3366] uppercase mb-2">{((this as any).props as ErrorBoundaryProps).localized ? <CommonText text="Connection Issue" /> : "Connection Issue"}</h2>
           <p className="text-xs text-slate-400 max-w-xs mb-4">
-            Could not load the game resources. Please tap below to reload.
+            {((this as any).props as ErrorBoundaryProps).localized ? <CommonText text="Could not load the game resources. Please tap below to reload." /> : "Could not load the game resources. Please tap below to reload."}
           </p>
           <button
             onClick={this.handleReload}
             className="px-6 py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase rounded shadow-[2px_2px_0_#000] active:translate-y-0.5"
           >
-            RELOAD APP
+            {((this as any).props as ErrorBoundaryProps).localized ? <CommonText text="RELOAD APP" /> : "RELOAD APP"}
           </button>
         </div>
       );
@@ -159,15 +166,15 @@ export default function RootApp() {
     return () => window.removeEventListener('popstate', handleHistoryChange);
   }, []);
 
+  if (surface === 'story') {
+    return <RootErrorBoundary><Suspense fallback={<SurfaceLoader surface="story" />}><ComicExperience /></Suspense></RootErrorBoundary>;
+  }
+
   return (
-    <RootErrorBoundary>
-      <Suspense fallback={<SurfaceLoader surface={surface} />}>
-        {surface === 'story' ? (
-          <ComicExperience />
-        ) : (
-          <GameSurface />
-        )}
-      </Suspense>
-    </RootErrorBoundary>
+    <LanguageProvider>
+      <RootErrorBoundary localized>
+        <Suspense fallback={<SurfaceLoader surface="game" />}><GameSurface /></Suspense>
+      </RootErrorBoundary>
+    </LanguageProvider>
   );
 }

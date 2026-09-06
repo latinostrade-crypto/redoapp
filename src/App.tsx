@@ -1,3 +1,6 @@
+import { cardColorKeys } from './i18n/cardLabels';
+import { translateGameLabel } from './i18n/gameLabels';
+import { LanguageSwitch, useLanguage } from './i18n/LanguageProvider';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -46,6 +49,7 @@ function GameModuleLoader({ label }: { label: string }) {
 }
 
 export default function App() {
+  const { tr } = useLanguage();
   const firstFreeGameWalletPromptKey = 'redoapp_prompt_connect_wallet_after_free_game';
   const forceReducedPokerMotion = new URLSearchParams(window.location.search).get('reducedMotion') === '1';
   const {
@@ -794,13 +798,11 @@ export default function App() {
 
       {/* HEADER PANELS (Only rendered during active gameplay) */}
       {gameState.phase !== 'setup' && (
-        <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono">
+        <header className="w-full max-w-4xl px-3 py-2 flex justify-between items-center z-30 bg-[#18181c] border-b-4 border-black font-mono flex-wrap gap-1">
           <div className="flex items-center gap-2">
-            <img src="/text(logo).jpg" alt="Logo" className="h-6 w-auto object-contain select-none" />
+            <img src="/text(logo).jpg" alt={tr("logo")} className="h-6 w-auto object-contain select-none" />
             {gameState.winsRequired && gameState.winsRequired > 1 && (
-              <span className="px-2 py-0.5 text-[9px] font-black bg-[#ffcc00] text-black border border-black rounded shadow-[1px_1px_0_#000]">
-                BEST OF 3
-              </span>
+              <span className="px-2 py-0.5 text-[9px] font-black bg-[#ffcc00] text-black border border-black rounded shadow-[1px_1px_0_#000]">{tr("bestOfThree")}</span>
             )}
           </div>
 
@@ -817,15 +819,15 @@ export default function App() {
                   await leaveUnstartedMatch();
                   return;
                 }
-                if (window.confirm('Wanna head back to lobby? Current progress will lose.')) {
+                if (window.confirm(tr('leaveGameQuestion'))) {
                   await leaveUnstartedMatch();
                 }
               }}
               className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
-              title="Lobby Setup"
+              title={tr("lobbySetup")}
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>MENU</span>
+              <span>{tr("menu")}</span>
             </button>
 
             <button
@@ -834,7 +836,7 @@ export default function App() {
                 setRulesOpen(true);
               }}
               className="p-1 bg-slate-950 border-2 border-black text-[#ffcc00] pixel-btn-interactive"
-              title="Schedules / Rules"
+              title={tr("schedulesRules")}
             >
               <HelpCircle className="w-4 h-4 stroke-[3]" />
             </button>
@@ -844,19 +846,20 @@ export default function App() {
               className={`p-1 border-2 border-black pixel-btn-interactive ${
                 muted ? 'bg-red-950/40 text-[#ff4b4b]' : 'bg-slate-950 text-[#00ff66]'
               }`}
-              title={muted ? 'Unmute Sound' : 'Mute Sound'}
+              title={muted ? translateGameLabel("Unmute Sound", tr) : translateGameLabel("Mute Sound", tr)}
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
           </div>
-        </header>
+        <LanguageSwitch />
+      </header>
       )}
 
       {/* POKER GAMEPLAY SURFACE */}
       {activeGameType === 'poker' ? (
         <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
           <MotionConfig reducedMotion={forceReducedPokerMotion ? 'always' : 'user'}>
-            <Suspense fallback={<GameModuleLoader label="CONNECTING TO TABLE" />}>
+            <Suspense fallback={<GameModuleLoader label={translateGameLabel("CONNECTING TO TABLE", tr)} />}>
               <PokerGame
                 gameState={pokerState}
                 turnTimeLeft={pokerTurnTimeLeft}
@@ -873,7 +876,7 @@ export default function App() {
         </main>
       ) : activeGameType === 'blackjack' ? (
         <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
-          <Suspense fallback={<GameModuleLoader label="CONNECTING TO BLACKJACK" />}>
+          <Suspense fallback={<GameModuleLoader label={translateGameLabel("CONNECTING TO BLACKJACK", tr)} />}>
             <BlackjackGame
               gameState={blackjackState}
               turnTimeLeft={blackjackTurnTimeLeft}
@@ -912,7 +915,7 @@ export default function App() {
 
           {/* Web3 Smartphone-Oriented Dashboard Menu */}
           <div className="w-full z-10">
-            <Suspense fallback={<GameModuleLoader label="SYNCING LOBBY" />}>
+            <Suspense fallback={<GameModuleLoader label={translateGameLabel("SYNCING LOBBY", tr)} />}>
               <Web3Dashboard
                 userName={userName}
                 selectedAvatar={selectedAvatar}
@@ -948,8 +951,7 @@ export default function App() {
           {isSpectator && (
             <div className="w-full bg-[#ffcc00] text-black py-1.5 px-3 text-center text-[9px] min-[370px]:text-[10px] font-black uppercase border-b-2 border-black flex items-center justify-between z-30 shadow-[0_2px_10px_rgba(255,204,0,0.3)] shrink-0">
               <span className="flex items-center gap-1.5">
-                <span className="animate-pulse">👁️</span> SPECTATING MATCH · CARDS HIDDEN FOR FAIR PLAY
-              </span>
+                <span className="animate-pulse">👁️</span>{' '}{tr("spectatorFairPlay")}</span>
               <button
                 type="button"
                 onClick={() => {
@@ -957,9 +959,7 @@ export default function App() {
                   stopSpectating();
                 }}
                 className="bg-black text-white px-2.5 py-1 text-[8px] font-black uppercase border border-black hover:bg-slate-900 shadow-[1px_1px_0_#fff]"
-              >
-                EXIT SPECTATOR ➔
-              </button>
+              >{tr("exitSpectator")}</button>
             </div>
           )}
 
@@ -1003,18 +1003,18 @@ export default function App() {
             <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0c0f12]/90 p-4 font-mono backdrop-blur-sm">
               <div className="w-full max-w-xs border-4 border-black bg-slate-950 p-5 text-center shadow-[4px_4px_0_#000]">
                 <div className="text-[11px] font-black uppercase tracking-wider text-[#00d2ff]">
-                  {isPublicUnoRecruiting ? 'UNO table — recruiting players' : 'Connecting players'}
+                  {isPublicUnoRecruiting ? tr("unoRecruiting") : tr("connectingPlayers")}
                 </div>
                 <div className="mt-3 text-[24px] font-black text-[#ffcc00]">{connectionTimeLeft}s</div>
                 <div className="mt-1 text-[9px] font-black uppercase text-[#00ff66]">
                   {isPublicUnoRecruiting
-                    ? `${connectedPlayerCount}/4 players at table`
-                    : `${connectedPlayerCount}/${totalMatchPlayerCount} players connected`}
+                    ? tr('playersAtTable', { count: connectedPlayerCount })
+                    : tr('playersConnected', { count: connectedPlayerCount, total: totalMatchPlayerCount })}
                 </div>
                 <div className="mt-3 text-[7px] leading-relaxed text-slate-400">
                   {isPublicUnoRecruiting
-                    ? 'The server is holding this shared table open for more players. The game starts for everyone when this timer ends.'
-                    : 'The match starts when everyone connects. If nobody connects, no tickets or energy are charged.'}
+                    ? tr("sharedTableWaiting")
+                    : tr("matchWaiting")}
                 </div>
                 <button
                   type="button"
@@ -1022,7 +1022,7 @@ export default function App() {
                   disabled={isLeavingUnstartedMatch}
                   className="mt-4 w-full py-2 bg-red-950/80 hover:bg-red-900 border-2 border-black text-[#ff4b4b] font-black text-[9px] uppercase tracking-wider pixel-btn-interactive shadow-[3px_3px_0_#000] cursor-pointer disabled:opacity-50"
                 >
-                  {isLeavingUnstartedMatch ? 'Leaving...' : 'Cancel Match'}
+                  {isLeavingUnstartedMatch ? tr("leaving") : tr("cancelMatch")}
                 </button>
               </div>
             </div>
@@ -1038,14 +1038,13 @@ export default function App() {
                   <span className="text-lg">⏳</span>
                 </div>
                 
-                <h3 className="text-[11px] font-black text-[#ffcc00] uppercase tracking-widest leading-none">
-                  Waiting for Players ({gameState.players.filter((p) => p.name !== 'Waiting...').length}/{gameState.players.length})
+                <h3 className="text-[11px] font-black text-[#ffcc00] uppercase tracking-widest leading-none">{tr("waitingPlayersPrefix")}{gameState.players.filter((p) => p.name !== 'Waiting...').length}/{gameState.players.length})
                 </h3>
                 
                 <p className="text-[8px] text-slate-400 font-sans leading-normal px-2">
                   {gameState.players.filter((p) => p.name === 'Waiting...').length === 1
-                    ? 'Need 1 more player to auto-start the match.'
-                    : `Need ${gameState.players.filter((p) => p.name === 'Waiting...').length} more players to auto-start the match.`}
+                    ? tr("needOnePlayer")
+                    : tr('needMorePlayers', { count: gameState.players.filter((p) => p.name === 'Waiting...').length })}
                 </p>
 
                 {/* Player Slots List */}
@@ -1057,11 +1056,11 @@ export default function App() {
                         <div className="flex items-center gap-1.5 truncate pr-2">
                           <Avatar id={p.avatar} size={22} />
                           <span className={isJoined ? "font-bold text-white truncate" : "text-slate-500 italic text-[8px] truncate"}>
-                            {isJoined ? getDisplayName(p) : `Slot ${index + 1}: Waiting...`}
+                            {isJoined ? getDisplayName(p) : tr('waitingSlot', { number: index + 1 })}
                           </span>
                         </div>
                         <span className={isJoined ? "text-[#00ff66] font-black text-[8px] shrink-0" : "text-[#ffcc00] animate-pulse text-[8px] shrink-0"}>
-                          {isJoined ? (index === 0 ? 'HOST' : 'READY') : 'WAITING'}
+                          {isJoined ? (index === 0 ? tr('hostLabel') : tr('readyLabel')) : tr("waiting")}
                         </span>
                       </div>
                     );
@@ -1075,8 +1074,7 @@ export default function App() {
                       const activeMatch = JSON.parse(activeMatchRaw);
                       if (activeMatch.roomCode) {
                         return (
-                          <div className="bg-slate-900 border border-slate-800 p-1.5 font-mono text-[9px] text-[#00ff66] break-all select-all">
-                            CODE: <span className="font-bold text-white text-[10px]">{activeMatch.roomCode}</span>
+                          <div className="bg-slate-900 border border-slate-800 p-1.5 font-mono text-[9px] text-[#00ff66] break-all select-all">{tr("code")}{' '}<span className="font-bold text-white text-[10px]">{activeMatch.roomCode}</span>
                           </div>
                         );
                       }
@@ -1106,7 +1104,7 @@ export default function App() {
                             window.open(link, '_blank');
                           }
                         } else {
-                          alert('Room code not found in session.');
+                          alert(tr('roomCodeMissing'));
                         }
                       } catch (e) {
                         console.error(e);
@@ -1114,16 +1112,14 @@ export default function App() {
                     }
                   }}
                   className="w-full py-2 bg-[#00ff66] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border-2 border-black cursor-pointer shadow-[3px_3px_0_#000] hover:translate-y-0.5 hover:shadow-[1px_1px_0_#000] transition-all"
-                >
-                  Invite Friend ➔
-                </button>
+                >{tr("inviteFriend")}</button>
                 <button
                   type="button"
                   onClick={leaveUnstartedMatch}
                   disabled={isLeavingUnstartedMatch}
                   className="w-full py-2 bg-[#ff4b4b] text-black font-black text-[9px] uppercase tracking-wider pixel-btn-interactive border-2 border-black cursor-pointer shadow-[3px_3px_0_#000] disabled:opacity-60 disabled:cursor-wait"
                 >
-                  {isLeavingUnstartedMatch ? 'Leaving...' : 'Leave & Cancel Room'}
+                  {isLeavingUnstartedMatch ? tr("leaving") : tr("cancelRoom")}
                 </button>
               </div>
             </div>
@@ -1151,10 +1147,10 @@ export default function App() {
                       🎴 {getHandCount(pandaPlayer)}
                     </span>
                     {isOffline && (
-                      <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse">🔌 OFF</span>
+                      <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse">{tr("disconnected")}</span>
                     )}
                     {isBot && (
-                      <span className="text-[#ffcc00] font-black text-[7px]">🤖 BOT</span>
+                      <span className="text-[#ffcc00] font-black text-[7px]">{tr("bot")}</span>
                     )}
                   </div>
                 </div>
@@ -1183,12 +1179,12 @@ export default function App() {
                     
                     <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000] max-w-[85px] truncate">
                       <span className="max-w-[80px] truncate text-center">{getDisplayName(leftPlayer)}</span>
-                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {getHandCount(leftPlayer)} CARDS</span>
+                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {tr('cardsCount', { count: getHandCount(leftPlayer) })}</span>
                       {isOffline && (
-                        <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">🔌 OFF</span>
+                        <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">{tr("disconnected")}</span>
                       )}
                       {isBot && (
-                        <span className="text-[#ffcc00] font-black text-[7px] mt-0.5">🤖 BOT</span>
+                        <span className="text-[#ffcc00] font-black text-[7px] mt-0.5">{tr("bot")}</span>
                       )}
                     </div>
                   </div>
@@ -1210,7 +1206,7 @@ export default function App() {
                       ? 'bg-[#ff4b4b] text-white animate-bounce shadow-[0_0_8px_#ff4b4b]'
                       : 'bg-[#ffcc00] text-black'
                   }`}>
-                    {isHumanTurn ? '⏱️ YOUR TURN: ' : `⏱️ ${currentActivePlayer?.name || 'Turn'}: `}
+                    {isHumanTurn ? tr("turnTimer") : `⏱️ ${currentActivePlayer?.name || 'Turn'}: `}
                     <span className="font-extrabold">{turnTimeLeft}s</span>
                   </div>
                 </div>
@@ -1250,21 +1246,18 @@ export default function App() {
                       className={`relative z-10 transition-transform active:translate-y-1 border-none bg-none outline-none ${
                         isHumanTurn ? 'cursor-pointer hover:-translate-y-1' : 'opacity-85'
                       }`}
-                      aria-label="Draw a card"
+                      aria-label={tr("drawCard")}
                     >
                       <UnoCard card={{ id: 'draw-pile-gui', color: 'wild', value: 'wild', score: 0 }} isBack={true} size="responsive" />
                       
                       {/* Interactive Tap-glowing Ring for Human turn */}
                       {isHumanTurn && playableCount === 0 && (
-                        <span className="absolute inset-x-0 -bottom-1 text-center bg-[#ffcc00] text-black font-black text-[7px] min-[370px]:text-[9px] uppercase px-1 border border-black shadow animate-pulse tracking-tight select-none font-mono">
-                          TAP DRAW!
-                        </span>
+                        <span className="absolute inset-x-0 -bottom-1 text-center bg-[#ffcc00] text-black font-black text-[7px] min-[370px]:text-[9px] uppercase px-1 border border-black shadow animate-pulse tracking-tight select-none font-mono">{tr("tapDraw")}</span>
                       )}
                     </button>
                   </div>
                   <span className="text-[8px] min-[370px]:text-[9px] font-mono font-bold text-slate-450 bg-black px-1.5 border border-black/40">
-                    {gameState.deckCount ?? gameState.deck.length} REM
-                  </span>
+                    {gameState.deckCount ?? gameState.deck.length}{' '}{tr("remaining")}</span>
                 </div>
 
                 {/* DISCARD PILE */}
@@ -1296,7 +1289,7 @@ export default function App() {
                   </div>
                           {/* Current Table Target Color Badge */}
                   <span className={`text-[8px] min-[370px]:text-[9px] font-black uppercase font-mono px-2 py-0.5 border border-black shadow-[1px_1px_0_#000] ${getActiveColorBorder(gameState.activeColor)}`}>
-                    {gameState.activeColor === 'green' ? 'purple' : gameState.activeColor}
+                    {tr(cardColorKeys[gameState.activeColor])}
                   </span>
                 </div>
 
@@ -1305,7 +1298,7 @@ export default function App() {
               {/* Play Direction Action Alert Text Overlay */}
               <div className="absolute bottom-1 bg-black border border-black px-2 py-0.5 flex items-center gap-1 text-[8px] font-mono text-slate-300 select-none max-w-[115px] sm:max-w-none truncate">
                 <ArrowRightLeft className="w-2.5 h-2.5 text-[#ffcc00]" />
-                <span>DIR: {gameState.direction === 1 ? 'CW 🔄' : 'CCW 🔄'}</span>
+                <span>{tr("direction")}{' '}{gameState.direction === 1 ? tr("clockwise") : tr("counterclockwise")}</span>
               </div>
             </div>
 
@@ -1327,12 +1320,12 @@ export default function App() {
                     
                     <div className="bg-black text-white px-1.5 py-1 border border-black text-[8px] font-mono flex flex-col items-center leading-none shadow-[2px_2px_0_#000] max-w-[85px] truncate">
                       <span className="max-w-[80px] truncate text-center">{getDisplayName(rightPlayer)}</span>
-                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {getHandCount(rightPlayer)} CARDS</span>
+                      <span className="text-[#ffcc00] font-black mt-0.5 whitespace-nowrap">🎴 {tr('cardsCount', { count: getHandCount(rightPlayer) })}</span>
                       {isOffline && (
-                        <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">🔌 OFF</span>
+                        <span className="text-[#ff4b4b] font-black text-[7px] animate-pulse mt-0.5">{tr("disconnected")}</span>
                       )}
                       {isBot && (
-                        <span className="text-[#ffcc00] font-black text-[7px] mt-0.5">🤖 BOT</span>
+                        <span className="text-[#ffcc00] font-black text-[7px] mt-0.5">{tr("bot")}</span>
                       )}
                     </div>
                   </div>
@@ -1348,9 +1341,7 @@ export default function App() {
               <button
                 onClick={passTurn}
                 className="py-2 px-4 bg-[#00d2ff] text-black font-black text-xs uppercase font-mono tracking-wider border-2 border-black pixel-btn-interactive shadow-[2px_2px_0_#000]"
-              >
-                PASS TURN ➔
-              </button>
+              >{tr("passTurn")}</button>
             )}
           </section>
 
@@ -1364,8 +1355,8 @@ export default function App() {
             <div className="cards-hand-container w-full overflow-x-auto py-2 px-1 flex flex-row items-center justify-start min-h-[106px] min-[370px]:min-h-[126px] sm:min-h-[148px] select-none relative bg-black/40 border border-black">
               {(() => {
                 const human = gameState.players.find((p) => p.id === 'player');
-                if (!human) return <div className="text-slate-500 text-xs italic font-mono">Loading...</div>;
-                if (human.hand.length === 0) return <div className="text-slate-500 text-xs italic font-mono">Empty hand.</div>;
+                if (!human) return <div className="text-slate-500 text-xs italic font-mono">{tr("loading")}</div>;
+                if (human.hand.length === 0) return <div className="text-slate-500 text-xs italic font-mono">{tr("emptyHand")}</div>;
 
                 const handLength = human.hand.length;
                 const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
@@ -1412,14 +1403,13 @@ export default function App() {
               <div className="flex items-center gap-1.5">
                 <div className="flex items-center gap-1.5 text-white bg-black px-2 py-1.5 border border-black">
                   <Star className="w-3 h-3 text-[#ffcc00] fill-[#ffcc00]" />
-                  <span>LEVEL {playerLevel}</span>
+                  <span>{tr("levelUpper")}{' '}{playerLevel}</span>
                 </div>
                 <QuickEmojiPanel onSendEmoji={handleSendEmoji} />
-                {gameState.matchId && <button type="button" onClick={() => inviteToTable(gameState.matchId, 'UNO')} className="px-2 py-1.5 bg-[#1da1f2] text-white border border-black text-[9px] font-black uppercase pixel-btn-interactive">INVITE</button>}
+                {gameState.matchId && <button type="button" onClick={() => inviteToTable(gameState.matchId, 'UNO')} className="px-2 py-1.5 bg-[#1da1f2] text-white border border-black text-[9px] font-black uppercase pixel-btn-interactive">{tr("invite")}</button>}
               </div>
               
-              <div className="text-white bg-black px-2 py-1.5 border border-black">
-                CARDS: <strong>{gameState.players.find((p) => p.id === 'player')?.hand.length || 0}</strong>
+              <div className="text-white bg-black px-2 py-1.5 border border-black">{tr("cardsLabel")}{' '}<strong>{gameState.players.find((p) => p.id === 'player')?.hand.length || 0}</strong>
               </div>
             </div>
 
@@ -1438,46 +1428,32 @@ export default function App() {
             className="bg-[#0c0f12]/95 text-white border-4 border-black p-5 w-full max-w-sm text-center shadow-[6px_6px_0_#000000] font-mono"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-xs font-black text-white mb-1 uppercase tracking-wider">
-              :: SELECT SUIT ::
-            </h3>
-            <p className="text-[10px] text-slate-400 mb-4 font-sans leading-relaxed">
-              Choose the next active color suit for the table pile
-            </p>
+            <h3 className="text-xs font-black text-white mb-1 uppercase tracking-wider">{tr("chooseSuit")}</h3>
+            <p className="text-[10px] text-slate-400 mb-4 font-sans leading-relaxed">{tr("chooseSuitDescription")}</p>
 
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={() => selectWildColor('red')}
                 className="py-3 bg-[#ff4b4b] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
-              >
-                Red Suit
-              </button>
+              >{tr("redSuit")}</button>
               <button
                 onClick={() => selectWildColor('blue')}
                 className="py-3 bg-[#00d2ff] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
-              >
-                Blue Suit
-              </button>
+              >{tr("blueSuit")}</button>
               <button
                 onClick={() => selectWildColor('yellow')}
                 className="py-3 bg-[#ffcc00] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
-              >
-                Gold Suit
-              </button>
+              >{tr("goldSuit")}</button>
               <button
                 onClick={() => selectWildColor('green')}
                 className="py-3 bg-[#a855f7] text-black font-black text-xs border-2 border-black pixel-btn-interactive uppercase"
-              >
-                Purple Suit
-              </button>
+              >{tr("purpleSuit")}</button>
             </div>
 
             <button
               onClick={cancelWildSelect}
               className="w-full mt-3 py-2.5 bg-[#2a2d32] hover:bg-[#3f434a] text-slate-200 font-black text-xs border-2 border-black pixel-btn-interactive uppercase tracking-wider shadow-[2px_2px_0_#000000] transition-colors"
-            >
-              CANCEL
-            </button>
+            >{tr("cancel")}</button>
           </div>
         </div>
       )}
@@ -1490,16 +1466,16 @@ export default function App() {
             {/* Top Banner Header */}
             <div className="bg-[#ffcc00] text-black py-1.5 px-3 font-black text-xs uppercase tracking-widest border-2 border-black flex items-center justify-center gap-2 shadow-[2px_2px_0_#000]">
               <Trophy className="w-4 h-4" />
-              <span>ROUND FINISHED</span>
+              <span>{tr("roundFinished")}</span>
             </div>
 
             {/* Winner Announcement */}
             <div className="bg-[#18231c] border border-[#00ff66]/50 p-2.5 rounded-sm flex items-center justify-center gap-2">
               <Avatar id="rabbit" size={24} emotion="celebrating" />
               <div className="text-left leading-tight">
-                <span className="text-[7.5px] text-[#00ff66] font-bold block uppercase tracking-wider">ROUND WINNER</span>
+                <span className="text-[7.5px] text-[#00ff66] font-bold block uppercase tracking-wider">{tr("roundWinner")}</span>
                 <span className="text-xs font-black text-white">
-                  {gameState.roundWinnerName || (gameState.winnerId === 'player' ? 'You' : gameState.winnerId) || 'Winner'}
+                  {gameState.roundWinnerName || (gameState.winnerId === 'player' ? translateGameLabel("You", tr) : gameState.winnerId) || translateGameLabel("Winner", tr)}
                 </span>
               </div>
             </div>
@@ -1507,7 +1483,7 @@ export default function App() {
             {/* 5-Second Animated Countdown Progress Bar */}
             <div className="space-y-1">
               <div className="flex justify-between items-center text-[8px] font-bold text-[#00d2ff]">
-                <span>⚡ NEXT HAND STARTING IN...</span>
+                <span>{tr("nextHandTimer")}</span>
                 <span className="text-[#ffcc00] font-black text-[10px]">{roundTimeLeft}s</span>
               </div>
               <div className="w-full bg-slate-900 h-2.5 border border-black overflow-hidden relative">
@@ -1521,7 +1497,7 @@ export default function App() {
             {/* Table Player Standings */}
             <div className="space-y-1.5 text-left pt-1">
               <span className="text-[7.5px] text-slate-400 font-bold uppercase tracking-wider block border-b border-slate-800 pb-1">
-                TABLE SCOREBOARD (BEST OF {(gameState.winsRequired || 2)})
+                {tr('tableScoreBestOf', { count: gameState.winsRequired || 2 })}
               </span>
               {gameState.players.map((p, idx) => {
                 const winsMap = gameState.playerWins || {};
@@ -1543,18 +1519,16 @@ export default function App() {
                       <Avatar id={p.avatar} emotion={isWinner ? 'celebrating' : 'happy'} size={20} />
                       <div className="min-w-0 truncate">
                         <span className="font-bold text-white block leading-tight truncate">
-                          {p.name} {p.id === 'player' ? '(You)' : ''}
+                          {p.name} {p.id === 'player' ? tr("you") : ''}
                         </span>
                         <span className="text-[7.5px] text-slate-400 font-mono">
-                          🎴 {p.hand?.length || 0} CARDS LEFT
-                        </span>
+                          🎴 {p.hand?.length || 0}{' '}{tr("cardsLeft")}</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       {(gameState.winsRequired || 1) > 1 && (
                         <span className="px-1.5 py-0.5 bg-[#ffcc00]/20 text-[#ffcc00] border border-[#ffcc00]/50 text-[8px] font-black rounded">
-                          {wins}/{(gameState.winsRequired || 2)} WINS
-                        </span>
+                          {wins}/{(gameState.winsRequired || 2)}{' '}{tr("wins")}</span>
                       )}
                       {isWinner && <span className="text-xs">👑</span>}
                     </div>
@@ -1573,7 +1547,7 @@ export default function App() {
           <div className="w-full max-w-md space-y-3">
             <div className="w-full px-3 py-2 flex justify-between items-center bg-[#18181c] border-4 border-black font-mono shadow-[6px_6px_0_#000]">
               <div className="flex items-center gap-2">
-                <img src="/text(logo).jpg" alt="Logo" className="h-6 w-auto object-contain select-none" />
+                <img src="/text(logo).jpg" alt={tr("logo")} className="h-6 w-auto object-contain select-none" />
               </div>
 
               <button
@@ -1582,20 +1556,20 @@ export default function App() {
                   returnToLobby();
                 }}
                 className="px-2 py-1 bg-slate-950 border-2 border-black text-white pixel-btn-interactive flex items-center gap-1 text-[9px] font-black"
-                title="Lobby Setup"
+                title={tr("lobbySetup")}
               >
                 <RotateCcw className="w-3.5 h-3.5" />
-                <span>MENU</span>
+                <span>{tr("menu")}</span>
               </button>
             </div>
 
             <div className="bg-[#0c0f12] text-white border-4 border-black p-4 w-full text-center shadow-[6px_6px_0_#000] font-mono max-h-[78vh] flex flex-col overflow-y-auto custom-scroll">
             
             <h2 className="text-sm sm:text-base font-black tracking-tight leading-none mb-2 text-[#ffcc00] uppercase">
-              {gameState.winnerId === 'player' ? '🏆 VICTORY MATCH 🏆' : '💀 GAME OVER 💀'}
+              {gameState.winnerId === 'player' ? tr("victory") : tr("gameOver")}
             </h2>
             <p className="text-slate-450 text-[9px] sm:text-[10px] mb-3 leading-normal font-sans">
-              {gameState.winnerId === 'player' ? 'Outstanding game! You cleared your hand first!' : 'The AI bots cleared their hand first!'}
+              {gameState.winnerId === 'player' ? tr("clearedHand") : tr("botsWon")}
             </p>
 
             {/* Leaderboard entries */}
@@ -1630,19 +1604,16 @@ export default function App() {
                       
                       <div className="leading-tight">
                         <span className={`block font-bold text-[10px] ${isUser ? 'text-[#00d2ff]' : 'text-slate-200'}`}>
-                          {entry.name} {isUser && ' (You)'}
+                          {entry.name} {isUser && translateGameLabel(" (You)", tr)}
                         </span>
                         <span className="text-[8px] text-slate-550 font-mono">
-                          {entry.cardsLeft || 0} {entry.cardsLeft === 1 ? 'CARD' : 'CARDS'} LEFT ({entry.points} PTS)
-                        </span>
+                          {entry.cardsLeft || 0} {entry.cardsLeft === 1 ? tr("card") : tr("cards")}{' '}{tr("leftPrefix")}{entry.points}{' '}{tr("pointsSuffix")}</span>
                       </div>
                     </div>
 
                     <div className="text-right leading-none">
                       {entry.isWinner && (
-                        <span className="text-[6px] bg-[#00ff66]/20 text-[#00ff66] px-1 border border-[#00ff66] font-black uppercase tracking-wider mt-0.5 inline-block">
-                          Winner
-                        </span>
+                        <span className="text-[6px] bg-[#00ff66]/20 text-[#00ff66] px-1 border border-[#00ff66] font-black uppercase tracking-wider mt-0.5 inline-block">{tr("winner")}</span>
                       )}
                     </div>
                   </div>
@@ -1662,16 +1633,16 @@ export default function App() {
                 <div className="bg-black p-2.5 border border-black mb-3 text-left space-y-1.5 font-mono text-[9px]">
                   <div className="flex justify-between items-center">
                     <span className="font-black text-[#00d2ff] flex flex-col gap-0.5">
-                      <span>YOUR REWARD</span>
+                      <span>{tr("yourReward")}</span>
                       <span className="text-[#ffcc00] text-[12px]">+{myEntry.xpGained} XP</span>
                       {gameMode !== 'offline' && myEntry.ticketsGained !== undefined && (
-                        <span className="text-[#00ff66]">TICKETS: <span className="text-[#ffcc00]">+{myEntry.ticketsGained.toFixed(2)} TKT</span></span>
+                        <span className="text-[#00ff66]">{tr("ticketsLabel")}{' '}<span className="text-[#ffcc00]">+{myEntry.ticketsGained.toFixed(2)} TKT</span></span>
                       )}
                     </span>
                   </div>
 
                   <div className="flex justify-between items-center text-[8px] font-bold text-slate-400">
-                    <span>Level {playerLevel}</span>
+                    <span>{tr("level")}{' '}{playerLevel}</span>
                     <span>{currentLevelXp}/{xpNeeded} XP</span>
                   </div>
 
@@ -1683,8 +1654,7 @@ export default function App() {
                   </div>
 
                   {playerLevel > prevLevel && (
-                    <div className="text-center text-[8px] text-[#00ff66] font-black animate-pulse mt-0.5 uppercase">
-                      Level Up! Reached Level {playerLevel}
+                    <div className="text-center text-[8px] text-[#00ff66] font-black animate-pulse mt-0.5 uppercase">{tr("levelUpPrefix")}{' '}{playerLevel}
                     </div>
                   )}
                 </div>
@@ -1693,10 +1663,8 @@ export default function App() {
 
             {shouldPromptWalletAfterFirstFreeGame && (
               <div className="bg-[#08131f] border border-[#00d2ff] mb-3 p-3 text-left font-mono">
-                <div className="text-[10px] font-black uppercase text-[#00d2ff]">After Your First Free Game</div>
-                <p className="mt-1 text-[9px] leading-relaxed text-slate-200 font-sans">
-                  Return to the lobby and connect your wallet to sync progress, open the rewards flow, and start earning free energy from quests.
-                </p>
+                <div className="text-[10px] font-black uppercase text-[#00d2ff]">{tr("afterFirstGame")}</div>
+                <p className="mt-1 text-[9px] leading-relaxed text-slate-200 font-sans">{tr("afterFirstGameDescription")}</p>
                 <button
                   type="button"
                   onClick={() => {
@@ -1705,9 +1673,7 @@ export default function App() {
                     returnToLobby();
                   }}
                   className="mt-3 w-full py-2 bg-[#00d2ff] text-black font-black text-[10px] uppercase border-2 border-black shadow-[2px_2px_0_#000]"
-                >
-                  Open Rewards And Connect Wallet
-                </button>
+                >{tr("rewardsAndWallet")}</button>
               </div>
             )}
 
@@ -1718,18 +1684,14 @@ export default function App() {
                   returnToLobby();
                 }}
                 className="w-full py-2.5 bg-slate-950 text-white font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-              >
-                MENU
-              </button>
+              >{tr("menu")}</button>
               <button
                 onClick={() => {
                   sound.playShuffle();
                   startGame(selectedAvatar, userName, gameMode, activeStake);
                 }}
                 className="w-full py-2.5 bg-[#00ff66] text-black font-black text-xs uppercase tracking-wider pixel-btn-interactive border-2 border-black shadow-[2px_2px_0_#000]"
-              >
-                PLAY AGAIN
-              </button>
+              >{tr("playAgain")}</button>
             </div>
             </div>
           </div>

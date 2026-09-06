@@ -1,3 +1,5 @@
+import type { UiMessage } from '../../i18n/message';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useRef } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { ChipStackIcon } from './PokerTable';
@@ -5,16 +7,17 @@ import { useTelegramSafeArea } from '../../hooks/useTelegramSafeArea';
 
 export type CasinoConfirmationRequest = {
   key: number;
-  title: string;
-  message: string;
-  detail?: string;
-  confirmLabel?: string;
+  title: UiMessage;
+  message: UiMessage;
+  detail?: UiMessage;
+  confirmLabel?: UiMessage;
   tone?: 'signal' | 'danger';
 };
 
-export type CasinoNotice = { key: number; message: string; tone: 'signal' | 'danger' | 'neutral' };
+export type CasinoNotice = { key: number; message: UiMessage; tone: 'signal' | 'danger' | 'neutral' };
 
 export function CasinoNoticeToast({ notice }: { notice: CasinoNotice | null }) {
+  const { tr, renderMessage, renderError } = useLanguage();
   const reduceMotion = useReducedMotion();
   const telegramSafeArea = useTelegramSafeArea();
   return (
@@ -31,8 +34,8 @@ export function CasinoNoticeToast({ notice }: { notice: CasinoNotice | null }) {
           aria-live="polite"
           style={{ '--tg-safe-top': `${telegramSafeArea.top}px` } as React.CSSProperties}
         >
-          <span>NETWORK MESSAGE</span>
-          <strong>{notice.message}</strong>
+          <span>{tr("networkMessage")}</span>
+          <strong>{notice.tone === 'danger' ? renderError(notice.message) : renderMessage(notice.message)}</strong>
         </motion.div>
       )}
     </AnimatePresence>
@@ -48,6 +51,7 @@ export function CasinoConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { tr, renderMessage, renderError } = useLanguage();
   const reduceMotion = useReducedMotion();
   const telegramSafeArea = useTelegramSafeArea();
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
@@ -112,17 +116,17 @@ export function CasinoConfirmDialog({
             transition={{ duration: reduceMotion ? 0 : .18, delay: reduceMotion ? 0 : .22, ease: 'linear' }}
           >
             <motion.header className="rp-lobby-confirm__header" exit={reduceMotion ? undefined : { opacity: 0 }} transition={{ duration: reduceMotion ? 0 : .06, delay: reduceMotion ? 0 : .16 }}>
-              <span>RESISTANCE NETWORK // AUTHORIZATION</span>
-              <h2 id="casino-confirm-title">{request.title}</h2>
+              <span>{tr("authorization")}</span>
+              <h2 id="casino-confirm-title">{renderMessage(request.title)}</h2>
             </motion.header>
             <motion.div className="rp-lobby-confirm__content" exit={reduceMotion ? undefined : { opacity: 0 }} transition={{ duration: reduceMotion ? 0 : .06, delay: reduceMotion ? 0 : .1 }}>
               <ChipStackIcon className="w-6 h-6" />
-              <p id="casino-confirm-message">{request.message}</p>
-              {request.detail && <small>{request.detail}</small>}
+              <p id="casino-confirm-message">{renderMessage(request.message)}</p>
+              {request.detail && <small>{renderMessage(request.detail)}</small>}
             </motion.div>
             <motion.div className="rp-lobby-confirm__actions" exit={reduceMotion ? undefined : { opacity: 0 }} transition={{ duration: reduceMotion ? 0 : .06 }}>
-              <button ref={cancelButtonRef} type="button" onClick={onCancel} className="rp-lobby-secondary">CANCEL</button>
-              <button ref={confirmButtonRef} type="button" onClick={onConfirm} className="rp-lobby-primary">{request.confirmLabel || 'CONFIRM'}</button>
+              <button ref={cancelButtonRef} type="button" onClick={onCancel} className="rp-lobby-secondary">{tr("cancel")}</button>
+              <button ref={confirmButtonRef} type="button" onClick={onConfirm} className="rp-lobby-primary">{request.confirmLabel ? renderMessage(request.confirmLabel) : tr('confirmNotice')}</button>
             </motion.div>
           </motion.section>
         </motion.div>

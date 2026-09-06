@@ -1,20 +1,25 @@
+import { translateGameLabel } from '../../i18n/gameLabels';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useRef } from 'react';
 import { ArcadeAnnouncement, PixelBuild, PixelBurst, PixelLoader, PixelModalTransition, PixelTextReveal } from './PixelPrimitives';
 
 export type AnnouncementTone = 'signal' | 'danger' | 'winner';
 
 export function GameAnnouncement({ message, detail, tone = 'signal' }: { message: string; detail?: string; tone?: AnnouncementTone; key?: React.Key }) {
-  return <ArcadeAnnouncement message={message} detail={detail} tone={tone} />;
+  const { tr } = useLanguage();
+  return <ArcadeAnnouncement message={translateGameLabel(message, tr)} detail={detail} tone={tone} />;
 }
 
 export function GameStartSequence({ phase = 'start' }: { phase?: 'ready' | 'start'; key?: React.Key }) {
+  const { tr } = useLanguage();
   return phase === 'ready'
-    ? <GameAnnouncement message="READY?" detail="LINKING TABLE SIGNAL" />
-    : <GameAnnouncement message="GAME START!" detail="CARDS IN MOTION" />;
+    ? <GameAnnouncement message="READY?" detail={translateGameLabel("LINKING TABLE SIGNAL", tr)} />
+    : <GameAnnouncement message="GAME START!" detail={translateGameLabel("CARDS IN MOTION", tr)} />;
 }
 
 export function GameOverSequence() {
-  return <GameAnnouncement message="GAME OVER" detail="SESSION CLOSED_" tone="danger" />;
+  const { tr } = useLanguage();
+  return <GameAnnouncement message="GAME OVER" detail={translateGameLabel("SESSION CLOSED_", tr)} tone="danger" />;
 }
 
 export function WinnerSequence({ playerName }: { playerName: string; key?: React.Key }) {
@@ -31,7 +36,8 @@ export function AllInSequence({ playerName }: { playerName: string; key?: React.
 }
 
 export function ShowdownSequence() {
-  return <GameAnnouncement message="SHOWDOWN" detail="IDENTITIES REVEALED" />;
+  const { tr } = useLanguage();
+  return <GameAnnouncement message="SHOWDOWN" detail={translateGameLabel("IDENTITIES REVEALED", tr)} />;
 }
 
 export function PixelModal({
@@ -101,20 +107,22 @@ export function PixelSpeechBubble({ children }: { children: React.ReactNode }) {
 }
 
 export function ConnectionStatus({ waitingForOpponent = false }: { waitingForOpponent?: boolean }) {
+  const { tr } = useLanguage();
   return (
     <div className="rp-table-signal rp-table-signal--waiting">
-      <PixelLoader label={waitingForOpponent ? 'WAITING FOR ONE MORE PLAYER' : 'SYNCING PLAYERS'} />
+      <PixelLoader label={tr(waitingForOpponent ? 'waitingOnePlayer' : 'syncingPlayersLabel')} />
     </div>
   );
 }
 
 export function PokerBootSequence({ phase }: { phase: 0 | 1 | 2 }) {
-  const labels = ['LINKING SECURE TABLE', 'VERIFYING PLAYERS', 'TABLE READY'];
+  const { tr } = useLanguage();
+  const labels = ['linkingSecureTable', 'verifyingPlayersLabel', 'tableReadyLabel'] as const;
   return (
     <div className="rp-boot-sequence" role="status" aria-live="polite">
       <PixelBuild className="rp-boot-sequence__frame">
-        <span className="rp-boot-sequence__eyebrow">RESISTANCE POKER // BOOT</span>
-        <PixelLoader label={labels[phase]} />
+        <span className="rp-boot-sequence__eyebrow">{tr('pokerBootLabel')}</span>
+        <PixelLoader label={tr(labels[phase])} />
         <PixelTextReveal className="rp-boot-sequence__progress">[{phase + 1}/3]</PixelTextReveal>
       </PixelBuild>
     </div>

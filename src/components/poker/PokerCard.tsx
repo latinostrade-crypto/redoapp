@@ -1,3 +1,5 @@
+import { translateGameLabel } from '../../i18n/gameLabels';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React from 'react';
 import type { PokerCard } from '../../types/poker';
 import { PixelCardDeal, PixelCardFlip } from './PixelPrimitives';
@@ -34,6 +36,7 @@ export function PokerCardView({
   dealIndex?: number;
   key?: React.Key;
 }) {
+  const { tr } = useLanguage();
   const cardSizeClass = isLarge
     ? 'w-12 h-[68px] min-[380px]:w-13 min-[380px]:h-[74px]'
     : 'w-9 h-13 min-[380px]:w-10 min-[380px]:h-14';
@@ -42,7 +45,7 @@ export function PokerCardView({
     return (
       <PixelCardDeal className={cardSizeClass} fromX={(2 - dealIndex) * 28} delay={dealIndex * 45}>
         <div className={`rp-card w-full h-full border-2 border-black shadow-md overflow-hidden bg-slate-950 select-none ${className}`}>
-          <img src="/card-thumbs/back.jpeg" alt="Face-down playing card" className="w-full h-full object-cover" />
+          <img src="/card-thumbs/back.jpeg" alt={tr("faceDownCard")} className="w-full h-full object-cover" />
         </div>
       </PixelCardDeal>
     );
@@ -50,7 +53,7 @@ export function PokerCardView({
 
   const suitInfo = SUIT_SYMBOLS[card.suit] || { symbol: '?', color: 'text-black', label: 'unknown suit' };
   const rankLabel = RANK_LABELS[card.rank] || String(card.rank);
-  const accessibleLabel = `${RANK_NAMES[card.rank] || rankLabel} of ${suitInfo.label}`;
+  const accessibleLabel = `${translateGameLabel(RANK_NAMES[card.rank] || rankLabel, tr)} · ${translateGameLabel(suitInfo.label, tr)}`;
 
   return (
     <PixelCardDeal className={cardSizeClass} fromX={(2 - dealIndex) * 28} delay={dealIndex * 45}>
@@ -60,7 +63,7 @@ export function PokerCardView({
             isWinning ? 'rp-card--winning border-white ring-2 ring-white shadow-[0_0_12px_rgba(255,255,255,.55)]' : 'border-black'
           } p-1 flex flex-col justify-between select-none shadow-[2px_2px_0_#000] relative overflow-hidden ${className}`}
           role="img"
-          aria-label={`${accessibleLabel}${isWinning ? ', part of winning hand' : ''}`}
+          aria-label={`${accessibleLabel}${isWinning ? `, ${translateGameLabel('part of winning hand', tr)}` : ''}`}
         >
           <div className={`text-[10px] min-[380px]:text-[11px] font-black leading-none ${suitInfo.color}`}>{rankLabel}</div>
           <div className={`text-base min-[380px]:text-lg self-center leading-none ${suitInfo.color}`} aria-hidden="true">{suitInfo.symbol}</div>

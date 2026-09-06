@@ -1,3 +1,16 @@
+.language-switch {
+  min-width: 88px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #7b9d91;
+  border-radius: 6px;
+  color: #e8fff4;
+  background: #142920;
+  font: 700 12px/1.4 system-ui, sans-serif;
+  cursor: pointer;
+}
+.language-switch:focus-visible { outline: 3px solid #00ff88; outline-offset: 3px; }
+
 .surface-loader {
   display: grid;
   min-height: 100vh;

@@ -1,3 +1,4 @@
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React from 'react';
 import type { PokerCard } from '../../types/poker';
 import { PixelCounter } from './PixelPrimitives';
@@ -36,8 +37,9 @@ export function ChipValue({
   animate?: boolean;
   ariaLabel?: string;
 }) {
+  const { tr } = useLanguage();
   return (
-    <span className={`rp-chip-value inline-flex items-center gap-1 ${className}`} aria-label={ariaLabel || `${amount} chips`}>
+    <span className={`rp-chip-value inline-flex items-center gap-1 ${className}`} aria-label={ariaLabel || tr('chipCount', { count: amount })}>
       {prefix}
       <ChipStackIcon className={iconClassName} />
       {animate ? <PixelCounter value={amount} /> : <strong>{amount}</strong>}
@@ -60,6 +62,7 @@ export function PokerChipStack({
   style?: React.CSSProperties;
   ariaHidden?: boolean;
 }) {
+  const { tr } = useLanguage();
   if (amount <= 0) return null;
   const piles = decomposeChips(amount);
   // Multiple denominations form a compact cluster, not a long horizontal bar.
@@ -67,7 +70,7 @@ export function PokerChipStack({
   const count = columns.reduce((sum, n) => sum + n, 0);
   let columnIndex = 0;
   return (
-    <span className={`rp-chip-stack ${className}`} style={style} aria-hidden={ariaHidden || undefined} aria-label={ariaHidden ? undefined : `${amount} chips`}>
+    <span className={`rp-chip-stack ${className}`} style={style} aria-hidden={ariaHidden || undefined} aria-label={ariaHidden ? undefined : tr('chipCount', { count: amount })}>
       <span className="rp-chip-piles" aria-hidden="true" style={{ '--pile-count': count } as React.CSSProperties}>
         {piles.map((pile, i) => <span key={pile.denomination} className={`rp-chip-denomination rp-chip-denomination--${pile.denomination}`} data-denomination={pile.denomination} data-count={pile.count}>
           {Array.from({ length: columns[i] }, (_, column) => {
@@ -84,25 +87,28 @@ export function PokerChipStack({
 }
 
 export function PokerTable({ children, bankCount = 1 }: { children: React.ReactNode; bankCount?: number }) {
+  const { tr } = useLanguage();
   return (
     <div className={`rp-table${bankCount > 3 ? ' rp-table--many-pots' : ''} w-full h-[385px] min-[380px]:h-[415px] relative overflow-hidden flex flex-col items-center justify-center z-10 shrink-0`}>
-      <div className="rp-table-grid" aria-hidden="true" />
+      <div className="rp-table-grid" data-label={tr("tableChannel")} aria-hidden="true" />
       <div className="rp-table-frame" aria-hidden="true" />
-      <div className="rp-board-zone" aria-hidden="true"><span>COMMUNITY // 05</span></div>
+      <div className="rp-board-zone" aria-hidden="true"><span>{tr("community")}</span></div>
       {children}
     </div>
   );
 }
 
 export function Deck() {
-  return <div className="rp-deck" aria-hidden="true"><i /><span>DECK</span></div>;
+  const { tr } = useLanguage();
+  return <div className="rp-deck" aria-hidden="true"><i /><span>{tr("deckUpper")}</span></div>;
 }
 
 export function Pot({ amount }: { amount: number }) {
+  const { tr } = useLanguage();
   return (
-    <div key={amount} className="rp-pot-cluster rp-pixel-snap" aria-label={`Pot ${amount} chips`}>
+    <div key={amount} className="rp-pot-cluster rp-pixel-snap" aria-label={tr('potAmount', { chips: tr('chipCount', { count: amount }) })}>
       <div className="rp-pot px-3 py-0.5 flex items-center gap-1.5">
-        <span>POT</span>
+        <span>{tr("pot")}</span>
         <ChipStackIcon className="w-3 h-3" />
         <PixelCounter value={amount} />
       </div>
@@ -126,14 +132,15 @@ export function CommunityCards({
   revealAll?: boolean;
   winningCardIds?: string[];
 }) {
+  const { tr } = useLanguage();
   return (
     <div className="rp-community-board relative flex items-center">
-      <div className="flex gap-1" role="group" aria-label="Community cards">
+      <div className="flex gap-1" role="group" aria-label={tr("communityCards")}>
         {[0, 1, 2, 3, 4].map((slotIndex) => {
           const card = cards[slotIndex];
           const visible = card && (!revealedCardIds || revealedCardIds.has(card.id) || revealAll);
           return (
-            <div key={slotIndex} className="rp-card-slot w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 border-2 border-dashed flex items-center justify-center shrink-0 shadow-inner" aria-label={visible ? undefined : `Empty community card slot ${slotIndex + 1}`}>
+            <div key={slotIndex} className="rp-card-slot w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 border-2 border-dashed flex items-center justify-center shrink-0 shadow-inner" aria-label={visible ? undefined : tr('emptyCommunitySlot', { slot: slotIndex + 1 })}>
               {visible ? <PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} /> : null}
             </div>
           );
@@ -144,8 +151,9 @@ export function CommunityCards({
 }
 
 export function HoleCards({ cards, winningCardIds = [] }: { cards: PokerCard[]; winningCardIds?: string[] }) {
+  const { tr } = useLanguage();
   return (
-    <div className="flex -space-x-3 shrink-0" role="group" aria-label="Your hole cards">
+    <div className="flex -space-x-3 shrink-0" role="group" aria-label={tr("holeCards")}>
       {cards.map((card, index) => (
         <PokerCardView
           key={card?.id || index}

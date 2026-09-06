@@ -1,3 +1,5 @@
+import { cardColorKeys } from '../i18n/cardLabels';
+import { useLanguage } from '../i18n/LanguageProvider';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -25,6 +27,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
   size = 'md',
   indexOffset = 0,
 }) => {
+  const { tr } = useLanguage();
   const { color, value } = card;
   const [imgError, setImgError] = React.useState(false);
 
@@ -182,7 +185,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
       >
         <img
           src="/card-thumbs/back.jpeg"
-          alt="Card Back"
+          alt={tr("cardBack")}
           className="w-full h-full object-cover select-none pointer-events-none"
           style={{ imageRendering: 'pixelated' }}
         />
@@ -207,7 +210,7 @@ export const UnoCard: React.FC<UnoCardProps> = ({
         <div className="w-full h-full relative flex items-center justify-center bg-black/10">
           <img
             src={imageUrl}
-            alt={`${color} ${value}`}
+            alt={`${tr(cardColorKeys[color])} ${String(value).toUpperCase()}`}
             onError={() => {
               console.warn(`Failed to load card image: ${imageUrl}.`);
               setImgError(true);

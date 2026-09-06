@@ -1,3 +1,8 @@
+import { translateTableEvent } from '../i18n/tableEvent';
+import { translateGameLabel } from '../i18n/gameLabels';
+import { describePokerHand } from '../i18n/pokerHand';
+import { message as uiMessage, type UiMessage } from '../i18n/message';
+import { LanguageSwitch, useLanguage } from '../i18n/LanguageProvider';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -77,6 +82,7 @@ export function PokerGame({
   onReturnToLobby,
   onInvite,
 }: PokerGameProps) {
+  const { tr, renderMessage, renderError } = useLanguage();
   const systemReduceMotion = useReducedMotion();
   const reduceMotion = forceReducedMotion || systemReduceMotion;
   const presentation = usePokerPresentation(gameState, Boolean(reduceMotion));
@@ -89,7 +95,7 @@ export function PokerGame({
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
   const [sceneClosing, setSceneClosing] = useState(false);
   const [preAction, setPreAction] = useState<PokerPreAction | null>(null);
-  const [preActionNotice, setPreActionNotice] = useState<{ key: number; message: string; tone: 'signal' | 'danger' | 'neutral' } | null>(null);
+  const [preActionNotice, setPreActionNotice] = useState<{ key: number; message: UiMessage; tone: 'signal' | 'danger' | 'neutral' } | null>(null);
   const resultRevealReady = presentation.resultReady;
   const { reactions, show: showReaction, optimistic: showOptimisticReaction } = usePokerReactions(gameState.matchId || 'practice');
   const announcedResultRef = useRef('');
@@ -113,7 +119,7 @@ export function PokerGame({
     const undo = showOptimisticReaction(player.userId || player.id, emoji.id);
     if (!gameState.matchId) return;
     void sendMatchEmoji(emoji).catch(() => {
-      if (undo()) showPreActionNotice('REACTION NOT SENT · TRY AGAIN', 'danger');
+      if (undo()) showPreActionNotice(uiMessage('reactionRetry'), 'danger');
     });
   };
 
@@ -139,7 +145,7 @@ export function PokerGame({
   const [exchangeAmount, setExchangeAmount] = useState(1);
   const [isExchanging, setIsExchanging] = useState(false);
   const [isJoiningSeat, setIsJoiningSeat] = useState(false);
-  const [seatJoinError, setSeatJoinError] = useState('');
+  const [seatJoinError, setSeatJoinError] = useState<UiMessage>('');
   const seatRequestIdRef = useRef('');
   const { profile, fetchProfile } = useUserProfile();
   const telegramPhotoUrl = humanPlayer.photoUrl
@@ -222,7 +228,7 @@ export function PokerGame({
         await fetchProfile();
         setExchangeAmount(1);
       } else {
-        setSeatJoinError('Exchange failed. Check your ticket balance and retry.');
+        setSeatJoinError(uiMessage('seatExchangeFailed'));
       }
     } catch (e) {
       console.error(e);
@@ -254,7 +260,7 @@ export function PokerGame({
       console.error(err);
       const message = err instanceof Error ? err.message : '';
       if (/timed out|interrupted/i.test(message) && gameState.matchId) {
-        setSeatJoinError('Checking whether your seat was reserved…');
+        setSeatJoinError(uiMessage('seatReservationChecking'));
         try {
           const recovered = await apiRequest<{ seated: boolean }>(`/api/casino/my-seat/${encodeURIComponent(gameState.matchId)}`, {
             timeoutMs: 8_000,
@@ -272,7 +278,7 @@ export function PokerGame({
           console.error('Poker seat reconciliation failed', recoveryError);
         }
       }
-      setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : 'Could not take a seat. Please retry.');
+      setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : uiMessage('seatTakeFailed'));
     } finally {
       setIsJoiningSeat(false);
     }
@@ -315,7 +321,7 @@ export function PokerGame({
     }
   }, [gameState.currentPlayerIndex, gameState.turnStartedAt, isHumanTurn, turnTimeLeft]);
 
-  const showPreActionNotice = useCallback((message: string, tone: 'signal' | 'danger' | 'neutral' = 'neutral') => {
+  const showPreActionNotice = useCallback((message: UiMessage, tone: 'signal' | 'danger' | 'neutral' = 'neutral') => {
     if (preActionNoticeTimerRef.current !== null) window.clearTimeout(preActionNoticeTimerRef.current);
     const key = Date.now();
     setPreActionNotice({ key, message, tone });
@@ -343,21 +349,21 @@ export function PokerGame({
 
     if (resolution === 'fold') {
       playPokerFeedback('fold');
-      showPreActionNotice('PRE-FOLD EXECUTED', 'danger');
+      showPreActionNotice(uiMessage('preFoldExecuted'), 'danger');
       onFold();
       return;
     }
 
     if (resolution === 'check') {
       playPokerFeedback('ui_confirm');
-      showPreActionNotice('PRE-CHECK EXECUTED', 'signal');
+      showPreActionNotice(uiMessage('preCheckExecuted'), 'signal');
       onCallOrCheck();
       return;
     }
 
     if (preAction === 'check' && callNeeded > 0) {
       playPokerFeedback('ui_cancel');
-      showPreActionNotice('PRE-CHECK CANCELLED · BET TO CALL', 'danger');
+      showPreActionNotice(uiMessage('preCheckCancelledBet'), 'danger');
     }
   }, [
     callNeeded,
@@ -376,7 +382,7 @@ export function PokerGame({
   const togglePreAction = (action: PokerPreAction) => {
     if (action === 'check' && !canQueuePreCheck) {
       playPokerFeedback('ui_cancel');
-      showPreActionNotice('PRE-CHECK UNAVAILABLE · BET TO CALL', 'danger');
+      showPreActionNotice(uiMessage('preCheckUnavailableBet'), 'danger');
       return;
     }
     playPokerFeedback(preAction === action ? 'ui_cancel' : 'ui_click');
@@ -474,13 +480,13 @@ export function PokerGame({
             exit={reduceMotion ? undefined : { clipPath: 'inset(0 100% 0 0)' }}
             transition={{ duration: reduceMotion ? 0 : 0.12 }}
           >
-            <PixelToast message={preActionNotice.message} tone={preActionNotice.tone} />
+            <PixelToast message={renderMessage(preActionNotice.message)} tone={preActionNotice.tone} />
           </motion.div>
         )}
       </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
-      <header className="rp-header flex justify-between items-center border px-2.5 py-1 z-20">
+      <header className="rp-header flex justify-between items-center border px-2.5 py-1 z-20 flex-wrap gap-1">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -488,11 +494,11 @@ export function PokerGame({
             className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase flex items-center gap-1 cursor-pointer"
           >
             <RotateCcw className="w-3 h-3" />
-            <span>LOBBY</span>
+            <span>{tr("lobby")}</span>
           </button>
-          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase">INVITE</button>}
+          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase">{tr("invite")}</button>}
           <span className="rp-mode-label text-[8px] font-black uppercase px-1.5 py-0.5">
-            HOLD'EM · {gameState.mode.toUpperCase()}
+            HOLD'EM · {tr(gameState.mode === 'offline' ? 'modePractice' : gameState.mode === 'private' ? 'privateRoom' : 'tabPvp')}
           </span>
         </div>
 
@@ -502,16 +508,16 @@ export function PokerGame({
               <ChipValue
                 amount={gameState.stake}
                 iconClassName="w-3 h-3"
-                prefix={isFreeChipTable ? <span>FREE ·</span> : null}
-                suffix={!isFreeChipTable ? <span>MIN</span> : null}
+                prefix={isFreeChipTable ? <span>{tr("freePrefix")}</span> : null}
+                suffix={!isFreeChipTable ? <span>{tr('minimumShort')}</span> : null}
               />
-            ) : gameState.stake === 0 ? <span>FREE</span> : <span>{gameState.stake} TKT</span>}
+            ) : gameState.stake === 0 ? <span>{tr("freeUpper")}</span> : <span>{gameState.stake} TKT</span>}
           </span>
 
           <button
             type="button"
             onClick={toggleMute}
-            aria-label={muted ? 'Unmute poker sounds' : 'Mute poker sounds'}
+            aria-label={tr(muted ? 'unmutePoker' : 'mutePoker')}
             className={`min-w-[44px] p-1 border border-black pixel-btn-interactive cursor-pointer ${
               muted ? 'bg-red-950/40 text-red-400' : 'bg-slate-900 text-slate-200'
             }`}
@@ -523,19 +529,20 @@ export function PokerGame({
             onClick={toggleHaptics}
             className={`rp-header-toggle px-1 text-[7px] font-black ${hapticsEnabled ? 'text-slate-100' : 'text-slate-500'}`}
             aria-pressed={hapticsEnabled}
-            aria-label={`${hapticsEnabled ? 'Disable' : 'Enable'} poker haptics`}
-            title="Haptics"
+            aria-label={tr(hapticsEnabled ? 'disablePokerHaptics' : 'enablePokerHaptics')}
+            title={tr("haptics")}
           >
             {hapticsEnabled ? 'H' : 'H×'}
           </button>
         </div>
+      <LanguageSwitch />
       </header>
 
       {/* 2. RESISTANCE SIGNAL TABLE */}
       <PokerTable bankCount={chipView.pots.length}>
         <div className="rp-event-stage" aria-live="polite" aria-atomic="true">
           {presentation.cue && <div key={presentation.cue.id} className={`rp-event-cue rp-pixel-build${presentation.cue.impact ? ' rp-event-cue--impact' : ''}`}>
-            <span>{presentation.cue.detail}</span><strong>{presentation.cue.label}</strong>
+            <span>{['READY?', 'GAME START!', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN', 'POT CAPTURED'].includes(presentation.cue.label) ? translateTableEvent(translateGameLabel(presentation.cue.detail, tr), tr) : presentation.cue.detail}</span><strong>{translateGameLabel(presentation.cue.label, tr)}</strong>
           </div>}
         </div>
 
@@ -545,14 +552,14 @@ export function PokerGame({
           {['preflop', 'flop', 'turn', 'river', 'showdown'].includes(gameState.stage) && (
             <span className="rp-stage-label text-[7.5px] font-black uppercase mt-0.5 tracking-widest px-2 py-0.5 border">
               {gameState.stage === 'preflop'
-                ? 'PRE-FLOP (DEAL)'
+                ? tr("preFlop")
                 : gameState.stage === 'flop'
-                ? 'FLOP (3 CARDS)'
+                ? tr("flop")
                 : gameState.stage === 'turn'
-                ? 'TURN (4TH CARD)'
+                ? tr("turn")
                 : gameState.stage === 'river'
-                ? 'RIVER (5TH CARD)'
-                : 'SHOWDOWN'}
+                ? tr("river")
+                : tr("showdown")}
             </span>
           )}
         </div>
@@ -621,9 +628,9 @@ export function PokerGame({
           ) : (
             gameState.stage !== 'idle' && !isFinished(gameState) && (
               <div className={`rp-table-signal${turnTimeLeft <= 5 ? ' rp-table-signal--danger' : ''}`}>
-                <span>SIGNAL</span>
-                <strong>{isHumanTurn ? 'YOUR TURN' : gameState.players[gameState.currentPlayerIndex]?.name || 'PLAYER'}</strong>
-                <span className="rp-turn-seconds" aria-label={`${turnTimeLeft} seconds remaining`}>{turnTimeLeft}S</span>
+                <span>{tr("signal")}</span>
+                <strong>{isHumanTurn ? tr("yourTurn") : gameState.players[gameState.currentPlayerIndex]?.name || 'PLAYER'}</strong>
+                <span className="rp-turn-seconds" aria-label={tr('secondsRemainingLabel', { count: turnTimeLeft })}>{turnTimeLeft}S</span>
               </div>
             )
           )}
@@ -634,7 +641,7 @@ export function PokerGame({
           <div className="rp-local-position absolute z-30" data-seat-slot={9}>
             {humanHandEval && (
               <div className="rp-hand-rank px-2 py-0.5 text-[7.5px] font-black uppercase tracking-wider">
-                <span>{humanHandEval.description}</span>
+                <span>{describePokerHand(humanHandEval, tr)}</span>
               </div>
             )}
             {/* Own cards and identity are the strongest visual layer. */}
@@ -672,9 +679,9 @@ export function PokerGame({
         {showRaisePanel && (
           <RaiseControl>
             <div className="rp-panel-heading flex justify-between items-center text-[9px] font-black">
-              <span>RAISE CONTROL</span>
+              <span>{tr("raiseControl")}</span>
               <div className="rp-control-packet flex items-center gap-1 text-[10px] px-2 py-0.5 border">
-                <span>TOTAL:</span>
+                <span>{tr("total")}</span>
                 <ChipStackIcon className="w-3 h-3" />
                 <PixelCounter value={customRaiseAmount} />
               </div>
@@ -714,7 +721,7 @@ export function PokerGame({
                   );
                 }}
                 className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
-                aria-label="Decrease raise by one chip"
+                aria-label={tr("decreaseRaise")}
               >
                 <Minus className="w-3.5 h-3.5" />
               </button>
@@ -727,7 +734,7 @@ export function PokerGame({
                 value={customRaiseAmount}
                 onChange={(e) => setCustomRaiseAmount(Number(e.target.value))}
                 className="rp-raise-range w-full cursor-pointer"
-                aria-label="Raise amount"
+                aria-label={tr("raiseAmount")}
               />
 
               <button
@@ -739,15 +746,13 @@ export function PokerGame({
                   );
                 }}
                 className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
-                aria-label="Increase raise by one chip"
+                aria-label={tr("increaseRaise")}
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
             </div>
 
-            <label className="rp-direct-raise-label" htmlFor="poker-direct-raise">
-              DIRECT AMOUNT
-              <input
+            <label className="rp-direct-raise-label" htmlFor="poker-direct-raise">{tr("directAmount")}<input
                 id="poker-direct-raise"
                 type="number"
                 min={gameState.currentBet + gameState.minRaise}
@@ -774,21 +779,19 @@ export function PokerGame({
                   setShowRaisePanel(false);
                 }}
                 className="rp-secondary-button w-1/3 py-2.5 text-[9px] font-bold uppercase cursor-pointer"
-              >
-                CANCEL
-              </button>
+              >{tr("cancel")}</button>
               <button
                 type="button"
                 onClick={() => {
                   clearPreAction();
                   setShowRaisePanel(false);
                   playPokerFeedback('bet_move');
-                  showPreActionNotice(`RAISE ${customRaiseAmount} TRANSMITTED`, 'signal');
+                  showPreActionNotice(uiMessage('raiseTransmitted', { amount: customRaiseAmount }), 'signal');
                   onRaise(customRaiseAmount);
                 }}
                 className="rp-primary-button w-2/3 py-2.5 font-black text-[10px] uppercase cursor-pointer flex items-center justify-center gap-1"
               >
-                <span>CONFIRM RAISE</span>
+                <span>{tr("confirmRaise")}</span>
                 <div className="flex items-center gap-0.5 bg-black/30 px-1.5 py-0.5 text-[9px]">
                   <ChipStackIcon className="w-2.5 h-2.5" />
                   <span>{customRaiseAmount}</span>
@@ -804,7 +807,7 @@ export function PokerGame({
         <BetControls>
           {isHumanTurn && <div className="flex justify-between items-center text-[8.5px] font-bold">
             <span className="text-white font-black">
-              {`YOUR TURN · ${turnTimeLeft}S`}
+              {tr('turnSeconds', { seconds: turnTimeLeft })}
             </span>
             {callNeeded > 0 && (
               <div className="flex items-center gap-1 text-[#ff8a82]">
@@ -816,8 +819,8 @@ export function PokerGame({
           </div>}
 
           {canQueuePreAction && (
-            <div className="rp-pre-actions" aria-label="Preliminary poker actions">
-              <span className="rp-pre-actions__label"><PixelTextReveal>QUEUE NEXT MOVE</PixelTextReveal></span>
+            <div className="rp-pre-actions" aria-label={tr("preliminaryActions")}>
+              <span className="rp-pre-actions__label"><PixelTextReveal>{tr("queueNextMove")}</PixelTextReveal></span>
               <div className="rp-pre-actions__buttons">
                 <button
                   type="button"
@@ -838,7 +841,7 @@ export function PokerGame({
                 </button>
               </div>
               <span className="rp-pre-actions__hint">
-                {!canQueuePreCheck ? 'PRE-CHECK LOCKED · BET ALREADY ACTIVE' : 'PRE-CHECK AUTO-CANCELS IF A BET ARRIVES'}
+                {!canQueuePreCheck ? tr("preCheckLocked") : tr("preCheckCancels")}
               </span>
             </div>
           )}
@@ -848,15 +851,11 @@ export function PokerGame({
               type="button"
               onClick={handleTakeSeat}
               className="rp-primary-button rp-spectator-join w-full px-4 py-2.5 font-black uppercase text-[10px]"
-            >
-              TAKE A SEAT
-            </button>
+            >{tr("takeSeat")}</button>
           )}
 
           {isSpectator && !isPersistentCashTable && (
-            <div className="rp-system-module w-full px-3 py-2 text-center font-black uppercase text-[9px]">
-              SPECTATING · ACTIONS LOCKED
-            </div>
+            <div className="rp-system-module w-full px-3 py-2 text-center font-black uppercase text-[9px]">{tr("spectatingLocked")}</div>
           )}
 
           {isHumanTurn && <div className="grid grid-cols-3 gap-1.5">
@@ -867,7 +866,7 @@ export function PokerGame({
               onClick={() => {
                 clearPreAction();
                 playPokerFeedback('fold');
-                showPreActionNotice('FOLD TRANSMITTED', 'danger');
+                showPreActionNotice(uiMessage('foldTransmitted'), 'danger');
                 onFold();
               }}
             >
@@ -881,7 +880,7 @@ export function PokerGame({
               onClick={() => {
                 clearPreAction();
                 playPokerFeedback(callNeeded === 0 ? 'ui_confirm' : 'bet_move');
-                showPreActionNotice(callNeeded === 0 ? 'CHECK LOCKED' : `CALL ${callNeeded} TRANSMITTED`, 'signal');
+                showPreActionNotice(callNeeded === 0 ? uiMessage('checkLocked') : uiMessage('callTransmitted', { amount: callNeeded }), 'signal');
                 onCallOrCheck();
               }}
             >
@@ -919,11 +918,11 @@ export function PokerGame({
         <div className="rp-result-panel border-2 p-3 z-20 flex flex-col gap-2">
           <div className="text-center">
             <span className="rp-panel-heading text-[10px] font-black uppercase tracking-wider block">
-              {gameState.matchWinnerName ? `${gameState.matchWinnerName.toUpperCase()} WON THE MATCH` : 'POKER MATCH CONCLUDED'}
+              {gameState.matchWinnerName ? tr('wonMatchName', { name: gameState.matchWinnerName }) : tr("pokerConcluded")}
             </span>
             {gameState.winningHandDesc && (
               <span className="text-[9px] text-slate-300 block mt-0.5">
-                {gameState.winningHandDesc}
+                {translateTableEvent(gameState.winningHandDesc, tr)}
               </span>
             )}
           </div>
@@ -931,29 +930,25 @@ export function PokerGame({
             type="button"
             onClick={handleReturnToLobby}
             className="rp-primary-button w-full py-2.5 font-black text-[10px] uppercase cursor-pointer"
-          >
-            RETURN TO LOBBY ➔
-          </button>
+          >{tr("returnLobbyArrow")}</button>
         </div>
       )}
 
       {resultRevealReady && !chipView.busy && gameState.stage === 'ended' && !gameState.isMatchOver && (
         <div className="rp-result-panel border p-2 z-20 flex flex-col gap-1.5">
           <div className="text-center text-[8.5px] font-bold text-slate-200">
-            <span>{gameState.winningHandDesc || 'Round completed! Dealing next hand...'}</span>
+            <span>{translateTableEvent(gameState.winningHandDesc || 'Round completed! Dealing next hand...', tr)}</span>
           </div>
           {gameState.mode === 'offline' && onNextHand && (
             <button
               type="button"
               onClick={onNextHand}
               className="rp-primary-button w-full py-2 font-black text-[9px] uppercase cursor-pointer"
-            >
-              NEXT HAND ➔
-            </button>
+            >{tr("nextHandArrow")}</button>
           )}
           {gameState.mode !== 'offline' && (
             <div className="rp-system-module w-full py-2 text-center font-black text-[9px] uppercase">
-              {gameState.nextRoundStartsAt ? `NEXT HAND STARTS IN ${nextHandCountdown}S` : 'WAITING FOR AN OPPONENT TO START THE NEXT HAND'}
+              {gameState.nextRoundStartsAt ? tr('nextHandSeconds', { seconds: nextHandCountdown }) : tr("waitingOpponent")}
             </div>
           )}
         </div>
@@ -973,36 +968,32 @@ export function PokerGame({
               onRequestClose={handleCloseBuyInModal}
               className="flex flex-col items-center gap-3 w-72"
             >
-              <h2 id="poker-buy-in-title" className="rp-modal__header rp-panel-heading font-black text-xs uppercase text-center w-full border-b border-slate-700 pb-2">Secure Table Entry</h2>
+              <h2 id="poker-buy-in-title" className="rp-modal__header rp-panel-heading font-black text-xs uppercase text-center w-full border-b border-slate-700 pb-2">{tr("secureEntry")}</h2>
               <div className="rp-modal__content text-center w-full space-y-1">
-                <div className="text-[9px] text-slate-300">Balance: <span className="text-white font-bold">{(profile?.casinoChips || 0).toFixed(0)} Chips</span></div>
-                <div className="text-[9px] text-slate-300">Tickets: <span className="text-slate-100 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
+                <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-white font-bold">{(profile?.casinoChips || 0).toFixed(0)}{' '}{tr("chips")}</span></div>
+                <div className="text-[9px] text-slate-300">{tr("tickets")}{' '}<span className="text-slate-100 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
               </div>
               
               {gameState.matchId.includes('-free-') ? (
                 <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-3 text-center">
-                  <p className="text-white text-[10px]">
-                    Cost: <span className="text-white font-black">⚡ 2 Energy</span>
+                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-white font-black">{tr("twoEnergy")}</span>
                   </p>
-                  <p className="text-white text-[10px]">
-                    You receive: <span className="text-[#ff6a61] font-black">100 Free Chips</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#ff6a61] font-black">{tr("freeChips")}</span>
                   </p>
                 </div>
               ) : gameState.matchId.includes('-practice-') ? (
                 <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-3 text-center">
-                  <p className="text-white text-[10px]">
-                    Cost: <span className="text-white font-black">Free</span>
+                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-white font-black">{tr("free")}</span>
                   </p>
-                  <p className="text-white text-[10px]">
-                    You receive: <span className="text-[#ff6a61] font-black">1000 Practice Chips</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#ff6a61] font-black">{tr("practiceChips")}</span>
                   </p>
                 </div>
               ) : (
                 <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-2">
-                  <div className="text-[8px] text-slate-400 mb-1 font-bold">Convert TKT to Chips (1 TKT = 100 Chips):</div>
+                  <div className="text-[8px] text-slate-400 mb-1 font-bold">{tr("convertDescription")}</div>
                   <div className="flex gap-2">
                     <input
-                      aria-label="Tickets to convert to chips"
+                      aria-label={tr("ticketsToConvert")}
                       type="number"
                       min={1}
                       step={1}
@@ -1014,16 +1005,14 @@ export function PokerGame({
                       onClick={handleExchange} 
                       disabled={isExchanging}
                       className="rp-secondary-button px-2 py-1 text-[8px] font-bold uppercase disabled:opacity-50 whitespace-nowrap"
-                    >
-                      Convert
-                    </button>
+                    >{tr("convert")}</button>
                   </div>
                 </div>
               )}
 
               {gameState.matchId.includes('-public-') && (
                 <div className="rp-modal__content flex flex-col gap-1 w-full mt-2">
-                  <label htmlFor="poker-buy-in-amount" className="text-[8px] text-slate-400 font-bold">Chips to Bring to Table:</label>
+                  <label htmlFor="poker-buy-in-amount" className="text-[8px] text-slate-400 font-bold">{tr("tableChips")}</label>
                   <input
                     id="poker-buy-in-amount"
                     type="number"
@@ -1036,7 +1025,7 @@ export function PokerGame({
                 </div>
               )}
               <div className="rp-modal__actions flex gap-2 w-full mt-2">
-                <button data-modal-cancel onClick={handleCloseBuyInModal} className="rp-secondary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase">{isJoiningSeat ? 'Continue in background' : 'Cancel'}</button>
+                <button data-modal-cancel onClick={handleCloseBuyInModal} className="rp-secondary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase">{isJoiningSeat ? tr("background") : tr("cancelSentence")}</button>
                 <button 
                   disabled={isJoiningSeat}
                   onClick={() => {
@@ -1047,10 +1036,10 @@ export function PokerGame({
                   }}
                   className="rp-primary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase disabled:opacity-60"
                 >
-                  {isJoiningSeat ? <PixelLoader label="JOINING TABLE" /> : 'Join Table'}
+                  {isJoiningSeat ? <PixelLoader label="JOINING TABLE" /> : tr("joinTable")}
                 </button>
               </div>
-              {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{seatJoinError}</div>}
+              {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{renderError(seatJoinError)}</div>}
             </PixelModal>
           </motion.div>
         )}

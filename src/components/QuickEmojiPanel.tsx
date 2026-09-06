@@ -1,3 +1,4 @@
+import { useLanguage } from '../i18n/LanguageProvider';
 import React, { useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { sound } from '../utils/sound';
@@ -40,6 +41,7 @@ interface QuickEmojiPanelProps {
 }
 
 export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, className = '', resistance = false }) => {
+  const { tr } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const reduceMotion = useReducedMotion();
 
@@ -93,12 +95,12 @@ export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, c
         {isOpen ? (
           <>
             <X className="w-3.5 h-3.5" />
-            <span>CLOSE</span>
+            <span>{tr("close")}</span>
           </>
         ) : (
           <>
             <Smile className={`w-3.5 h-3.5 ${resistance ? 'text-[#ff5448]' : 'text-[#ffcc00]'}`} />
-            <span>EMOJI</span>
+            <span>{tr("emoji")}</span>
           </>
         )}
       </button>

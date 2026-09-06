@@ -1,3 +1,4 @@
+import { useLanguage } from '../i18n/LanguageProvider';
 import React from 'react';
 import { AvatarId } from '../types';
 
@@ -137,6 +138,9 @@ const AVATAR_PIXELS: Record<AvatarId, string[]> = {
 };
 
 export const Avatar: React.FC<AvatarProps> = ({ id, avatarId, emotion, isActive, size = 64 }) => {
+  const { tr } = useLanguage();
+  const animalKeys = { rabbit: 'animalRabbit', bear: 'animalBear', fox: 'animalFox', panda: 'animalPanda', cat: 'animalCat', koala: 'animalKoala' } as const;
+  const emotionKeys = { happy: 'emotionHappy', thinking: 'emotionThinking', worried: 'emotionWorried', angry: 'emotionAngry', celebrating: 'emotionCelebrating' } as const;
   const targetId = id || avatarId || 'rabbit';
   const calculatedSize = typeof size === 'number'
     ? size
@@ -173,7 +177,7 @@ export const Avatar: React.FC<AvatarProps> = ({ id, avatarId, emotion, isActive,
   return (
     <div
       role="img"
-      aria-label={`Pixel avatar ${targetId} showing ${emotion}`}
+      aria-label={tr('pixelAvatarLabel', { animal: tr(animalKeys[targetId] || 'animalRabbit'), emotion: tr(emotionKeys[emotion] || 'emotionHappy') })}
       className={`transition-all duration-200 ${getAvatarStyle()}`}
       style={{ width: calculatedSize, height: calculatedSize, padding: '2px' }}
     >

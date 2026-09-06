@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
-import { TonConnectUIProvider } from '@tonconnect/ui-react';
+import { TonConnectUIProvider, useTonConnectUI } from '@tonconnect/ui-react';
+import './i18n/registerGame';
+import { useLanguage } from './i18n/LanguageProvider';
 import App from './App';
 import { wakeBackend } from './utils/api';
 
@@ -10,6 +12,13 @@ const telegramReturnUrl =
   `https://t.me/${telegramBotUsername}/${telegramAppShortName}` as `${string}://${string}`;
 
 let gameBootstrapped = false;
+
+function WalletLanguage() {
+  const { language } = useLanguage();
+  const [, setOptions] = useTonConnectUI();
+  useEffect(() => { setOptions({ language }); }, [language, setOptions]);
+  return null;
+}
 
 export default function GameSurface() {
   useEffect(() => {
@@ -26,6 +35,7 @@ export default function GameSurface() {
         twaReturnUrl: telegramReturnUrl,
       }}
     >
+      <WalletLanguage />
       <App />
     </TonConnectUIProvider>
   );

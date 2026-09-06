@@ -1,9 +1,11 @@
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useRef, useState } from 'react';
 import type { PokerCard } from '../../types/poker';
 import { HoleCards } from './PokerTable';
 import { PixelDissolve } from './PixelPrimitives';
 
 export function LocalPokerHand({ cards, folded, eliminated, winningCardIds, reduced }: { cards: PokerCard[]; folded: boolean; eliminated?: boolean; winningCardIds?: string[]; reduced: boolean }) {
+  const { tr } = useLanguage();
   const lastCards = useRef(cards);
   const wasFolded = useRef(folded);
   const [withdrawing, setWithdrawing] = useState(false);
@@ -18,5 +20,5 @@ export function LocalPokerHand({ cards, folded, eliminated, winningCardIds, redu
   }, [folded, reduced]);
   if (withdrawing && !reduced) return <PixelDissolve><HoleCards cards={lastCards.current} /></PixelDissolve>;
   if (!folded && !eliminated && cards.length) return <HoleCards cards={cards} winningCardIds={winningCardIds} />;
-  return <div className="rp-system-module rp-waiting-hand px-2 py-1">{eliminated ? 'ELIMINATED' : folded ? 'FOLDED · NEXT HAND' : 'WAITING FOR CARDS'}</div>;
+  return <div className="rp-system-module rp-waiting-hand px-2 py-1">{eliminated ? tr("eliminated") : folded ? tr("foldedNext") : tr("waitingCards")}</div>;
 }

@@ -1,3 +1,5 @@
+import { translateGameLabel } from '../../i18n/gameLabels';
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PokerPlayer } from '../../types/poker';
 import { ResistanceAvatar, ResistanceAvatarState } from './ResistanceAvatar';
@@ -51,6 +53,7 @@ export function ResistancePlayerSeat({
   dealAt = 0,
   dealIndex = 0,
 }: ResistancePlayerSeatProps) {
+  const { tr } = useLanguage();
   const previousConnectedRef = useRef(player.isConnected !== false);
   const seatRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -103,10 +106,10 @@ export function ResistancePlayerSeat({
         '--seat-deal-delay': `${Math.max(0, dealAt - performance.now()) + dealIndex * 35}ms`,
       } as React.CSSProperties}
       role="group"
-      aria-label={`${player.name}, ${player.chips} chips${active ? ', active turn' : ''}${status ? `, ${status}` : ''}`}
+      aria-label={`${player.name}, ${tr('chipCount', { count: player.chips })}${active ? `, ${tr('avatarActiveTurn')}` : ''}${status ? `, ${translateGameLabel(status, tr)}` : ''}`}
     >
       {showCards && state !== 'eliminated' && (state === 'folded' ? (
-        <PixelDissolve as="span" className="rp-seat-hole-cards rp-seat-hole-cards--folded" ariaLabel="Two withdrawn hole cards">
+        <PixelDissolve as="span" className="rp-seat-hole-cards rp-seat-hole-cards--folded" ariaLabel={translateGameLabel('Two withdrawn hole cards', tr)}>
           {[0, 1].map((index) => {
             const card = player.holeCards?.[index];
             const suit = card ? MINI_SUIT[card.suit] : null;
@@ -118,7 +121,7 @@ export function ResistancePlayerSeat({
           })}
         </PixelDissolve>
       ) : (
-        <span key={`${player.holeCards.map(c => c.id).join(':')}:${revealCards}`} className={`rp-seat-hole-cards${revealCards ? ' rp-seat-hole-cards--revealed' : dealAt ? ' rp-seat-hole-cards--dealt' : ''}`} aria-label={revealCards ? 'Revealed hole cards' : 'Two hidden hole cards'}>
+        <span key={`${player.holeCards.map(c => c.id).join(':')}:${revealCards}`} className={`rp-seat-hole-cards${revealCards ? ' rp-seat-hole-cards--revealed' : dealAt ? ' rp-seat-hole-cards--dealt' : ''}`} aria-label={translateGameLabel(revealCards ? 'Revealed hole cards' : 'Two hidden hole cards', tr)}>
           {[0, 1].map((index) => {
             const card = player.holeCards?.[index];
             const suit = card ? MINI_SUIT[card.suit] : null;
@@ -145,16 +148,16 @@ export function ResistancePlayerSeat({
             </SignalGlitch>
           </PlayerSignalState>
         </PlayerElimination>
-        {dealer && <span className="rp-dealer-chip" aria-label="Dealer">D</span>}
-        {blind && <span className={`rp-blind-chip rp-blind-chip--${blind.toLowerCase()}`} aria-label={blind === 'SB' ? 'Small blind' : 'Big blind'}>{blind}</span>}
+        {dealer && <span className="rp-dealer-chip" aria-label={tr("dealerSentence")}>D</span>}
+        {blind && <span className={`rp-blind-chip rp-blind-chip--${blind.toLowerCase()}`} aria-label={translateGameLabel(blind === 'SB' ? 'Small blind' : 'Big blind', tr)}>{blind}</span>}
       </div>
       <div className="rp-player-seat__meta">
         <strong>{player.name || 'Player'}</strong>
         <ChipValue amount={Math.max(0, displayBalance || 0)} iconClassName="rp-seat-balance-logo" animate />
       </div>
-      {status && <PlayerStatus>{status}</PlayerStatus>}
+      {status && <PlayerStatus>{translateGameLabel(status, tr)}</PlayerStatus>}
       {active && <PlayerTimer value={turnProgress} />}
-      {active && turnSeconds !== undefined && turnSeconds <= 3 && <span className="rp-seat-countdown" aria-label={`${turnSeconds} seconds remaining`}>{Math.max(0, Math.ceil(turnSeconds))}</span>}
+      {active && turnSeconds !== undefined && turnSeconds <= 3 && <span className="rp-seat-countdown" aria-label={tr('secondsRemainingLabel', { count: turnSeconds })}>{Math.max(0, Math.ceil(turnSeconds))}</span>}
     </div>
     </PixelBuild>
     {reaction && <div className={`rp-seat-reaction-anchor${compact ? ' rp-seat-reaction-anchor--compact' : ''}`} role="status" aria-label={`${player.name} reaction`}>
@@ -168,6 +171,7 @@ export const PlayerSeat = ResistancePlayerSeat;
 export const PlayerAvatar = ResistanceAvatar;
 
 export function EmptyPlayerSeat({ seatNumber }: { seatNumber: number }) {
+  const { tr } = useLanguage();
   return (
     <PixelBuild className="rp-seat-build-shell">
       <div className="rp-player-seat rp-player-seat--compact rp-player-seat--empty" role="group" aria-label={`Open poker seat ${seatNumber}`}>
@@ -175,8 +179,8 @@ export function EmptyPlayerSeat({ seatNumber }: { seatNumber: number }) {
           <ResistanceAvatar name={`Open seat ${seatNumber}`} fallbackAvatar="rabbit" state="eliminated" size={34} />
         </div>
         <div className="rp-player-seat__meta">
-          <strong>OPEN {String(seatNumber).padStart(2, '0')}</strong>
-          <span>NO SIGNAL</span>
+          <strong>{tr("open")}{' '}{String(seatNumber).padStart(2, '0')}</strong>
+          <span>{tr("noSignal")}</span>
         </div>
       </div>
     </PixelBuild>

@@ -1,3 +1,4 @@
+import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { AvatarId } from '../../types';
 import { Avatar } from '../Avatars';
@@ -29,6 +30,8 @@ export function ResistanceAvatar({
   active = false,
   state = 'online',
 }: ResistanceAvatarProps) {
+  const { tr } = useLanguage();
+  const stateKey = { online: "avatarOnline", folded: "avatarFolded", disconnected: "avatarDisconnected", eliminated: "avatarEliminated", winner: "avatarWinner" } as const;
   const [photoFailed, setPhotoFailed] = useState(false);
   const photoCanvasRef = useRef<HTMLCanvasElement>(null);
   const hoodMaskId = `resistance-hood-${useId().replace(/:/g, '')}`;
@@ -68,7 +71,7 @@ export function ResistanceAvatar({
       className={`resistance-avatar resistance-avatar--${state}${active ? ' resistance-avatar--active' : ''}`}
       style={{ ...pixelMaskStyle, '--resistance-avatar-size': `${size}px` } as React.CSSProperties}
       role="img"
-      aria-label={`${name}, ${state}${active ? ', active turn' : ''}`}
+      aria-label={`${name}, ${tr(stateKey[state])}${active ? `, ${tr('avatarActiveTurn')}` : ''}`}
     >
       <img className="resistance-avatar__hood resistance-avatar__hood--base" src={hoodAsset} alt="" aria-hidden="true" draggable={false} />
       <div className="resistance-avatar__face" aria-hidden="true">
