@@ -32,6 +32,8 @@
     "test:poker-side-pots": "tsx scripts/test-poker-side-pots.ts",
     "test:poker-chips": "tsx scripts/test-poker-chips.ts",
     "test:poker-motion": "tsx scripts/test-poker-motion.ts",
+    "test:poker-reactions": "tsx scripts/test-poker-reactions.ts",
+    "test:match-emoji": "node scripts/test-match-emoji.mjs",
     "test:poker-pre-actions": "tsx scripts/test-poker-pre-actions.ts",
     "test:game-routing": "tsx scripts/test-game-routing.ts",
     "test:poker-cashout-referrals": "tsx scripts/test-poker-cashout-referrals.ts",

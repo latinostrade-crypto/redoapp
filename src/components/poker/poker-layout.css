@@ -59,6 +59,22 @@
 .rp-table .rp-local-cards [role="group"] > .rp-pixel-card-deal { width: 42px; height: 60px; }
 
 /* Extra banks get their own central rows, without changing ownership lanes. */
+.rp-seat-identity { position: relative; }
+/* Sibling of PixelBuild: its resting clip-path must never crop a reaction. */
+.rp-seat-reaction-anchor { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); z-index: 60; pointer-events: none; }
+.rp-seat-reaction-anchor .rp-reaction-bubble { position: relative; top: auto; left: auto; translate: none; transform: none; }
+.rp-seat-reaction-anchor--compact .rp-reaction-bubble { width: 44px; height: 44px; padding: 1px; }
+.rp-seat-reaction-anchor--compact .rp-reaction-bubble > * { width: 38px !important; height: 38px !important; }
+.rp-seat-reaction-anchor--compact .rp-pixel-reaction--large { width: 38px; height: 38px; border: 0; }
+.rp-seat-reaction-anchor--compact .rp-pixel-reaction--large .rp-sticker { width: 32px; height: 32px; }
+/* The upper rail has no headroom. Show its bubbles beside/over the portrait,
+   clear of the hole cards and the name, rather than outside the table. */
+.rp-table [data-seat-slot="3"] .rp-seat-reaction-anchor,
+.rp-table [data-seat-slot="4"] .rp-seat-reaction-anchor,
+.rp-table [data-seat-slot="5"] .rp-seat-reaction-anchor { bottom: auto; top: -8px; left: auto; right: calc(100% - 26px); transform: none; }
+.rp-table .rp-opponent-position:has(.rp-seat-reaction-anchor),
+.rp-table .rp-local-position:has(.rp-seat-reaction-anchor) { z-index: 45; }
+
 .resistance-poker .rp-table--many-pots { height: 580px !important; }
 .rp-table--many-pots .rp-pot-position { top: 18%; }
 .rp-table--many-pots .rp-board-position, .rp-table--many-pots .rp-board-zone { top: 53%; }
@@ -79,6 +95,9 @@
   .rp-table .rp-waiting-hand { width: 64px; }
 }
 @media (min-width: 600px) {
+  .rp-table [data-seat-slot="3"] .rp-seat-reaction-anchor,
+  .rp-table [data-seat-slot="4"] .rp-seat-reaction-anchor,
+  .rp-table [data-seat-slot="5"] .rp-seat-reaction-anchor { top: -6px; }
   .resistance-poker .rp-table { --seat-width: 72px; --seat-edge: 48px; height: 520px !important; }
   .resistance-poker .rp-table--many-pots { height: 620px !important; }
   .rp-table .rp-player-seat--compact { min-height: 62px; }

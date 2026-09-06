@@ -6,7 +6,10 @@ export function PixelSticker({ path, label, animate = false, reduced = false }: 
   const source = useRef<HTMLDivElement>(null);
   const target = useRef<HTMLCanvasElement>(null);
   const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
+    setReady(false);
+    setFailed(false);
     if (!source.current || !target.current) return;
     const context = target.current.getContext('2d');
     if (!context) return;
@@ -23,6 +26,7 @@ export function PixelSticker({ path, label, animate = false, reduced = false }: 
     animation.addEventListener('DOMLoaded', () => {
       let frame = Math.floor(animation.totalFrames * .3);
       render(frame);
+      setReady(true);
       if (!animate || reduced) return;
       let ticks = 0;
       timer = setInterval(() => {
@@ -36,6 +40,7 @@ export function PixelSticker({ path, label, animate = false, reduced = false }: 
   }, [path, animate, reduced]);
   return <span className="rp-sticker" role="img" aria-label={label}>
     <span ref={source} className="rp-sticker-source" aria-hidden="true" />
-    {failed ? <span>{label}</span> : <canvas ref={target} width={32} height={32} aria-hidden="true" />}
+    {(!ready || failed) && <span className="rp-sticker-fallback">{label}</span>}
+    <canvas ref={target} width={32} height={32} aria-hidden="true" style={{ visibility: ready && !failed ? 'visible' : 'hidden' }} />
   </span>;
 }

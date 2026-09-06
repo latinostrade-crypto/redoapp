@@ -13,6 +13,7 @@ import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus } from 'lu
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
+import { usePokerReactions } from '../hooks/usePokerReactions';
 import { useTelegramSafeArea } from '../hooks/useTelegramSafeArea';
 import { getPokerHapticsEnabled, playPokerFeedback, setPokerHapticsEnabled } from '../utils/pokerFeedback';
 import { ResistanceAvatar, ResistanceAvatarState } from './poker/ResistanceAvatar';
@@ -90,7 +91,7 @@ export function PokerGame({
   const [preAction, setPreAction] = useState<PokerPreAction | null>(null);
   const [preActionNotice, setPreActionNotice] = useState<{ key: number; message: string; tone: 'signal' | 'danger' | 'neutral' } | null>(null);
   const resultRevealReady = presentation.resultReady;
-  const [activeEmoji, setActiveEmoji] = useState<{ emoji: EmojiItem | string; senderUserId?: string; key: number } | null>(null);
+  const { reactions, show: showReaction, optimistic: showOptimisticReaction } = usePokerReactions(gameState.matchId || 'practice');
   const announcedResultRef = useRef('');
   const sequenceTimersRef = useRef<number[]>([]);
   const previousHumanTurnRef = useRef(false);
@@ -101,19 +102,19 @@ export function PokerGame({
   const previousPlayerStatesRef = useRef<Map<string, { connected: boolean; eliminated: boolean }> | null>(null);
   const autoNextTriggeredRef = useRef(false);
   const handleMatchEmoji = useCallback((event: { emojiId: string; senderUserId: string; sentAt: number }) => {
-    setActiveEmoji({ emoji: event.emojiId, senderUserId: event.senderUserId, key: event.sentAt });
-    window.setTimeout(() => setActiveEmoji(null), 3500);
-  }, []);
+    showReaction(event.senderUserId, event.emojiId);
+  }, [showReaction]);
   const sendMatchEmoji = useMatchEmoji(gameState.matchId, Boolean(gameState.matchId), handleMatchEmoji);
 
   const handleSendEmoji = (emoji: EmojiItem) => {
     playPokerFeedback('ui_click');
-    if (!gameState.matchId) {
-      setActiveEmoji({ emoji, key: Date.now() });
-      setTimeout(() => setActiveEmoji(null), 3500);
-      return;
-    }
-    void sendMatchEmoji(emoji).catch(() => undefined);
+    const player = gameState.players.find(p => p.id === 'player');
+    if (!player) return;
+    const undo = showOptimisticReaction(player.userId || player.id, emoji.id);
+    if (!gameState.matchId) return;
+    void sendMatchEmoji(emoji).catch(() => {
+      if (undo()) showPreActionNotice('REACTION NOT SENT · TRY AGAIN', 'danger');
+    });
   };
 
   const seatedHumanPlayer = gameState.players.find((p) => p.id === 'player');
@@ -581,7 +582,7 @@ export function PokerGame({
                   revealCards={presentation.revealedPlayers.has(opp.id) && !opp.folded && !opp.mucked}
                   dealAt={presentation.dealAt}
                   dealIndex={positionIndex}
-                  reaction={activeEmoji && activeEmoji.senderUserId === opp.userId ? <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} resistance /> : null}
+                  reaction={reactions[opp.userId || opp.id] ? <EmojiDisplayBadge emoji={reactions[opp.userId || opp.id].emojiId} key={reactions[opp.userId || opp.id].key} resistance /> : null}
                   displayBalance={chipView.balances[opp.id]}
                 />
               </div>
@@ -653,7 +654,7 @@ export function PokerGame({
                 photoUrl={telegramPhotoUrl}
                 compact={false}
                 showCards={false}
-                reaction={activeEmoji && (!activeEmoji.senderUserId || activeEmoji.senderUserId === humanPlayer.userId) ? <EmojiDisplayBadge emoji={activeEmoji.emoji} key={activeEmoji.key} resistance /> : null}
+                reaction={reactions[humanPlayer.userId || humanPlayer.id] ? <EmojiDisplayBadge emoji={reactions[humanPlayer.userId || humanPlayer.id].emojiId} key={reactions[humanPlayer.userId || humanPlayer.id].key} resistance /> : null}
                 displayBalance={chipView.balances[humanPlayer.id]}
               />
             </div>

@@ -92,6 +92,7 @@ export function ResistancePlayerSeat({
     : criticalAction || (active ? player.lastAction : '');
 
   return (
+    <div className="rp-seat-identity">
     <PixelBuild className="rp-seat-build-shell">
     <div
       className={`rp-player-seat${compact ? ' rp-player-seat--compact' : ''} rp-player-seat--${state}${active ? ' rp-player-seat--active' : ''}`}
@@ -130,7 +131,6 @@ export function ResistancePlayerSeat({
         </span>
       ))}
       <div className="rp-player-seat__portrait">
-        {reaction}
         <PlayerElimination eliminated={state === 'eliminated'}>
           <PlayerSignalState state={signalState}>
             <SignalGlitch active={state === 'disconnected'}>
@@ -157,6 +157,10 @@ export function ResistancePlayerSeat({
       {active && turnSeconds !== undefined && turnSeconds <= 3 && <span className="rp-seat-countdown" aria-label={`${turnSeconds} seconds remaining`}>{Math.max(0, Math.ceil(turnSeconds))}</span>}
     </div>
     </PixelBuild>
+    {reaction && <div className={`rp-seat-reaction-anchor${compact ? ' rp-seat-reaction-anchor--compact' : ''}`} role="status" aria-label={`${player.name} reaction`}>
+      {reaction}
+    </div>}
+    </div>
   );
 }
 

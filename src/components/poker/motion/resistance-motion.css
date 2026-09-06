@@ -57,6 +57,7 @@
 .rp-pre-action-toast-slot .rp-pixel-toast { animation: rp-material-build 160ms steps(1, end); mask-size: 32px 32px; }
 .rp-sticker { display: inline-grid; place-items: center; width: 36px; height: 36px; position: relative; }
 .rp-sticker > canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+.rp-sticker-fallback { position: absolute; inset: 0; display: grid; place-items: center; font: 700 7px/1.2 var(--rp-font-body); color: #fff; }
 .rp-sticker-source { position: absolute; width: 48px; height: 48px; visibility: hidden; pointer-events: none; }
 .rp-pixel-reaction .rp-sticker { width: 32px; height: 32px; }
 .rp-pixel-reaction--large .rp-sticker { width: 42px; height: 42px; }
