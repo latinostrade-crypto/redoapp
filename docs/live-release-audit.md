@@ -1,6 +1,48 @@
 # Live-аудит перед push — 6 сентября 2026
 
-Статус: **согласованные исправления выполнены; код ожидает отдельной выкладки**.
+Статус: **релиз `512769a` отправлен в main и успешно выложен 6 сентября 2026**.
+
+## Результат rollout, 12:23–12:28 UTC
+
+- Все 22 локальных release gates повторно прошли; официальная Render JSON Schema
+  проверена, staged paths совпали с manifest, значения секретов `.env` в staged
+  файлах не найдены. В релиз вошли 100 файлов; справочные новые `FOR AI` остались
+  локально. Секреты, дамп и инструменты не отправлялись в Git.
+- Backend `srv-d8uc5ejtqb8s73b35e70`: deploy `dep-daellv7qj5pc73a0s5vg`,
+  **Deploy succeeded**, 58,5 s, Node 22.20.0. Build
+  `npm ci --include=dev && npm run build:server`, start `npm run start:production`.
+  Логи подтвердили запуск `build/server.mjs` на `0.0.0.0:10000`.
+- Frontend `srv-d92ann19rddc738b3f1g`: deploy `dep-daelm4qd0e5s7390qi2g`,
+  **Deploy succeeded**, 26,7 s. Build `npm ci --include=dev && npm run build`,
+  publish `dist`. Оба сервиса сохранили URL, регион, тариф и existing env.
+- На существующих сервисах применены build filters и все 7 frontend headers из
+  `render.yaml`. Auto-Deploy временно выключался на rollout и возвращён On Commit.
+  Новый Blueprint или дубликаты сервисов не создавались.
+- Независимый HTTP smoke после deploy: `/api/health` 200/healthy, сайт 200;
+  HTML `no-cache, no-store, must-revalidate`, хешированный WebP
+  `public, max-age=31536000, immutable`; CSP/Referrer/Permissions/nosniff присутствуют.
+- До рестарта read-only preflight показал 0 мест с живым presence и 0 runtime
+  leases. Во время проверки гостевого UI приложение штатно создало один гостевой
+  профиль (438 → 439 app_state rows); реальные деньги, tickets и seats не менялись.
+- После завершения перекрытия старой и новой instance `global-state.updated_at`
+  оставался `12:24:03.368 UTC` при проверках `12:24:55` и `12:26:43` с тем же
+  fingerprint и размером 584192 bytes. Прежние одинаковые записи каждые 15 s
+  прекратились в этом окне. Это не суточное измерение экономии трафика.
+- В production-браузере 390×844 проверены меню ME/SHOP/PVP, загрузка UNO/Poker banners,
+  данные каталога 0/10, открытие wallet gateway без подключения и Poker practice.
+  В проверенном окне console warn/error пусты; свежие application logs содержали
+  нормальный старт без ошибок. В frontend build остаётся предупреждение upstream
+  `lottie-web` об eval (не ошибка сборки).
+- Обычный `/` по-прежнему открывает story отдельно от `?play=1`; её
+  `SKIP TO GAME` сохраняет `https://t.me/redo_appbot/app?startapp=ref_KNVPOU`.
+  Production dependency audit повторно вернул 0 vulnerabilities.
+- Физические Android/iPhone в Telegram, reconnect при смене сети, реальные
+  платежи и многопользовательские сценарии с живыми пользователями после rollout
+  не воспроизводились. Ограничения paid launch из README сохраняются.
+
+Ниже сохранены исходные результаты **аудита до rollout**; их временные статусы
+не отменяют результат выкладки выше.
+
 Проверка выполнена через авторизованные панели Render и Supabase и сопоставлена
 с локальным кодом, включая фактически выложенный commit `41f9c97`.
 Первоначальный аудит был read-only. После разрешения владельца применена
