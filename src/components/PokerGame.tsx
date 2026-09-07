@@ -293,6 +293,14 @@ export function PokerGame({
     gameState.players[gameState.currentPlayerIndex]?.id === 'player';
   const callNeeded = humanPlayer ? Math.max(0, gameState.currentBet - humanPlayer.currentBet) : 0;
   const canCallOrCheck = Boolean(isHumanTurn && humanPlayer && !humanPlayer.folded && !humanPlayer.isAllIn);
+  const maxRaiseTotal = humanPlayer.chips + humanPlayer.currentBet;
+  const minRaiseTotal = Math.min(maxRaiseTotal, gameState.currentBet + gameState.minRaise);
+  useEffect(() => {
+    setShowRaisePanel(false);
+  }, [canCallOrCheck, gameState.matchId, gameState.turnStartedAt]);
+  useEffect(() => {
+    setCustomRaiseAmount((amount) => Math.max(minRaiseTotal, Math.min(maxRaiseTotal, amount)));
+  }, [minRaiseTotal, maxRaiseTotal]);
   const canQueuePreCheck = canQueuePokerPreCheck(callNeeded);
   const canRemainPreActionQueued = Boolean(
     !isSpectator &&
@@ -676,8 +684,8 @@ export function PokerGame({
 
       {/* 4. RAISE SELECTION DRAWER POPUP */}
       <AnimatePresence>
-        {showRaisePanel && (
-          <RaiseControl>
+        {showRaisePanel && canCallOrCheck && (
+          <RaiseControl onClose={() => setShowRaisePanel(false)} label={tr("raiseControl")} safeBottom={telegramSafeArea.bottom}>
             <div className="rp-panel-heading flex justify-between items-center text-[9px] font-black">
               <span>{tr("raiseControl")}</span>
               <div className="rp-control-packet flex items-center gap-1 text-[10px] px-2 py-0.5 border">
@@ -701,7 +709,7 @@ export function PokerGame({
                   type="button"
                   onClick={() => {
                     sound.playPop();
-                    setCustomRaiseAmount(Math.min(humanPlayer.chips + humanPlayer.currentBet, preset.amt));
+                    setCustomRaiseAmount(Math.max(minRaiseTotal, Math.min(maxRaiseTotal, preset.amt)));
                   }}
                   className="rp-raise-preset py-1.5 text-[8px] font-black uppercase cursor-pointer"
                 >
@@ -717,7 +725,7 @@ export function PokerGame({
                 onClick={() => {
                   sound.playPop();
                   setCustomRaiseAmount((prev) =>
-                    Math.max(gameState.currentBet + gameState.minRaise, prev - 1)
+                    Math.max(minRaiseTotal, prev - 1)
                   );
                 }}
                 className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
@@ -728,7 +736,7 @@ export function PokerGame({
 
               <input
                 type="range"
-                min={gameState.currentBet + gameState.minRaise}
+                min={minRaiseTotal}
                 max={humanPlayer.chips + humanPlayer.currentBet}
                 step={1}
                 value={customRaiseAmount}
@@ -755,7 +763,7 @@ export function PokerGame({
             <label className="rp-direct-raise-label" htmlFor="poker-direct-raise">{tr("directAmount")}<input
                 id="poker-direct-raise"
                 type="number"
-                min={gameState.currentBet + gameState.minRaise}
+                min={minRaiseTotal}
                 max={humanPlayer.chips + humanPlayer.currentBet}
                 step={1}
                 value={customRaiseAmount}
@@ -763,8 +771,8 @@ export function PokerGame({
                   const value = Number(event.target.value);
                   if (!Number.isFinite(value)) return;
                   setCustomRaiseAmount(Math.max(
-                    gameState.currentBet + gameState.minRaise,
-                    Math.min(humanPlayer.chips + humanPlayer.currentBet, value)
+                    minRaiseTotal,
+                    Math.min(maxRaiseTotal, Math.floor(value))
                   ));
                 }}
                 className="rp-number-input bg-black border px-2 text-center"
@@ -802,8 +810,16 @@ export function PokerGame({
         )}
       </AnimatePresence>
 
+      {/* Seating remains available while waiting and between hands. */}
+      {isSpectator && isPersistentCashTable && <BetControls>
+        <button type="button" onClick={handleTakeSeat} disabled={isJoiningSeat}
+          className="rp-primary-button rp-spectator-join w-full px-4 py-2.5 font-black uppercase text-[10px]">
+          {tr("takeSeat")}
+        </button>
+      </BetControls>}
+
       {/* 5. PLAYER TURN ACTION CONTROLS */}
-      {gameState.stage !== 'idle' && gameState.stage !== 'ended' && gameState.stage !== 'match_ended' && !gameState.isMatchOver && !showRaisePanel && (isHumanTurn || canQueuePreAction || isSpectator) && (
+      {gameState.stage !== 'idle' && gameState.stage !== 'ended' && gameState.stage !== 'match_ended' && !gameState.isMatchOver && !showRaisePanel && (isHumanTurn || canQueuePreAction || (isSpectator && !isPersistentCashTable)) && (
         <BetControls>
           {isHumanTurn && <div className="flex justify-between items-center text-[8.5px] font-bold">
             <span className="text-white font-black">
@@ -844,14 +860,6 @@ export function PokerGame({
                 {!canQueuePreCheck ? tr("preCheckLocked") : tr("preCheckCancels")}
               </span>
             </div>
-          )}
-
-          {isSpectator && isPersistentCashTable && (
-            <button
-              type="button"
-              onClick={handleTakeSeat}
-              className="rp-primary-button rp-spectator-join w-full px-4 py-2.5 font-black uppercase text-[10px]"
-            >{tr("takeSeat")}</button>
           )}
 
           {isSpectator && !isPersistentCashTable && (
@@ -902,7 +910,7 @@ export function PokerGame({
               onClick={() => {
                 clearPreAction();
                 playPokerFeedback('ui_click');
-                setCustomRaiseAmount(gameState.currentBet + gameState.minRaise);
+                setCustomRaiseAmount(minRaiseTotal);
                 setShowRaisePanel(true);
               }}
             >

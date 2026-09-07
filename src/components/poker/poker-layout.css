@@ -104,3 +104,20 @@
   .rp-table .rp-player-seat--compact .rp-player-seat__meta > strong { font-size: 8px; }
   .rp-table .rp-player-seat--compact .rp-player-seat__meta > .rp-chip-value { font-size: 8px; }
 }
+
+/* Top-layer dialog escapes clipped and animated table ancestors. */
+.resistance-poker.rp-raise-dialog {
+  position: fixed;
+  inset: auto 0 0;
+  margin: 0 auto;
+  width: min(100%, 448px);
+  max-width: 100%;
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  padding: 8px 8px max(8px, env(safe-area-inset-bottom), var(--tg-safe-bottom, 0px));
+}
+.rp-raise-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.rp-raise-dialog .rp-raise-panel { animation: none; clip-path: none; }
+.rp-raise-dialog input { min-height: 44px; }

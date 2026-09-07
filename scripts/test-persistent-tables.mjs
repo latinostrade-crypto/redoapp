@@ -94,6 +94,13 @@ try {
   const persistentProfile = await request('poker_table_user_one', '/api/me');
   assert.equal(persistentProfile.activeMatch?.matchId, pokerTableId, 'a seated permanent-table user must be recoverable from their profile');
   assert.equal(persistentProfile.activeMatch?.pokerGameState?.stage, 'idle', 'waiting for an opponent is a recoverable persistent-table state');
+  await request('poker_table_user_two', `/api/casino/open-table/${pokerTableId}`, { method: 'POST' });
+  const arrivingSpectator = (await request('poker_table_user_two', `/api/matches/state/${pokerTableId}`)).pokerGameState;
+  assert.equal(arrivingSpectator.stage, 'idle', 'a link visitor sees the waiting table before taking a seat');
+  assert.equal(arrivingSpectator.players.some((player) => player.id === 'player'), false,
+    'the waiting player must not be mistaken for the arriving spectator');
+  assert.equal(arrivingSpectator.players[0].userId, 'poker_table_user_one',
+    'opening the table must preserve the first human seat');
   await request('poker_table_user_two', '/api/casino/join-table', {
     method: 'POST', body: JSON.stringify({ tableId: pokerTableId, chips: 100, idempotencyKey: 'poker-human-entry-2' }),
   });
