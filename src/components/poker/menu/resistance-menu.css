@@ -167,3 +167,8 @@
 @media (hover:hover) { .rp-menu-shell .rp-menu-section button:hover:not(:disabled), .rp-menu-shell .rp-menu-games button:hover:not(:disabled) { border-color: #ed4c5b; color: #fff0ef; box-shadow: inset 0 -3px #ed4959; } }
 .rp-menu-shell .rp-menu-section button:active:not(:disabled), .rp-menu-shell .rp-menu-games button:active:not(:disabled) { border-color: #ed4c5b; box-shadow: inset 0 -3px #ed4959; }
 @media (max-width:359px) { .rp-menu-section .pixel-box-sm,.rp-menu-me__modules > div { padding: 9px; } .rp-menu-shell .rp-menu-section button { font-size: 10px; padding: 7px; } .rp-menu-shop .grid-cols-7 { grid-template-columns: repeat(4,minmax(0,1fr)); } }
+.rp-practice-bots { border: 0; margin: 0; padding: 0; }
+.rp-practice-bots legend { margin: 0 auto .45rem; color: #a9b2be; font-size: 8px; font-weight: 900; letter-spacing: .16em; }
+.rp-practice-bots > div { display: grid; grid-template-columns: repeat(4, minmax(44px, 1fr)); gap: 6px; }
+.rp-practice-bots button { min-height: 44px; border: 1px solid #050607; background: #111820; color: #c8d0d8; font: 900 10px/1 monospace; box-shadow: inset 0 0 0 1px #29313a; }
+.rp-practice-bots button[aria-pressed="true"] { border-color: #ef443b; color: #fff; background: #271214; box-shadow: inset 0 0 0 1px #ef443b, 0 0 10px rgba(239,68,59,.25); }

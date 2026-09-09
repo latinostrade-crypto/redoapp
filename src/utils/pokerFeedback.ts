@@ -1,4 +1,4 @@
-import { sound, type PokerSoundId } from './sound';
+import { sound, type PokerSoundId, type PokerSoundSource } from './sound';
 
 export type PokerFeedbackEvent = PokerSoundId;
 
@@ -32,9 +32,9 @@ export function setPokerHapticsEnabled(enabled: boolean) {
 /** Single mapping for poker sound IDs and optional Telegram haptics. It never
  * autoplays audio: the existing synthesizer still unlocks only after a user
  * interaction, and Telegram decides whether haptics are supported. */
-export function playPokerFeedback(event: PokerFeedbackEvent) {
+export function playPokerFeedback(event: PokerFeedbackEvent, source: PokerSoundSource = 'system') {
   const telegramHaptics = haptics();
-  sound.playPokerCue(event);
+  sound.playPokerCue(event, source);
 
   switch (event) {
     case 'ui_click':

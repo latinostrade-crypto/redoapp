@@ -46,6 +46,7 @@ export interface PokerPlayer {
   /** Telegram profile photo when the authenticated multiplayer profile exposes one. */
   photoUrl?: string | null;
   chips: number;
+  rebuyPending?: boolean;
   currentBet: number;
   totalMatchInvested: number;
   holeCards: PokerCard[];

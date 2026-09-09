@@ -556,7 +556,7 @@ interface Web3DashboardProps {
   xpProgressPercentage: number;
   playerXp: number;
   onStartGame: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
-  onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
+  onStartPokerGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string, practiceBotCount?: number) => void;
   onStartBlackjackGame?: (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => void;
   onNameChange?: (name: string) => void;
   onAvatarSelect?: (id: AvatarId) => void;
@@ -6184,9 +6184,9 @@ export function Web3Dashboard({
                 const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
                 if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl); else window.open(shareUrl, '_blank');
               }}
-              onPractice={() => {
+              onPractice={(botCount) => {
                 sound.playShuffle();
-                if (onStartPokerGame) transitionResistanceScene(() => onStartPokerGame('offline', 0), Boolean(prefersReducedMotion));
+                if (onStartPokerGame) transitionResistanceScene(() => onStartPokerGame('offline', 0, undefined, undefined, botCount), Boolean(prefersReducedMotion));
                 else onStartGame('offline', 0);
               }}
             />

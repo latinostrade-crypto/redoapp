@@ -46,7 +46,9 @@
     "lint": "tsc --noEmit",
     "check:production-config": "node scripts/check-production-config.mjs",
     "start": "tsx server.ts",
-    "server-dev": "npx tsx watch server.ts"
+    "server-dev": "npx tsx watch server.ts",
+    "test:poker-rebuy": "tsx scripts/test-poker-rebuy.ts && node scripts/test-poker-rebuy-api.mjs && node scripts/test-poker-rebuy-api.mjs --public",
+    "test:poker-all-in": "tsx scripts/test-poker-all-in.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

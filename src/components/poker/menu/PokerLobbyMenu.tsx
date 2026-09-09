@@ -9,13 +9,18 @@ export function PokerLobbyMenu({game = 'poker', bannerSrc = banner, mode, onMode
   game?: 'poker' | 'blackjack'; bannerSrc?: string;
   mode: string; onMode: (mode: 'public' | 'free' | 'practice') => void; tables: Table[];
   status: 'idle' | 'refreshing' | 'ready' | 'offline'; balance: number; onRefresh: () => void;
-  onOpen: (table: Table) => void; onInvite: (table: Table) => void; onPractice: () => void;
+  onOpen: (table: Table) => void; onInvite: (table: Table) => void; onPractice: (botCount?: number) => void;
 }) {
   const { t, tr } = useLanguage();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [availableOnly, setAvailableOnly] = useState(false);
   const [affordableOnly, setAffordableOnly] = useState(false);
   const [sort, setSort] = useState('default');
+  const [practiceBotCount, setPracticeBotCount] = useState(() => {
+    if (game !== 'poker' || typeof window === 'undefined') return 3;
+    const stored = Number(window.localStorage.getItem('redoapp:poker-practice-bots'));
+    return [1, 3, 5, 9].includes(stored) ? stored : 3;
+  });
   const title = game === 'poker' ? 'Poker' : 'Blackjack';
   const filtered = useMemo(() => {
     const result = tables.filter(table => (!availableOnly || status !== 'ready' || table.playersCount < table.maxPlayers) && (mode !== 'public' || !affordableOnly || table.minBuyIn <= balance));
@@ -35,7 +40,9 @@ export function PokerLobbyMenu({game = 'poker', bannerSrc = banner, mode, onMode
       <label>{t("Sort")}<select value={sort} onChange={event=>setSort(event.target.value)}><option value="default">{t("Table number")}</option><option value="buy-in">{t("Lowest buy-in")}</option><option value="players">{t("Most players")}</option></select></label>
       <button type="button" onClick={()=>{setAvailableOnly(false);setAffordableOnly(false);setSort('default');}}>{t("RESET")}</button>
     </div>}
-    {mode === 'practice' ? <div className="rp-menu-practice"><p>{game === 'poker' ? t("Practice Texas Hold’em against the Resistance AI table. No entry fee.") : t("Practice Blackjack 21 against the house. No entry fee.")}</p><button type="button" className="rp-menu-open" onClick={onPractice}><MenuIcon name={game} />{tr('practiceGameFree', { game: title.toUpperCase() })}</button></div> : <>
+    {mode === 'practice' ? <div className="rp-menu-practice"><p>{game === 'poker' ? t("Practice Texas Hold’em against the Resistance AI table. No entry fee.") : t("Practice Blackjack 21 against the house. No entry fee.")}</p>
+      {game === 'poker' && <fieldset className="rp-practice-bots"><legend>{t("OPPONENTS")}</legend><div role="group" aria-label={t("Number of poker opponents")}>{[1, 3, 5, 9].map(count => <button key={count} type="button" aria-pressed={practiceBotCount === count} onClick={() => { setPracticeBotCount(count); window.localStorage.setItem('redoapp:poker-practice-bots', String(count)); }}>{count}</button>)}</div></fieldset>}
+      <button type="button" className="rp-menu-open" onClick={() => onPractice(game === 'poker' ? practiceBotCount : undefined)}><MenuIcon name={game} />{tr('practiceGameFree', { game: title.toUpperCase() })}</button></div> : <>
       <header className="rp-menu-tables-heading"><h2><MenuIcon name={game} />{tr(mode === 'free' ? 'freeGameTables' : 'publicGameTables', { game: title.toUpperCase() })}</h2><ChipValue prefix={<span>{t("BAL")}</span>} amount={balance} iconClassName="rp-menu-currency" /><button type="button" aria-label={tr('refreshGameTables', { game: title })} disabled={status === 'refreshing'} onClick={onRefresh}><MenuIcon name="refresh" /></button></header>
       {mode === 'free' && <p className="rp-menu-table-status">{t("ENTRY: 2 ENERGY · 100 PLAY CHIPS")}</p>}
       {status !== 'ready' && <p className="rp-menu-table-status" role="status">{status === 'offline' ? t("LIVE SEATS UNAVAILABLE · RETRY TO UPDATE") : t("UPDATING LIVE SEATS…")}</p>}

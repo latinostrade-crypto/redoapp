@@ -1,0 +1,28 @@
+PASTE THIS INTO YOUR EXISTING SKILL.md
+
+## Resistance Poker UI / Motion Reference
+
+When the task touches poker UI, poker table layout, game states, player seats,
+animations, transitions, visual effects, Telegram player avatars, or the
+Resistance visual language, you MUST read and follow:
+
+`references/RESISTANCE_POKER_DESIGN.md`
+
+Treat that file as the source of truth for:
+- Resistance Poker visual language
+- pixel-native motion
+- GAME START / GAME OVER / ALL IN / showdown sequences
+- reusable animation primitives
+- mobile/Telegram Mini App performance constraints
+- player-seat behavior
+- faceless Resistance hood + live Telegram avatar composition
+
+Do not merely recolor existing UI.
+Preserve existing business/game/network logic unless the task explicitly
+requires changing it.
+
+If existing UI conflicts with the reference, redesign the presentation layer
+to match the reference while keeping functionality intact.
+
+When a canonical Resistance hood asset exists under the project's assets,
+reuse it as the source of truth instead of generating or drawing a substitute.

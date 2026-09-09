@@ -1,9 +1,8 @@
 import { useLanguage } from '../i18n/LanguageProvider';
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { sound } from '../utils/sound';
 import { Smile, X } from 'lucide-react';
-import { PixelSpeechBubble } from './poker/PokerOverlays';
 
 const LottieSticker = React.lazy(() => import('./LottieSticker').then((module) => ({ default: module.LottieSticker })));
 const PixelSticker = React.lazy(() => import('./poker/PixelSticker').then(module => ({ default: module.PixelSticker })));
@@ -38,12 +37,30 @@ interface QuickEmojiPanelProps {
   onSendEmoji: (emoji: EmojiItem) => void;
   className?: string;
   resistance?: boolean;
+  iconOnly?: boolean;
 }
 
-export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, className = '', resistance = false }) => {
+export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, className = '', resistance = false, iconOnly = false }) => {
   const { tr } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const reduceMotion = useReducedMotion();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOutside, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isOpen]);
 
   const handleSelect = (emoji: EmojiItem) => {
     sound.playPop();
@@ -52,7 +69,7 @@ export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, c
   };
 
   return (
-    <div className={`relative z-40 ${className}`}>
+    <div ref={rootRef} className={`relative z-40 ${className}`}>
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -86,21 +103,23 @@ export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, c
 
       <button
         type="button"
+        aria-label={tr(isOpen ? 'close' : 'emoji')}
+        aria-expanded={isOpen}
         onClick={() => {
           sound.playPop();
           setIsOpen((prev) => !prev);
         }}
-        className={`flex items-center gap-1.5 px-3 py-1.5 font-black text-[10px] uppercase border-2 border-black shadow-[2px_2px_0_#000] pixel-btn-interactive cursor-pointer ${resistance ? `rp-reaction-trigger${isOpen ? ' rp-reaction-trigger--open' : ''}` : `${isOpen ? 'bg-[#ffcc00] text-black ring-2 ring-[#ffcc00]/50' : 'bg-[#08131f] text-slate-200 hover:bg-[#00d2ff] hover:text-black'} rounded-full transition-all`}`}
+        className={`flex items-center justify-center gap-1.5 font-black text-[10px] uppercase pixel-btn-interactive cursor-pointer ${iconOnly ? 'min-w-[44px] min-h-[44px] p-0 border-0 shadow-none' : 'px-3 py-1.5 border-2 border-black shadow-[2px_2px_0_#000]'} ${resistance ? `rp-reaction-trigger${iconOnly ? ' rp-reaction-trigger--avatar' : ''}${isOpen ? ' rp-reaction-trigger--open' : ''}` : `${isOpen ? 'bg-[#ffcc00] text-black ring-2 ring-[#ffcc00]/50' : 'bg-[#08131f] text-slate-200 hover:bg-[#00d2ff] hover:text-black'} rounded-full transition-all`}`}
       >
         {isOpen ? (
           <>
             <X className="w-3.5 h-3.5" />
-            <span>{tr("close")}</span>
+            {!iconOnly && <span>{tr("close")}</span>}
           </>
         ) : (
           <>
-            <Smile className={`w-3.5 h-3.5 ${resistance ? 'text-[#ff5448]' : 'text-[#ffcc00]'}`} />
-            <span>{tr("emoji")}</span>
+            <Smile className={`${iconOnly ? 'w-5 h-5' : 'w-3.5 h-3.5'} ${resistance ? 'text-[#ff5448]' : 'text-[#ffcc00]'}`} />
+            {!iconOnly && <span>{tr("emoji")}</span>}
           </>
         )}
       </button>
@@ -122,7 +141,7 @@ export const EmojiDisplayBadge: React.FC<{ emoji: EmojiItem | string; className?
       transition={reduceMotion ? { duration: 0 } : resistance ? { duration: 0.22, ease: 'linear' } : { duration: 2.8, ease: 'easeOut' }}
       className={`absolute -top-14 left-1/2 -translate-x-1/2 z-50 flex items-center justify-center pointer-events-none select-none ${resistance ? 'rp-reaction-bubble' : 'drop-shadow-[0_4px_12px_rgba(0,0,0,0.6)]'} ${className}`}
     >
-      {resistance ? <PixelSpeechBubble><PixelReaction item={item} large /></PixelSpeechBubble> : (
+      {resistance ? <PixelReaction item={item} large /> : (
         <React.Suspense fallback={<span className="w-14 h-14" aria-hidden="true" />}>
           <LottieSticker path={item.file} className="w-14 h-14" />
         </React.Suspense>

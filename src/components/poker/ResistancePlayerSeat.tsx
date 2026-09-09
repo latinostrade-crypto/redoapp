@@ -170,23 +170,6 @@ export function ResistancePlayerSeat({
 export const PlayerSeat = ResistancePlayerSeat;
 export const PlayerAvatar = ResistanceAvatar;
 
-export function EmptyPlayerSeat({ seatNumber }: { seatNumber: number }) {
-  const { tr } = useLanguage();
-  return (
-    <PixelBuild className="rp-seat-build-shell">
-      <div className="rp-player-seat rp-player-seat--compact rp-player-seat--empty" role="group" aria-label={`Open poker seat ${seatNumber}`}>
-        <div className="rp-player-seat__portrait">
-          <ResistanceAvatar name={`Open seat ${seatNumber}`} fallbackAvatar="rabbit" state="eliminated" size={34} />
-        </div>
-        <div className="rp-player-seat__meta">
-          <strong>{tr("open")}{' '}{String(seatNumber).padStart(2, '0')}</strong>
-          <span>{tr("noSignal")}</span>
-        </div>
-      </div>
-    </PixelBuild>
-  );
-}
-
 export function PlayerStatus({ children }: { children: React.ReactNode }) {
   return <span className="rp-seat-state">{children}</span>;
 }

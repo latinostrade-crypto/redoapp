@@ -32,8 +32,7 @@ export function BetControls({ children }: { children: React.ReactNode }) {
   return <div className="rp-action-panel border p-2 z-20 flex flex-col gap-1.5">{children}</div>;
 }
 
-export function RaiseControl({ children, onClose, label, safeBottom = 0 }: { children: React.ReactNode; onClose: () => void; label: string; safeBottom?: number }) {
-  const reduceMotion = useReducedMotion();
+export function PokerDialog({ children, onClose, label, safeBottom = 0 }: { children: React.ReactNode; onClose: () => void; label: string; safeBottom?: number }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const dialog = dialogRef.current!;
@@ -48,6 +47,15 @@ export function RaiseControl({ children, onClose, label, safeBottom = 0 }: { chi
     <dialog ref={dialogRef} className="resistance-poker rp-raise-dialog" aria-label={label}
       style={{ '--tg-safe-bottom': `${safeBottom}px` } as React.CSSProperties}
       onCancel={(event) => { event.preventDefault(); onClose(); }}>
+      {children}
+    </dialog>, document.body
+  );
+}
+
+export function RaiseControl(props: { children: React.ReactNode; onClose: () => void; label: string; safeBottom?: number }) {
+  const reduceMotion = useReducedMotion();
+  const { children } = props;
+  return <PokerDialog {...props}>
     <motion.div
       initial={reduceMotion ? false : { clipPath: 'inset(100% 0 0 0)' }}
       animate={reduceMotion ? undefined : { clipPath: 'inset(0 0 0 0)' }}
@@ -57,6 +65,5 @@ export function RaiseControl({ children, onClose, label, safeBottom = 0 }: { chi
     >
       {children}
     </motion.div>
-    </dialog>, document.body
-  );
+  </PokerDialog>;
 }

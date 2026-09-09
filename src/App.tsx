@@ -107,6 +107,7 @@ export default function App() {
     playerRaise,
     spectatePokerMatch,
     resetPokerSession,
+    rebuyPractice,
   } = usePokerGame({
     onSettlement: (payout, won) => {
       if (won && payout > 0) {
@@ -226,9 +227,9 @@ export default function App() {
   const [selectedAvatar, setSelectedAvatar] = useState<AvatarId>('rabbit');
 
   const handleStartPokerGame = useCallback(
-    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string) => {
+    (mode: 'offline' | 'pvp' | 'private', stake: number, roomCode?: string, matchId?: string, practiceBotCount?: number) => {
       setActiveGameType('poker');
-      startPokerSession(selectedAvatar, userName, mode, stake, roomCode, matchId);
+      startPokerSession(selectedAvatar, userName, mode, stake, roomCode, matchId, practiceBotCount);
     },
     [selectedAvatar, startPokerSession, userName]
   );
@@ -868,6 +869,7 @@ export default function App() {
                 onCallOrCheck={playerCallOrCheck}
                 onRaise={playerRaise}
                 onNextHand={handleNextPokerHand}
+                onPracticeRebuy={rebuyPractice}
                 onReturnToLobby={handleReturnFromPoker}
                 onInvite={() => inviteToTable(pokerState.matchId, 'poker')}
               />

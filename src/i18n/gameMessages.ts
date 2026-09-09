@@ -3,6 +3,16 @@ import { dashboardMessages } from './dashboardMessages';
 /** Stable message IDs; game commands and player data are deliberately separate. */
 export const gameMessages = {
   ...dashboardMessages,
+  pokerRebuy: ['Rebuy chips', 'Докупить фишки'],
+  pokerStackEmpty: ['You have no chips left.', 'Фишки закончились.'],
+  pokerRebuyQueued: ['The chips will be in play from the next hand.', 'Фишки вступят в игру со следующей раздачи.'],
+  pokerPracticeRefill: ['Refill 100 practice chips · free', 'Пополнить 100 учебных фишек · бесплатно'],
+  pokerEnergyBalance: ['Energy: {{amount}}', 'Энергия: {{amount}}'],
+  pokerRebuyProcessing: ['Confirming', 'Подтверждение'],
+  pokerNotEnoughEnergy: ['Not enough energy for this rebuy.', 'Недостаточно энергии для докупки.'],
+  pokerNotEnoughChips: ['Not enough casino chips for this rebuy.', 'Недостаточно игровых фишек для докупки.'],
+  pokerRebuyUnavailable: ['Rebuy is available after your stack reaches zero and the hand is resolved.', 'Докупка доступна после обнуления стека и завершения раздачи.'],
+  pokerRebuyExpired: ['The old rebuy request expired. Tap rebuy again.', 'Старый запрос докупки истёк. Нажмите «Докупить» ещё раз.'],
   ...noticeMessages,
   chipCount: ['{{count}} chips', '{{count}} фишек'],
   chipCount_one: ['{{count}} chip', '{{count}} фишка'],

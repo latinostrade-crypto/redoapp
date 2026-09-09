@@ -119,5 +119,30 @@
   padding: 8px 8px max(8px, env(safe-area-inset-bottom), var(--tg-safe-bottom, 0px));
 }
 .rp-raise-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.rp-raise-dialog::before { display: none; }
 .rp-raise-dialog .rp-raise-panel { animation: none; clip-path: none; }
 .rp-raise-dialog input { min-height: 44px; }
+.rp-avatar-reaction-control { position: absolute; right: -4px; bottom: 5px; z-index: 48; }
+.rp-avatar-reaction-control .rp-reaction-panel { left: auto; right: 0; bottom: 48px; }
+.rp-reaction-trigger--avatar,
+.rp-reaction-trigger--avatar.rp-reaction-trigger--open {
+  width: 44px;
+  height: 44px;
+  border: 0 !important;
+  border-radius: 50%;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #ff6459;
+}
+.rp-reaction-trigger--avatar svg { filter: drop-shadow(0 1px 1px #000) drop-shadow(0 0 4px rgba(255,84,72,.45)); }
+.rp-reaction-trigger--avatar:hover,
+.rp-reaction-trigger--avatar:focus-visible { background: rgba(255,255,255,.08) !important; outline: 2px solid rgba(255,255,255,.72); outline-offset: -7px; }
+.rp-hand-history { width: min(92vw, 420px); max-height: min(72svh, 620px); padding: 0; overflow: hidden; border: 2px solid #46505c; background: #090d12; color: #eef2f5; font-family: monospace; }
+.rp-hand-history > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 8px 10px; border-bottom: 1px solid #38414a; background: #121820; }
+.rp-hand-history h2 { margin: 0; font-size: 11px; letter-spacing: .12em; }
+.rp-hand-history header button { min-width: 44px; min-height: 44px; border: 1px solid #4a535d; background: #090d12; color: #fff; font-size: 20px; }
+.rp-hand-history ol { list-style: none; margin: 0; padding: 8px 10px calc(10px + var(--tg-safe-bottom, 0px)); max-height: calc(min(72svh, 620px) - 50px); overflow-y: auto; }
+.rp-hand-history li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 8px 2px; border-bottom: 1px solid #202832; font-size: 9px; line-height: 1.45; }
+.rp-hand-history time { color: #788694; }
+.rp-hand-history li[data-kind="win"] span { color: #ffd44a; }
+.rp-hand-history li[data-kind="fold"] span { color: #9ca6af; }

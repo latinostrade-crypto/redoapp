@@ -12,6 +12,7 @@ import { createTicketingService, type DepositIntent, type TicketLedgerEntry, typ
 import { distributePlayersIntoTables, type TournamentData, type TournamentParticipant, type TournamentMatch } from './server/tournaments';
 import { buildPokerSidePots, calculatePokerPotAwards, pokerPotTransferKind } from './server/pokerPots';
 import { calculatePokerCashoutReferralShares } from './server/pokerCashout';
+import { applyPokerRebuy, canRebuyPoker, pokerRebuyPrice, type PokerRebuyReceipt } from './server/pokerRebuy';
 import { rollDailyVaultReward } from './server/dailyVault';
 import { sendSerializedSse } from './server/sseTransport';
 import { createChangedSnapshotWriter } from './server/changedSnapshot';
@@ -422,6 +423,7 @@ interface ServerPokerPlayer {
   disconnectedAt?: number | null;
   chips: number;
   tableBuyInChips?: number;
+  rebuyPending?: boolean;
   currentBet: number;
   totalMatchInvested: number;
   holeCards: ServerPokerCard[];
@@ -505,6 +507,7 @@ interface UserState {
   ticketStateRevision?: number;
   casinoChips: number;
   practiceChips: number;
+  pokerRebuys?: Record<string, PokerRebuyReceipt>;
   xp: number;
   lastDailyXpAt: number | null;
   lastDailyEnergyAt: number | null;
@@ -1348,6 +1351,16 @@ async function verifyCasinoDatabaseContract() {
   if (!error || !/Table not found/i.test(error.message || '')) {
     throw new Error(`Casino database migration v2 is required: ${error?.message || 'unexpected contract probe response'}`);
   }
+  const { error: rebuyError } = await supabaseAdmin.rpc('casino_poker_rebuy', {
+    p_table_id: '__casino_contract_probe__',
+    p_user_id: '__casino_contract_probe__',
+    p_chips: 100,
+    p_key: 'casino-rebuy-contract-probe-v1',
+    p_state: { id: '__casino_contract_probe__', players: [] },
+  });
+  if (!rebuyError || !/Table not found/i.test(rebuyError.message || '')) {
+    throw new Error(`Poker rebuy database migration is required: ${rebuyError?.message || 'unexpected contract probe response'}`);
+  }
 }
 
 async function loadCasinoRuntimeSnapshots() {
@@ -1402,6 +1415,7 @@ const casinoRuntimePersistTails = new Map<string, Promise<void>>();
 // Preserve ordering across Render restarts: a client must not discard the
 // newly recovered state as older than its last SSE update.
 const casinoRuntimeStateVersions = new Map<string, number>();
+const pendingPokerRebuys = new Map<string, { key: string; userId: string; receipt: PokerRebuyReceipt; state: ServerPokerGameState }>();
 const casinoTableMutationTails = new Map<string, Promise<unknown>>();
 // A casino table is wallet-backed.  If its dedicated schema cannot be read at
 // boot, keep the HTTP service available but reject casino writes instead of
@@ -1436,9 +1450,12 @@ async function withCasinoDatabaseDeadline<T>(operation: PromiseLike<T>, label: s
 }
 
 /** Serialize wallet, seat and game mutations for one permanent table. */
-function runCasinoTableMutation<T>(tableId: string, operation: () => Promise<T> | T): Promise<T> {
+function runCasinoTableMutation<T>(tableId: string, operation: () => Promise<T> | T, rebuyRecovery = false): Promise<T> {
   const previous = casinoTableMutationTails.get(tableId) || Promise.resolve();
-  const next = previous.catch(() => undefined).then(operation);
+  const next = previous.catch(() => undefined).then(() => {
+    if (pendingPokerRebuys.has(tableId) && !rebuyRecovery) throw new Error('Table rebuy is being confirmed. Please retry.');
+    return operation();
+  });
   casinoTableMutationTails.set(tableId, next);
   void next.finally(() => {
     if (casinoTableMutationTails.get(tableId) === next) casinoTableMutationTails.delete(tableId);
@@ -1447,6 +1464,7 @@ function runCasinoTableMutation<T>(tableId: string, operation: () => Promise<T> 
 }
 
 async function persistCasinoRuntimeNow(tableId: string) {
+  if (pendingPokerRebuys.has(tableId)) return;
   const table = casinoManager.getTable(tableId);
   const state = casinoManager.getRuntimeState(tableId);
   if (!table || !state) return;
@@ -5038,6 +5056,10 @@ function startNextPokerRound(match: ActiveMatch) {
   }
 
   pk.players.forEach((p) => {
+    if (match.creatorUserId === 'casino' && p.rebuyPending) {
+      p.eliminated = false;
+      p.rebuyPending = false;
+    }
     if (p.chips <= 0) p.eliminated = true;
   });
 
@@ -5400,6 +5422,7 @@ function buildPokerPerspectiveState(match: ActiveMatch, userId: string) {
       avatar: p.avatarId,
       photoUrl: p.isAi ? null : getUser(p.userId).telegramPhotoUrl || null,
       chips: p.chips,
+      rebuyPending: p.rebuyPending,
       currentBet: p.currentBet,
       totalMatchInvested: p.totalMatchInvested,
       holeCards,
@@ -10316,6 +10339,7 @@ setInterval(() => {
   const allMatchesToTick = Array.from(activeMatches.values());
   for (const match of allMatchesToTick) {
     const matchId = match.matchId;
+    if (casinoTableMutationTails.has(matchId) || pendingPokerRebuys.has(matchId)) continue;
     if (match.settled) {
       match.players.forEach((p) => activeMatchByUser.delete(p.userId));
       continue;
@@ -10343,7 +10367,7 @@ setInterval(() => {
     if (match.gameType === 'poker' && match.pokerGameState) {
       const pk = match.pokerGameState;
       if (match.creatorUserId === 'casino' && pk.stage === 'idle') {
-        const humanCount = pk.players.filter((player) => !player.isAi && !player.userId.startsWith('bot_') && player.isConnected !== false).length;
+        const humanCount = pk.players.filter((player) => !player.isAi && !player.userId.startsWith('bot_') && player.isConnected !== false && player.chips > 0 && (!player.eliminated || player.rebuyPending)).length;
         if (humanCount >= 2) {
           startNextPokerRound(match);
           publishCasinoTransition(match, 'poker-hand-started');
@@ -10897,6 +10921,99 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
       });
     }
     return res.status(err?.statusCode || 400).json({ error: rawMessage });
+  }
+});
+
+app.post('/api/casino/poker-rebuy', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const userId = getAuthenticatedUserId(req);
+  const { tableId, chips, idempotencyKey } = req.body;
+  if (typeof tableId !== 'string' || !tableId.startsWith('table-poker-')
+    || typeof idempotencyKey !== 'string' || !/^[a-zA-Z0-9:_-]{8,160}$/.test(idempotencyKey)) {
+    return res.status(400).json({ error: 'Invalid poker rebuy request.' });
+  }
+  const key = 'poker-rebuy:' + userId + ':' + idempotencyKey;
+  try {
+    const receipt = await runCasinoTableMutation(tableId, async () => {
+      const user = getUser(userId);
+      const previous = !CASINO_TABLES_DB_MODE ? user.pokerRebuys?.[key] : undefined;
+      if (previous) {
+        if (previous.tableId !== tableId) throw new Error('Rebuy request belongs to another table.');
+        return previous;
+      }
+      const match = getActiveMatchOrCasino(tableId);
+      const table = casinoManager.getTable(tableId);
+      const state = match?.pokerGameState;
+      if (!table || table.gameType !== 'poker' || !state) throw new Error('Table not found');
+      let pending = pendingPokerRebuys.get(tableId);
+      if (pending && (pending.key !== key || pending.userId !== userId)) throw new Error('Table rebuy is being confirmed. Please retry.');
+      if (!pending) {
+        const price = pokerRebuyPrice(table.mode, chips, table.minBuyIn);
+        if (!CASINO_TABLES_DB_MODE && table.mode === 'free' && user.energy < price.energyCost) throw new Error('Not enough energy. Need 2 energy.');
+        if (!CASINO_TABLES_DB_MODE && table.mode === 'public' && user.casinoChips < price.chips) throw new Error('Not enough casino chips.');
+        // Drain older checkpoints before atomically committing the funded snapshot.
+        await casinoRuntimePersistTails.get(tableId);
+        const snapshot = structuredClone(state);
+        const player = state.players.find(p => p.userId === userId);
+        if (canRebuyPoker(state.stage, player)) {
+          snapshot.players = snapshot.players.map(p => p.userId === userId ? applyPokerRebuy(p, price.chips) : p);
+        } else if (!CASINO_TABLES_DB_MODE) {
+          throw new Error('Rebuy is available after losing all chips, once the hand is over.');
+        }
+        pending = { key, userId, receipt: { tableId, ...price }, state: snapshot };
+        pendingPokerRebuys.set(tableId, pending);
+      }
+      if (CASINO_TABLES_DB_MODE) {
+        if (!supabaseAdmin || !casinoTablesDatabaseReady) { pendingPokerRebuys.delete(tableId); throw casinoDatabaseUnavailableError(); }
+        // Do not race this transaction against an HTTP timer: a client retry
+        // queues behind it. Unknown transport outcomes keep this table frozen
+        // until this same key is reconciled, protecting the committed snapshot.
+        const { data, error } = await supabaseAdmin.rpc('casino_poker_rebuy', {
+          p_table_id: tableId, p_user_id: userId, p_chips: pending.receipt.chips,
+          p_key: key, p_state: pending.state,
+        });
+        if (error) {
+          // SQL errors roll back; gateway/transport failures can have an
+          // unknown commit outcome and must be reconciled with the same key.
+          if (/^[0-9A-Z]{5}$/.test(error.code || '') || error.code === 'PGRST202') pendingPokerRebuys.delete(tableId);
+          throw new Error('Could not confirm rebuy. Please retry.');
+        }
+        pending.receipt = data as PokerRebuyReceipt;
+        if (pending.receipt.replayed) {
+          const { data: runtime, error: runtimeError } = await withCasinoDatabaseDeadline(supabaseAdmin
+            .from('casino_table_runtime').select('state').eq('table_id', tableId).single(), 'rebuy reconciliation');
+          if (runtimeError || !runtime?.state) throw new Error('Could not reconcile rebuy. Please retry.');
+          pending.state = runtime.state as ServerPokerGameState;
+          const durablePlayer = pending.state.players.find(p => p.userId === userId);
+          if (!durablePlayer?.rebuyPending || durablePlayer.chips !== pending.receipt.chips) {
+            pendingPokerRebuys.delete(tableId);
+            throw new Error('This rebuy request has expired. Please submit a new rebuy.');
+          }
+        }
+      }
+      const player = state.players.find(p => p.userId === userId)!;
+      const fundedPlayer = pending.state.players.find(p => p.userId === userId);
+      if (fundedPlayer?.rebuyPending) Object.assign(player, fundedPlayer);
+      if (CASINO_TABLES_DB_MODE) {
+        if (Number.isFinite(pending.receipt.energy)) user.energy = pending.receipt.energy!;
+        if (Number.isFinite(pending.receipt.casinoChips)) user.casinoChips = pending.receipt.casinoChips!;
+      } else {
+        user.pokerRebuys = { ...user.pokerRebuys, [key]: pending.receipt };
+        if (table.mode === 'free') {
+          user.energy -= pending.receipt.energyCost;
+          updateQuestProgress(userId, 'spend_energy', pending.receipt.energyCost);
+        } else user.casinoChips = round2(user.casinoChips - pending.receipt.chips);
+        createLedgerEntry(user, { id: key, event: 'Poker Rebuy', type: 'stake_hold',
+          amount: table.mode === 'free' ? 0 : -pending.receipt.chips,
+          value: table.mode === 'free' ? '-2 Energy' : '-' + pending.receipt.chips + ' CHIPS' });
+      }
+      pendingPokerRebuys.delete(tableId);
+      publishCasinoTransition(match!, 'poker-rebuy');
+      schedulePersist({ userId, matchId: tableId });
+      return pending.receipt;
+    }, true);
+    res.json({ success: true, ...receipt });
+  } catch (error: any) {
+    res.status(error.statusCode || 409).json({ error: error.message });
   }
 });
 

@@ -10,6 +10,7 @@ import {
   PokerPlayer,
   PokerPlayerId,
   PokerStage,
+  PokerGameLog,
 } from '../types/poker';
 import { AvatarId } from '../types';
 import { createShuffledPokerDeck, evaluate7CardHand } from '../utils/pokerEvaluator';
@@ -21,6 +22,10 @@ const STARTING_CHIPS = 100;
 const SMALL_BLIND = 1;
 const BIG_BLIND = 2;
 const TURN_TIME_LIMIT_SEC = 15;
+
+function withPokerLog(logs: PokerGameLog[], message: string, type: PokerGameLog['type']): PokerGameLog[] {
+  return [{ id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, timestamp: new Date().toISOString(), message, type }, ...logs].slice(0, 30);
+}
 
 const DEFAULT_BOTS: { name: string; avatar: AvatarId }[] = [
   { name: 'Bear Ace', avatar: 'bear' },
@@ -127,21 +132,6 @@ export function usePokerGame(options?: {
     dealingTimeoutsRef.current = [];
   };
 
-  const addLog = useCallback((message: string, type: 'info' | 'bet' | 'fold' | 'deal' | 'win') => {
-    setGameState((prev) => ({
-      ...prev,
-      logs: [
-        {
-          id: Math.random().toString(36).substring(2, 9),
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          message,
-          type,
-        },
-        ...prev.logs.slice(0, 29),
-      ],
-    }));
-  }, []);
-
   /**
    * Sync authoritative state from backend in online mode
    */
@@ -202,7 +192,8 @@ export function usePokerGame(options?: {
       mode: 'offline' | 'pvp' | 'private',
       stake: number,
       tableId?: string,
-      matchId?: string
+      matchId?: string,
+      practiceBotCount = 3,
     ) => {
       sound.playShuffle();
       clearDealingTimeouts();
@@ -258,7 +249,7 @@ export function usePokerGame(options?: {
         return;
       }
 
-      // Offline Practice Mode vs 3 AI Bots
+      // Offline Practice Mode. Public/private player counts remain server-owned.
       setRemoteMatchId(null);
 
       const deck = createShuffledPokerDeck();
@@ -277,7 +268,8 @@ export function usePokerGame(options?: {
         isAi: false,
       };
 
-      const bots: PokerPlayer[] = DEFAULT_BOTS.map((bot, idx) => ({
+      const safeBotCount = Math.max(1, Math.min(DEFAULT_BOTS.length, Math.round(practiceBotCount)));
+      const bots: PokerPlayer[] = DEFAULT_BOTS.slice(0, safeBotCount).map((bot, idx) => ({
         id: `ai_${idx + 1}`,
         name: bot.name,
         avatar: bot.avatar,
@@ -334,7 +326,7 @@ export function usePokerGame(options?: {
           {
             id: '1',
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            message: `Texas Hold'em started (Practice vs Bots). Blinds: ${SMALL_BLIND}/${BIG_BLIND}`,
+            message: `Texas Hold'em started (Practice vs ${safeBotCount} bot${safeBotCount === 1 ? '' : 's'}). Blinds: ${SMALL_BLIND}/${BIG_BLIND}`,
             type: 'info',
           },
         ],
@@ -503,35 +495,6 @@ export function usePokerGame(options?: {
   }, []);
 
   /**
-   * Check if current betting round is completed (Offline Mode)
-   */
-  const checkRoundCompletion = useCallback(
-    (currentPlayers: PokerPlayer[], currentBet: number, lastActorIdx: number) => {
-      const active = currentPlayers.filter((p) => !p.folded && !p.eliminated);
-      if (active.length <= 1) {
-        advanceStage();
-        return;
-      }
-
-      const allActedAndMatched = active.every(
-        (p) => p.isAllIn || (p.hasActedThisStage && p.currentBet === currentBet)
-      );
-
-      if (allActedAndMatched) {
-        advanceStage();
-      } else {
-        let nextTurn = (lastActorIdx + 1) % currentPlayers.length;
-        while (currentPlayers[nextTurn].folded || currentPlayers[nextTurn].isAllIn || currentPlayers[nextTurn].eliminated) {
-          nextTurn = (nextTurn + 1) % currentPlayers.length;
-        }
-        setTurnTimeLeft(TURN_TIME_LIMIT_SEC);
-        setGameState((prev) => ({ ...prev, currentPlayerIndex: nextTurn }));
-      }
-    },
-    [advanceStage]
-  );
-
-  /**
    * Action: FOLD
    */
   const playerFold = useCallback(async () => {
@@ -548,11 +511,9 @@ export function usePokerGame(options?: {
       const updatedPlayers = prev.players.map((p, idx) =>
         idx === currIdx ? { ...p, folded: true, hasActedThisStage: true, lastAction: 'FOLD' } : p
       );
-      addLog(`${prev.players[currIdx]?.name || 'Player'} folded`, 'fold');
-      setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
-      return { ...prev, players: updatedPlayers };
+      return { ...prev, players: updatedPlayers, logs: withPokerLog(prev.logs, `${prev.players[currIdx]?.name || 'Player'} folded`, 'fold') };
     });
-  }, [addLog, checkRoundCompletion, remoteMatchId, sendRemotePokerAction]);
+  }, [remoteMatchId, sendRemotePokerAction]);
 
   /**
    * Action: CHECK / CALL
@@ -580,9 +541,7 @@ export function usePokerGame(options?: {
         const updatedPlayers = prev.players.map((p, idx) =>
           idx === currIdx ? { ...p, hasActedThisStage: true, lastAction: 'CHECK' } : p
         );
-        addLog(`${player.name} checked`, 'bet');
-        setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
-        return { ...prev, players: updatedPlayers };
+        return { ...prev, players: updatedPlayers, logs: withPokerLog(prev.logs, `${player.name} checked`, 'bet') };
       }
 
       // CALL
@@ -602,13 +561,11 @@ export function usePokerGame(options?: {
           : p
       );
 
-      addLog(`${player.name} called ${callAmount}`, 'bet');
       const nextPot = prev.pot + callAmount;
 
-      setTimeout(() => checkRoundCompletion(updatedPlayers, prev.currentBet, currIdx), 50);
-      return { ...prev, pot: nextPot, players: updatedPlayers };
+      return { ...prev, pot: nextPot, players: updatedPlayers, logs: withPokerLog(prev.logs, `${player.name} called ${callAmount}`, 'bet') };
     });
-  }, [addLog, checkRoundCompletion, gameState.currentBet, gameState.players, remoteMatchId, sendRemotePokerAction]);
+  }, [gameState.currentBet, gameState.players, remoteMatchId, sendRemotePokerAction]);
 
   /**
    * Action: RAISE
@@ -654,21 +611,44 @@ export function usePokerGame(options?: {
               }
         );
 
-        addLog(`${player.name} raised to ${newCurrentBet}`, 'bet');
         const nextPot = prev.pot + actualBet;
 
-        setTimeout(() => checkRoundCompletion(updatedPlayers, newCurrentBet, currIdx), 50);
         return {
           ...prev,
           pot: nextPot,
           currentBet: newCurrentBet,
           minRaise: isFullRaise ? raiseIncrement : prev.minRaise,
           players: updatedPlayers,
+          logs: withPokerLog(prev.logs, `${player.name} raised to ${newCurrentBet}`, 'bet'),
         };
       });
     },
-    [addLog, checkRoundCompletion, remoteMatchId, sendRemotePokerAction]
+    [remoteMatchId, sendRemotePokerAction]
   );
+
+  // One effect owns offline turn progression. Action updaters remain pure, so
+  // React Strict Mode cannot schedule the same transition or log twice.
+  useEffect(() => {
+    if (remoteMatchId || gameState.isDealing || !['preflop', 'flop', 'turn', 'river'].includes(gameState.stage)) return;
+    const active = gameState.players.filter((p) => !p.folded && !p.eliminated);
+    if (active.length <= 1 || active.every((p) => p.isAllIn || (p.hasActedThisStage && p.currentBet === gameState.currentBet))) {
+      advanceStage();
+      return;
+    }
+    const current = gameState.players[gameState.currentPlayerIndex];
+    if (current && !current.folded && !current.isAllIn && !current.eliminated
+      && (!current.hasActedThisStage || current.currentBet < gameState.currentBet)) return;
+    let nextTurn = (gameState.currentPlayerIndex + 1) % gameState.players.length;
+    for (let checked = 0; checked < gameState.players.length; checked += 1) {
+      const candidate = gameState.players[nextTurn];
+      if (!candidate.folded && !candidate.isAllIn && !candidate.eliminated && (!candidate.hasActedThisStage || candidate.currentBet < gameState.currentBet)) {
+        setTurnTimeLeft(TURN_TIME_LIMIT_SEC);
+        setGameState((prev) => prev.currentPlayerIndex === nextTurn ? prev : { ...prev, currentPlayerIndex: nextTurn });
+        return;
+      }
+      nextTurn = (nextTurn + 1) % gameState.players.length;
+    }
+  }, [advanceStage, gameState.currentBet, gameState.currentPlayerIndex, gameState.isDealing, gameState.players, gameState.stage, remoteMatchId]);
 
   /**
    * Action: NEXT HAND
@@ -1032,22 +1012,6 @@ export function usePokerGame(options?: {
   ]);
 
   /**
-   * Auto advance if all remaining active players are All-In (Offline Mode Only)
-   */
-  useEffect(() => {
-    if (remoteMatchId || gameState.stage === 'idle' || gameState.stage === 'ended' || gameState.isDealing) return;
-    const active = gameState.players.filter((p) => !p.folded && !p.eliminated);
-    const nonAllIn = active.filter((p) => !p.isAllIn);
-
-    if (active.length > 1 && nonAllIn.length <= 1) {
-      const timer = setTimeout(() => {
-        advanceStage();
-      }, 750);
-      return () => clearTimeout(timer);
-    }
-  }, [remoteMatchId, gameState.stage, gameState.isDealing, gameState.communityCards.length, gameState.players, advanceStage]);
-
-  /**
    * Turn timer countdown effect (15 seconds) (Offline Mode Only)
    */
   useEffect(() => {
@@ -1098,6 +1062,17 @@ export function usePokerGame(options?: {
       } catch {}
     }
   }, [syncRemoteMatchState]);
+
+  const rebuyPractice = useCallback(() => {
+    if (remoteMatchId) return;
+    setGameState(prev => {
+      const player = prev.players.find(p => p.id === 'player');
+      if (!player || player.chips !== 0 || prev.stage !== 'ended') return prev;
+      return { ...prev, isMatchOver: false, matchWinnerName: undefined,
+        nextRoundStartsAt: Date.now() + 1500,
+        players: prev.players.map(p => p.id === 'player' ? { ...p, chips: STARTING_CHIPS, eliminated: false } : p) };
+    });
+  }, [remoteMatchId]);
 
   const resetPokerSession = useCallback(() => {
     remoteMatchStreamRef.current?.close();
@@ -1164,5 +1139,6 @@ export function usePokerGame(options?: {
     playerRaise,
     spectatePokerMatch,
     resetPokerSession,
+    rebuyPractice,
   };
 }

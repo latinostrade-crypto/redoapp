@@ -10,10 +10,11 @@ import { ResistanceAvatar } from './ResistanceAvatar';
 import { playPokerFeedback } from '../../utils/pokerFeedback';
 import './poker-result.css';
 
-export function PokerHandResult({ state, countdown, onNextHand, onLobby }: {
+export function PokerHandResult({ state, countdown, onNextHand, onRebuy, onLobby }: {
   state: PokerGameState;
   countdown: number;
   onNextHand?: () => void;
+  onRebuy?: () => void;
   onLobby: () => void;
 }) {
   const { tr } = useLanguage();
@@ -25,6 +26,7 @@ export function PokerHandResult({ state, countdown, onNextHand, onLobby }: {
   const otherPlayers = state.players.filter(p => !winnerIds.has(p.id));
   useEffect(() => { if (sessionEnded) playPokerFeedback('game_over'); }, [sessionEnded]);
   const leave = () => { dialogRef.current?.close(); setOpen(false); onLobby(); };
+  const rebuy = () => { dialogRef.current?.close(); setOpen(false); onRebuy?.(); };
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog || !open) return;
@@ -77,6 +79,7 @@ export function PokerHandResult({ state, countdown, onNextHand, onLobby }: {
         {!sessionEnded && <p>{tr("nextHandIn")}{' '}{Math.max(0, countdown)}S</p>}
         <div>
           <button type="button" autoFocus onClick={() => setOpen(false)}>{tr("viewTable")}</button>
+          {onRebuy && <button type="button" className="rp-hand-result__primary" onClick={rebuy}>{tr("pokerRebuy")}</button>}
           {state.mode === 'offline' && !sessionEnded && onNextHand
             ? <button type="button" className="rp-hand-result__primary" onClick={onNextHand}>{tr("nextHand")}</button>
             : <button type="button" onClick={leave}>{tr("lobby")}</button>}

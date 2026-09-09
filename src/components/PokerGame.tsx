@@ -14,7 +14,7 @@ import { PokerGameState, PokerPlayer } from '../types/poker';
 import { apiRequest } from '../utils/api';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { sound } from '../utils/sound';
-import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus } from 'lucide-react';
+import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus, History } from 'lucide-react';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
@@ -22,7 +22,7 @@ import { usePokerReactions } from '../hooks/usePokerReactions';
 import { useTelegramSafeArea } from '../hooks/useTelegramSafeArea';
 import { getPokerHapticsEnabled, playPokerFeedback, setPokerHapticsEnabled } from '../utils/pokerFeedback';
 import { ResistanceAvatar, ResistanceAvatarState } from './poker/ResistanceAvatar';
-import { EmptyPlayerSeat, ResistancePlayerSeat } from './poker/ResistancePlayerSeat';
+import { ResistancePlayerSeat } from './poker/ResistancePlayerSeat';
 import {
   PixelCounter,
   PixelLoader,
@@ -42,10 +42,9 @@ import { transitionResistanceScene } from './poker/motion/sceneTransition';
 import { pixelMaskStyle } from './poker/motion/pixelMasks';
 import { isFinished } from './poker/motion/presentation';
 import { LocalPokerHand } from './poker/LocalPokerHand';
-import { ActionButton, BetControls, RaiseControl } from './poker/PokerControls';
+import { ActionButton, BetControls, RaiseControl, PokerDialog } from './poker/PokerControls';
 import {
   ConnectionStatus,
-  PixelModal,
 } from './poker/PokerOverlays';
 import './poker/poker-resistance.css';
 import './poker/poker-layout.css';
@@ -59,6 +58,7 @@ interface PokerGameProps {
   onCallOrCheck: () => void;
   onRaise: (amount: number) => void;
   onNextHand?: () => void;
+  onPracticeRebuy?: () => void;
   onReturnToLobby: () => void;
   onInvite?: () => void;
 }
@@ -79,18 +79,20 @@ export function PokerGame({
   onCallOrCheck,
   onRaise,
   onNextHand,
+  onPracticeRebuy,
   onReturnToLobby,
   onInvite,
 }: PokerGameProps) {
-  const { tr, renderMessage, renderError } = useLanguage();
+  const { t, tr, renderMessage, renderError } = useLanguage();
   const systemReduceMotion = useReducedMotion();
   const reduceMotion = forceReducedMotion || systemReduceMotion;
   const presentation = usePokerPresentation(gameState, Boolean(reduceMotion));
   const chipView = useChipTimeline(gameState, Boolean(reduceMotion), presentation.payoutAt);
   const telegramSafeArea = useTelegramSafeArea();
-  const [muted, setMuted] = useState(() => sound.getMuted());
+  const [audioMode, setAudioMode] = useState(() => sound.getPokerAudioMode());
   const [hapticsEnabled, setHapticsEnabled] = useState(getPokerHapticsEnabled);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
+  const [showHandHistory, setShowHandHistory] = useState(false);
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
   const [sceneClosing, setSceneClosing] = useState(false);
@@ -140,6 +142,7 @@ export function PokerGame({
     isBusted: false,
     isConnected: true
   } as any;
+  const [isRebuy, setIsRebuy] = useState(false);
   const [showBuyInModal, setShowBuyInModal] = useState(false);
   const [buyInAmount, setBuyInAmount] = useState(200);
   const [exchangeAmount, setExchangeAmount] = useState(1);
@@ -153,8 +156,17 @@ export function PokerGame({
     || (window as typeof window & { Telegram?: { WebApp?: { initDataUnsafe?: { user?: { photo_url?: string } } } } }).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url
     || null;
   const isPersistentCashTable = String(gameState.matchId || gameState.tableId || '').startsWith('table-poker-');
+  const isPracticeGame = gameState.mode === 'offline' && !gameState.matchId && !gameState.tableId;
+  const canRebuy = !isSpectator && humanPlayer.chips === 0 && !humanPlayer.rebuyPending
+    && humanPlayer.isConnected !== false
+    && (gameState.stage === 'idle' || gameState.stage === 'ended' || humanPlayer.eliminated);
+  const canOfferRebuy = canRebuy && (isPersistentCashTable || (isPracticeGame && Boolean(onPracticeRebuy)));
   const stakeUsesChips = isPersistentCashTable;
   const isFreeChipTable = stakeUsesChips && String(gameState.matchId || gameState.tableId).includes('-free-');
+  const rebuyUnaffordable = isRebuy && Boolean(profile) && (
+    (isFreeChipTable && (profile?.energy?.energy || 0) < 2)
+    || (!isFreeChipTable && (profile?.casinoChips || 0) < buyInAmount)
+  );
 
   useEffect(() => () => {
     sequenceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -188,12 +200,12 @@ export function PokerGame({
       const before = previous.get(player.id);
       const after = current.get(player.id)!;
       if (!before) {
-        playPokerFeedback('player_join');
+        playPokerFeedback('player_join', 'opponent');
         return;
       }
-      if (before.connected && !after.connected) playPokerFeedback('player_disconnect');
-      if (!before.connected && after.connected) playPokerFeedback('player_join');
-      if (!before.eliminated && after.eliminated) playPokerFeedback('player_eliminated');
+      if (before.connected && !after.connected) playPokerFeedback('player_disconnect', 'opponent');
+      if (!before.connected && after.connected) playPokerFeedback('player_join', 'opponent');
+      if (!before.eliminated && after.eliminated) playPokerFeedback('player_eliminated', 'opponent');
     });
   }, [gameState.players]);
 
@@ -207,8 +219,27 @@ export function PokerGame({
   const handleTakeSeat = async () => {
     playPokerFeedback('ui_confirm');
     setSeatJoinError('');
+    setIsRebuy(false);
     setShowBuyInModal(true);
+    void fetchProfile();
   };
+
+  const handleStartRebuy = useCallback(() => {
+    if (!isPersistentCashTable && !isPracticeGame) return;
+    if (!isPersistentCashTable) {
+      onPracticeRebuy?.();
+      return;
+    }
+    try {
+      const pending = JSON.parse(localStorage.getItem('redoapp_poker_rebuy_' + gameState.matchId) || 'null');
+      seatRequestIdRef.current = pending?.key || '';
+      if (pending?.chips) setBuyInAmount(pending.chips);
+    } catch { /* Storage is optional. */ }
+    setIsRebuy(true);
+    setSeatJoinError('');
+    setShowBuyInModal(true);
+    void fetchProfile();
+  }, [fetchProfile, gameState.matchId, isPersistentCashTable, isPracticeGame, onPracticeRebuy]);
 
   const handleCloseBuyInModal = useCallback(() => {
     playPokerFeedback('ui_cancel');
@@ -241,9 +272,18 @@ export function PokerGame({
     if (isJoiningSeat) return;
     setIsJoiningSeat(true);
     setSeatJoinError('');
+    if (isRebuy) {
+      try {
+        const pending = JSON.parse(localStorage.getItem('redoapp_poker_rebuy_' + gameState.matchId) || 'null');
+        if (pending?.key) { seatRequestIdRef.current = pending.key; requestedChips = pending.chips; }
+      } catch { /* Storage is optional; the current request still remains idempotent. */ }
+    }
     if (!seatRequestIdRef.current) seatRequestIdRef.current = `seat-${gameState.matchId}-${crypto.randomUUID()}`;
+    if (isRebuy) {
+      try { localStorage.setItem('redoapp_poker_rebuy_' + gameState.matchId, JSON.stringify({key: seatRequestIdRef.current, chips: requestedChips})); } catch {}
+    }
     try {
-      const res = await apiRequest<{success: boolean; tableId: string; joined?: boolean; message?: string}>('/api/casino/join-table', {
+      const res = await apiRequest<{success: boolean; tableId: string; joined?: boolean; message?: string}>(isRebuy ? '/api/casino/poker-rebuy' : '/api/casino/join-table', {
         method: 'POST',
         retryOnNetworkError: true,
         networkAttempts: 1,
@@ -253,13 +293,18 @@ export function PokerGame({
       if (res.success) {
         setShowBuyInModal(false);
         seatRequestIdRef.current = '';
+        if (isRebuy) { try { localStorage.removeItem('redoapp_poker_rebuy_' + gameState.matchId); } catch {} }
         await fetchProfile();
         window.dispatchEvent(new CustomEvent('redoapp:casino-seat-taken', { detail: { tableId: gameState.matchId } }));
       }
     } catch (err) {
       console.error(err);
       const message = err instanceof Error ? err.message : '';
-      if (/timed out|interrupted/i.test(message) && gameState.matchId) {
+      if (isRebuy && /Not enough|Buy-in must|Rebuy is available|Invalid poker rebuy|request has expired/i.test(message)) {
+        seatRequestIdRef.current = '';
+        try { localStorage.removeItem('redoapp_poker_rebuy_' + gameState.matchId); } catch {}
+      }
+      if (!isRebuy && /timed out|interrupted/i.test(message) && gameState.matchId) {
         setSeatJoinError(uiMessage('seatReservationChecking'));
         try {
           const recovered = await apiRequest<{ seated: boolean }>(`/api/casino/my-seat/${encodeURIComponent(gameState.matchId)}`, {
@@ -278,7 +323,13 @@ export function PokerGame({
           console.error('Poker seat reconciliation failed', recoveryError);
         }
       }
-      setSeatJoinError(err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : uiMessage('seatTakeFailed'));
+      setSeatJoinError(
+        /Not enough energy/i.test(message) ? uiMessage('pokerNotEnoughEnergy')
+          : /Not enough casino chips/i.test(message) ? uiMessage('pokerNotEnoughChips')
+          : /request has expired/i.test(message) ? uiMessage('pokerRebuyExpired')
+          : /Rebuy is available|Invalid poker rebuy/i.test(message) ? uiMessage('pokerRebuyUnavailable')
+          : err instanceof Error ? err.message.replace(/\s*\[[^\]]+\]$/, '') : uiMessage('seatTakeFailed')
+      );
     } finally {
       setIsJoiningSeat(false);
     }
@@ -413,10 +464,11 @@ export function PokerGame({
     return evaluate7CardHand([...humanPlayer.holeCards, ...gameState.communityCards]);
   }, [isSpectator, humanPlayer, gameState.communityCards]);
 
-  const toggleMute = () => {
-    const isNowMuted = sound.toggleMute();
-    setMuted(isNowMuted);
-    playPokerFeedback('ui_click');
+  const cycleAudioMode = () => {
+    const next = audioMode === 'all' ? 'self' : audioMode === 'self' ? 'muted' : 'all';
+    sound.setPokerAudioMode(next);
+    setAudioMode(next);
+    if (next !== 'muted') playPokerFeedback('ui_click', 'ui');
   };
 
   const toggleHaptics = () => {
@@ -505,6 +557,9 @@ export function PokerGame({
             <span>{tr("lobby")}</span>
           </button>
           {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase">{tr("invite")}</button>}
+          <button type="button" onClick={() => setShowHandHistory(true)} className="rp-header-action min-w-[44px] min-h-[44px] px-2 text-[8px] font-black uppercase flex items-center justify-center" aria-label={t("Hand history")} title={t("Hand history")}>
+            <History className="w-3.5 h-3.5" />
+          </button>
           <span className="rp-mode-label text-[8px] font-black uppercase px-1.5 py-0.5">
             HOLD'EM · {tr(gameState.mode === 'offline' ? 'modePractice' : gameState.mode === 'private' ? 'privateRoom' : 'tabPvp')}
           </span>
@@ -524,13 +579,15 @@ export function PokerGame({
 
           <button
             type="button"
-            onClick={toggleMute}
-            aria-label={tr(muted ? 'unmutePoker' : 'mutePoker')}
+            onClick={cycleAudioMode}
+            aria-label={audioMode === 'all' ? t('All poker sounds. Switch to my sounds only.') : audioMode === 'self' ? t('My sounds only. Switch to mute.') : t('Poker muted. Switch to all sounds.')}
+            aria-pressed={audioMode === 'muted'}
+            title={audioMode === 'all' ? t('All sounds') : audioMode === 'self' ? t('My sounds only') : t('Muted')}
             className={`min-w-[44px] p-1 border border-black pixel-btn-interactive cursor-pointer ${
-              muted ? 'bg-red-950/40 text-red-400' : 'bg-slate-900 text-slate-200'
+              audioMode === 'muted' ? 'bg-red-950/40 text-red-400' : audioMode === 'self' ? 'bg-amber-950/40 text-amber-300' : 'bg-slate-900 text-slate-200'
             }`}
           >
-            {muted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+            {audioMode === 'muted' ? <VolumeX className="w-3 h-3" /> : <><Volume2 className="w-3 h-3" /><span className="text-[6px]">{audioMode === 'self' ? 'ME' : 'ALL'}</span></>}
           </button>
           <button
             type="button"
@@ -604,18 +661,27 @@ export function PokerGame({
             );
           };
 
-          const visiblePositions = Array.from({ length: isSpectator ? 10 : 9 }, (_, index) => index);
+          const practiceSlotMap: Record<number, number[]> = {
+            1: [4],
+            2: [2, 6],
+            3: [1, 4, 7],
+            4: [0, 3, 5, 8],
+            5: [0, 2, 4, 6, 8],
+            6: [0, 1, 3, 5, 7, 8],
+            7: [0, 1, 2, 4, 6, 7, 8],
+            8: [0, 1, 2, 3, 5, 6, 7, 8],
+            9: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+          };
+          const visiblePositions = gameState.mode === 'offline' && !isSpectator
+            ? (practiceSlotMap[opponents.length] || practiceSlotMap[9])
+            : Array.from({ length: isSpectator ? 10 : 9 }, (_, index) => index);
 
           return (
             <>
-              {visiblePositions.map((index) => {
-                const opponent = opponents[index];
-                if (opponent) return renderOpponentView(opponent, index);
-                return (
-                  <div key={`open-seat-${index}`} className="rp-opponent-position absolute z-30" data-seat-slot={index}>
-                    <EmptyPlayerSeat seatNumber={index + 1} />
-                  </div>
-                );
+              {visiblePositions.map((seatSlot, opponentIndex) => {
+                const opponent = opponents[opponentIndex];
+                if (opponent) return renderOpponentView(opponent, seatSlot);
+                return null;
               })}
             </>
           );
@@ -647,6 +713,7 @@ export function PokerGame({
         {/* HUMAN PLAYER (BOTTOM CENTER) */}
         {!isSpectator && humanPlayer && (
           <div className="rp-local-position absolute z-30" data-seat-slot={9}>
+            <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="rp-avatar-reaction-control" resistance iconOnly />
             {humanHandEval && (
               <div className="rp-hand-rank px-2 py-0.5 text-[7.5px] font-black uppercase tracking-wider">
                 <span>{describePokerHand(humanHandEval, tr)}</span>
@@ -678,7 +745,8 @@ export function PokerGame({
 
         <ChipField state={gameState} view={chipView} />
         {['ended', 'match_ended'].includes(gameState.stage) && resultRevealReady && !chipView.busy && (
-          <PokerHandResult state={gameState} countdown={nextHandCountdown} onNextHand={onNextHand} onLobby={handleReturnToLobby} />
+          <PokerHandResult state={gameState} countdown={nextHandCountdown} onNextHand={onNextHand}
+            onRebuy={canOfferRebuy ? handleStartRebuy : undefined} onLobby={handleReturnToLobby} />
         )}
       </PokerTable>
 
@@ -809,6 +877,17 @@ export function PokerGame({
           </RaiseControl>
         )}
       </AnimatePresence>
+
+      {canOfferRebuy && (
+        <BetControls>
+          <p className="text-[10px] text-center">{tr('pokerStackEmpty')}</p>
+          <button type="button" className="rp-primary-button w-full px-3 py-2 text-[10px] font-black"
+            onClick={handleStartRebuy}>
+            {tr(isPersistentCashTable ? 'pokerRebuy' : 'pokerPracticeRefill')}
+          </button>
+        </BetControls>
+      )}
+      {humanPlayer.rebuyPending && <div className="rp-system-module p-3 text-center text-[10px]" role="status">{tr('pokerRebuyQueued')}</div>}
 
       {/* Seating remains available while waiting and between hands. */}
       {isSpectator && isPersistentCashTable && <BetControls>
@@ -961,23 +1040,24 @@ export function PokerGame({
           )}
         </div>
       )}
-      <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="absolute bottom-2 left-2 z-40" resistance />
+      <AnimatePresence>
+        {showHandHistory && <PokerDialog label={t("Hand history")} onClose={() => setShowHandHistory(false)} safeBottom={telegramSafeArea.bottom}>
+          <section className="rp-modal rp-hand-history" aria-labelledby="poker-history-title">
+            <header><h2 id="poker-history-title">{t("HAND HISTORY")}</h2><button type="button" onClick={() => setShowHandHistory(false)} aria-label={t("Close hand history")}>×</button></header>
+            <ol>{gameState.logs.length ? gameState.logs.map(log => <li key={log.id} data-kind={log.type}><time>{new Date(log.timestamp).toString() === 'Invalid Date' ? log.timestamp : new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span>{translateGameLabel(log.message, tr)}</span></li>) : <li><span>{t("No hand events yet.")}</span></li>}</ol>
+          </section>
+        </PokerDialog>}
+      </AnimatePresence>
 
       {/* BUY IN MODAL */}
       <AnimatePresence>
         {showBuyInModal && (
-          <motion.div
-            initial={reduceMotion ? false : { clipPath: 'inset(50% 50%)' }} animate={reduceMotion ? undefined : { clipPath: 'inset(0 0)' }} exit={reduceMotion ? undefined : { clipPath: 'inset(50% 50%)' }}
-            transition={{ duration: reduceMotion ? 0 : 0.2, ease: 'linear' }}
-            className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80"
-          >
-            <PixelModal
-              labelledBy="poker-buy-in-title"
-              onRequestClose={handleCloseBuyInModal}
-              className="flex flex-col items-center gap-3 w-72"
-            >
-              <h2 id="poker-buy-in-title" className="rp-modal__header rp-panel-heading font-black text-xs uppercase text-center w-full border-b border-slate-700 pb-2">{tr("secureEntry")}</h2>
+          <PokerDialog label={tr(isRebuy ? 'pokerRebuy' : 'secureEntry')} onClose={handleCloseBuyInModal} safeBottom={telegramSafeArea.bottom}>
+            <div className="rp-modal flex flex-col items-center gap-3 w-full p-3">
+              <h2 id="poker-buy-in-title" className="rp-modal__header rp-panel-heading font-black text-xs uppercase text-center w-full border-b border-slate-700 pb-2">{tr(isRebuy ? "pokerRebuy" : "secureEntry")}</h2>
+              {isRebuy && <p className="text-[10px] text-center">{tr('pokerRebuyQueued')}</p>}
               <div className="rp-modal__content text-center w-full space-y-1">
+                {isFreeChipTable && <div className="text-[10px]">{tr('pokerEnergyBalance', { amount: profile?.energy?.energy || 0 })}</div>}
                 <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-white font-bold">{(profile?.casinoChips || 0).toFixed(0)}{' '}{tr("chips")}</span></div>
                 <div className="text-[9px] text-slate-300">{tr("tickets")}{' '}<span className="text-slate-100 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
               </div>
@@ -1023,9 +1103,11 @@ export function PokerGame({
                   <label htmlFor="poker-buy-in-amount" className="text-[8px] text-slate-400 font-bold">{tr("tableChips")}</label>
                   <input
                     id="poker-buy-in-amount"
+                    disabled={isJoiningSeat || (isRebuy && Boolean(seatRequestIdRef.current))}
                     type="number"
-                    min={100}
-                    step={50}
+                    min={50}
+                    max={100000}
+                    step={1}
                     value={buyInAmount}
                     onChange={e => setBuyInAmount(Number(e.target.value))}
                     className="rp-number-input bg-black border font-bold px-2 py-1.5 text-center text-[10px] w-full"
@@ -1035,7 +1117,7 @@ export function PokerGame({
               <div className="rp-modal__actions flex gap-2 w-full mt-2">
                 <button data-modal-cancel onClick={handleCloseBuyInModal} className="rp-secondary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase">{isJoiningSeat ? tr("background") : tr("cancelSentence")}</button>
                 <button 
-                  disabled={isJoiningSeat}
+                  disabled={isJoiningSeat || rebuyUnaffordable}
                   onClick={() => {
                     let chipsToBuyIn = buyInAmount;
                     if (gameState.matchId.includes('-free-')) chipsToBuyIn = 100;
@@ -1044,12 +1126,12 @@ export function PokerGame({
                   }}
                   className="rp-primary-button flex-1 px-2 py-2 text-[9px] font-bold uppercase disabled:opacity-60"
                 >
-                  {isJoiningSeat ? <PixelLoader label="JOINING TABLE" /> : tr("joinTable")}
+                  {isJoiningSeat ? <PixelLoader label={tr("pokerRebuyProcessing")} /> : tr(isRebuy ? "pokerRebuy" : "joinTable")}
                 </button>
               </div>
               {seatJoinError && <div className="w-full text-center text-[8px] text-red-300">{renderError(seatJoinError)}</div>}
-            </PixelModal>
-          </motion.div>
+            </div>
+          </PokerDialog>
         )}
       </AnimatePresence>
     </ScreenShake>

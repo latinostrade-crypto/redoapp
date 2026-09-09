@@ -30,6 +30,7 @@ The story uses original opaque JPEG compositions from `FOR AI/WEBSITE`; its capt
 
 - **UNO-style card game:** offline practice, public PVP, and private rooms for 2–4 players. Public matches use server-owned state, reconnect handling and SSE state delivery.
 - **Poker:** practice plus free and public persistent tables. Public play uses casino chips; realised table cash-out is processed by the backend.
+- **Poker rebuys:** after a resolved loss of the entire stack, free tables offer 100 chips for 2 energy; public tables accept 50–100,000 chips from the casino balance. The seat is retained and the new chips enter play next hand. Practice offers a free 100-chip refill. Tournament and other nonpersistent matches retain their elimination rules.
 - **Blackjack:** practice plus free and public persistent tables, including standard in-table actions such as hit, stand, double, split, surrender and insurance where the game state allows them.
 - **Free casino tables:** use energy for entry. Public casino tables use a chip buy-in; the current catalogue exposes two tables per game and mode.
 - **Tournaments:** server-managed tournament registration, brackets and progression are present. Tournament bracelets are a possible Daily Vault reward.
@@ -98,8 +99,9 @@ Apply the Supabase migrations in this order before enabling persistent public ca
 4. `supabase/repair_persistent_table_seats.sql`
 5. `supabase/20260827_poker_cashout_referrals.sql`
 6. `supabase/20260827_casino_cashout_referrals.sql`
-7. `supabase/20260906_backend_only_permissions.sql`
-8. `supabase/20260906_trigger_permissions.sql`
+7. `supabase/20260907_poker_rebuy.sql` — required before enabling the new rebuy endpoint in database mode. This transaction commits the debit, idempotency receipt and funded table snapshot together; it grants execution only to `service_role`.
+8. `supabase/20260906_backend_only_permissions.sql`
+9. `supabase/20260906_trigger_permissions.sql`
 
 On the existing production project, the two September permission migrations
 were applied separately with owner approval; see `docs/permissions-change-record.md`.

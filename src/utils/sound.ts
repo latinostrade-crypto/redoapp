@@ -9,6 +9,8 @@ export type PokerSoundId =
   | 'bet_move' | 'pot_receive' | 'fold' | 'all_in'
   | 'player_join' | 'player_disconnect' | 'player_eliminated'
   | 'showdown' | 'game_start' | 'winner' | 'game_over' | 'scene_transition';
+export type PokerSoundSource = 'self' | 'opponent' | 'system' | 'ui';
+export type PokerAudioMode = 'all' | 'self' | 'muted';
 
 // Shared Web Audio synthesizer. Poker uses the dedicated dry, deterministic
 // terminal cue bank below; the older game surfaces retain their existing cues.
@@ -74,8 +76,20 @@ class SoundSynth {
     return this.isMuted;
   }
 
-  playPokerCue(id: PokerSoundId) {
-    if (this.getMuted()) return;
+  getPokerAudioMode(): PokerAudioMode {
+    if (typeof window === 'undefined') return 'all';
+    const stored = window.localStorage.getItem('redoapp:poker-audio-mode');
+    if (stored === 'all' || stored === 'self' || stored === 'muted') return stored;
+    return this.getMuted() ? 'muted' : 'all';
+  }
+
+  setPokerAudioMode(mode: PokerAudioMode) {
+    if (typeof window !== 'undefined') window.localStorage.setItem('redoapp:poker-audio-mode', mode);
+  }
+
+  playPokerCue(id: PokerSoundId, source: PokerSoundSource = 'system') {
+    const mode = this.getPokerAudioMode();
+    if (mode === 'muted' || (mode === 'self' && source === 'opponent')) return;
     this.init();
     if (!this.ctx) return;
 
