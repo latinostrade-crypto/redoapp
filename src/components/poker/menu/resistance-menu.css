@@ -51,16 +51,11 @@
 .rp-menu-poker { display: grid; gap: 8px; }
 .rp-menu-poker__banner { margin: 0 0 2px; padding: 3px; border: 1px solid #394555; background: #020408; }
 .rp-menu-poker__banner img { width: 100%; height: auto; aspect-ratio: 3/1; display: block; image-rendering: pixelated; }
-.rp-menu-poker__modes { display: flex; gap: 5px; }
+.rp-menu-poker__modes { display: block; }
 .rp-menu-poker__modes nav { display: grid; flex: 1; grid-template-columns: repeat(3,minmax(0,1fr)); border: 1px solid #354051; min-width: 0; }
-.rp-menu-shell .rp-menu-poker__modes button { min-height: 44px; padding: 6px; border: 0; background: #090e16; box-shadow: none; color: #a8b4cb; font: 11px var(--rp-font-terminal); text-transform: uppercase; }
+.rp-menu-shell .rp-menu-poker__modes button { min-width: 0; min-height: 44px; padding: 6px 4px; border: 0; background: #090e16; box-shadow: none; color: #a8b4cb; font: 11px/1.25 var(--rp-font-terminal); text-transform: uppercase; overflow-wrap: anywhere; }
+.rp-menu-poker__modes button > span { display: block; min-width: 0; max-width: 100%; }
 .rp-menu-shell .rp-menu-poker__modes button[aria-pressed=true] { color: #f6f2f1; box-shadow: inset 0 -3px #ed4959; background: linear-gradient(0deg,#31121b,#090e16); }
-.rp-menu-shell button.rp-menu-filter { display: flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid #354051; padding: 6px 8px; }
-.rp-menu-filter .rp-menu-icon { width: 17px; height: 17px; }
-.rp-menu-filters { display: grid; gap: 4px; padding: 8px; background: #0e1520; border: 1px solid #384253; font-size: 12px; }
-.rp-menu-filters label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
-.rp-menu-filters input { width: 20px; height: 20px; accent-color: #e34a5c; }
-.rp-menu-filters select { flex: 1; min-height: 44px; min-width: 0; background: #080b11; border: 1px solid #4c586c; color: white; padding: 8px; }
 .rp-menu-tables-heading { display: flex; align-items: center; gap: 6px; border: 1px solid #354051; min-height: 46px; padding-left: 10px; background: #090e16; }
 .rp-menu-tables-heading h2 { display: flex; align-items: center; flex: 1; gap: 7px; margin: 0; font: 12px/1.3 var(--rp-font-terminal); min-width: 0; }
 .rp-menu-tables-heading h2 .rp-menu-icon { color: #fb4d60; }
@@ -68,7 +63,7 @@
 .rp-menu-tables-heading > .rp-chip-value > span { color: #9aacc9; font-size: 11px; }
 .rp-menu-shell .rp-menu-tables-heading button { width: 44px; align-self: stretch; border: 0; border-left: 1px solid #354051; background: #111722; box-shadow: none; display: grid; place-items: center; color: #b7c5df; }
 .rp-menu-table-list { display: grid; gap: 6px; }
-.rp-menu-table { display: grid; grid-template-columns: minmax(0,1fr) 58px 82px; gap: 6px; align-items: center; padding: 8px; background: linear-gradient(125deg,#111823,#070b11 55%); border: 1px solid #344052; box-shadow: inset 3px 0 #192332; }
+.rp-menu-table { display: grid; grid-template-columns: minmax(0,1fr) minmax(48px,58px) minmax(88px,96px); gap: 6px; align-items: center; padding: 8px; background: linear-gradient(125deg,#111823,#070b11 55%); border: 1px solid #344052; box-shadow: inset 3px 0 #192332; }
 .rp-menu-table__chips { display: inline-block; position: relative; width: 45px; height: 30px; flex: 0 0 45px; }
 .rp-menu-table__chips svg:first-child { position: absolute; width: 30px; height: 34px; top: -2px; left: 0; }
 .rp-menu-table__chips svg:last-child { position: absolute; width: 25px; height: 29px; bottom: 0; right: 0; }
@@ -81,7 +76,7 @@
 .rp-menu-table__occupancy .rp-menu-icon { width: 14px; height: 14px; }
 .rp-menu-table__occupancy strong { font: 12px var(--rp-font-body); font-variant-numeric: tabular-nums; }
 .rp-menu-table__occupancy small { display: block; font: 10px var(--rp-font-body); margin-top: 4px; }
-.rp-menu-shell button.rp-menu-open { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 6px 8px; color: #fff0ec; font: 13px/1.2 var(--rp-font-terminal); background: linear-gradient(145deg,#d4414d,#8d2131); border: 1px solid #ff6d77; box-shadow: inset 0 0 0 2px #ae3442, 2px 2px #280b15; }
+.rp-menu-shell button.rp-menu-open { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; max-width: 100%; min-height: 44px; padding: 6px 5px; overflow: hidden; color: #fff0ec; font: 12px/1.2 var(--rp-font-terminal); background: linear-gradient(145deg,#d4414d,#8d2131); border: 1px solid #ff6d77; box-shadow: inset 0 0 0 2px #ae3442, 2px 2px #280b15; }
 .rp-menu-open .rp-menu-icon { width: 16px; height: 16px; }
 .rp-menu-shell button.rp-menu-table__invite { display: inline-flex; align-items: center; gap: 2px; min-height: 20px; min-width: 0; padding: 0; background: transparent; color: #98abc8; border: 0; box-shadow: none; font: 8px/1 var(--rp-font-body); }
 .rp-menu-table__invite-label { display: flex; align-items: center; gap: 2px; }
@@ -92,7 +87,7 @@
 .rp-menu-practice { padding: 14px; border: 1px solid #344154; display: grid; gap: 12px; }
 .rp-menu-practice p { font: 13px/1.5 var(--rp-font-body); color: #aebbd0; margin: 0; }
 @media (min-width: 500px) { .rp-menu-profile__level { grid-template-columns: auto minmax(30px,1fr) auto; } .rp-menu-profile__level > span:last-child { grid-column: auto; } .rp-menu-profile__funds { min-width: 96px; } .rp-menu-table { grid-template-columns: minmax(0,1fr) 90px 120px; } .rp-menu-table__name h3 { font-size: 18px; } .rp-menu-table__occupancy strong { font-size: 16px; } }
-@media (max-width: 359px) { .rp-main-menu { padding-inline: 8px; } .rp-menu-profile { grid-template-columns: 48px minmax(0,1fr) 98px; padding: 7px; gap: 7px; } .rp-menu-profile__avatar { width: 48px; height: 58px; } .rp-menu-profile__avatar > * { scale: .8; } .rp-menu-profile__identity > strong { font-size: 13px; } .rp-menu-profile__funds { min-width: 0; } .rp-menu-profile__funds > div { padding-inline: 4px; } .rp-menu-profile__funds strong { font-size: 11px; gap: 3px; } .rp-menu-profile__funds .rp-menu-icon,.rp-menu-currency { width: 16px; height: 16px; } .rp-menu-shell .rp-network-nav button { font-size: 10px; gap: 4px; } .rp-menu-shell .rp-menu-games button { font-size: 10px; gap: 5px; } .rp-menu-games { gap: 5px; } .rp-menu-games .rp-menu-icon { width: 17px; height: 17px; } .rp-menu-shell .rp-menu-poker__modes button { font-size: 9px; padding-inline: 3px; } .rp-menu-shell button.rp-menu-filter { padding-inline: 5px; } .rp-menu-tables-heading { padding-left: 5px; } .rp-menu-tables-heading h2 { font-size: 10px; gap: 4px; } .rp-menu-tables-heading h2 .rp-menu-icon { width: 15px; } .rp-menu-table { grid-template-columns: minmax(0,1fr) 52px 68px; gap: 5px; padding: 6px; } .rp-menu-table__chips { width: 31px; flex-basis: 31px; } .rp-menu-table__chips svg:first-child { width: 24px; } .rp-menu-table__chips svg:last-child { width: 20px; } .rp-menu-table__name h3 { font-size: 12px; } .rp-menu-table__occupancy { padding-left: 4px; gap: 3px; } .rp-menu-table__occupancy .rp-menu-icon { width: 11px; } .rp-menu-shell button.rp-menu-open { font-size: 11px; gap: 5px; } }
+@media (max-width: 359px) { .rp-main-menu { padding-inline: 8px; } .rp-menu-profile { grid-template-columns: 48px minmax(0,1fr) 76px; padding: 7px; gap: 7px; } .rp-menu-profile__avatar { width: 48px; height: 58px; } .rp-menu-profile__avatar > * { scale: .8; } .rp-menu-profile__identity > strong { font-size: 13px; } .rp-menu-profile__funds { min-width: 0; width: 76px; } .rp-menu-profile__funds > div { padding-inline: 4px; } .rp-menu-profile__funds strong { font-size: 11px; gap: 3px; } .rp-menu-profile__funds .rp-menu-icon,.rp-menu-currency { width: 16px; height: 16px; } .rp-menu-shell .rp-network-nav button { font-size: 9px; gap: 3px; } .rp-menu-shell .rp-network-nav .rp-menu-icon { width: 18px; height: 18px; } .rp-menu-shell .rp-menu-games button { font-size: 9px; gap: 4px; } .rp-menu-games { gap: 5px; } .rp-menu-games .rp-menu-icon { width: 16px; height: 16px; } .rp-menu-shell .rp-menu-poker__modes button { font-size: 8px; padding-inline: 2px; } .rp-menu-tables-heading { padding-left: 5px; } .rp-menu-tables-heading h2 { font-size: 9px; gap: 4px; } .rp-menu-tables-heading h2 .rp-menu-icon { width: 14px; } .rp-menu-table { grid-template-columns: minmax(0,1fr) 46px 78px; gap: 4px; padding: 6px; } .rp-menu-table__chips { width: 31px; flex-basis: 31px; } .rp-menu-table__chips svg:first-child { width: 24px; } .rp-menu-table__chips svg:last-child { width: 20px; } .rp-menu-table__name h3 { font-size: 12px; } .rp-menu-table__occupancy { padding-left: 3px; gap: 2px; } .rp-menu-table__occupancy .rp-menu-icon { display: none; } .rp-menu-table__occupancy strong { font-size: 10px; } .rp-menu-table__occupancy small { font-size: 8px; } .rp-menu-shell button.rp-menu-open { font-size: 9px; gap: 2px; padding-inline: 3px; } .rp-menu-open .rp-menu-icon { width: 11px; } }
 @media (prefers-reduced-motion: reduce) { .rp-menu-shell *, .rp-menu-tools * { animation: none !important; transition: none !important; } }
 
 /* UNO has matchmaking queues, not permanent poker tables: share the visual
@@ -121,7 +116,17 @@
 .rp-menu-uno__content { animation: rp-menu-content-arrive 160ms steps(3,end); }
 @keyframes rp-menu-content-arrive { from { opacity: .5; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 @media (max-width:359px) { .rp-menu-uno h3 { font-size: 11px; gap: 5px; } .rp-menu-shell .rp-menu-uno__content button { font-size: 10px; } .rp-menu-uno__content .grid-cols-4 { grid-template-columns: repeat(3,minmax(0,1fr)); } }
-@media (max-width:359px) { .rp-menu-table { grid-template-columns: 44px minmax(0,1fr) 52px 68px; } .rp-menu-profile__funds { width: 68px; } }
+@media (max-width:420px) {
+  html[lang="ru"] .rp-menu-shell .rp-network-nav button { gap: 4px; font-size: 9px; }
+  html[lang="ru"] .rp-menu-shell .rp-network-nav .rp-menu-icon { width: 18px; height: 18px; }
+  html[lang="ru"] .rp-menu-shell .rp-menu-games button { gap: 4px; font-size: 9px; }
+  html[lang="ru"] .rp-menu-shell .rp-menu-games .rp-menu-icon { width: 17px; height: 17px; }
+  html[lang="ru"] .rp-menu-shell .rp-menu-poker__modes button { font-size: 9px; letter-spacing: -.02em; }
+  html[lang="ru"] .rp-menu-tables-heading h2 { font-size: 10px; }
+  html[lang="ru"] .rp-menu-shell button.rp-menu-open { font-size: 10px; letter-spacing: -.02em; }
+  .rp-menu-shell button, .rp-menu-shell h2, .rp-menu-shell h3, .rp-menu-shell p, .rp-menu-shell span { min-width: 0; }
+  .rp-menu-shell button { white-space: normal; overflow-wrap: anywhere; }
+}
 
 /* Profile, events and shop use the same readable terminal panels. */
 .rp-menu-section { font: 12px/1.5 var(--rp-font-body); color: #becbe0; }

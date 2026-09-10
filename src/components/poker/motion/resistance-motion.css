@@ -43,7 +43,6 @@
 @keyframes rp-signal-fragment { 0% { mask-image: none; } 35% { mask-image: var(--rp-mask-6); transform: translateX(1px); } 65% { mask-image: var(--rp-mask-3); transform: translateX(-1px); } 100% { mask-image: var(--rp-mask-4); transform: none; } }
 .rp-player-seat--winner::after { content: ''; position: absolute; inset: -2px; border: 2px solid #dcebe3; pointer-events: none; animation: rp-winner-perimeter 400ms steps(4, end) both; }
 @keyframes rp-winner-perimeter { 0% { clip-path: inset(0 100% 100% 0); } 50% { clip-path: inset(0 0 50% 0); } 100% { clip-path: inset(0); } }
-.rp-table .rp-seat-state { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .rp-hand-result__header { position: relative; }
 .rp-hand-result__header::after { content: ''; position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: #8ee1af; transform-origin: left; animation: rp-result-scan 360ms steps(8, end) both; }
 @keyframes rp-result-scan { from { transform: scaleX(0); } to { transform: scaleX(1); } }

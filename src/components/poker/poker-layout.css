@@ -53,8 +53,9 @@
 .rp-table .rp-board-zone { top: 48%; width: min(230px, 65%); height: 104px; }
 .rp-table .rp-local-position { bottom: 12px; left: 50%; transform: translateX(-50%); }
 .rp-table .rp-local-player { display: block; transform: none; filter: none; }
-.rp-table .rp-local-player .rp-player-seat:not(.rp-player-seat--compact) { width: 100px; min-height: 60px; grid-template-columns: 42px minmax(0, 1fr); }
+.rp-table .rp-local-player .rp-player-seat:not(.rp-player-seat--compact) { width: 146px; min-height: 60px; grid-template-columns: 42px minmax(0, 1fr); }
 .rp-table .rp-local-player .resistance-avatar { max-width: 42px; max-height: 42px; }
+.rp-table .rp-local-player .rp-player-seat__meta > strong { max-width: 100%; font-size: 7.5px; letter-spacing: 0; }
 .rp-local-position .rp-local-cards { position: absolute; right: calc(100% + 10px); bottom: 2px; }
 .rp-table .rp-local-position .rp-hand-rank { position: absolute; bottom: 96px; left: 50%; transform: translateX(-50%); white-space: nowrap; max-width: 220px; font-size: 7px; }
 .rp-table .rp-waiting-hand { width: 78px; min-height: 38px; font-size: 6px; line-height: 1.5; text-align: center; white-space: normal; letter-spacing: .04em; }
@@ -89,11 +90,11 @@
   .rp-table .rp-player-seat--compact .resistance-avatar { max-width: 22px; max-height: 28px; }
   .rp-table .rp-seat-hole-cards { width: 26px; gap: 1px; }
   .rp-table .rp-seat-hole-cards i { width: 12px; }
-  .rp-table .rp-local-player .rp-player-seat:not(.rp-player-seat--compact) { width: 88px; grid-template-columns: 34px minmax(0, 1fr); }
+  .rp-table .rp-local-player .rp-player-seat:not(.rp-player-seat--compact) { width: 122px; grid-template-columns: 34px minmax(0, 1fr); }
   .rp-table .rp-local-player .resistance-avatar { max-width: 34px; max-height: 34px; }
   .rp-local-position .rp-local-cards { right: calc(100% + 6px); }
   .rp-table .rp-local-cards [role="group"] > .rp-pixel-card-deal { width: 36px; height: 54px; }
-  .rp-table .rp-local-player .rp-player-seat__meta > strong { font-size: 7px; }
+  .rp-table .rp-local-player .rp-player-seat__meta > strong { font-size: 6.5px; letter-spacing: 0; }
   .rp-table .rp-waiting-hand { width: 64px; }
 }
 @media (min-width: 600px) {

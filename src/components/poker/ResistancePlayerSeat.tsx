@@ -155,7 +155,6 @@ export function ResistancePlayerSeat({
         <strong>{player.name || 'Player'}</strong>
         <ChipValue amount={Math.max(0, displayBalance || 0)} iconClassName="rp-seat-balance-logo" animate />
       </div>
-      {status && <PlayerStatus>{translateGameLabel(status, tr)}</PlayerStatus>}
       {active && <PlayerTimer value={turnProgress} />}
       {active && turnSeconds !== undefined && turnSeconds <= 3 && <span className="rp-seat-countdown" aria-label={tr('secondsRemainingLabel', { count: turnSeconds })}>{Math.max(0, Math.ceil(turnSeconds))}</span>}
     </div>
@@ -169,10 +168,6 @@ export function ResistancePlayerSeat({
 
 export const PlayerSeat = ResistancePlayerSeat;
 export const PlayerAvatar = ResistanceAvatar;
-
-export function PlayerStatus({ children }: { children: React.ReactNode }) {
-  return <span className="rp-seat-state">{children}</span>;
-}
 
 export function PlayerTimer({ value }: { value: number }) {
   return <PixelBorderProgress value={value} className="rp-seat-timer" />;
