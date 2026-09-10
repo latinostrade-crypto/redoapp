@@ -14,7 +14,7 @@ import { PokerGameState, PokerPlayer } from '../types/poker';
 import { apiRequest } from '../utils/api';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { sound } from '../utils/sound';
-import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus, History } from 'lucide-react';
+import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus, History, UserPlus } from 'lucide-react';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
@@ -516,26 +516,29 @@ export function PokerGame({
       </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
-      <header className="rp-header flex justify-between items-center border px-1.5 py-1 z-20 gap-1">
-        <div className="flex items-center gap-1.5">
+      <header className="rp-header z-20" aria-label={t('Poker table controls')}>
+        <div className="rp-header-nav">
           <button
             type="button"
             onClick={handleReturnToLobby}
-            className="rp-header-action rp-header-action--lobby px-1.5 text-[7px] font-black uppercase flex items-center gap-1 cursor-pointer"
+            className="rp-header-action rp-header-action--icon cursor-pointer"
+            aria-label={tr('lobby')}
+            title={tr('lobby')}
           >
-            <RotateCcw className="w-3 h-3" />
-            <span>{tr("lobby")}</span>
+            <RotateCcw />
           </button>
-          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-1.5 text-[7px] font-black uppercase">{tr("invite")}</button>}
-          <button type="button" onClick={() => setShowHandHistory(true)} className="rp-header-action rp-header-action--icon px-1 text-[8px] font-black uppercase flex items-center justify-center" aria-label={t("Hand history")} title={t("Hand history")}>
-            <History className="w-3.5 h-3.5" />
+          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action rp-header-action--icon" aria-label={tr('invite')} title={tr('invite')}><UserPlus /></button>}
+          <button type="button" onClick={() => setShowHandHistory(true)} className="rp-header-action rp-header-action--icon" aria-label={t("Hand history")} title={t("Hand history")}>
+            <History />
           </button>
-          <span className="rp-mode-label text-[8px] font-black uppercase px-1.5 py-0.5">
-            HOLD'EM · {tr(gameState.mode === 'offline' ? 'modePractice' : gameState.mode === 'private' ? 'privateRoom' : 'tabPvp')}
-          </span>
         </div>
 
-        <div className="rp-header-tools flex items-center gap-1">
+        <span className="rp-mode-label">
+          <strong>HOLD'EM</strong>
+          <small>{tr(gameState.mode === 'offline' ? 'modePractice' : gameState.mode === 'private' ? 'privateRoom' : 'tabPvp')}</small>
+        </span>
+
+        <div className="rp-header-tools">
           <span className="rp-stake-label text-[8px] font-black flex items-center gap-1 px-1.5 py-0.5">
             {stakeUsesChips ? (
               <ChipValue
@@ -552,12 +555,14 @@ export function PokerGame({
             onClick={cycleAudioMode}
             aria-label={audioMode === 'all' ? t('All poker sounds. Switch to my sounds only.') : audioMode === 'self' ? t('My sounds only. Switch to mute.') : t('Poker muted. Switch to all sounds.')}
             aria-pressed={audioMode === 'muted'}
+            data-audio-mode={audioMode}
             title={audioMode === 'all' ? t('All sounds') : audioMode === 'self' ? t('My sounds only') : t('Muted')}
-            className={`rp-header-sound p-1 border border-black pixel-btn-interactive cursor-pointer ${
+            className={`rp-header-sound pixel-btn-interactive cursor-pointer ${
               audioMode === 'muted' ? 'bg-red-950/40 text-red-400' : audioMode === 'self' ? 'bg-amber-950/40 text-amber-300' : 'bg-slate-900 text-slate-200'
             }`}
           >
-            {audioMode === 'muted' ? <VolumeX className="w-3 h-3" /> : <><Volume2 className="w-3 h-3" /><span className="text-[6px]">{audioMode === 'self' ? 'ME' : 'ALL'}</span></>}
+            {audioMode === 'muted' ? <VolumeX /> : <Volume2 />}
+            <span>{audioMode === 'muted' ? 'OFF' : audioMode === 'self' ? 'ME' : 'ALL'}</span>
           </button>
           <LanguageSwitch compact />
         </div>

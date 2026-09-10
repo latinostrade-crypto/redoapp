@@ -7,6 +7,7 @@ export const ru: Record<string, string> = {
   'Account menu': 'Меню аккаунта',
   'ACCOUNT & SETTINGS': 'АККАУНТ И НАСТРОЙКИ',
   'Player account': 'Аккаунт игрока',
+  'Poker table controls': 'Управление покерным столом',
   'Level XP': 'Опыт уровня',
   'LVL': 'УР.',
   'BAL': 'БАЛАНС',

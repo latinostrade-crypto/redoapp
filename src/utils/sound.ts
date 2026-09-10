@@ -79,12 +79,16 @@ class SoundSynth {
   getPokerAudioMode(): PokerAudioMode {
     if (typeof window === 'undefined') return 'all';
     const stored = window.localStorage.getItem('redoapp:poker-audio-mode');
+    // Global sound settings and the poker-specific selector must never
+    // disagree: a global mute always wins until poker explicitly unmutes.
+    if (this.getMuted()) return 'muted';
     if (stored === 'all' || stored === 'self' || stored === 'muted') return stored;
-    return this.getMuted() ? 'muted' : 'all';
+    return 'all';
   }
 
   setPokerAudioMode(mode: PokerAudioMode) {
     if (typeof window !== 'undefined') window.localStorage.setItem('redoapp:poker-audio-mode', mode);
+    this.setMute(mode === 'muted');
   }
 
   playPokerCue(id: PokerSoundId, source: PokerSoundSource = 'system') {
