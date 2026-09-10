@@ -25,7 +25,7 @@ import { sound } from '../utils/sound';
 import { playPokerFeedback } from '../utils/pokerFeedback';
 import { Avatar } from './Avatars';
 import { ResistanceAvatar } from './poker/ResistanceAvatar';
-import { ChipValue } from './poker/PokerTable';
+import { ChipStackIcon, ChipValue } from './poker/PokerTable';
 import { CasinoConfirmDialog, CasinoNoticeToast, type CasinoConfirmationRequest, type CasinoNotice } from './poker/CasinoConfirmDialog';
 import { AvatarId, GameState, GameStats, PendingDepositView, PlayerProfile, ReferralInvite } from '../types';
 import { API_BASE_URL, ApiTraceDetail, apiRequest, buildAuthenticatedUrl, getSessionToken, isTransientApiError, setBridgeToken, setSessionToken, wakeBackend, cleanErrorMessage, isUserAdmin, isLocal, isSameUser } from '../utils/api';
@@ -78,6 +78,7 @@ type DepositIntentResponse = {
   tonAmount: number;
   ticketAmount: number;
   paymentPayload: string;
+  creditAsset?: 'coins' | 'chips';
 };
 const NFT_COLLECTION_ADDRESS = 'EQD6khY5nAL43bGcvhtZjwDl-us7oBicYXMCJrUEojePy_Wi';
 const NFT_COLLECTION_URL = `https://getgems.io/collection/${NFT_COLLECTION_ADDRESS}`;
@@ -376,12 +377,13 @@ async function claimDailyCheckinViaSimpleGet(payload: { claimId: string; walletA
   }
 }
 
-function createDepositIntentViaBridge(payload: { walletAddress: string; ticketAmount: number }) {
+function createDepositIntentViaBridge(payload: { walletAddress: string; ticketAmount: number; creditAsset: 'chips' }) {
   return new Promise<DepositIntentResponse>((resolve, reject) => {
     const bridgeRequestId = `deposit-bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const params = new URLSearchParams({
       walletAddress: payload.walletAddress,
       ticketAmount: String(payload.ticketAmount),
+      creditAsset: 'chips',
       responseMode: 'iframe',
       bridgeRequestId,
       parentOrigin: window.location.origin,
@@ -503,6 +505,10 @@ function formatEnergyValue(amount: number) {
   return `⚡ ${amount}`;
 }
 
+function gramUnitsToChips(amount: number) {
+  return Math.round(amount * 100);
+}
+
 function getTelegramStartParam(): string {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -606,6 +612,7 @@ interface PendingDepositState {
   ticketAmount: number;
   tonAmount: number;
   createdAt: number;
+  creditAsset?: 'coins' | 'chips';
 }
 
 const PENDING_DEPOSIT_STORAGE_KEY = 'redoapp_pending_deposit';
@@ -1476,12 +1483,11 @@ export function Web3Dashboard({
     setPvpSubMode('public');
   };
   const referralStats = fullProfile?.referrals;
-  const referralTicketEarnings = transactions
-    .filter((tx: any) => tx.type === 'referral_bonus' && /TKT\b/i.test(String(tx.value || '')) && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
-    .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
-  const pokerReferralChipEarnings = transactions
-    .filter((tx: any) => tx.type === 'referral_bonus' && /CHIPS\b/i.test(String(tx.value || '')) && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
-    .reduce((sum: number, tx: any) => sum + (Number(tx.amount) || 0), 0);
+  const referralChipEarnings = transactions
+    .filter((tx: any) => tx.type === 'referral_bonus' && (!fullProfile?.referralResetAt || tx.createdAt >= fullProfile.referralResetAt))
+    .reduce((sum: number, tx: any) => sum + (/CHIPS\b/i.test(String(tx.value || ''))
+      ? Number(tx.amount) || 0
+      : (Number(tx.amount) || 0) * 100), 0);
   const tgProfileName = activeProfile?.telegramUsername || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.username || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.first_name || 'guest';
   const tgPhotoUrl = activeProfile?.telegramPhotoUrl || (window as any).Telegram?.WebApp?.initDataUnsafe?.user?.photo_url || '';
   const isLocalNetwork = isLocal;
@@ -1550,7 +1556,7 @@ export function Web3Dashboard({
   const formatPayoutRow = (stake: number, playersCount: 2 | 3 | 4) => {
     const { payouts } = calculateTicketPayouts(stake, playersCount);
     return payouts
-      .map((payout, index) => `${formatPlaceLabel(index + 1)} ${payout.toFixed(2)} TKT`)
+      .map((payout, index) => `${formatPlaceLabel(index + 1)} ${gramUnitsToChips(payout)}`)
       .join(' · ');
   };
 
@@ -1989,7 +1995,7 @@ export function Web3Dashboard({
     return apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(roomCodeToUse)}`, { timeoutMs: 6_000 }).then(async (preview) => {
       if (preview.stake > 0 && !(await requestCasinoConfirmation({
         title: uiMessage('authorizePrivateTable'),
-        message: uiMessage('reservePrivateJoin', { stake: preview.stake, game: preview.gameType.toUpperCase() }),
+        message: uiMessage('reservePrivateJoin', { stake: gramUnitsToChips(preview.stake), game: preview.gameType.toUpperCase() }),
         detail: uiMessage('privateHoldDetails'),
         confirmLabel: uiMessage('reserveJoin'),
         tone: 'danger',
@@ -2099,7 +2105,7 @@ export function Web3Dashboard({
     apiRequest<{ stake: number; gameType: string }>(`/api/private-rooms/preview/${encodeURIComponent(code)}`, { timeoutMs: 6_000 }).then(async (preview) => {
       if (preview.stake > 0 && !(await requestCasinoConfirmation({
         title: uiMessage('authorizeInvitedTable'),
-        message: uiMessage('reservePrivateJoin', { stake: preview.stake, game: preview.gameType.toUpperCase() }),
+        message: uiMessage('reservePrivateJoin', { stake: gramUnitsToChips(preview.stake), game: preview.gameType.toUpperCase() }),
         detail: uiMessage('invitedHoldDetails'),
         confirmLabel: uiMessage('reserveJoin'),
         tone: 'danger',
@@ -2290,8 +2296,8 @@ export function Web3Dashboard({
     }
     if (effectiveStake > 0 && !(await requestCasinoConfirmation({
       title: uiMessage('authorizePrivateRoom'),
-      message: uiMessage('reservePrivateCreate', { stake: effectiveStake, game: pvpGameTab.toUpperCase() }),
-      detail: uiMessage('reservePrivateDetail', { stake: effectiveStake }),
+      message: uiMessage('reservePrivateCreate', { stake: gramUnitsToChips(effectiveStake), game: pvpGameTab.toUpperCase() }),
+      detail: uiMessage('reservePrivateDetail', { stake: gramUnitsToChips(effectiveStake) }),
       confirmLabel: uiMessage('reserveCreate'),
       tone: 'danger',
     }))) return;
@@ -2556,7 +2562,7 @@ export function Web3Dashboard({
     }
     if (selectedStake > 0 && !(await requestCasinoConfirmation({
       title: uiMessage('authorizePublicQueue'),
-      message: uiMessage('reservePublicSearch', { stake: selectedStake, game: pvpGameTab.toUpperCase() }),
+      message: uiMessage('reservePublicSearch', { stake: gramUnitsToChips(selectedStake), game: pvpGameTab.toUpperCase() }),
       detail: uiMessage('publicHoldDetails'),
       confirmLabel: uiMessage('reserveSearch'),
       tone: 'danger',
@@ -2677,9 +2683,9 @@ export function Web3Dashboard({
     }
     setBuyingTickets(true);
     setDepositFlowStatus('waiting_chain');
-    setDepositStatusMessage(uiMessage('depositWaitingAmount', { amount: pending.ticketAmount.toFixed(2) }));
+    setDepositStatusMessage(uiMessage('chipDepositWaitingAmount', { amount: pending.ticketAmount.toFixed(2), chips: (pending.ticketAmount * 100).toFixed(0) }));
     try {
-      const confirmed = await apiRequest<{ availableTickets: number }>('/api/tickets/deposit-confirm', {
+      const confirmed = await apiRequest<{ availableTickets: number; casinoChips?: number }>('/api/tickets/deposit-confirm', {
         method: 'POST',
         retryOnNetworkError: true,
         timeoutMs: 90_000,
@@ -2689,15 +2695,20 @@ export function Web3Dashboard({
         }),
       });
       setGoldenTickets(confirmed.availableTickets);
+      if (Number.isFinite(confirmed.casinoChips)) {
+        const casinoChips = confirmed.casinoChips as number;
+        if (fullProfile) setFullProfile({ ...fullProfile, casinoChips });
+        if (profile) setProfile({ ...profile, casinoChips });
+      }
       const ledger = await apiRequest<{ transactions: any[] }>('/api/tickets/ledger');
       setTransactions(ledger.transactions);
       await refreshPendingDeposits();
       clearPendingDeposit();
       autoResumedDepositRef.current = '';
       setDepositFlowStatus('confirmed');
-      setDepositStatusMessage(uiMessage('depositConfirmedAmount', { amount: pending.ticketAmount.toFixed(2) }));
+      setDepositStatusMessage(uiMessage('chipDepositConfirmedAmount', { amount: pending.ticketAmount.toFixed(2), chips: (pending.ticketAmount * 100).toFixed(0) }));
       if (!options?.silent) {
-        showDashboardNotice(uiMessage('depositConfirmedAmount', { amount: pending.ticketAmount.toFixed(2) }), 'signal');
+        showDashboardNotice(uiMessage('chipDepositConfirmedAmount', { amount: pending.ticketAmount.toFixed(2), chips: (pending.ticketAmount * 100).toFixed(0) }), 'signal');
       }
       return true;
     } catch (e) {
@@ -2729,7 +2740,7 @@ export function Web3Dashboard({
     if (autoResumedDepositRef.current === pending.intentId) return;
     autoResumedDepositRef.current = pending.intentId;
     setDepositFlowStatus('waiting_chain');
-    setDepositStatusMessage(uiMessage('depositResumingAmount', { amount: pending.ticketAmount.toFixed(2) }));
+    setDepositStatusMessage(uiMessage('chipDepositResumingAmount', { amount: pending.ticketAmount.toFixed(2), chips: (pending.ticketAmount * 100).toFixed(0) }));
     confirmPendingDeposit(pending, { silent: true }).catch(() => undefined);
   }, [walletConnected, currentUserId, buyingTickets, authReady, depositRecoveryAttempt]);
 
@@ -3364,7 +3375,7 @@ export function Web3Dashboard({
           });
           setIsClaimingDaily(false);
         });
-        const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${result.rewardTickets.toFixed(1)} TKT` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
+        const rewardVal = `${result.xpAwarded} XP${result.rewardTickets > 0 ? ` +${gramUnitsToChips(result.rewardTickets)}` : ''}${result.rewardEnergy > 0 ? ` +${formatEnergyValue(result.rewardEnergy)}` : ''}`;
         const newTx = {
           id: `tx-daily-${result.claimId || claimedAt}`,
           event: `Check-in Day ${result.streak || 1}`,
@@ -3643,7 +3654,7 @@ export function Web3Dashboard({
       return;
     }
     const amount = Number(depositAmount);
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000 || !/^\d+(?:\.\d{1,2})?$/.test(depositAmount.trim())) {
       showDashboardNotice(uiMessage('depositPositive'), 'danger');
       return;
     }
@@ -3653,7 +3664,7 @@ export function Web3Dashboard({
     setDepositFlowStatus('creating');
     setDepositStatusMessage(uiMessage('depositPreparing'));
     try {
-      const intentPayload = { walletAddress: rawAddress, ticketAmount: amount };
+      const intentPayload = { walletAddress: rawAddress, ticketAmount: amount, creditAsset: 'chips' as const };
       const bridgeIntent = createDepositIntentViaBridge(intentPayload);
       let directIntentTimer = 0;
       const directIntentFallback = new Promise<DepositIntentResponse>((resolve, reject) => {
@@ -3677,7 +3688,7 @@ export function Web3Dashboard({
         })
         .finally(() => window.clearTimeout(directIntentTimer));
       setDepositFlowStatus('awaiting_wallet');
-      setDepositStatusMessage(uiMessage('depositWalletAmount', { ton: intent.tonAmount.toFixed(2), tickets: intent.ticketAmount.toFixed(2) }));
+      setDepositStatusMessage(uiMessage('chipDepositWalletAmount', { ton: intent.tonAmount.toFixed(2), tickets: intent.ticketAmount.toFixed(2), chips: (intent.ticketAmount * 100).toFixed(0) }));
       const transaction = await tonConnectUI.sendTransaction({
         // Keep this request browser-only: importing @ton/core into the Mini App
         // bundle pulls in Node Buffer assumptions and can crash older Telegram
@@ -3697,6 +3708,7 @@ export function Web3Dashboard({
         ticketAmount: intent.ticketAmount,
         tonAmount: intent.tonAmount,
         createdAt: Date.now(),
+        creditAsset: 'chips',
       };
       savePendingDeposit(pending);
       await confirmPendingDeposit(pending);
@@ -4022,7 +4034,7 @@ export function Web3Dashboard({
       </nav>
 
       <MenuProfile bannerTarget={currentTab === 'pvp' ? pvpGameTab : undefined} name={tgProfileName || userName || 'Guest'} photoUrl={tgPhotoUrl} avatar={selectedAvatar} level={displayLevel} xp={displayCurrentLevelXp} xpNeeded={displayXpNeeded} tickets={goldenTickets} chips={Math.round(activeProfile?.casinoChips || 0)}>
-        <div className="rp-menu-energy"><Zap aria-hidden="true" />{tr("energy")}{' '}{energy.energy}/{energy.maxEnergy}</div>
+        <div className="rp-menu-energy" aria-label={tr('energyBalance', { current: energy.energy, max: energy.maxEnergy })}><Zap aria-hidden="true" />{energy.energy}/{energy.maxEnergy}</div>
         <div className="rp-account-actions">
           {onOpenRules && (
             <button
@@ -4261,11 +4273,7 @@ export function Web3Dashboard({
                       )}
                       <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
                         <span className="text-slate-400 uppercase">{tr("referralEarnings")}</span>
-                        <span className="font-black text-[#00ff66]">{referralTicketEarnings.toFixed(2)} TKT</span>
-                      </div>
-                      <div className="flex justify-between items-center text-[7.5px] bg-slate-950 border border-black px-2 py-0.5">
-                        <span className="text-slate-400 uppercase">{tr("pokerReferralChips")}</span>
-                        <ChipValue amount={Math.round(pokerReferralChipEarnings)} iconClassName="w-3 h-3" className="font-black text-[#ffcc00]" />
+                        <ChipValue amount={Math.round(referralChipEarnings)} iconClassName="w-3 h-3" className="font-black text-[#ffcc00]" />
                       </div>
                       
                       {activeProfile?.referralLink ? (
@@ -4612,157 +4620,40 @@ export function Web3Dashboard({
                 </div>
               </div>
 
-              {/* Compressed Balance and Withdraw */}
+              {/* Single-currency wallet deposit */}
               <div className="bg-[#18181c] border border-black pixel-box-sm p-2.5 space-y-2.5 font-mono">
-                <div className="space-y-1.5">
-                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">{tr("withdrawTickets")}</div>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="0.5"
-                      step="0.1"
-                      value={withdrawAmount}
-                      disabled={!!pendingWithdrawal || withdrawRequestState === 'submitting'}
-                      onChange={(e) => {
-                        setWithdrawAmount(e.target.value);
-                        if (withdrawRequestState === 'confirming') {
-                          setWithdrawRequestState('idle');
-                          setWithdrawRequestId('');
-                        }
-                        setWithdrawStatusTone('idle');
-                        setWithdrawStatusMessage('');
-                      }}
-                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
-                      placeholder={tr("amount")}
-                    />
-                    <button
-                      type="button"
-                      onClick={prepareWithdrawal}
-                      disabled={withdrawRequestState === 'submitting' || !!pendingWithdrawal}
-                      className="px-3 py-1 bg-[#ff4b4b] text-black border border-black text-[8px] font-black uppercase pixel-btn-interactive cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {pendingWithdrawal ? tr("pending") : withdrawRequestState === 'submitting' ? tr("sending") : tr("withdraw")}
-                    </button>
-                  </div>
-                  {withdrawRequestState === 'confirming' && (
-                    <div className="space-y-1.5 border border-[#ffcc00] bg-[#231b05] p-2 text-[7px] text-[#ffe680]">
-                      <div>
-                        <Trans ns="game" i18nKey="withdrawalQuestion" values={{ amount: Number(withdrawAmount).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} components={{ strong: <strong /> }} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setWithdrawRequestState('idle');
-                            setWithdrawRequestId('');
-                            setWithdrawStatusTone('idle');
-                            setWithdrawStatusMessage('');
-                          }}
-                          className="border border-black bg-slate-800 py-1 text-[7px] font-black uppercase text-slate-200 pixel-btn-interactive"
-                        >{tr("cancelSentence")}</button>
-                        <button
-                          type="button"
-                          onClick={confirmWithdrawal}
-                          className="border border-black bg-[#ffcc00] py-1 text-[7px] font-black uppercase text-black pixel-btn-interactive"
-                        >{tr("confirmWithdrawal")}</button>
-                      </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[7.5px] uppercase text-slate-300 font-bold inline-flex items-center gap-1.5">
+                      {tr("depositChipsFromWallet")} <ChipStackIcon className="w-3.5 h-3.5" />
                     </div>
-                  )}
-                  {withdrawStatusMessage && withdrawRequestState !== 'submitting' && (
-                    <div className={`border border-black p-2 text-[7px] ${
-                      withdrawStatusTone === 'error'
-                        ? 'bg-[#2a0d0d] text-[#ff9a9a]'
-                        : withdrawStatusTone === 'refund'
-                          ? 'bg-[#2b2105] text-[#ffe680]'
-                          : withdrawStatusTone === 'success'
-                            ? 'bg-[#062b12] text-[#8dffaf]'
-                            : 'bg-[#08131f] text-[#9ed8ff]'
-                    }`}>
-                      {renderError(withdrawStatusMessage)}
+                    <div className="text-[6px] text-slate-500 uppercase inline-flex items-center gap-1">
+                      1 GRAM = 100 <ChipStackIcon className="w-3 h-3" />
                     </div>
-                  )}
-                </div>
-
-                <div className="pt-2 border-t border-black space-y-1.5">
-                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">{tr("exchange")}</div>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={exchangeAmount}
-                      onChange={(e) => setExchangeAmount(e.target.value)}
-                      className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
-                      placeholder={tr("amountTkt")}
-                    />
-                    <button
-                      type="button"
-                      disabled={!authReady || accountRefreshState === 'refreshing'}
-                      onClick={() => {
-                        const amount = Number(exchangeAmount);
-                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice(uiMessage('validAmountNotice'), 'danger');
-                        apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
-                          method: 'POST',
-                          body: JSON.stringify({ direction: 'tkt_to_chips', amount }),
-                        }).then((res) => {
-                          if (res.success) {
-                            setGoldenTickets(res.availableTickets);
-                            if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
-                            if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
-                            showDashboardNotice(uiMessage('exchangeToChips', { tickets: amount, chips: amount * 100 }), 'signal');
-                          }
-                        }).catch(e => showDashboardNotice(e.message, 'danger'));
-                      }}
-                      className="px-2 bg-purple-600 hover:bg-purple-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
-                    >{tr("buyChips")}</button>
-                    <button
-                      type="button"
-                      disabled={!authReady || accountRefreshState === 'refreshing'}
-                      onClick={() => {
-                        const amount = Number(exchangeAmount);
-                        if (!Number.isFinite(amount) || amount <= 0) return showDashboardNotice(uiMessage('validAmountNotice'), 'danger');
-                        apiRequest<{ success: boolean, availableTickets: number, casinoChips: number }>('/api/casino/exchange', {
-                          method: 'POST',
-                          body: JSON.stringify({ direction: 'chips_to_tkt', amount }),
-                        }).then((res) => {
-                          if (res.success) {
-                            setGoldenTickets(res.availableTickets);
-                            if (fullProfile) setFullProfile({ ...fullProfile, casinoChips: res.casinoChips });
-                            if (profile) setProfile({ ...profile, casinoChips: res.casinoChips });
-                            showDashboardNotice(uiMessage('exchangeToTickets', { tickets: amount, chips: amount * 100 }), 'signal');
-                          }
-                        }).catch(e => showDashboardNotice(e.message, 'danger'));
-                      }}
-                      className="px-2 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-[7px] uppercase border border-black pixel-btn-interactive disabled:opacity-60 min-w-[70px]"
-                    >{tr("sellChips")}</button>
                   </div>
-                  <div className="text-[6px] text-slate-500 uppercase">{tr("exchangeRate")}</div>
-                </div>
-
-                <div className="pt-2 border-t border-black space-y-1.5">
-                  <div className="text-[7.5px] uppercase text-slate-400 font-bold">{tr("depositTickets")}</div>
                   <div className="flex gap-2">
                     <input
                       type="number"
                       min="0.01"
+                      max="100000"
                       step="0.01"
                       value={depositAmount}
                       onChange={(e) => setDepositAmount(e.target.value)}
                       className="flex-1 bg-black border border-black text-slate-200 px-2 py-1 text-[9px] font-mono min-w-0"
-                      placeholder={tr("amount")}
+                      placeholder="GRAM"
                     />
                     <button
                       type="button"
-                      onClick={buyTicketsWithTon}
+                      onClick={() => buyTicketsWithTon()}
                       disabled={buyingTickets || !authReady}
-                      className="flex-1 py-1 bg-black text-slate-350 border border-black text-[8px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 min-h-9 border border-[#ffcc00]/70 bg-[#2a1e00] px-2 py-1 text-[8px] font-black uppercase text-[#ffe680] pixel-btn-interactive disabled:opacity-50 flex items-center justify-center gap-1.5"
                     >
                       {buyingTickets ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
                       ) : (
                         <>
                           <span>{tr("depositUpper")}</span>
-                          <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
+                          <span className="text-[#ffe680] text-[7px] inline-flex items-center gap-1">{(Number(depositAmount || 0) * 100).toFixed(0)}<ChipStackIcon className="w-3 h-3" /></span>
                         </>
                       )}
                     </button>
@@ -4800,7 +4691,7 @@ export function Web3Dashboard({
                         return (
                           <div key={deposit.id} className="border border-black bg-black/60 px-2 py-1.5 text-[7px] text-slate-250 space-y-1">
                             <div className="flex justify-between gap-2">
-                              <span>{deposit.ticketAmount.toFixed(2)} TKT / {deposit.tonAmount.toFixed(2)} TON</span>
+                              <span className="inline-flex items-center gap-1">{gramUnitsToChips(deposit.ticketAmount)}<ChipStackIcon className="w-3 h-3" /> / {deposit.tonAmount.toFixed(2)} GRAM</span>
                               <span className="text-[#ffcc99]">{deposit.confirmationAttempts}{' '}{tr("checks")}</span>
                             </div>
                             <div className="flex justify-between gap-2">
@@ -5126,7 +5017,7 @@ export function Web3Dashboard({
                         {tournamentData.rules}
                       </p>
                       <div className="flex justify-between items-center text-[7.5px] pt-1 text-slate-400 border-t border-slate-900">
-                        <span>{tr("entryFee")}{' '}<strong className={tournamentData.entryTicketCost > 0 ? "text-[#ffcc00]" : "text-[#00ff66]"}>{tournamentData.entryTicketCost > 0 ? `${tournamentData.entryTicketCost} TKT` : tr("freeEntry")}</strong></span>
+                        <span>{tr("entryFee")}{' '}<strong className={tournamentData.entryTicketCost > 0 ? "text-[#ffcc00] inline-flex items-center gap-1" : "text-[#00ff66]"}>{tournamentData.entryTicketCost > 0 ? <>{gramUnitsToChips(tournamentData.entryTicketCost)} <ChipStackIcon className="w-3 h-3" /></> : tr("freeEntry")}</strong></span>
                         <span>{tr("participants")}{' '}<strong>{tournamentData.participants.length} / {tournamentData.maxPlayers}</strong></span>
                       </div>
                     </div>
@@ -5577,7 +5468,7 @@ export function Web3Dashboard({
                             onClick={() => setAdminTicketCost('0.5')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '0.5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
-                          0.5 TKT
+                          <span className="inline-flex items-center gap-1">50<ChipStackIcon className="w-3 h-3" /></span>
                         </button>
                         <button
                           type="button"
@@ -5585,7 +5476,7 @@ export function Web3Dashboard({
                             onClick={() => setAdminTicketCost('1')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '1' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
-                          1 TKT
+                          <span className="inline-flex items-center gap-1">100<ChipStackIcon className="w-3 h-3" /></span>
                         </button>
                         <button
                           type="button"
@@ -5593,7 +5484,7 @@ export function Web3Dashboard({
                             onClick={() => setAdminTicketCost('5')}
                           className={`px-1.5 py-0.5 border text-[7px] font-bold ${adminTicketCost === '5' ? 'bg-[#ffcc00] text-black border-black' : 'bg-black text-slate-300 border-slate-800'}`}
                         >
-                          5 TKT
+                          <span className="inline-flex items-center gap-1">500<ChipStackIcon className="w-3 h-3" /></span>
                         </button>
                       </div>
 
@@ -5746,7 +5637,7 @@ export function Web3Dashboard({
                           {selectedStake === 0 ? (
                             <span className="inline-flex items-center gap-1"><Zap className="w-3 h-3 fill-[#ffcc00]" /> <strong>{energy.energy}</strong> / {energy.maxEnergy}</span>
                           ) : (
-                            <>{tr("balanceShort")}{' '}<strong>{goldenTickets.toFixed(2)}</strong> TKT</>
+                            <span className="inline-flex items-center gap-1"><ChipStackIcon /><strong>{gramUnitsToChips(goldenTickets)}</strong></span>
                           )}
                         </span>
                       </div>
@@ -5768,7 +5659,7 @@ export function Web3Dashboard({
                                 : 'bg-black border-black text-slate-450'
                             }`}
                           >
-                            <span className="text-[9px] font-black">{stake === 0 ? tr("freeUpper") : `${stake}TKT`}</span>
+                            <span className="text-[9px] font-black">{stake === 0 ? tr("freeUpper") : <span className="inline-flex items-center gap-1">{gramUnitsToChips(stake)}<ChipStackIcon className="w-3 h-3" /></span>}</span>
                             <span className="text-[6px] block mt-0.5">{stake === 0 ? formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST) : tr("stake")}</span>
                           </button>
                         ))}
@@ -5779,7 +5670,7 @@ export function Web3Dashboard({
                           <span className="text-[#00ff66] font-bold">
                             {selectedStake === 0
                               ? tr('energyPerGame', { energy: formatEnergyValue(PUBLIC_FREE_MATCH_ENERGY_COST) })
-                              : `${calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool.toFixed(2)} - ${calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool.toFixed(2)} TKT`}
+                              : <span className="inline-flex items-center gap-1">{gramUnitsToChips(calculateTicketPayouts(selectedStake, MIN_MATCH_PLAYERS).netPrizePool)}–{gramUnitsToChips(calculateTicketPayouts(selectedStake, MAX_MATCH_PLAYERS).netPrizePool)} <ChipStackIcon className="w-3 h-3" /></span>}
                           </span>
                         </div>
                         {selectedStake > 0 && (
@@ -5821,6 +5712,7 @@ export function Web3Dashboard({
                           <input
                             type="number"
                             min="0.01"
+                            max="100000"
                             step="0.01"
                             value={depositAmount}
                             onChange={(e) => setDepositAmount(e.target.value)}
@@ -5829,7 +5721,7 @@ export function Web3Dashboard({
                           />
                           <button
                             type="button"
-                            onClick={buyTicketsWithTon}
+                            onClick={() => buyTicketsWithTon()}
                             disabled={buyingTickets || !authReady}
                             className="flex-1 py-1.5 bg-black text-slate-300 border border-black text-[9px] font-black uppercase pixel-btn-interactive flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
@@ -5838,7 +5730,7 @@ export function Web3Dashboard({
                             ) : (
                               <>
                                 <span>{tr("depositUpper")}</span>
-                                <span className="text-[#00d2ff] text-[7px]">{Number(depositAmount || 0).toFixed(2)} TKT</span>
+                                <span className="text-[#00d2ff] text-[7px] inline-flex items-center gap-1">{(Number(depositAmount || 0) * 100).toFixed(0)}<ChipStackIcon className="w-3 h-3" /></span>
                               </>
                             )}
                           </button>
@@ -5907,7 +5799,7 @@ export function Web3Dashboard({
                               return (
                                 <div key={deposit.id} className="border border-black bg-black/60 px-2 py-1.5 text-[7px] text-slate-250 space-y-1">
                                   <div className="flex justify-between gap-2">
-                                    <span>{deposit.ticketAmount.toFixed(2)} TKT / {deposit.tonAmount.toFixed(2)} TON</span>
+                                    <span className="inline-flex items-center gap-1">{gramUnitsToChips(deposit.ticketAmount)}<ChipStackIcon className="w-3 h-3" /> / {deposit.tonAmount.toFixed(2)} GRAM</span>
                                     <span className="text-[#ffcc99]">{deposit.confirmationAttempts}{' '}{tr("checks")}</span>
                                   </div>
                                   <div className="flex justify-between gap-2">
@@ -5993,7 +5885,7 @@ export function Web3Dashboard({
                       <div className="bg-[#18181c] border border-black pixel-box-sm p-3 space-y-3 font-mono">
                         <div className="flex justify-between items-center text-[9px]">
                           <h3 className="font-black text-slate-100 uppercase">{tr("privateRoom")}</h3>
-                          <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black">{tr("balanceShort")}{' '}<strong>{goldenTickets.toFixed(2)}</strong> TKT
+                          <span className="text-[8px] text-[#00d2ff] bg-black px-1.5 py-0.5 border border-black inline-flex items-center gap-1"><ChipStackIcon /><strong>{gramUnitsToChips(goldenTickets)}</strong>
                           </span>
                         </div>
 
@@ -6031,7 +5923,7 @@ export function Web3Dashboard({
                                     : 'bg-black border-black text-slate-450'
                                 }`}
                               >
-                                <span className="text-[9px] font-black">{stake === 0 ? tr("freeUpper") : `${stake}TKT`}</span>
+                                <span className="text-[9px] font-black">{stake === 0 ? tr("freeUpper") : <span className="inline-flex items-center gap-1">{gramUnitsToChips(stake)}<ChipStackIcon className="w-3 h-3" /></span>}</span>
                                 <span className="text-[6px] block mt-0.5">{stake === 0 ? tr("zeroStake") : tr("stake")}</span>
                               </button>
                             ))}
@@ -6079,7 +5971,7 @@ export function Web3Dashboard({
                               <div className="flex justify-between mb-1">
                                 <span className="text-slate-400">{tr("prizePool")}</span>
                                 <span className="font-black text-[#00ff66]">
-                                  {calculateTicketPayouts(privateRoomStake, privateRoomTargetPlayers).netPrizePool.toFixed(2)} TKT
+                                  <span className="inline-flex items-center gap-1"><ChipStackIcon className="w-3 h-3" />{gramUnitsToChips(calculateTicketPayouts(privateRoomStake, privateRoomTargetPlayers).netPrizePool)}</span>
                                 </span>
                               </div>
                               <div className="text-[#ffcc00] font-bold text-right">
@@ -6172,7 +6064,7 @@ export function Web3Dashboard({
 
           {pvpGameTab === 'poker' && (
             <PokerLobbyMenu mode={pvpSubMode} onMode={mode => {sound.playPop(); setPvpSubMode(mode);}}
-              tables={casinoTables} status={casinoTableStatus} balance={Math.round(activeProfile?.casinoChips || 0)}
+              tables={casinoTables} status={casinoTableStatus} balance={Math.round(goldenTickets * 100)}
               onRefresh={() => {setCasinoTableStatus('refreshing'); setCasinoRefreshRevision(value => value + 1);}}
               onOpen={table => {
                 if (onStartPokerGame) transitionResistanceScene(() => onStartPokerGame('pvp', table.minBuyIn, table.id, table.id), Boolean(prefersReducedMotion));
@@ -6195,7 +6087,7 @@ export function Web3Dashboard({
           {pvpGameTab === 'blackjack' && (
             <PokerLobbyMenu game="blackjack" bannerSrc={blackjackBanner} mode={pvpSubMode}
               onMode={mode=>{sound.playPop();setPvpSubMode(mode);}} tables={casinoTables}
-              status={casinoTableStatus} balance={Math.round(activeProfile?.casinoChips || 0)}
+              status={casinoTableStatus} balance={Math.round(goldenTickets * 100)}
               onRefresh={()=>{setCasinoTableStatus('refreshing');setCasinoRefreshRevision(value=>value+1);}}
               onOpen={table=>{if(onStartBlackjackGame) onStartBlackjackGame('pvp',table.minBuyIn,table.id,table.id);}}
               onInvite={table=>{
@@ -6321,7 +6213,7 @@ export function Web3Dashboard({
               </div>
               {dailyReward.tickets > 0 && (
                 <div className="mt-2 bg-slate-950 border-2 border-black p-2 text-[9px] font-black text-[#ffcc00]">
-                  +{dailyReward.tickets.toFixed(2)} TKT
+                  <span className="inline-flex items-center gap-1"><ChipStackIcon />+{gramUnitsToChips(dailyReward.tickets)}</span>
                 </div>
               )}
               <button
@@ -6362,7 +6254,7 @@ export function Web3Dashboard({
                 style={{ transformStyle: 'preserve-3d' }}
                 className="mx-auto w-14 h-14 bg-slate-950 border-2 border-black flex items-center justify-center text-[#ffcc00] relative overflow-hidden text-2xl animate-bounce mt-2"
               >
-                {lootboxReward.type === 'bracelet' ? '⌁' : lootboxReward.type === 'tickets' ? '🎟️' : '⚡'}
+                {lootboxReward.type === 'bracelet' ? '⌁' : lootboxReward.type === 'tickets' ? <ChipStackIcon className="w-7 h-7" /> : '⚡'}
               </motion.div>
 
               <div className="space-y-2">

@@ -163,8 +163,6 @@ export function BlackjackGame({
   } as any;
   const [showBuyInModal, setShowBuyInModal] = useState(false);
   const [buyInAmount, setBuyInAmount] = useState(100);
-  const [exchangeAmount, setExchangeAmount] = useState(1);
-  const [isExchanging, setIsExchanging] = useState(false);
   const [isJoiningSeat, setIsJoiningSeat] = useState(false);
   const [seatJoinError, setSeatJoinError] = useState<UiMessage>('');
   const seatRequestIdRef = useRef('');
@@ -173,27 +171,6 @@ export function BlackjackGame({
   const handleTakeSeat = async () => {
     setSeatJoinError('');
     setShowBuyInModal(true);
-  };
-
-  const handleExchange = async () => {
-    if (isExchanging) return;
-    setIsExchanging(true);
-    try {
-      const res = await apiRequest<{success: boolean}>('/api/casino/exchange', {
-        method: 'POST',
-        body: JSON.stringify({ direction: 'tkt_to_chips', amount: exchangeAmount })
-      });
-      if (res.success) {
-        await fetchProfile();
-        setExchangeAmount(1);
-      } else {
-        alert(tr('exchangeFailed'));
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsExchanging(false);
-    }
   };
 
   const handleConfirmBuyIn = async (requestedChips = buyInAmount) => {
@@ -351,8 +328,10 @@ export function BlackjackGame({
           </span>
           <span className="text-[7.5px] font-black text-[#ffcc00] uppercase bg-black px-1.5 py-0.5 border border-black">
             {gameState.isPersistentTable
-              ? (gameState.stake === 0 ? 'FREE · 2 ENERGY ENTRY' : <span className="inline-flex items-center gap-1">{tr("cashTable")}{' '}<ChipStackIcon className="w-3 h-3" /></span>)
-              : tr('prizeValue', { value: gameState.stake === 0 ? 'XP' : `${(gameState.stake * Math.max(2, gameState.players.length) * 0.96).toFixed(2)} TKT` })}
+              ? (gameState.stake === 0 ? <span className="inline-flex items-center gap-1">FREE · 2 ⚡</span> : <span className="inline-flex items-center gap-1">{tr("cashTable")}{' '}<ChipStackIcon className="w-3 h-3" /></span>)
+              : gameState.stake === 0
+                ? tr('prizeValue', { value: 'XP' })
+                : <span className="inline-flex items-center gap-1">{tr('prizeValue', { value: Math.round(gameState.stake * Math.max(2, gameState.players.length) * 96) })}<ResistanceChipIcon className="w-3 h-3" /></span>}
           </span>
         </div>
 
@@ -633,7 +612,7 @@ export function BlackjackGame({
               {gameState.stage === 'match_ended' && gameState.winningPayout && gameState.winningPayout > 0 && (
                 <div className="bg-amber-950/70 border border-amber-500/50 p-1 rounded text-[8px] font-black text-[#ffcc00] flex items-center justify-center gap-1">
                   <Coins className="w-3 h-3" />
-                  <span>{tr("championPrize")}{gameState.winningPayout} TKT</span>
+                  <span className="inline-flex items-center gap-1">{tr("championPrize")}<ResistanceChipIcon />{Math.round((gameState.winningPayout || 0) * 100)}</span>
                 </div>
               )}
 
@@ -817,48 +796,28 @@ export function BlackjackGame({
             <div className="bg-[#18181c] border-2 border-[#00ff66] pixel-box-sm p-4 flex flex-col items-center gap-3 w-72 shadow-[0_0_20px_rgba(0,255,102,0.3)]">
               <h2 className="text-[#00ff66] font-black text-xs uppercase text-center w-full border-b border-[#00ff66]/30 pb-2">{tr("buyIn")}</h2>
               <div className="text-center w-full space-y-1">
-                <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-[#00ff66] font-bold">{(profile?.casinoChips || 0).toFixed(0)}{' '}{tr("chips")}</span></div>
-                <div className="text-[9px] text-slate-300">{tr("tickets")}{' '}<span className="text-pink-400 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
+                <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-[#00ff66] font-bold inline-flex items-center gap-1"><ResistanceChipIcon className="w-3 h-3" />{(profile?.casinoChips || 0).toFixed(0)}</span></div>
               </div>
 
               {gameState.matchId.includes('-free-') ? (
                 <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
-                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-[#00ff66] font-black">{tr("twoEnergy")}</span>
+                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-[#00ff66] font-black">⚡ 2</span>
                   </p>
-                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#00ff66] font-black">{tr("freeChips")}</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#00ff66] font-black inline-flex items-center gap-1">100 <ResistanceChipIcon className="w-3 h-3" /></span>
                   </p>
                 </div>
               ) : gameState.matchId.includes('-practice-') ? (
                 <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-3 rounded border border-slate-800 text-center">
                   <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-[#00ff66] font-black">{tr("free")}</span>
                   </p>
-                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#00ff66] font-black">{tr("practiceChips")}</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#00ff66] font-black inline-flex items-center gap-1">1000 <ResistanceChipIcon className="w-3 h-3" /></span>
                   </p>
                 </div>
-              ) : (
-                <div className="flex flex-col gap-1 w-full bg-slate-900/50 p-2 rounded border border-slate-800">
-                  <div className="text-[8px] text-slate-400 mb-1 font-bold">{tr("convertDescription")}</div>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={exchangeAmount}
-                      onChange={e => setExchangeAmount(Number(e.target.value))}
-                      className="bg-black border border-pink-500/50 text-pink-400 font-bold px-2 py-1 text-center text-[10px] w-full"
-                    />
-                    <button 
-                      onClick={handleExchange} 
-                      disabled={isExchanging}
-                      className="px-2 py-1 bg-pink-900 text-pink-200 text-[8px] border border-pink-700 font-bold uppercase hover:bg-pink-800 disabled:opacity-50 whitespace-nowrap"
-                    >{tr("convert")}</button>
-                  </div>
-                </div>
-              )}
+              ) : null}
 
               {gameState.matchId.includes('-public-') && (
                 <div className="flex flex-col gap-1 w-full mt-2">
-                  <div className="text-[8px] text-slate-400 font-bold">{tr("tableChips")}</div>
+                  <div className="text-[8px] text-slate-400 font-bold inline-flex items-center gap-1">{tr("bringToTable")} <ResistanceChipIcon className="w-3 h-3" /></div>
                   <input
                     type="number"
                     min={50}

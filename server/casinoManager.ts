@@ -115,7 +115,7 @@ export class CasinoManager {
     if (table.engine) return table;
 
     table.engine = table.gameType === 'poker'
-      ? new PokerEngine(table.id, 1, 2)
+      ? new PokerEngine(table.id, 3, 6)
       : new BlackjackEngine(table.id);
     table.activatedAt = Date.now();
     BOT_ROSTER.forEach(([userId, username, avatarId]) => {

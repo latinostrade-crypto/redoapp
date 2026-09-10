@@ -66,6 +66,25 @@ html::-webkit-scrollbar-thumb {
   }
 }
 
+/* Press Start 2P/Silkscreen are kept for the original Latin art direction.
+   Russian uses one Cyrillic display family so Telegram WebViews never mix in a
+   narrow system fallback inside a single label. */
+html:lang(ru) {
+  --font-sans: "Rubik Mono One", "Segoe UI", sans-serif;
+  --font-mono: "Rubik Mono One", "Segoe UI", sans-serif;
+}
+
+html:lang(ru) body {
+  font-synthesis: none;
+  letter-spacing: 0;
+}
+
+html:lang(ru) .font-mono,
+html:lang(ru) .font-sans {
+  line-height: 1.24;
+  font-weight: 400;
+}
+
 /* Crisp pixelated rendering */
 * {
   box-sizing: border-box;

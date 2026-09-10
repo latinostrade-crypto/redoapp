@@ -77,3 +77,9 @@
   --rp-z-boot: 190;
   --rp-z-wipe: 200;
 }
+
+html:lang(ru) {
+  --rp-font-display: "Rubik Mono One", "Segoe UI", sans-serif;
+  --rp-font-terminal: "Rubik Mono One", "Segoe UI", sans-serif;
+  --rp-font-body: "Rubik Mono One", "Segoe UI", sans-serif;
+}

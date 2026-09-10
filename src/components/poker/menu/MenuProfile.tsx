@@ -11,6 +11,9 @@ export function MenuProfile({bannerTarget, name, photoUrl, avatar, level, xp, xp
   name: string; photoUrl?: string; avatar: AvatarId; level: number; xp: number; xpNeeded: number; tickets: number; chips: number; children: React.ReactNode;
 }) {
   const { t } = useLanguage();
+  // All product surfaces share one displayed wallet. During the API cut-over
+  // `tickets` is a read-only GRAM projection of the canonical integer chips.
+  const displayedChips = Math.round(tickets * 100);
   const [toolsTarget, setToolsTarget] = useState<HTMLElement | null>(null);
   const toolsRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
@@ -51,8 +54,7 @@ export function MenuProfile({bannerTarget, name, photoUrl, avatar, level, xp, xp
         <div className="rp-menu-profile__level"><span>{t('LVL')} {level}</span><progress aria-label={t('Level XP')} max={xpNeeded} value={xp} /><span>{xp} / {xpNeeded} XP</span></div>
       </div>
       <div className="rp-menu-profile__funds">
-        <div><span>TKT</span><strong><MenuIcon name="ticket" />{tickets}</strong></div>
-        <div><span>{t('BAL')}</span><ChipValue amount={chips} iconClassName="rp-menu-currency" /></div>
+        <div><ChipValue amount={displayedChips} iconClassName="rp-menu-currency" /></div>
       </div>
     </section>
   </>;

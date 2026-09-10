@@ -7,9 +7,9 @@ const [server, tickets, migration] = await Promise.all([
   readFile(new URL('../supabase/20260826_ticket_atomic_projection.sql', import.meta.url), 'utf8'),
 ]);
 
-assert.match(server, /rpc\('ticket_persist_user_snapshot'/, 'user snapshots must use the atomic ticket RPC');
+assert.match(server, /rpc\('chip_persist_user_snapshot'/, 'user snapshots must use the atomic unified-chip RPC');
 assert.match(server, /ticketStateRevision/, 'user snapshots must carry optimistic-concurrency revisions');
-assert.match(server, /parseTicketUnits\(amount\)/, 'casino exchange must accept exact centi-TKT only');
+assert.match(server, /app\.post\('\/api\/casino\/exchange'[\s\S]*?status\(410\)/, 'legacy casino exchange must remain retired');
 assert.match(server, /Direct balance adjustment is retired/, 'direct admin balance edits must remain disabled');
 assert.match(tickets, /\^\\d\+\(\?:\\\.\\d\{1,2\}\)\?\$/, 'deposit and withdrawal values must remain centi-TKT exact');
 assert.match(migration, /ticket_persist_user_snapshot/, 'migration must define the atomic projection RPC');

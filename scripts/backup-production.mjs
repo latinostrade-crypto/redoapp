@@ -45,7 +45,7 @@ try {
   const partial = path.join(directory, 'database.partial');
   await pg('pg_dump', ['--no-password', '--format=custom', '--lock-wait-timeout=10000', '--file', partial]);
   const listing = (await pg('pg_restore', ['--list', partial])).stdout;
-  const required = ['app_state', 'casino_table_catalog', 'casino_table_runtime', 'casino_table_seats', 'casino_chip_ledger', 'ticket_accounts', 'ticket_transactions', 'ticket_ledger_entries', 'ticket_reconciliation_cases'];
+  const required = ['app_state', 'casino_table_catalog', 'casino_table_runtime', 'casino_table_seats', 'casino_chip_ledger', 'chip_accounts', 'chip_transactions', 'chip_ledger_entries', 'wallet_deposit_claims', 'ticket_accounts', 'ticket_transactions', 'ticket_ledger_entries', 'ticket_reconciliation_cases'];
   for (const table of required) {
     if (!listing.includes(`TABLE DATA public ${table} `)) throw new Error(`Backup lacks required table data: ${table}`);
   }

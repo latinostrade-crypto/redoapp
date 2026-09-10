@@ -19,8 +19,8 @@ import { apiRequest, buildAuthenticatedUrl } from '../utils/api';
 import { settlePracticeChips } from '../utils/pokerChipSettlement';
 
 const STARTING_CHIPS = 100;
-const SMALL_BLIND = 1;
-const BIG_BLIND = 2;
+const SMALL_BLIND = 3;
+const BIG_BLIND = 6;
 const TURN_TIME_LIMIT_SEC = 15;
 
 function withPokerLog(logs: PokerGameLog[], message: string, type: PokerGameLog['type']): PokerGameLog[] {

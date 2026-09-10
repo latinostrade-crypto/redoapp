@@ -4,20 +4,9 @@ import type { PokerCard } from '../../types/poker';
 import { PixelCounter } from './PixelPrimitives';
 import { PokerCardView } from './PokerCard';
 import { decomposeChips } from './chips/chipModel';
-
-export function ChipStackIcon({ className = 'w-3.5 h-3.5', style }: { key?: React.Key; className?: string; style?: React.CSSProperties }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={`rp-chip-logo inline-block shrink-0 ${className}`} aria-hidden="true" style={{ shapeRendering: 'crispEdges', ...style }}>
-      {[14, 9, 4].map(y => <g key={y} transform={`translate(0 ${y})`}>
-        <path d="M5 0h14v2h4v6h-4v2H5V8H1V2h4Z" fill="#090b0e" />
-        <path d="M5 1h14v2h3v4h-3v2H5V7H2V3h3Z" fill="var(--chip-color, #df493f)" />
-        <path d="M5 1h14v2h3v2H2V3h3Z" fill="var(--chip-top, #ff7664)" />
-        <path d="M5 5h3v3H5zm11 0h3v3h-3zM10 1h4v2h-4Z" fill="#f4ead7" />
-        <path d="M8 3h8v2H8Z" fill="#141a20" />
-      </g>)}
-    </svg>
-  );
-}
+import cleanTableAsset from '../../assets/resistance/poker-table-clean.png';
+import { ChipStackIcon } from '../ChipStackIcon';
+export { ChipStackIcon } from '../ChipStackIcon';
 
 export function ChipValue({
   amount,
@@ -87,12 +76,11 @@ export function PokerChipStack({
 }
 
 export function PokerTable({ children, bankCount = 1 }: { children: React.ReactNode; bankCount?: number }) {
-  const { tr } = useLanguage();
   return (
-    <div className={`rp-table${bankCount > 3 ? ' rp-table--many-pots' : ''} w-full h-[385px] min-[380px]:h-[415px] relative overflow-hidden flex flex-col items-center justify-center z-10 shrink-0`}>
-      <div className="rp-table-grid" data-label={tr("tableChannel")} aria-hidden="true" />
-      <div className="rp-table-frame" aria-hidden="true" />
-      <div className="rp-board-zone" aria-hidden="true"><span>{tr("community")}</span></div>
+    <div
+      className={`rp-table${bankCount > 3 ? ' rp-table--many-pots' : ''} w-full relative overflow-hidden flex flex-col items-center justify-center z-10`}
+      style={{ '--rp-table-art': `url(${cleanTableAsset})` } as React.CSSProperties}
+    >
       {children}
     </div>
   );
@@ -141,7 +129,9 @@ export function CommunityCards({
           const visible = card && (!revealedCardIds || revealedCardIds.has(card.id) || revealAll);
           return (
             <div key={slotIndex} className="rp-card-slot w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 border-2 border-dashed flex items-center justify-center shrink-0 shadow-inner" aria-label={visible ? undefined : tr('emptyCommunitySlot', { slot: slotIndex + 1 })}>
-              {visible ? <PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} /> : null}
+              {visible
+                ? <PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} />
+                : <img src="/card-thumbs/back.jpeg" alt="" aria-hidden="true" className="rp-community-card-back" />}
             </div>
           );
         })}

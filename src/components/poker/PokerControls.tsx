@@ -57,11 +57,11 @@ export function RaiseControl(props: { children: React.ReactNode; onClose: () => 
   const { children } = props;
   return <PokerDialog {...props}>
     <motion.div
-      initial={reduceMotion ? false : { clipPath: 'inset(100% 0 0 0)' }}
-      animate={reduceMotion ? undefined : { clipPath: 'inset(0 0 0 0)' }}
-      exit={reduceMotion ? undefined : { clipPath: 'inset(0 0 100% 0)' }}
-      transition={{ duration: reduceMotion ? 0 : 0.18, ease: 'linear' }}
-      className="rp-action-panel rp-raise-panel border-2 p-3 z-30 space-y-2.5"
+      initial={reduceMotion ? false : { y: '100%', opacity: .72 }}
+      animate={reduceMotion ? undefined : { y: 0, opacity: 1 }}
+      exit={reduceMotion ? undefined : { y: '100%', opacity: .72 }}
+      transition={{ duration: reduceMotion ? 0 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="rp-action-panel rp-raise-panel border-2 p-2 z-30 space-y-1.5"
     >
       {children}
     </motion.div>

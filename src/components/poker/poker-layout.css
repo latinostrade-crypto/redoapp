@@ -4,7 +4,9 @@
   --seat-edge: 38px;
   container-type: inline-size;
   --board-card: clamp(26px, calc((100cqw - 2 * var(--seat-edge) - var(--seat-width) - 20px) / 5), 40px);
-  height: 480px !important;
+  height: auto !important;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .rp-table .rp-opponent-position {
   left: var(--seat-x);
@@ -75,7 +77,7 @@
 .rp-table .rp-opponent-position:has(.rp-seat-reaction-anchor),
 .rp-table .rp-local-position:has(.rp-seat-reaction-anchor) { z-index: 45; }
 
-.resistance-poker .rp-table--many-pots { height: 580px !important; }
+.resistance-poker .rp-table--many-pots { height: auto !important; }
 .rp-table--many-pots .rp-pot-position { top: 18%; }
 .rp-table--many-pots .rp-board-position, .rp-table--many-pots .rp-board-zone { top: 53%; }
 
@@ -98,8 +100,8 @@
   .rp-table [data-seat-slot="3"] .rp-seat-reaction-anchor,
   .rp-table [data-seat-slot="4"] .rp-seat-reaction-anchor,
   .rp-table [data-seat-slot="5"] .rp-seat-reaction-anchor { top: -6px; }
-  .resistance-poker .rp-table { --seat-width: 72px; --seat-edge: 48px; height: 520px !important; }
-  .resistance-poker .rp-table--many-pots { height: 620px !important; }
+  .resistance-poker .rp-table { --seat-width: 72px; --seat-edge: 48px; height: auto !important; }
+  .resistance-poker .rp-table--many-pots { height: auto !important; }
   .rp-table .rp-player-seat--compact { min-height: 62px; }
   .rp-table .rp-player-seat--compact .rp-player-seat__meta > strong { font-size: 8px; }
   .rp-table .rp-player-seat--compact .rp-player-seat__meta > .rp-chip-value { font-size: 8px; }
@@ -111,18 +113,30 @@
   inset: auto 0 0;
   margin: 0 auto;
   width: min(100%, 448px);
+  height: auto !important;
+  min-height: 0 !important;
   max-width: 100%;
-  max-height: calc(100dvh - 16px);
-  overflow-y: auto;
+  max-height: min(42svh, 310px) !important;
+  overflow: visible;
   overscroll-behavior: contain;
   border: 0;
-  padding: 8px 8px max(8px, env(safe-area-inset-bottom), var(--tg-safe-bottom, 0px));
+  padding: 0 8px max(8px, env(safe-area-inset-bottom), var(--tg-safe-bottom, 0px));
+  background: transparent;
+  box-shadow: none;
 }
-.rp-raise-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+.rp-raise-dialog::backdrop { background: transparent; }
 .rp-raise-dialog::before { display: none; }
-.rp-raise-dialog .rp-raise-panel { animation: none; clip-path: none; }
+.rp-raise-dialog .rp-raise-panel {
+  animation: none;
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 0 100%, 0 7px);
+  background: rgba(8,10,13,.97) !important;
+  border-color: #59636c !important;
+  box-shadow: 0 -6px 18px rgba(0,0,0,.45) !important;
+}
 .rp-raise-dialog input { min-height: 44px; }
-.rp-avatar-reaction-control { position: absolute; right: -4px; bottom: 5px; z-index: 48; }
+.rp-raise-dialog .rp-raise-preset { min-height: 36px; font-size: 7px !important; }
+.rp-raise-dialog .rp-direct-raise-label input { min-height: 36px; height: 36px; }
+.rp-avatar-reaction-control { position: absolute; left: calc(100% + 4px); bottom: 5px; z-index: 48; }
 .rp-avatar-reaction-control .rp-reaction-panel { left: auto; right: 0; bottom: 48px; }
 .rp-reaction-trigger--avatar,
 .rp-reaction-trigger--avatar.rp-reaction-trigger--open {

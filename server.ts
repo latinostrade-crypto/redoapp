@@ -16,6 +16,7 @@ import { applyPokerRebuy, canRebuyPoker, pokerRebuyPrice, type PokerRebuyReceipt
 import { rollDailyVaultReward } from './server/dailyVault';
 import { sendSerializedSse } from './server/sseTransport';
 import { createChangedSnapshotWriter } from './server/changedSnapshot';
+import { checkedAddChips, chipsToGram, parseChips, parseGramAsChips } from './server/chipEconomy';
 
 
 dotenv.config();
@@ -26,6 +27,9 @@ const PORT = process.env.PORT || 10000;
 const MARKETING_WALLET = process.env.MARKETING_WALLET || 'UQCQoVn3iML7nn2a6ts97Xo1wGV21r3QCBHfPy51l0UQbXdw';
 const WITHDRAWAL_SENDER_WALLET = process.env.WITHDRAWAL_SENDER_WALLET || MARKETING_WALLET;
 const TICKET_PRICE_TON = Number(process.env.TICKET_PRICE_TON || '1');
+if (!Number.isFinite(TICKET_PRICE_TON) || TICKET_PRICE_TON <= 0 || TICKET_PRICE_TON > 1_000_000) {
+  throw new Error('TICKET_PRICE_TON must be a positive finite value within the supported range.');
+}
 const MIN_WITHDRAW_TICKETS = 0.5;
 const ENABLE_CHAIN_VERIFICATION = process.env.ENABLE_CHAIN_VERIFICATION !== 'false';
 const TON_VERIFICATION_MODE = process.env.TON_VERIFICATION_MODE || 'tonapi';
@@ -106,6 +110,7 @@ const PUBLIC_UNO_RECRUITMENT_MS = Number.isFinite(configuredUnoRecruitmentMs)
   : 10_000;
 const PUBLIC_FREE_MATCH_ENERGY_COST = 2;
 const PUBLIC_STAKE_MATCH_ENERGY_COST = 2;
+const SUPPORTED_MATCH_STAKES_GRAM = new Set([0, 0.3, 0.5, 1, 5, 10, 30]);
 // Telegram legitimately backgrounds a Mini App while the user picks a chat
 // for an invite. A room lifetime must therefore be independent of an SSE
 // socket's lifetime. Hosts can still cancel explicitly; inactive lobbies are
@@ -506,6 +511,8 @@ interface UserState {
   // projection. It is server-owned and validated in Postgres.
   ticketStateRevision?: number;
   casinoChips: number;
+  heldCasinoChips?: number;
+  chipEconomyVersion?: 1;
   practiceChips: number;
   pokerRebuys?: Record<string, PokerRebuyReceipt>;
   xp: number;
@@ -1139,13 +1146,13 @@ async function persistDirtyUsers() {
     userPersistInFlight.add(userId);
     try {
       const { error } = await supabaseAdmin!
-        .rpc('ticket_persist_user_snapshot', {
+        .rpc('chip_persist_user_snapshot', {
           p_user_id: userId,
           p_payload: payload,
           p_expected_revision: nextRevision - 1,
           p_next_revision: nextRevision,
         });
-      if (error) throw new Error(`Atomic ticket snapshot failed for ${userId}: ${error.message}`);
+      if (error) throw new Error(`Atomic chip snapshot failed for ${userId}: ${error.message}`);
     } finally {
       userPersistInFlight.delete(userId);
     }
@@ -2003,6 +2010,8 @@ function getUser(userId: string, walletAddress?: string): UserState {
     availableTickets: 0,
     heldTickets: 0,
     casinoChips: 0,
+    heldCasinoChips: 0,
+    chipEconomyVersion: 1,
     practiceChips: 0,
     xp: 0,
     lastDailyXpAt: null,
@@ -2045,12 +2054,25 @@ function hydrateUser(user: UserState, reconcileHolds = true): boolean {
     }
   };
 
-  setIfChanged('availableTickets', Number.isFinite(user.availableTickets) ? Math.max(0, round2(user.availableTickets)) : 0);
-  setIfChanged('heldTickets', Number.isFinite(user.heldTickets) ? Math.max(0, round2(user.heldTickets)) : 0);
+  if (user.chipEconomyVersion !== 1) {
+    const legacyAvailableChips = parseGramAsChips(user.availableTickets || 0, { allowZero: true }) || 0;
+    const legacyHeldChips = parseGramAsChips(user.heldTickets || 0, { allowZero: true }) || 0;
+    const legacyCasinoChips = parseChips(Math.max(0, Math.floor(Number(user.casinoChips) || 0)), { allowZero: true }) || 0;
+    setIfChanged('casinoChips', checkedAddChips(legacyCasinoChips, legacyAvailableChips));
+    setIfChanged('heldCasinoChips', legacyHeldChips);
+    setIfChanged('chipEconomyVersion', 1);
+  }
+  const canonicalAvailableChips = parseChips(user.casinoChips, { allowZero: true }) || 0;
+  const canonicalHeldChips = parseChips(user.heldCasinoChips, { allowZero: true }) || 0;
+  setIfChanged('casinoChips', canonicalAvailableChips);
+  setIfChanged('heldCasinoChips', canonicalHeldChips);
+  // Compatibility projection for old response types. It is never an
+  // independent balance after chipEconomyVersion=1.
+  setIfChanged('availableTickets', chipsToGram(canonicalAvailableChips));
+  setIfChanged('heldTickets', chipsToGram(canonicalHeldChips));
   setIfChanged('ticketStateRevision', Number.isSafeInteger(user.ticketStateRevision) && (user.ticketStateRevision || 0) >= 0
     ? user.ticketStateRevision
     : 0);
-  setIfChanged('casinoChips', Number.isFinite(user.casinoChips) ? Math.max(0, round2(user.casinoChips)) : 0);
   setIfChanged('practiceChips', Number.isFinite(user.practiceChips) ? Math.max(0, round2(user.practiceChips)) : 0);
   setIfChanged('xp', Number.isFinite(user.xp) ? user.xp : 0);
   const hydratedEnergy = Math.max(0, Number.isFinite(user.energy) ? user.energy : DEFAULT_MAX_ENERGY);
@@ -2149,37 +2171,34 @@ function reconcileStuckUserBalances(user: UserState): boolean {
   }
 
   // 2. Release orphaned heldTickets (if user is not currently in a live match, room, or queue)
-  if (user.heldTickets > 0) {
+  if ((user.heldCasinoChips || 0) > 0) {
     const isMatched = activeMatchByUser.has(user.userId);
     const isQueued = matchmakingQueue.some((p) => p.userId === user.userId);
     const isRoomed = Array.from(privateRooms.values()).some((r) => r.players.some((p) => p.userId === user.userId));
 
     if (!isMatched && !isQueued && !isRoomed) {
-      const stuckAmount = round2(user.heldTickets);
-      user.availableTickets = round2(user.availableTickets + stuckAmount);
-      user.heldTickets = 0;
+      const stuckChips = user.heldCasinoChips || 0;
+      const stuckAmount = chipsToGram(stuckChips);
+      user.casinoChips = checkedAddChips(user.casinoChips, stuckChips);
+      user.heldCasinoChips = 0;
+      syncLegacyChipProjection(user);
       createLedgerEntry(user, {
         id: `held-release-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         event: 'Orphaned Held Tickets Released',
-        value: `+${stuckAmount.toFixed(2)} TKT`,
+        value: `+${stuckChips} CHIPS`,
         type: 'stake_release',
         amount: stuckAmount,
       });
       changed = true;
-      console.log(`[Balance Restoration] Released ${stuckAmount} held TKT for user ${user.userId}.`);
+      console.log(`[Balance Restoration] Released ${stuckChips} held chips for user ${user.userId}.`);
     }
   }
 
-  // 3. Ensure non-negative bounds and correct 2-decimal rounding
-  const cleanAvailable = Number.isFinite(user.availableTickets) ? Math.max(0, round2(user.availableTickets)) : 0;
-  if (user.availableTickets !== cleanAvailable) {
-    user.availableTickets = cleanAvailable;
-    changed = true;
-  }
-
-  const cleanHeld = Number.isFinite(user.heldTickets) ? Math.max(0, round2(user.heldTickets)) : 0;
-  if (user.heldTickets !== cleanHeld) {
-    user.heldTickets = cleanHeld;
+  // 3. Legacy decimal fields are read-only projections of integer chips.
+  const projectedAvailable = chipsToGram(user.casinoChips);
+  const projectedHeld = chipsToGram(user.heldCasinoChips || 0);
+  if (user.availableTickets !== projectedAvailable || user.heldTickets !== projectedHeld) {
+    syncLegacyChipProjection(user);
     changed = true;
   }
 
@@ -2368,6 +2387,8 @@ function buildBootstrapProfileResponse(user: UserState) {
     availableTickets: user.availableTickets,
     heldTickets: user.heldTickets,
     casinoChips: user.casinoChips,
+    heldCasinoChips: user.heldCasinoChips || 0,
+    chipEconomyVersion: user.chipEconomyVersion || 1,
     practiceChips: user.practiceChips,
     xp: user.xp,
     energy: getEnergyState(user),
@@ -2692,6 +2713,51 @@ function markTelegramChatUndeliverable(telegramChatId: number) {
     });
   }
   return changed;
+}
+
+function syncLegacyChipProjection(user: UserState) {
+  user.availableTickets = chipsToGram(user.casinoChips);
+  user.heldTickets = chipsToGram(user.heldCasinoChips || 0);
+}
+
+function chipsForLegacyStake(stake: number) {
+  const chips = parseGramAsChips(stake, { allowZero: true });
+  if (chips === null) throw new Error('Stake must resolve to an integer chip amount.');
+  return chips;
+}
+
+function holdUserStake(user: UserState, stake: number) {
+  const chips = chipsForLegacyStake(stake);
+  if (user.casinoChips < chips) return false;
+  user.casinoChips = checkedAddChips(user.casinoChips, -chips);
+  user.heldCasinoChips = checkedAddChips(user.heldCasinoChips || 0, chips);
+  syncLegacyChipProjection(user);
+  return true;
+}
+
+function releaseUserStake(user: UserState, stake: number) {
+  const chips = chipsForLegacyStake(stake);
+  const released = Math.min(user.heldCasinoChips || 0, chips);
+  user.heldCasinoChips = checkedAddChips(user.heldCasinoChips || 0, -released);
+  user.casinoChips = checkedAddChips(user.casinoChips, released);
+  syncLegacyChipProjection(user);
+  return released;
+}
+
+function consumeHeldStake(user: UserState, stake: number) {
+  const chips = chipsForLegacyStake(stake);
+  const consumed = Math.min(user.heldCasinoChips || 0, chips);
+  user.heldCasinoChips = checkedAddChips(user.heldCasinoChips || 0, -consumed);
+  syncLegacyChipProjection(user);
+  return consumed;
+}
+
+function creditLegacyGramValue(user: UserState, amount: number) {
+  const chips = parseGramAsChips(amount, { allowZero: true });
+  if (chips === null) throw new Error('Payout must resolve to an integer chip amount.');
+  user.casinoChips = checkedAddChips(user.casinoChips, chips);
+  syncLegacyChipProjection(user);
+  return chips;
 }
 
 function queueTournamentTelegramMessage(
@@ -3309,17 +3375,17 @@ function creditReferralPayout(record: ReferralPayoutRecord, recipient: UserState
   const ledgerId = `ledger:${record.id}`;
   const ledgerExists = recipient.transactions.some((entry) => entry.id === ledgerId);
   if (!ledgerExists) {
-    recipient.availableTickets = round2(recipient.availableTickets + record.amount);
+    creditLegacyGramValue(recipient, record.amount);
     createLedgerEntry(recipient, {
       id: ledgerId,
       event: `L${record.level} Referral Match Bonus`,
-      value: `+${record.amount.toFixed(2)} TKT`,
+      value: `+${chipsForLegacyStake(record.amount)} CHIPS`,
       type: 'referral_bonus',
       amount: record.amount,
     });
     queueTelegramNotification(
       recipient,
-      `L${record.level} referral bonus: ${source.telegramUsername ? '@' + source.telegramUsername : source.userId} won a match. You received +${record.amount.toFixed(2)} TKT.`,
+      `L${record.level} referral bonus: ${source.telegramUsername ? '@' + source.telegramUsername : source.userId} won a match. You received +${chipsForLegacyStake(record.amount)} chips.`,
       { dedupeKey: `${record.id}:notice` },
     );
   }
@@ -3426,7 +3492,8 @@ function applyCasinoCashoutReferralBonus(user: UserState, grossProfit: number, c
     const alreadyCredited = user.transactions.some((entry) => entry.id === ledgerId)
       || recipient.transactions.some((entry) => entry.id === ledgerId);
     if (alreadyCredited) continue;
-    recipient.casinoChips = round2(recipient.casinoChips + amount);
+    recipient.casinoChips = checkedAddChips(recipient.casinoChips, amount);
+    syncLegacyChipProjection(recipient);
     createLedgerEntry(recipient, {
       id: ledgerId,
       event: `L${level} ${gameType === 'blackjack' ? 'Blackjack' : 'Poker'} Cash-out Referral Bonus`,
@@ -3644,8 +3711,41 @@ function getWithdrawalNotificationStatus(requestId: string): 'queued' | 'sent' |
   return 'missing';
 }
 
+async function creditVerifiedChipDeposit(input: {
+  paymentMessageHash: string;
+  intentId: string;
+  userId: string;
+  chipAmount: number;
+  txHash?: string;
+}) {
+  const chipAmount = parseChips(input.chipAmount);
+  if (chipAmount === null) throw new Error('Deposit chip amount is outside the supported integer range.');
+  if (supabaseAdmin) {
+    const { data, error } = await supabaseAdmin.rpc('chip_credit_wallet_deposit', {
+      p_payment_message_hash: input.paymentMessageHash,
+      p_intent_id: input.intentId,
+      p_user_id: input.userId,
+      p_chip_amount: chipAmount,
+      p_metadata: { txHash: input.txHash || null, rate: '100_chips_per_gram' },
+    });
+    if (error) throw new Error(`Atomic chip deposit failed: ${error.message}`);
+    const availableChips = Number((data as { availableChips?: unknown } | null)?.availableChips);
+    if (!Number.isSafeInteger(availableChips) || availableChips < 0) {
+      throw new Error('Atomic chip deposit returned an invalid balance.');
+    }
+    return { availableChips, replayed: Boolean((data as { replayed?: unknown } | null)?.replayed) };
+  }
+
+  const claim = await claimDepositPayment(`payment-msg:${input.paymentMessageHash}`, input.intentId);
+  const user = getUser(input.userId);
+  if (claim.claimed) user.casinoChips = checkedAddChips(user.casinoChips, chipAmount);
+  else if (claim.ownerIntentId !== input.intentId) throw new Error('This on-chain transaction was already credited.');
+  return { availableChips: user.casinoChips, replayed: !claim.claimed };
+}
+
 const ticketingService = createTicketingService({
   claimDepositPayment,
+  creditVerifiedChipDeposit,
   createLedgerEntry,
   depositIntents,
   getWithdrawalReviewFlags,
@@ -4403,13 +4503,13 @@ function settleBlackjackMatch(activeMatch: ActiveMatch) {
     const payoutAlreadyCredited = user.transactions.some((entry) => entry.id === matchPayoutLedgerId);
 
     if (!payoutAlreadyCredited) {
-      user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
+      consumeHeldStake(user, activeMatch.stake);
       if (referralSettlement.netPayout > 0) {
-        user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+        creditLegacyGramValue(user, referralSettlement.netPayout);
         createLedgerEntry(user, {
           id: matchPayoutLedgerId,
           event: `${activeMatch.mode === 'pvp' ? 'PVP Blackjack' : 'Private Blackjack'} Payout`,
-          value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+          value: `+${chipsForLegacyStake(referralSettlement.netPayout)} CHIPS`,
           type: 'match_payout',
           amount: referralSettlement.netPayout,
         });
@@ -5314,13 +5414,13 @@ function settlePokerMatch(activeMatch: ActiveMatch) {
     const payoutAlreadyCredited = user.transactions.some((entry) => entry.id === matchPayoutLedgerId);
 
     if (!payoutAlreadyCredited) {
-      user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
+      consumeHeldStake(user, activeMatch.stake);
       if (referralSettlement.netPayout > 0) {
-        user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+        creditLegacyGramValue(user, referralSettlement.netPayout);
         createLedgerEntry(user, {
           id: matchPayoutLedgerId,
           event: `${activeMatch.mode === 'pvp' ? 'PVP Poker' : 'Private Poker'} Payout`,
-          value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+          value: `+${chipsForLegacyStake(referralSettlement.netPayout)} CHIPS`,
           type: 'match_payout',
           amount: referralSettlement.netPayout,
         });
@@ -5978,7 +6078,7 @@ function commitPublicMatchCosts(match: ActiveMatch) {
   for (const { user, player } of entries) {
     recalculateEnergy(user);
     const needTicketHold = match.stake > 0 && player.costsCommitted !== 'held';
-    if (match.stake > 0 && (needTicketHold && user.availableTickets < match.stake)) {
+    if (match.stake > 0 && (needTicketHold && user.casinoChips < chipsForLegacyStake(match.stake))) {
       return false;
     }
   }
@@ -5993,12 +6093,11 @@ function commitPublicMatchCosts(match: ActiveMatch) {
     updateQuestProgress(user.userId, 'spend_energy', energyCost);
     if (match.stake > 0) {
       if (player.costsCommitted !== 'held') {
-        user.availableTickets = round2(user.availableTickets - match.stake);
-        user.heldTickets = round2(user.heldTickets + match.stake);
+        if (!holdUserStake(user, match.stake)) return false;
       }
       createLedgerEntry(user, {
         event: 'PVP Match Hold',
-        value: `-${match.stake.toFixed(2)} TKT`,
+        value: `-${chipsForLegacyStake(match.stake)} CHIPS`,
         type: 'stake_hold',
         amount: -match.stake,
       });
@@ -6019,12 +6118,11 @@ function cancelUnstartedPublicMatch(match: ActiveMatch, reason = 'Not all player
       const user = users.get(player.userId);
       if (user) {
         if (player.stake > 0 && (player.costsCommitted === 'held' || player.costsCommitted === true)) {
-          user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
-          user.availableTickets = round2(user.availableTickets + player.stake);
+          releaseUserStake(user, player.stake);
           createLedgerEntry(user, {
             id: `match-cancel-refund:${match.matchId}:${user.userId}`,
             event: 'Cancelled Match Refund',
-            value: `+${player.stake.toFixed(2)} TKT`,
+            value: `+${chipsForLegacyStake(player.stake)} CHIPS`,
             type: 'stake_release',
             amount: player.stake,
           });
@@ -6536,7 +6634,7 @@ function tryActivateQueuedMatch(userId: string): MatchmakingStatusPayload | null
     if (user?.matchmakingFailureReason === 'timeout' && user.matchmakingFailureAt) {
       return {
         status: 'expired',
-        message: 'Previous matchmaking attempt expired. No tickets or energy were charged. You can join again.',
+        message: 'Previous matchmaking attempt expired. No chips or energy were charged. You can join again.',
         failedAt: user.matchmakingFailureAt,
       };
     }
@@ -6604,8 +6702,7 @@ function expireTimedOutMatchmakingPlayers(now = Date.now()) {
     if (!player.isAi && !player.userId.startsWith('bot_')) {
       const user = getUser(player.userId);
       if (player.stake > 0 && player.costsCommitted === 'held') {
-        user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
-        user.availableTickets = round2(user.availableTickets + player.stake);
+        releaseUserStake(user, player.stake);
       }
       user.matchmakingFailureAt = now;
       user.matchmakingFailureReason = 'timeout';
@@ -6797,12 +6894,11 @@ function refundPrivateRoomReservation(player: QueuePlayer, roomCode: string, rea
   if (!player.costsCommitted) return;
   const user = getUser(player.userId);
   if (player.stake > 0 && (player.costsCommitted === 'held' || player.costsCommitted === true)) {
-    user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
-    user.availableTickets = round2(user.availableTickets + player.stake);
+    releaseUserStake(user, player.stake);
     createLedgerEntry(user, {
       id: `private-room-refund:${roomCode}:${player.userId}`,
       event: reason,
-      value: `+${player.stake.toFixed(2)} TKT`,
+      value: `+${chipsForLegacyStake(player.stake)} CHIPS`,
       type: 'stake_release',
       amount: player.stake,
     });
@@ -6826,13 +6922,12 @@ function reservePrivateRoomSeat(room: PrivateRoom, player: QueuePlayer) {
   if (room.stake <= 0 || player.costsCommitted === 'held' || player.costsCommitted === true) return true;
   const user = getUser(player.userId);
   recalculateEnergy(user);
-  if (user.availableTickets < room.stake || user.energy < 1) return false;
-  user.availableTickets = round2(user.availableTickets - room.stake);
-  user.heldTickets = round2(user.heldTickets + room.stake);
+  if (user.casinoChips < chipsForLegacyStake(room.stake) || user.energy < 1) return false;
+  if (!holdUserStake(user, room.stake)) return false;
   createLedgerEntry(user, {
     id: `private-room-hold:${room.roomCode}:${player.userId}`,
     event: 'Private Room Seat Hold',
-    value: `-${room.stake.toFixed(2)} TKT`,
+    value: `-${chipsForLegacyStake(room.stake)} CHIPS`,
     type: 'stake_hold',
     amount: -room.stake,
   });
@@ -6848,7 +6943,7 @@ function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
   for (const { player, user } of entries) {
     recalculateEnergy(user);
     const needsTicketHold = player.costsCommitted !== 'held';
-    if (room.stake > 0 && ((needsTicketHold && user.availableTickets < room.stake) || user.energy < 1)) {
+    if (room.stake > 0 && ((needsTicketHold && user.casinoChips < chipsForLegacyStake(room.stake)) || user.energy < 1)) {
       return false;
     }
   }
@@ -6857,11 +6952,10 @@ function commitPrivateRoomCosts(room: PrivateRoom, players: QueuePlayer[]) {
       spendEnergy(user, 1, 'Private Room Energy');
       updateQuestProgress(user.userId, 'spend_energy', 1);
       if (player.costsCommitted !== 'held') {
-        user.availableTickets = round2(user.availableTickets - room.stake);
-        user.heldTickets = round2(user.heldTickets + room.stake);
+        if (!holdUserStake(user, room.stake)) return false;
         createLedgerEntry(user, {
           event: 'Private Room Hold',
-          value: `-${room.stake.toFixed(2)} TKT`,
+          value: `-${chipsForLegacyStake(room.stake)} CHIPS`,
           type: 'stake_hold',
           amount: -room.stake,
         });
@@ -7360,15 +7454,15 @@ app.post('/api/quests/claim-lootbox', requireAuth, (req: AuthenticatedRequest, r
   let message = '';
 
   if (rewardType === 'tickets') {
-    user.availableTickets = round2(user.availableTickets + rewardTicketsAmount);
+    creditLegacyGramValue(user, rewardTicketsAmount);
     createLedgerEntry(user, {
       id: `daily-vault-ticket:${user.userId}:${todayStart}`,
-      event: 'Daily Vault — Rare TKT',
-      value: `+${rewardTicketsAmount.toFixed(2)} TKT`,
+      event: 'Daily Vault — Rare Chips',
+      value: `+${chipsForLegacyStake(rewardTicketsAmount)} CHIPS`,
       type: 'reward',
       amount: rewardTicketsAmount,
     });
-    message = `RARE DROP! +${rewardTicketsAmount.toFixed(2)} TKT added to your balance.`;
+    message = `RARE DROP! +${chipsForLegacyStake(rewardTicketsAmount)} chips added to your balance.`;
   } else if (rewardType === 'bracelet') {
     user.tournamentBracelets = (user.tournamentBracelets || 0) + 1;
     createLedgerEntry(user, {
@@ -7800,11 +7894,11 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
   if (existingIdx >= 0) {
     // Unregister and refund tickets if ticket-based entry
     if (currentTournament.entryTicketCost > 0) {
-      user.availableTickets = round2(user.availableTickets + currentTournament.entryTicketCost);
+      creditLegacyGramValue(user, currentTournament.entryTicketCost);
       createLedgerEntry(user, {
         id: `tx-tourn-refund-${Date.now()}`,
         event: 'Tournament Fee Refund',
-        value: `+${currentTournament.entryTicketCost.toFixed(2)} TKT`,
+        value: `+${chipsForLegacyStake(currentTournament.entryTicketCost)} CHIPS`,
         amount: currentTournament.entryTicketCost,
         type: 'stake_release',
       });
@@ -7819,14 +7913,17 @@ app.post('/api/tournaments/register', requireAuth, rateLimitMiddleware(10, 60000
   }
 
   if (currentTournament.entryTicketCost > 0) {
-    if (user.availableTickets < currentTournament.entryTicketCost) {
-      return res.status(400).json({ error: `Insufficient tickets. Entry requires ${currentTournament.entryTicketCost} TKT.` });
+    if (user.casinoChips < chipsForLegacyStake(currentTournament.entryTicketCost)) {
+      return res.status(400).json({ error: `Insufficient chips. Entry requires ${chipsForLegacyStake(currentTournament.entryTicketCost)} chips.` });
     }
-    user.availableTickets = round2(user.availableTickets - currentTournament.entryTicketCost);
+    if (!holdUserStake(user, currentTournament.entryTicketCost)) {
+      return res.status(400).json({ error: 'Insufficient chips for tournament entry.' });
+    }
+    consumeHeldStake(user, currentTournament.entryTicketCost);
     createLedgerEntry(user, {
       id: `tx-tourn-fee-${Date.now()}`,
       event: 'Tournament Entry Fee',
-      value: `-${currentTournament.entryTicketCost.toFixed(2)} TKT`,
+      value: `-${chipsForLegacyStake(currentTournament.entryTicketCost)} CHIPS`,
       amount: -currentTournament.entryTicketCost,
       type: 'stake_hold',
     });
@@ -7948,7 +8045,7 @@ app.post('/api/admin/tournaments/notify', requireAuth, rateLimitMiddleware(3, 60
     ``,
     `📌 <b>${tourn.title}</b>`,
     `🎲 <b>Game:</b> ${gameBadge}`,
-    `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${tourn.entryTicketCost} TKT` : 'FREE ENTRY'}`,
+    `💰 <b>Entry Fee:</b> ${tourn.entryTicketCost > 0 ? `${chipsForLegacyStake(tourn.entryTicketCost)} CHIPS` : 'FREE ENTRY'}`,
     `🎁 <b>Prize:</b> ${tourn.prizeType === 'bear' ? '🧸 Teddy bear' : tourn.nftLink}`,
     `⏳ <b>Starts in:</b> ${statusLabel}`,
     ``,
@@ -8086,7 +8183,7 @@ app.post('/api/admin/tournaments/simulate', requireAuth, rateLimitMiddleware(5, 
       `📌 <b>${simTitle}</b>`,
       `🎲 <b>Game:</b> ${gameBadge}`,
       `👥 <b>Participants:</b> ${totalSimPlayers} players`,
-      `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${simTicketCost} TKT` : 'FREE ENTRY'}`,
+      `💰 <b>Entry Fee:</b> ${simTicketCost > 0 ? `${chipsForLegacyStake(simTicketCost)} CHIPS` : 'FREE ENTRY'}`,
       `🎁 <b>Prize:</b> ${simPrizeType === 'bear' ? '🧸 Teddy bear' : simNftLink}`,
       `⏳ <b>Starts in:</b> ${simMinutes} min (Simulation)`,
       ``,
@@ -8243,7 +8340,7 @@ app.get('/api/admin/withdrawals/:requestId/reject', distributedRateLimitMiddlewa
 
   request.status = 'rejected';
   const user = getUser(request.userId, request.walletAddress);
-  user.availableTickets = round2(user.availableTickets + request.ticketAmount);
+  creditLegacyGramValue(user, request.ticketAmount);
   schedulePersist({ withdrawalId: request.id, userId: request.userId });
   createLedgerEntry(user, {
     event: 'Withdrawal Rejected',
@@ -8280,7 +8377,7 @@ app.post('/api/admin/withdrawals/:requestId/reject', distributedRateLimitMiddlew
   if (!request || request.status !== 'pending') return res.status(400).send('Withdrawal cannot be rejected.');
   request.status = 'rejected';
   const user = getUser(request.userId, request.walletAddress);
-  user.availableTickets = round2(user.availableTickets + request.ticketAmount);
+  creditLegacyGramValue(user, request.ticketAmount);
   schedulePersist({ withdrawalId: request.id, userId: request.userId });
   createLedgerEntry(user, { event: 'Withdrawal Rejected', value: `+${request.ticketAmount.toFixed(2)} TKT`, type: 'withdraw_rejected', amount: request.ticketAmount });
   await persistStateNow();
@@ -8339,10 +8436,13 @@ app.post('/api/admin/users/adjust-balance', requireAuth, rateLimitMiddleware(10,
     : targetUserId ? findUserByUsernameOrId(targetUserId) || getUser(String(targetUserId).trim()) : requesterUser;
   const units = parseTicketUnits(amount, true);
   if (!user || units === null) return res.status(400).json({ error: 'Adjustment requires an exact centi-TKT amount.' });
-  const nextAmount = mode === 'set'
-    ? ticketAmountFromUnits(units)
-    : round2(Math.max(0, user.availableTickets + ticketAmountFromUnits(units)));
-  user.availableTickets = nextAmount;
+  const requestedChips = units;
+  const nextChips = mode === 'set'
+    ? requestedChips
+    : checkedAddChips(user.casinoChips, requestedChips);
+  user.casinoChips = nextChips;
+  syncLegacyChipProjection(user);
+  const nextAmount = chipsToGram(nextChips);
   createLedgerEntry(user, {
     id: `dev-adjustment:${Date.now()}:${user.userId}`,
     event: reason ? `Development Adjustment: ${reason}` : 'Development Ticket Adjustment',
@@ -8533,8 +8633,8 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
     return res.status(400).json({ error: 'Missing stake or mode.' });
   }
   const stakeAmount = Number(stake);
-  if (!Number.isFinite(stakeAmount) || stakeAmount < 0) {
-    return res.status(400).json({ error: 'Public match stake must be 0 or greater.' });
+  if (!Number.isFinite(stakeAmount) || !SUPPORTED_MATCH_STAKES_GRAM.has(stakeAmount)) {
+    return res.status(400).json({ error: 'Unsupported public match chip stake.' });
   }
 
   const user = getUser(userId, walletAddress);
@@ -8587,9 +8687,9 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
       replayed: true,
     });
   }
-  if (stakeAmount > 0 && user.availableTickets < stakeAmount) {
+  if (stakeAmount > 0 && user.casinoChips < chipsForLegacyStake(stakeAmount)) {
     return res.status(400).json({
-      error: 'Insufficient available tickets for stake.',
+      error: 'Insufficient available chips for stake.',
       availableTickets: user.availableTickets,
       heldTickets: user.heldTickets,
       energy: getEnergyState(user),
@@ -8612,8 +8712,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
 
   const oldQueuedPlayer = matchmakingQueue.find(p => isSameUser(p.userId, userId));
   if (oldQueuedPlayer && oldQueuedPlayer.stake > 0 && oldQueuedPlayer.costsCommitted === 'held') {
-    user.heldTickets = round2(Math.max(0, user.heldTickets - oldQueuedPlayer.stake));
-    user.availableTickets = round2(user.availableTickets + oldQueuedPlayer.stake);
+    releaseUserStake(user, oldQueuedPlayer.stake);
   }
 
   matchmakingQueue = matchmakingQueue.filter(p => !isSameUser(p.userId, userId));
@@ -8640,8 +8739,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
 
   if (openActiveMatch) {
     if (stakeAmount > 0) {
-      user.availableTickets = round2(user.availableTickets - stakeAmount);
-      user.heldTickets = round2(user.heldTickets + stakeAmount);
+      if (!holdUserStake(user, stakeAmount)) throw new Error('Insufficient chips for stake.');
     }
     const newPlayer: QueuePlayer = {
       userId,
@@ -8764,8 +8862,7 @@ function handleMatchmakerJoin(req: AuthenticatedRequest, res: Response) {
   }
 
   if (stakeAmount > 0) {
-    user.availableTickets = round2(user.availableTickets - stakeAmount);
-    user.heldTickets = round2(user.heldTickets + stakeAmount);
+    if (!holdUserStake(user, stakeAmount)) throw new Error('Insufficient chips for stake.');
   }
 
   matchmakingQueue.push({
@@ -8844,8 +8941,7 @@ app.get('/api/matchmaker/stream', requireAuth, (req: AuthenticatedRequest, res) 
             if (player.stake > 0 && player.costsCommitted === 'held') {
               const u = users.get(userId) || (Array.from(users.entries()).find(([uId]) => isSameUser(uId, userId))?.[1]);
               if (u) {
-                u.heldTickets = round2(Math.max(0, u.heldTickets - player.stake));
-                u.availableTickets = round2(u.availableTickets + player.stake);
+                releaseUserStake(u, player.stake);
               }
             }
             matchmakingQueue = matchmakingQueue.filter(p => !isSameUser(p.userId, userId));
@@ -9039,8 +9135,8 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
   }
 
   const stakeAmount = Number(stake);
-  if (!Number.isFinite(stakeAmount) || stakeAmount < 0) {
-    return res.status(400).json({ error: 'Private room stake must be 0 or greater.' });
+  if (!Number.isFinite(stakeAmount) || !SUPPORTED_MATCH_STAKES_GRAM.has(stakeAmount)) {
+    return res.status(400).json({ error: 'Unsupported private room chip stake.' });
   }
   const targetPlayersCount = Number(targetPlayers || 2);
   if (!Number.isFinite(targetPlayersCount) || targetPlayersCount < MIN_MATCH_PLAYERS || targetPlayersCount > MAX_MATCH_PLAYERS) {
@@ -9119,8 +9215,8 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
   }
 
   const user = getUser(userId, walletAddress);
-  if (user.availableTickets < stakeAmount) {
-    return res.status(400).json({ error: 'Insufficient available tickets for private room stake.' });
+  if (user.casinoChips < chipsForLegacyStake(stakeAmount)) {
+    return res.status(400).json({ error: 'Insufficient available chips for private room stake.' });
   }
   recalculateEnergy(user);
   if (stakeAmount > 0 && user.energy < 1) {
@@ -9148,7 +9244,7 @@ async function handlePrivateRoomCreate(req: AuthenticatedRequest, res: Response)
     version: 1,
   };
   if (!reservePrivateRoomSeat(newRoom, hostPlayer)) {
-    return res.status(400).json({ error: 'Insufficient available tickets or energy for private room stake.' });
+    return res.status(400).json({ error: 'Insufficient available chips or energy for private room stake.' });
   }
   privateRooms.set(roomCode, newRoom);
   schedulePersist({ roomCode });
@@ -9302,8 +9398,8 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   }
 
   const user = getUser(userId, walletAddress);
-  if (user.availableTickets < room.stake) {
-    return res.status(400).json({ error: 'Insufficient available tickets for this private room.' });
+  if (user.casinoChips < chipsForLegacyStake(room.stake)) {
+    return res.status(400).json({ error: 'Insufficient available chips for this private room.' });
   }
   recalculateEnergy(user);
   if (room.stake > 0 && user.energy < 1) {
@@ -9322,7 +9418,7 @@ async function handlePrivateRoomJoin(req: AuthenticatedRequest, res: Response) {
   };
 
   if (!reservePrivateRoomSeat(room, newPlayer)) {
-    return res.status(400).json({ error: 'Insufficient available tickets or energy for this private room.' });
+    return res.status(400).json({ error: 'Insufficient available chips or energy for this private room.' });
   }
 
   room.players.push(newPlayer);
@@ -10006,8 +10102,7 @@ app.post('/api/matchmaker/leave', requireAuth, (req: AuthenticatedRequest, res) 
   matchmakingQueue = matchmakingQueue.filter(p => !isSameUser(p.userId, userId));
   if (player) {
     if (player.stake > 0 && player.costsCommitted === 'held') {
-      user.heldTickets = round2(Math.max(0, user.heldTickets - player.stake));
-      user.availableTickets = round2(user.availableTickets + player.stake);
+      releaseUserStake(user, player.stake);
     }
     matchmakingQueue
       .filter(p => p.stake === player.stake && p.mode === player.mode)
@@ -10027,12 +10122,11 @@ function scheduleMatchCleanup(matchId: string) {
       } else if (match.stake > 0) {
         match.players.forEach((p) => {
           const user = getUser(p.userId);
-          user.heldTickets = round2(Math.max(0, user.heldTickets - match.stake));
-          user.availableTickets = round2(user.availableTickets + match.stake);
+          releaseUserStake(user, match.stake);
           createLedgerEntry(user, {
             id: `match-refund:${matchId}:${user.userId}`,
             event: 'Unsettled Match Refund',
-            value: `+${match.stake.toFixed(2)} TKT`,
+            value: `+${chipsForLegacyStake(match.stake)} CHIPS`,
             type: 'stake_release',
             amount: match.stake,
           });
@@ -10165,13 +10259,13 @@ function settleMatchHelper(activeMatch: ActiveMatch) {
     const payoutAlreadyCredited = user.transactions.some((entry) => entry.id === matchPayoutLedgerId);
 
     if (!payoutAlreadyCredited) {
-      user.heldTickets = round2(Math.max(0, user.heldTickets - activeMatch.stake));
+      consumeHeldStake(user, activeMatch.stake);
       if (referralSettlement.netPayout > 0) {
-        user.availableTickets = round2(user.availableTickets + referralSettlement.netPayout);
+        creditLegacyGramValue(user, referralSettlement.netPayout);
         createLedgerEntry(user, {
           id: matchPayoutLedgerId,
           event: `${activeMatch.mode === 'pvp' ? 'PVP Match' : 'Private Match'} Payout`,
-          value: `+${referralSettlement.netPayout.toFixed(2)} TKT`,
+          value: `+${chipsForLegacyStake(referralSettlement.netPayout)} CHIPS`,
           type: 'match_payout',
           amount: referralSettlement.netPayout,
         });
@@ -10733,9 +10827,9 @@ setInterval(() => {
   try {
     let totalUserTickets = 0;
     for (const user of users.values()) {
-      totalUserTickets += user.availableTickets + user.heldTickets;
+      totalUserTickets += user.casinoChips + (user.heldCasinoChips || 0);
     }
-    console.log(`[Audit] Total circulating tickets across all users: ${totalUserTickets.toFixed(2)} TKT`);
+    console.log(`[Audit] Total circulating chips across all users: ${Math.round(totalUserTickets)} CHIPS`);
   } catch (err) {
     console.error('[Audit] Failed to execute double-entry bookkeeping validation:', err);
   }
@@ -10895,7 +10989,8 @@ app.post('/api/casino/join-table', requireAuth, async (req: AuthenticatedRequest
       if (result.joined) {
         const shouldChargeLocalEnvelope = !durableResult || durableResult.joined;
         if (shouldChargeLocalEnvelope && table.mode === 'public') {
-          user.casinoChips = round2(user.casinoChips - buyInAmount);
+          user.casinoChips = checkedAddChips(user.casinoChips, -buyInAmount);
+          syncLegacyChipProjection(user);
           createLedgerEntry(user, { id: `casino-buy-in:${tableId}:${userId}:${Date.now()}`, event: 'Public Table Buy-in', value: `-${buyInAmount} CHIPS`, type: 'stake_hold', amount: -buyInAmount });
         } else if (shouldChargeLocalEnvelope) {
           user.energy -= 2;
@@ -10995,13 +11090,19 @@ app.post('/api/casino/poker-rebuy', requireAuth, async (req: AuthenticatedReques
       if (fundedPlayer?.rebuyPending) Object.assign(player, fundedPlayer);
       if (CASINO_TABLES_DB_MODE) {
         if (Number.isFinite(pending.receipt.energy)) user.energy = pending.receipt.energy!;
-        if (Number.isFinite(pending.receipt.casinoChips)) user.casinoChips = pending.receipt.casinoChips!;
+        if (Number.isFinite(pending.receipt.casinoChips)) {
+          user.casinoChips = pending.receipt.casinoChips!;
+          syncLegacyChipProjection(user);
+        }
       } else {
         user.pokerRebuys = { ...user.pokerRebuys, [key]: pending.receipt };
         if (table.mode === 'free') {
           user.energy -= pending.receipt.energyCost;
           updateQuestProgress(userId, 'spend_energy', pending.receipt.energyCost);
-        } else user.casinoChips = round2(user.casinoChips - pending.receipt.chips);
+        } else {
+          user.casinoChips = checkedAddChips(user.casinoChips, -pending.receipt.chips);
+          syncLegacyChipProjection(user);
+        }
         createLedgerEntry(user, { id: key, event: 'Poker Rebuy', type: 'stake_hold',
           amount: table.mode === 'free' ? 0 : -pending.receipt.chips,
           value: table.mode === 'free' ? '-2 Energy' : '-' + pending.receipt.chips + ' CHIPS' });
@@ -11071,7 +11172,8 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
           applyCasinoCashoutReferralBonus(user, grossProfit, leaveIdempotencyKey, casinoGameType);
         }
         if (result.mode === 'public') {
-          user.casinoChips = round2(user.casinoChips + cashOutChips);
+          user.casinoChips = checkedAddChips(user.casinoChips, cashOutChips);
+          syncLegacyChipProjection(user);
           createLedgerEntry(user, {
             id: `casino-cash-out:${leaveIdempotencyKey}`,
             event: 'Public Table Cash-out',
@@ -11098,39 +11200,9 @@ app.post('/api/casino/leave-table', requireAuth, async (req: AuthenticatedReques
 });
 
 app.post('/api/casino/exchange', requireAuth, (req: AuthenticatedRequest, res) => {
-  const userId = getAuthenticatedUserId(req);
-  const { direction, amount } = req.body;
-  const amountUnits = parseTicketUnits(amount);
-  if (amountUnits === null) return res.status(400).json({ error: 'Amount must be a positive TKT value with at most two decimals.' });
-  const exactAmount = ticketAmountFromUnits(amountUnits);
-
-  const user = getUser(userId);
-  
-  // 1 Ticket = 100 Casino Chips
-  const RATIO = 100;
-
-  if (direction === 'tkt_to_chips') {
-    if (user.availableTickets < exactAmount) {
-      return res.status(400).json({ error: 'Not enough tickets.' });
-    }
-    user.availableTickets = round2(user.availableTickets - exactAmount);
-    user.casinoChips = round2(user.casinoChips + (exactAmount * RATIO));
-  } else if (direction === 'chips_to_tkt') {
-    const chipCost = exactAmount * RATIO;
-    if (user.casinoChips < chipCost) {
-      return res.status(400).json({ error: 'Not enough casino chips.' });
-    }
-    user.casinoChips = round2(user.casinoChips - chipCost);
-    user.availableTickets = round2(user.availableTickets + exactAmount);
-  } else {
-    return res.status(400).json({ error: 'Invalid exchange direction' });
-  }
-
-  schedulePersist({ userId });
-  res.json({ 
-    success: true, 
-    availableTickets: user.availableTickets, 
-    casinoChips: user.casinoChips 
+  return res.status(410).json({
+    code: 'single_chip_currency',
+    error: 'Currency exchange is retired. All games now use the same chip balance.',
   });
 });
 
@@ -11153,22 +11225,20 @@ function assertProductionBootstrapConfiguration() {
 let lastTicketAuditFingerprint = '';
 async function auditTicketAccounting() {
   if (!supabaseAdmin) return;
-  const [profileResult, accountResult, transactionResult] = await Promise.all([
-    supabaseAdmin.from('ticket_profile_reconciliation').select('user_id').limit(25),
-    supabaseAdmin.from('ticket_account_reconciliation').select('account_id').limit(25),
-    supabaseAdmin.from('ticket_transaction_reconciliation').select('transaction_id').limit(25),
+  const [profileResult, transactionResult] = await Promise.all([
+    supabaseAdmin.from('chip_profile_reconciliation').select('user_id').limit(25),
+    supabaseAdmin.from('chip_transaction_reconciliation').select('transaction_id').limit(25),
   ]);
-  const errors = [profileResult.error, accountResult.error, transactionResult.error].filter(Boolean);
-  if (errors.length) throw new Error(`Ticket audit query failed: ${errors.map((error) => error!.message).join('; ')}`);
+  const errors = [profileResult.error, transactionResult.error].filter(Boolean);
+  if (errors.length) throw new Error(`Chip audit query failed: ${errors.map((error) => error!.message).join('; ')}`);
   const profileCount = profileResult.data?.length || 0;
-  const accountCount = accountResult.data?.length || 0;
   const transactionCount = transactionResult.data?.length || 0;
-  const fingerprint = `${profileCount}:${accountCount}:${transactionCount}`;
-  if (fingerprint === '0:0:0') {
+  const fingerprint = `${profileCount}:${transactionCount}`;
+  if (fingerprint === '0:0') {
     lastTicketAuditFingerprint = '';
     return;
   }
-  const message = `⚠️ Ticket reconciliation alert: profile=${profileCount}, accounts=${accountCount}, transactions=${transactionCount}. Financial writes are fail-closed until reviewed.`;
+  const message = `⚠️ Chip reconciliation alert: profiles=${profileCount}, transactions=${transactionCount}. Financial writes are fail-closed until reviewed.`;
   console.error(message);
   if (fingerprint !== lastTicketAuditFingerprint && WITHDRAWAL_OPERATOR_CHAT_ID > 0) {
     queueTelegramMessage('ticket-reconciliation-alert', WITHDRAWAL_OPERATOR_CHAT_ID, message, undefined, {
@@ -11176,6 +11246,7 @@ async function auditTicketAccounting() {
     });
     lastTicketAuditFingerprint = fingerprint;
   }
+  throw new Error(message);
 }
 
 async function bootstrap() {
@@ -11190,10 +11261,9 @@ async function bootstrap() {
   try {
     await auditTicketAccounting();
   } catch (error) {
-    // A missing financial-audit view means migration drift. Do not conceal it:
-    // the deployment stays observable and every subsequent profile write fails
-    // through the atomic RPC rather than falling back to an unsafe upsert.
-    console.error('Initial ticket accounting audit failed', error);
+    // Never accept deposits or stakes on a deployment whose canonical ledger
+    // is unavailable or already disagrees with its balance projection.
+    throw new Error(`Unified chip accounting bootstrap failed: ${error instanceof Error ? error.message : String(error)}`);
   }
   setInterval(() => {
     auditTicketAccounting().catch((error) => console.error('Ticket accounting audit failed', error));

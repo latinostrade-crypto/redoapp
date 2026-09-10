@@ -10,6 +10,16 @@
   cursor: pointer;
 }
 .language-switch:focus-visible { outline: 3px solid #00ff88; outline-offset: 3px; }
+.language-switch--compact {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 7px;
+  border-color: #53635d;
+  border-radius: 4px;
+  background: #0c1713;
+  font-size: 9px;
+  letter-spacing: .08em;
+}
 
 .surface-loader {
   display: grid;
@@ -30,6 +40,15 @@
   color: #f8fafc;
   font-family: "Press Start 2P", monospace;
   text-align: center;
+}
+
+html:lang(ru) .surface-loader {
+  font-family: "Rubik Mono One", "Segoe UI", sans-serif;
+}
+
+html:lang(ru) .language-switch {
+  font-family: "Rubik Mono One", "Segoe UI", sans-serif;
+  font-weight: 400;
 }
 
 .surface-loader img {

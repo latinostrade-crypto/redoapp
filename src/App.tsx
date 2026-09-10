@@ -34,6 +34,7 @@ import { sound } from './utils/sound';
 import { AvatarId, CardColor } from './types';
 import lobbyBanner from './assets/resistance/lobby-banner.lossless.webp';
 import { initializeRequiredGameImages } from './utils/cardAssets';
+import { ChipStackIcon } from './components/ChipStackIcon';
 
 const Web3Dashboard = lazy(() => import('./components/Web3Dashboard').then((module) => ({ default: module.Web3Dashboard })));
 const PokerGame = lazy(() => import('./components/PokerGame').then((module) => ({ default: module.PokerGame })));
@@ -1638,7 +1639,7 @@ export default function App() {
                       <span>{tr("yourReward")}</span>
                       <span className="text-[#ffcc00] text-[12px]">+{myEntry.xpGained} XP</span>
                       {gameMode !== 'offline' && myEntry.ticketsGained !== undefined && (
-                        <span className="text-[#00ff66]">{tr("ticketsLabel")}{' '}<span className="text-[#ffcc00]">+{myEntry.ticketsGained.toFixed(2)} TKT</span></span>
+                        <span className="text-[#ffcc00] inline-flex items-center gap-1"><ChipStackIcon className="w-3 h-3" />+{Math.round(myEntry.ticketsGained * 100)}</span>
                       )}
                     </span>
                   </div>

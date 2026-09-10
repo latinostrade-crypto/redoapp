@@ -11,7 +11,7 @@ export function translateTableEvent(text: string, tr: (key: MessageKey, values?:
   };
   if (fixed[text]) return tr(fixed[text]);
   const templates: Array<[RegExp, MessageKey, string[]]> = [
-    [/^RARE DROP! \+([\d.]+) TKT added to your balance\.$/, 'rareTicketsAdded', ['amount']],
+    [/^RARE DROP! \+([\d.]+) chips added to your balance\.$/, 'rareTicketsAdded', ['amount']],
     [/^🏆 (.+) WINS THE MATCH WITH ([\d.]+) CHIPS!$/, 'matchWonChips', ['name', 'chips']],
     [/^🏆 (.+) WINS WITH ([\d.]+) CHIPS!$/, 'wonChips', ['name', 'chips']],
     [/^🏆 (.+) WINS THE POKER MATCH!$/, 'pokerMatchWon', ['name']],

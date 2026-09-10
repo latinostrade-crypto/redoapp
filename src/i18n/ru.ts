@@ -1,5 +1,6 @@
 /** UI copy only. Player names, protocol values and card actions stay unchanged. */
 export const ru: Record<string, string> = {
+  'ENTRY': 'ВХОД',
   'Connection Issue': 'Проблема подключения',
   'Could not load the game resources. Please tap below to reload.': 'Не удалось загрузить ресурсы игры. Нажмите кнопку ниже, чтобы повторить.',
   'RELOAD APP': 'ПЕРЕЗАГРУЗИТЬ',

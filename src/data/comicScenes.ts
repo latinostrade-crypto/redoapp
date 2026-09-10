@@ -167,7 +167,7 @@ export const comicScenes: ComicSceneConfig[] = [
     eyebrow: 'THE CHALLENGE',
     title: 'Attitude hits the table first.',
     description:
-      'Play free or choose a supported TKT stake. Every format supports two, three, or four players.',
+      'Play free or choose a supported 🪙 stake. Every format supports two, three, or four players.',
     scrollVh: 305,
     mobileScrollVh: 300,
     layout: 'right',
@@ -191,7 +191,7 @@ export const comicScenes: ComicSceneConfig[] = [
     ],
     facts: [
       { label: 'PLAYERS', text: '2 · 3 · 4' },
-      { label: 'TKT STAKES', text: '0 · 0.3 · 0.5 · 1 · 5 · 10 · 30' },
+      { label: '🪙 STAKES', text: '0 · 0.3 · 0.5 · 1 · 5 · 10 · 30' },
     ],
     bubbles: [
       { text: 'This round is mine.', tone: 'shout', x: 74, y: 28, mobileX: 48, mobileY: 26, rotate: 3 },

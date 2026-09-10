@@ -37,9 +37,9 @@ The story uses original opaque JPEG compositions from `FOR AI/WEBSITE`; its capt
 
 ### Economy, progression and social features
 
-- TON Connect wallet flow, ticket deposit intents and withdrawal requests. Withdrawal execution remains operator-assisted; the backend verifies the matching on-chain payment before completing a request.
-- Ticket ledger with available and held balances, atomic ticket-accounting bridge and reconciliation tooling.
-- Casino-chip exchange at the current server rate of **1 TKT = 100 chips**.
+- One integer chip wallet shared by UNO, Poker and Blackjack. At the wallet boundary **1 GRAM = 100 chips**.
+- TON Connect deposit intents with on-chain verification. Claiming a payment hash and crediting chips are one idempotent database transaction.
+- Double-entry chip ledger with available/held accounts, immutable transactions, atomic profile projection and reconciliation views. Legacy coin exchange and new legacy withdrawal requests return `410 Gone`.
 - XP, regenerating energy, daily check-in, daily and weekly quests, and the Daily Vault. The server records a vault claim before returning it, so a lost mobile response cannot produce a second reward.
 - Referral links, server-side assignment, activation rewards and L1/L2 referral shares. For public casino tables, referral shares are calculated from positive realised profit at cash-out, rather than minted on top of it.
 - Telegram notifications, paginated referral profiles and a short-lived, private referral-list cache when Upstash Redis is configured.
@@ -100,8 +100,9 @@ Apply the Supabase migrations in this order before enabling persistent public ca
 5. `supabase/20260827_poker_cashout_referrals.sql`
 6. `supabase/20260827_casino_cashout_referrals.sql`
 7. `supabase/20260907_poker_rebuy.sql` — required before enabling the new rebuy endpoint in database mode. This transaction commits the debit, idempotency receipt and funded table snapshot together; it grants execution only to `service_role`.
-8. `supabase/20260906_backend_only_permissions.sql`
-9. `supabase/20260906_trigger_permissions.sql`
+8. `supabase/20260910_unified_chip_ledger.sql` — merges both legitimate legacy balances into integer chips, preserves held funds, installs the double-entry ledger and makes wallet credit atomic.
+9. `supabase/20260906_backend_only_permissions.sql`
+10. `supabase/20260906_trigger_permissions.sql`
 
 On the existing production project, the two September permission migrations
 were applied separately with owner approval; see `docs/permissions-change-record.md`.
@@ -113,6 +114,7 @@ Then set `CASINO_TABLES_DB_MODE=true`, configure `SUPABASE_URL` and `SUPABASE_SE
 
 ```bash
 npm run verify:poker-cashout-production
+npm run verify:chip-economy-production
 ```
 
 The preflight is read-only: it verifies that the referral-aware cash-out RPC is available without creating a seat or changing a balance. In database mode, the server fails closed if the required cash-out RPC is unavailable.
@@ -168,6 +170,8 @@ Relevant focused checks include:
 
 ```bash
 npm run test:ticket-accounting
+npm run test:chip-economy
+npm run test:unified-chip-flow
 npm run test:pvp-handoff
 npm run test:multiplayer-rooms
 npm run test:private-room-client

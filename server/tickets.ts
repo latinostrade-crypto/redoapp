@@ -1,5 +1,6 @@
 import type { Express, NextFunction, Request, Response } from 'express';
 import { Address, Cell, beginCell, loadMessage } from '@ton/core';
+import { MAX_WALLET_DEPOSIT_GRAM } from './chipEconomy';
 
 export type LedgerType =
   | 'wallet'
@@ -32,6 +33,7 @@ export interface DepositIntent {
   userId: string;
   walletAddress: string;
   ticketAmount: number;
+  creditAsset?: 'coins' | 'chips';
   tonAmount: number;
   status: 'pending' | 'confirmed';
   createdAt: number;
@@ -81,6 +83,9 @@ interface UserStateLike {
   walletAddress?: string;
   availableTickets: number;
   heldTickets: number;
+  casinoChips: number;
+  heldCasinoChips?: number;
+  chipEconomyVersion?: 1;
   transactions: TicketLedgerEntry[];
 }
 
@@ -112,6 +117,13 @@ interface TicketingDeps {
   notifyWithdrawalRequest?: (user: UserStateLike, request: WithdrawalRequest) => void;
   withdrawalRequests: Map<string, WithdrawalRequest>;
   claimDepositPayment?: (claimKey: string, intentId: string) => Promise<{ claimed: boolean; ownerIntentId: string }>;
+  creditVerifiedChipDeposit?: (input: {
+    paymentMessageHash: string;
+    intentId: string;
+    userId: string;
+    chipAmount: number;
+    txHash?: string;
+  }) => Promise<{ availableChips: number; replayed: boolean }>;
   getWithdrawalNotificationStatus?: (requestId: string) => 'queued' | 'sent' | 'failed' | 'missing';
 }
 
@@ -225,7 +237,7 @@ function parseTicketAmount(value: unknown): number | null {
   const raw = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
   if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) return null;
   const amount = Number(raw);
-  return Number.isFinite(amount) && amount > 0 ? amount : null;
+  return Number.isFinite(amount) && amount > 0 && amount <= MAX_WALLET_DEPOSIT_GRAM ? amount : null;
 }
 
 function buildTonkeeperTransferLink(walletAddress: string, tonAmount: number, comment: string) {
@@ -401,6 +413,14 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   const signedDepositRecoveryTtlMs = 7 * 24 * 60 * 60 * 1000;
   const pendingWithdrawalTtlMs = 24 * 60 * 60 * 1000;
   const getRequestUserId = (req: Request) => (req as Request & { authUserId?: string }).authUserId;
+  const applyLegacyTicketDeltaAsChips = (user: UserStateLike, ticketDelta: number) => {
+    const chipDelta = Math.round(ticketDelta * 100);
+    if (!Number.isSafeInteger(chipDelta) || !Number.isSafeInteger(user.casinoChips + chipDelta) || user.casinoChips + chipDelta < 0) {
+      throw new Error('Legacy withdrawal adjustment would create an invalid chip balance.');
+    }
+    user.casinoChips += chipDelta;
+    user.availableTickets = user.casinoChips / 100;
+  };
 
   function isIntentExpired(intent: DepositIntent) {
     return Date.now() - intent.createdAt > config.depositIntentTtlMs;
@@ -420,7 +440,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     const user = deps.getUser(request.userId, request.walletAddress);
     request.status = 'rejected';
     request.completedAt = Date.now();
-    user.availableTickets = deps.round2(user.availableTickets + request.ticketAmount);
+    applyLegacyTicketDeltaAsChips(user, request.ticketAmount);
     deps.createLedgerEntry(user, {
       event,
       value: `+${request.ticketAmount.toFixed(2)} TKT`,
@@ -449,7 +469,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     request.outboundMessageHash = messageHash;
     const user = deps.getUser(request.userId, request.walletAddress);
     if (wasRefunded) {
-      user.availableTickets = deps.round2(user.availableTickets - request.ticketAmount);
+      applyLegacyTicketDeltaAsChips(user, -request.ticketAmount);
     }
     deps.createLedgerEntry(user, {
       event: wasRefunded ? 'Late Withdrawal Settled' : 'Withdrawal Completed',
@@ -592,12 +612,12 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
   function reverseDuplicateCredit(intent: DepositIntent, canonicalIntentId: string) {
     if (intent.creditReversedAt) return;
     const user = deps.getUser(intent.userId, intent.walletAddress);
-    user.availableTickets = deps.round2(user.availableTickets - intent.ticketAmount);
+    applyLegacyTicketDeltaAsChips(user, -intent.ticketAmount);
     intent.creditReversedAt = Date.now();
     intent.duplicateOfIntentId = canonicalIntentId;
     deps.createLedgerEntry(user, {
       event: 'Duplicate Deposit Reversed',
-      value: `-${intent.ticketAmount.toFixed(2)} TKT`,
+      value: `-${(intent.ticketAmount * 100).toFixed(0)} CHIPS`,
       type: 'deposit_reversal',
       amount: -intent.ticketAmount,
     });
@@ -651,7 +671,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     return depositReconciliationPromise;
   }
 
-  function finalizeConfirmedIntent(intent: DepositIntent, verification: TonVerificationResult | null) {
+  function finalizeConfirmedIntent(intent: DepositIntent, verification: TonVerificationResult | null, durableChipBalance?: number) {
     const user = deps.getUser(intent.userId, intent.walletAddress);
     const creditLedgerId = `deposit-credit:${intent.id}`;
     const alreadyCredited = user.transactions.some((entry) => entry.id === creditLedgerId);
@@ -661,12 +681,25 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     intent.paymentMessageHash = verification?.paymentMessageHash || intent.paymentMessageHash;
     intent.lastVerificationError = null;
     intent.lastVerificationAt = Date.now();
+    if (Number.isSafeInteger(durableChipBalance)) {
+      user.casinoChips = durableChipBalance!;
+      user.availableTickets = durableChipBalance! / 100;
+    }
     if (!alreadyCredited) {
-      user.availableTickets = deps.round2(user.availableTickets + intent.ticketAmount);
+      const creditsChips = true;
+      if (creditsChips) {
+        if (!Number.isSafeInteger(durableChipBalance)) {
+          applyLegacyTicketDeltaAsChips(user, intent.ticketAmount);
+        }
+      } else {
+        user.availableTickets = deps.round2(user.availableTickets + intent.ticketAmount);
+      }
       deps.createLedgerEntry(user, {
         id: creditLedgerId,
-        event: 'Deposit Confirmed',
-        value: `+${intent.ticketAmount.toFixed(2)} TKT`,
+        event: creditsChips ? 'Chip Deposit Confirmed' : 'Coin Deposit Confirmed',
+        value: creditsChips
+          ? `+${(intent.ticketAmount * 100).toFixed(0)} CHIPS`
+          : `+${intent.ticketAmount.toFixed(2)} COINS`,
         type: 'purchase',
         amount: intent.ticketAmount,
       });
@@ -711,6 +744,21 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
           ok: false as const,
           verification: { ok: false, provider: verification.provider, reason: intent.lastVerificationError },
         };
+      }
+      if (deps.creditVerifiedChipDeposit) {
+        const chipAmount = intent.ticketAmount * 100;
+        if (!Number.isSafeInteger(chipAmount) || chipAmount <= 0) {
+          throw new Error('Verified deposit does not resolve to an integer chip amount.');
+        }
+        const credit = await deps.creditVerifiedChipDeposit({
+          paymentMessageHash: verification.paymentMessageHash,
+          intentId: intent.id,
+          userId: intent.userId,
+          chipAmount,
+          txHash: verification.txHash,
+        });
+        const user = finalizeConfirmedIntent(intent, verification, credit.availableChips);
+        return { ok: true as const, verification, user };
       }
       if (deps.claimDepositPayment) {
         const claim = await deps.claimDepositPayment(`payment-msg:${verification.paymentMessageHash}`, intent.id);
@@ -879,6 +927,10 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
     function handleDepositIntent(req: Request, res: Response) {
       const input = (req.method === 'GET' ? req.query : req.body) as Record<string, unknown>;
       const { walletAddress, ticketAmount } = input;
+      if (input.creditAsset !== undefined && input.creditAsset !== 'chips') {
+        return sendDepositIntentResponse(req, res, 410, { error: 'Coin deposits are retired. Use the unified chip balance.' });
+      }
+      const creditAsset = 'chips' as const;
       const userId = getRequestUserId(req);
       const amount = parseTicketAmount(ticketAmount);
       if (!userId || typeof walletAddress !== 'string' || !walletAddress || amount === null) {
@@ -890,6 +942,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         entry.userId === userId
         && entry.walletAddress === walletAddress
         && entry.ticketAmount === roundedTicketAmount
+        && (entry.creditAsset || 'coins') === creditAsset
         && entry.status === 'pending'
         && !entry.signedBoc
         && !isIntentExpired(entry)
@@ -904,6 +957,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
           intentId: reusableIntent.id,
           marketingWallet: config.marketingWallet,
           ticketAmount: reusableIntent.ticketAmount,
+          creditAsset: reusableIntent.creditAsset || 'coins',
           tonAmount: reusableIntent.tonAmount,
           status: reusableIntent.status,
           reused: true,
@@ -915,6 +969,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         userId,
         walletAddress,
         ticketAmount: roundedTicketAmount,
+        creditAsset,
         tonAmount: deps.round2(roundedTicketAmount * config.ticketPriceTon),
         status: 'pending',
         createdAt: Date.now(),
@@ -930,6 +985,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         intentId: intent.id,
         marketingWallet: config.marketingWallet,
         ticketAmount: intent.ticketAmount,
+        creditAsset: intent.creditAsset,
         tonAmount: intent.tonAmount,
         status: intent.status,
         paymentPayload: intent.paymentPayload,
@@ -962,6 +1018,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         return res.json({
           success: true,
           availableTickets: user.availableTickets,
+          casinoChips: user.casinoChips,
           status: intent.status,
           txHash: intent.txHash || null,
           normalizedMessageHash: intent.normalizedMessageHash || null,
@@ -983,10 +1040,16 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         normalizedMessageHash: confirmation.verification.normalizedMessageHash || null,
         status: intent.status,
         availableTickets: confirmation.user.availableTickets,
+        casinoChips: confirmation.user.casinoChips,
       });
     });
 
     app.post('/api/tickets/withdraw-request', async (req: Request, res: Response) => {
+      return res.status(410).json({
+        code: 'single_chip_currency',
+        error: 'Legacy coin withdrawals are retired while chip withdrawals are being migrated.',
+      });
+      /* c8 ignore start -- retained temporarily for persisted request recovery */
       const { walletAddress, ticketAmount, requestId: clientRequestId } = req.body;
       const userId = getRequestUserId(req);
       if (!userId || !walletAddress || !ticketAmount) {
@@ -1099,6 +1162,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
         status: request.status,
         tonAmount: request.tonAmount,
       });
+      /* c8 ignore stop */
     });
 
     app.get('/api/tickets/withdraw-pending', (req: Request, res: Response) => {
@@ -1141,7 +1205,7 @@ export function createTicketingService(deps: TicketingDeps, config: TicketingCon
       }
       request.status = 'rejected';
       request.completedAt = Date.now();
-      user.availableTickets = deps.round2(user.availableTickets + request.ticketAmount);
+      applyLegacyTicketDeltaAsChips(user, request.ticketAmount);
       deps.createLedgerEntry(user, {
         event: 'Withdrawal Cancelled',
         value: `+${request.ticketAmount.toFixed(2)} TKT`,

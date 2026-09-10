@@ -68,12 +68,12 @@ export function useLanguage(): {
   }), [instance, language]);
 }
 
-export function LanguageSwitch() {
+export function LanguageSwitch({ compact = false }: { compact?: boolean }) {
   const { language, setLanguage } = useLanguage();
-  return <button type="button" className="language-switch" lang={language === 'en' ? 'ru' : 'en'}
+  return <button type="button" className={`language-switch${compact ? ' language-switch--compact' : ''}`} lang={language === 'en' ? 'ru' : 'en'}
     aria-label={language === 'en' ? 'Переключить на русский' : 'Switch to English'}
     onClick={() => setLanguage(language === 'en' ? 'ru' : 'en')}>
-    <span aria-hidden="true">{language === 'en' ? 'EN → RU' : 'RU → EN'}</span>
+    <span aria-hidden="true">{compact ? (language === 'en' ? 'RU' : 'EN') : (language === 'en' ? 'EN → RU' : 'RU → EN')}</span>
   </button>;
 }
 

@@ -20,8 +20,9 @@ import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
 import { usePokerReactions } from '../hooks/usePokerReactions';
 import { useTelegramSafeArea } from '../hooks/useTelegramSafeArea';
-import { getPokerHapticsEnabled, playPokerFeedback, setPokerHapticsEnabled } from '../utils/pokerFeedback';
+import { playPokerFeedback } from '../utils/pokerFeedback';
 import { ResistanceAvatar, ResistanceAvatarState } from './poker/ResistanceAvatar';
+import { TapPixelDust } from './poker/TapPixelDust';
 import { ResistancePlayerSeat } from './poker/ResistancePlayerSeat';
 import {
   PixelCounter,
@@ -90,7 +91,6 @@ export function PokerGame({
   const chipView = useChipTimeline(gameState, Boolean(reduceMotion), presentation.payoutAt);
   const telegramSafeArea = useTelegramSafeArea();
   const [audioMode, setAudioMode] = useState(() => sound.getPokerAudioMode());
-  const [hapticsEnabled, setHapticsEnabled] = useState(getPokerHapticsEnabled);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [showHandHistory, setShowHandHistory] = useState(false);
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
@@ -145,8 +145,6 @@ export function PokerGame({
   const [isRebuy, setIsRebuy] = useState(false);
   const [showBuyInModal, setShowBuyInModal] = useState(false);
   const [buyInAmount, setBuyInAmount] = useState(200);
-  const [exchangeAmount, setExchangeAmount] = useState(1);
-  const [isExchanging, setIsExchanging] = useState(false);
   const [isJoiningSeat, setIsJoiningSeat] = useState(false);
   const [seatJoinError, setSeatJoinError] = useState<UiMessage>('');
   const seatRequestIdRef = useRef('');
@@ -245,28 +243,6 @@ export function PokerGame({
     playPokerFeedback('ui_cancel');
     setShowBuyInModal(false);
   }, []);
-
-  const handleExchange = async () => {
-    if (isExchanging) return;
-    setIsExchanging(true);
-    try {
-      const res = await apiRequest<{success: boolean}>('/api/casino/exchange', {
-        method: 'POST',
-        body: JSON.stringify({ direction: 'tkt_to_chips', amount: exchangeAmount })
-      });
-      if (res.success) {
-        playPokerFeedback('player_join');
-        await fetchProfile();
-        setExchangeAmount(1);
-      } else {
-        setSeatJoinError(uiMessage('seatExchangeFailed'));
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsExchanging(false);
-    }
-  };
 
   const handleConfirmBuyIn = async (requestedChips = buyInAmount) => {
     if (isJoiningSeat) return;
@@ -471,13 +447,6 @@ export function PokerGame({
     if (next !== 'muted') playPokerFeedback('ui_click', 'ui');
   };
 
-  const toggleHaptics = () => {
-    const next = !hapticsEnabled;
-    setPokerHapticsEnabled(next);
-    setHapticsEnabled(next);
-    playPokerFeedback('ui_click');
-  };
-
   // Keep custom raise amount synced
   useEffect(() => {
     setCustomRaiseAmount(gameState.currentBet + gameState.bigBlindAmount);
@@ -521,7 +490,7 @@ export function PokerGame({
   return (
     <ScreenShake
       active={false}
-      className={`resistance-poker${reduceMotion ? ' resistance-poker--reduced-motion' : ''} w-full max-w-md mx-auto flex flex-col justify-start gap-1 border-4 border-black p-2 relative overflow-hidden select-none text-white shadow-[0_0_25px_rgba(0,0,0,0.95)] min-h-[550px]`}
+      className={`resistance-poker${reduceMotion ? ' resistance-poker--reduced-motion' : ''} w-full max-w-md mx-auto flex flex-col justify-start gap-1 border-4 border-black p-2 relative overflow-hidden select-none text-white shadow-[0_0_25px_rgba(0,0,0,0.95)]`}
       style={{
         ...pixelMaskStyle,
         '--tg-safe-top': `${telegramSafeArea.top}px`,
@@ -530,6 +499,7 @@ export function PokerGame({
         '--tg-safe-left': `${telegramSafeArea.left}px`,
       } as React.CSSProperties}
     >
+      <TapPixelDust />
       <AnimatePresence>
         {preActionNotice && (
           <motion.div
@@ -546,18 +516,18 @@ export function PokerGame({
       </AnimatePresence>
       
       {/* 1. TOP HEADER CONTROL BAR */}
-      <header className="rp-header flex justify-between items-center border px-2.5 py-1 z-20 flex-wrap gap-1">
+      <header className="rp-header flex justify-between items-center border px-1.5 py-1 z-20 gap-1">
         <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={handleReturnToLobby}
-            className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase flex items-center gap-1 cursor-pointer"
+            className="rp-header-action rp-header-action--lobby px-1.5 text-[7px] font-black uppercase flex items-center gap-1 cursor-pointer"
           >
             <RotateCcw className="w-3 h-3" />
             <span>{tr("lobby")}</span>
           </button>
-          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-2 py-0.5 text-[8px] font-black uppercase">{tr("invite")}</button>}
-          <button type="button" onClick={() => setShowHandHistory(true)} className="rp-header-action min-w-[44px] min-h-[44px] px-2 text-[8px] font-black uppercase flex items-center justify-center" aria-label={t("Hand history")} title={t("Hand history")}>
+          {onInvite && <button type="button" onClick={onInvite} className="rp-header-action px-1.5 text-[7px] font-black uppercase">{tr("invite")}</button>}
+          <button type="button" onClick={() => setShowHandHistory(true)} className="rp-header-action rp-header-action--icon px-1 text-[8px] font-black uppercase flex items-center justify-center" aria-label={t("Hand history")} title={t("Hand history")}>
             <History className="w-3.5 h-3.5" />
           </button>
           <span className="rp-mode-label text-[8px] font-black uppercase px-1.5 py-0.5">
@@ -565,7 +535,7 @@ export function PokerGame({
           </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="rp-header-tools flex items-center gap-1">
           <span className="rp-stake-label text-[8px] font-black flex items-center gap-1 px-1.5 py-0.5">
             {stakeUsesChips ? (
               <ChipValue
@@ -574,7 +544,7 @@ export function PokerGame({
                 prefix={isFreeChipTable ? <span>{tr("freePrefix")}</span> : null}
                 suffix={!isFreeChipTable ? <span>{tr('minimumShort')}</span> : null}
               />
-            ) : gameState.stake === 0 ? <span>{tr("freeUpper")}</span> : <span>{gameState.stake} TKT</span>}
+            ) : gameState.stake === 0 ? <span>{tr("freeUpper")}</span> : <span className="inline-flex items-center gap-1"><ChipStackIcon />{Math.round(gameState.stake * 100)}</span>}
           </span>
 
           <button
@@ -583,24 +553,14 @@ export function PokerGame({
             aria-label={audioMode === 'all' ? t('All poker sounds. Switch to my sounds only.') : audioMode === 'self' ? t('My sounds only. Switch to mute.') : t('Poker muted. Switch to all sounds.')}
             aria-pressed={audioMode === 'muted'}
             title={audioMode === 'all' ? t('All sounds') : audioMode === 'self' ? t('My sounds only') : t('Muted')}
-            className={`min-w-[44px] p-1 border border-black pixel-btn-interactive cursor-pointer ${
+            className={`rp-header-sound p-1 border border-black pixel-btn-interactive cursor-pointer ${
               audioMode === 'muted' ? 'bg-red-950/40 text-red-400' : audioMode === 'self' ? 'bg-amber-950/40 text-amber-300' : 'bg-slate-900 text-slate-200'
             }`}
           >
             {audioMode === 'muted' ? <VolumeX className="w-3 h-3" /> : <><Volume2 className="w-3 h-3" /><span className="text-[6px]">{audioMode === 'self' ? 'ME' : 'ALL'}</span></>}
           </button>
-          <button
-            type="button"
-            onClick={toggleHaptics}
-            className={`rp-header-toggle px-1 text-[7px] font-black ${hapticsEnabled ? 'text-slate-100' : 'text-slate-500'}`}
-            aria-pressed={hapticsEnabled}
-            aria-label={tr(hapticsEnabled ? 'disablePokerHaptics' : 'enablePokerHaptics')}
-            title={tr("haptics")}
-          >
-            {hapticsEnabled ? 'H' : 'H×'}
-          </button>
+          <LanguageSwitch compact />
         </div>
-      <LanguageSwitch />
       </header>
 
       {/* 2. RESISTANCE SIGNAL TABLE */}
@@ -787,7 +747,7 @@ export function PokerGame({
             </div>
 
             {/* Stepper with - / Slider / + */}
-            <div className="rp-stepper flex items-center gap-2 p-1.5 border">
+            <div className="rp-stepper flex items-center gap-1.5 p-1 border">
               <button
                 type="button"
                 onClick={() => {
@@ -796,7 +756,7 @@ export function PokerGame({
                     Math.max(minRaiseTotal, prev - 1)
                   );
                 }}
-                className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
+                className="rp-stepper-button w-10 h-10 flex items-center justify-center font-black"
                 aria-label={tr("decreaseRaise")}
               >
                 <Minus className="w-3.5 h-3.5" />
@@ -821,7 +781,7 @@ export function PokerGame({
                     Math.min(humanPlayer.chips + humanPlayer.currentBet, prev + 1)
                   );
                 }}
-                className="rp-stepper-button w-11 h-11 flex items-center justify-center font-black"
+                className="rp-stepper-button w-10 h-10 flex items-center justify-center font-black"
                 aria-label={tr("increaseRaise")}
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -1057,50 +1017,29 @@ export function PokerGame({
               <h2 id="poker-buy-in-title" className="rp-modal__header rp-panel-heading font-black text-xs uppercase text-center w-full border-b border-slate-700 pb-2">{tr(isRebuy ? "pokerRebuy" : "secureEntry")}</h2>
               {isRebuy && <p className="text-[10px] text-center">{tr('pokerRebuyQueued')}</p>}
               <div className="rp-modal__content text-center w-full space-y-1">
-                {isFreeChipTable && <div className="text-[10px]">{tr('pokerEnergyBalance', { amount: profile?.energy?.energy || 0 })}</div>}
-                <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-white font-bold">{(profile?.casinoChips || 0).toFixed(0)}{' '}{tr("chips")}</span></div>
-                <div className="text-[9px] text-slate-300">{tr("tickets")}{' '}<span className="text-slate-100 font-bold">{(profile?.availableTickets || 0).toFixed(2)} TKT</span></div>
+                {isFreeChipTable && <div className="text-[10px] inline-flex items-center gap-1" aria-label={tr('pokerEnergyBalance', { amount: profile?.energy?.energy || 0 })}><span aria-hidden="true">⚡</span>{profile?.energy?.energy || 0}</div>}
+                <div className="text-[9px] text-slate-300">{tr("balance")}{' '}<span className="text-white font-bold inline-flex items-center gap-1"><ChipStackIcon className="w-3 h-3" />{(profile?.casinoChips || 0).toFixed(0)}</span></div>
               </div>
               
               {gameState.matchId.includes('-free-') ? (
                 <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-3 text-center">
-                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-white font-black">{tr("twoEnergy")}</span>
+                  <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-white font-black">⚡ 2</span>
                   </p>
-                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#ff6a61] font-black">{tr("freeChips")}</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#ff6a61] font-black inline-flex items-center gap-1">100 <ChipStackIcon className="w-3 h-3" /></span>
                   </p>
                 </div>
               ) : gameState.matchId.includes('-practice-') ? (
                 <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-3 text-center">
                   <p className="text-white text-[10px]">{tr("cost")}{' '}<span className="text-white font-black">{tr("free")}</span>
                   </p>
-                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#ff6a61] font-black">{tr("practiceChips")}</span>
+                  <p className="text-white text-[10px]">{tr("youReceive")}{' '}<span className="text-[#ff6a61] font-black inline-flex items-center gap-1">1000 <ChipStackIcon className="w-3 h-3" /></span>
                   </p>
                 </div>
-              ) : (
-                <div className="rp-modal__content rp-info-module flex flex-col gap-1 w-full p-2">
-                  <div className="text-[8px] text-slate-400 mb-1 font-bold">{tr("convertDescription")}</div>
-                  <div className="flex gap-2">
-                    <input
-                      aria-label={tr("ticketsToConvert")}
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={exchangeAmount}
-                      onChange={e => setExchangeAmount(Number(e.target.value))}
-                      className="rp-number-input bg-black border font-bold px-2 py-1 text-center text-[10px] w-full"
-                    />
-                    <button 
-                      onClick={handleExchange} 
-                      disabled={isExchanging}
-                      className="rp-secondary-button px-2 py-1 text-[8px] font-bold uppercase disabled:opacity-50 whitespace-nowrap"
-                    >{tr("convert")}</button>
-                  </div>
-                </div>
-              )}
+              ) : null}
 
               {gameState.matchId.includes('-public-') && (
                 <div className="rp-modal__content flex flex-col gap-1 w-full mt-2">
-                  <label htmlFor="poker-buy-in-amount" className="text-[8px] text-slate-400 font-bold">{tr("tableChips")}</label>
+                  <label htmlFor="poker-buy-in-amount" className="text-[8px] text-slate-400 font-bold inline-flex items-center gap-1">{tr("bringToTable")} <ChipStackIcon className="w-3 h-3" /></label>
                   <input
                     id="poker-buy-in-amount"
                     disabled={isJoiningSeat || (isRebuy && Boolean(seatRequestIdRef.current))}
