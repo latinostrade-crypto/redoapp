@@ -79,7 +79,7 @@
 }
 
 html:lang(ru) {
-  --rp-font-display: "Rubik Mono One", "Segoe UI", sans-serif;
-  --rp-font-terminal: "Rubik Mono One", "Segoe UI", sans-serif;
-  --rp-font-body: "Rubik Mono One", "Segoe UI", sans-serif;
+  --rp-font-display: "Play", "Segoe UI", sans-serif;
+  --rp-font-terminal: "Play", "Segoe UI", sans-serif;
+  --rp-font-body: "Play", "Segoe UI", sans-serif;
 }

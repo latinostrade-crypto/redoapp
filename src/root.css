@@ -43,12 +43,12 @@
 }
 
 html:lang(ru) .surface-loader {
-  font-family: "Rubik Mono One", "Segoe UI", sans-serif;
+  font-family: "Play", "Segoe UI", sans-serif;
 }
 
 html:lang(ru) .language-switch {
-  font-family: "Rubik Mono One", "Segoe UI", sans-serif;
-  font-weight: 400;
+  font-family: "Play", "Segoe UI", sans-serif;
+  font-weight: 600;
 }
 
 .surface-loader img {

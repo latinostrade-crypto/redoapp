@@ -66,12 +66,12 @@ html::-webkit-scrollbar-thumb {
   }
 }
 
-/* Press Start 2P/Silkscreen are kept for the original Latin art direction.
-   Russian uses one Cyrillic display family so Telegram WebViews never mix in a
-   narrow system fallback inside a single label. */
+/* Keep the Latin pixel art direction while giving every Cyrillic glyph one
+   consistent, readable squared family. Play is compact and has even Cyrillic
+   metrics, unlike the very wide Rubik Mono One display face. */
 html:lang(ru) {
-  --font-sans: "Rubik Mono One", "Segoe UI", sans-serif;
-  --font-mono: "Rubik Mono One", "Segoe UI", sans-serif;
+  --font-sans: "Play", "Segoe UI", sans-serif;
+  --font-mono: "Play", "Segoe UI", sans-serif;
 }
 
 html:lang(ru) body {
@@ -79,10 +79,17 @@ html:lang(ru) body {
   letter-spacing: 0;
 }
 
-html:lang(ru) .font-mono,
-html:lang(ru) .font-sans {
-  line-height: 1.24;
-  font-weight: 400;
+html:lang(ru) body,
+html:lang(ru) body :where(*) {
+  font-family: "Play", "Segoe UI", sans-serif !important;
+}
+
+html:lang(ru) :where(.font-black, .font-extrabold) {
+  font-weight: 650 !important;
+}
+
+html:lang(ru) :where(.font-bold, .font-semibold) {
+  font-weight: 600 !important;
 }
 
 /* Crisp pixelated rendering */

@@ -39,16 +39,21 @@ export function TapPixelDust() {
     const scatter = (event: PointerEvent) => {
       if (event.pointerType === 'mouse' && event.button !== 0) return;
       const palette = ['#ff5a50', '#ba2d2d', '#f2c35b', '#77828a'];
-      for (let index = 0; index < 9; index += 1) {
+      const isTouch = event.pointerType === 'touch';
+      const particleCount = isTouch ? 18 : 9;
+      const originSpread = isTouch ? 26 : 8;
+      const minSpeed = isTouch ? .65 : .35;
+      const speedRange = isTouch ? 1.75 : 1.25;
+      for (let index = 0; index < particleCount; index += 1) {
         const angle = Math.random() * Math.PI * 2;
-        const speed = .35 + Math.random() * 1.25;
+        const speed = minSpeed + Math.random() * speedRange;
         pixels.push({
-          x: event.clientX + (Math.random() - .5) * 8,
-          y: event.clientY + (Math.random() - .5) * 8,
+          x: event.clientX + (Math.random() - .5) * originSpread,
+          y: event.clientY + (Math.random() - .5) * originSpread,
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed - .25,
           life: .75 + Math.random() * .25,
-          size: Math.random() > .7 ? 3 : 2,
+          size: isTouch ? (Math.random() > .65 ? 5 : 3) : (Math.random() > .7 ? 3 : 2),
           color: palette[Math.floor(Math.random() * palette.length)],
         });
       }
