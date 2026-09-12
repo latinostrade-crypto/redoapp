@@ -690,7 +690,10 @@ export function PokerGame({
         <div className="rp-board-position absolute flex flex-col items-center gap-2 z-35">
           
           <CommunityCards
+            key={`${gameState.matchId || 'practice'}:${gameState.visualEpoch || 0}`}
             cards={gameState.communityCards}
+            deliveries={presentation.boardDeliveries}
+            reduced={Boolean(reduceMotion)}
             revealedCardIds={presentation.boardIds}
             winningCardIds={presentation.winnerReady ? gameState.winningCardIds : []}
           />

@@ -3,12 +3,15 @@ import type { PokerGameState } from '../../../types/poker';
 export const handKey = (s: PokerGameState) => `${s.matchId || s.tableId || 'practice'}:${s.visualEpoch || 0}`;
 export const isFinished = (s: PokerGameState) => s.stage === 'ended' || s.stage === 'match_ended';
 export type TableCue = { id: number; label: string; detail: string; impact: boolean; start: number; end: number };
+export type BoardDelivery = { id: string; start: number; at: number; end: number };
+export const BOARD_CATCH_MS = 900;
+export const BOARD_EXIT_MS = 450;
 
 /** Only choreography. Server state, turn deadlines and money remain authoritative. */
 export class PokerPresentation {
   previous: PokerGameState | null = null;
   cues: TableCue[] = [];
-  board: Array<{ id: string; at: number }> = [];
+  board: BoardDelivery[] = [];
   reveals: Array<{ id: string; at: number }> = [];
   payoutAt = 0;
   resultAt = 0;
@@ -30,7 +33,7 @@ export class PokerPresentation {
       this.payoutAt = 0; this.resultAt = 0; this.dealAt = 0; this.finalized = false;
     }
     if (reduced || recover || (!prev && isFinished(s))) {
-      this.cues = []; this.board = s.communityCards.map(c => ({ id: c.id, at: 0 }));
+      this.cues = []; this.board = s.communityCards.map(c => ({ id: c.id, start: 0, at: 0, end: 0 }));
       this.reveals = s.players.map(p => ({ id: p.id, at: 0 }));
       this.payoutAt = 0; this.resultAt = 0; this.dealAt = 0;
       this.finalized = isFinished(s);
@@ -61,14 +64,17 @@ export class PokerPresentation {
       if (before && !before.eliminated && p.eliminated) this.cue('ELIMINATED', p.name, now);
     }
     const added = s.communityCards.filter(c => !this.board.some(b => b.id === c.id));
-    added.forEach((c, i) => this.board.push({ id: c.id, at: !prev || fresh ? 0 : actionAt + i * 130 }));
+    added.forEach((c, i) => {
+      const start = !prev || fresh ? 0 : actionAt + i * 140;
+      this.board.push({ id: c.id, start, at: start ? start + BOARD_CATCH_MS : 0, end: start ? start + BOARD_CATCH_MS + BOARD_EXIT_MS : 0 });
+    });
     if (prev && !fresh && added.length && !isFinished(s)) this.cue(s.communityCards.length === 5 ? 'RIVER' : s.communityCards.length === 4 ? 'TURN' : 'FLOP', 'BOARD UPDATED', now, 440);
     if (isFinished(s) && !this.finalized) {
       this.finalized = true;
       this.cues = this.cues.filter(c => c.label === 'ALL IN' && c.end > now);
       const eligible = s.players.filter(p => !p.folded && !p.mucked && p.holeCards.length === 2 && p.holeCards.every(c => !c.hidden));
       const contested = s.players.filter(p => !p.folded && !p.eliminated).length > 1 && s.communityCards.length === 5;
-      const boardReady = Math.max(actionAt, ...this.board.map(c => c.at)) + (added.length ? 240 : 0);
+      const boardReady = Math.max(actionAt, ...this.board.map(c => c.end));
       if (contested) {
         this.cue('SHOWDOWN', 'IDENTITIES REVEALED', boardReady, 540);
         const step = Math.min(170, Math.floor(850 / Math.max(1, eligible.length)));
@@ -84,8 +90,9 @@ export class PokerPresentation {
 
   view(now: number) {
     const cue = this.cues.filter(c => c.start <= now && c.end > now).at(-1) || null;
-    const boundaries = [...this.cues.flatMap(c => [c.start, c.end]), ...this.board.map(c => c.at), ...this.reveals.map(p => p.at), this.payoutAt, this.resultAt, this.dealAt].filter(t => t > now);
+    const boundaries = [...this.cues.flatMap(c => [c.start, c.end]), ...this.board.flatMap(c => [c.start, c.at, c.end]), ...this.reveals.map(p => p.at), this.payoutAt, this.resultAt, this.dealAt].filter(t => t > now);
     return { cue, boardIds: new Set(this.board.filter(c => c.at <= now).map(c => c.id)),
+      boardDeliveries: this.board.filter(c => c.start > 0 && c.start <= now && c.end > now),
       revealedPlayers: new Set(this.reveals.filter(p => p.at <= now).map(p => p.id)),
       resultReady: now >= this.resultAt, winnerReady: now >= this.payoutAt,
       payoutAt: this.payoutAt, dealAt: this.dealAt,

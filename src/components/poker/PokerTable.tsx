@@ -3,6 +3,8 @@ import React from 'react';
 import type { PokerCard } from '../../types/poker';
 import { PixelCounter } from './PixelPrimitives';
 import { PokerCardView } from './PokerCard';
+import { PlushCard } from './PlushCard';
+import type { BoardDelivery } from './motion/presentation';
 import { decomposeChips } from './chips/chipModel';
 import cleanTableAsset from '../../assets/resistance/poker-table-clean.png';
 import { ChipStackIcon } from '../ChipStackIcon';
@@ -114,24 +116,29 @@ export function CommunityCards({
   revealedCardIds,
   revealAll = false,
   winningCardIds = [],
+  deliveries = [],
+  reduced = false,
 }: {
   cards: PokerCard[];
   revealedCardIds?: Set<string>;
   revealAll?: boolean;
   winningCardIds?: string[];
+  deliveries?: BoardDelivery[];
+  reduced?: boolean;
+  key?: React.Key;
 }) {
   const { tr } = useLanguage();
   return (
     <div className="rp-community-board relative flex items-center">
+      <span className="rp-plush-deck" aria-hidden="true"><img src="/cards/poker-back-redo.png" width={24} height={33} alt="" /></span>
       <div className="flex gap-1" role="group" aria-label={tr("communityCards")}>
         {[0, 1, 2, 3, 4].map((slotIndex) => {
           const card = cards[slotIndex];
           const visible = card && (!revealedCardIds || revealedCardIds.has(card.id) || revealAll);
           return (
             <div key={slotIndex} className="rp-card-slot w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 border-2 border-dashed flex items-center justify-center shrink-0 shadow-inner" aria-label={visible ? undefined : tr('emptyCommunitySlot', { slot: slotIndex + 1 })}>
-              {visible
-                ? <PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} />
-                : <img src="/cards/poker-back-redo.png" alt="" aria-hidden="true" className="rp-community-card-back" />}
+              {visible && <div className={`rp-plush-face${!reduced && deliveries.some(d => d.id === card.id) ? ' rp-plush-face--turn' : ''}`}><PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} /></div>}
+              <PlushCard slot={slotIndex} visible={Boolean(visible)} delivery={deliveries.find(d => d.id === card?.id)} reduced={reduced} />
             </div>
           );
         })}
