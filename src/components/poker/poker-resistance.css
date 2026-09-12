@@ -26,6 +26,7 @@ body:has(.resistance-poker) {
   min-height: 0;
   max-height: calc(100svh - 16px);
   display: grid !important;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: 52px minmax(0, 1fr) 112px;
   gap: 4px;
 }

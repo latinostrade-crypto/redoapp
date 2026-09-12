@@ -524,7 +524,7 @@ export function PokerGame({
   return (
     <ScreenShake
       active={false}
-      className={`resistance-poker${reduceMotion ? ' resistance-poker--reduced-motion' : ''} w-full max-w-md mx-auto flex flex-col justify-start gap-1 border-4 border-black p-2 relative overflow-hidden select-none text-white shadow-[0_0_25px_rgba(0,0,0,0.95)]`}
+      className={`resistance-poker${reduceMotion ? ' resistance-poker--reduced-motion' : ''} w-full max-w-none md:max-w-md mx-auto flex flex-col justify-start gap-1 border-4 border-black p-2 relative overflow-hidden select-none text-white shadow-[0_0_25px_rgba(0,0,0,0.95)]`}
       style={{
         ...pixelMaskStyle,
         '--tg-safe-top': `${telegramSafeArea.top}px`,

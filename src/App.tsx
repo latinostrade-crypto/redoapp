@@ -859,7 +859,7 @@ export default function App() {
 
       {/* POKER GAMEPLAY SURFACE */}
       {activeGameType === 'poker' ? (
-        <main className="w-full max-w-md px-2 py-2 z-10 animate-fade-in flex flex-col justify-start">
+        <main className="w-full max-w-none px-0 py-0 md:max-w-md md:px-2 md:py-2 z-10 animate-fade-in flex flex-col justify-start">
           <MotionConfig reducedMotion={forceReducedPokerMotion ? 'always' : 'user'}>
             <Suspense fallback={<GameModuleLoader label={translateGameLabel("CONNECTING TO TABLE", tr)} />}>
               <PokerGame
