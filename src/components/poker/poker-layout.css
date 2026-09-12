@@ -4,8 +4,8 @@
   --seat-edge: 38px;
   container-type: inline-size;
   --board-card: clamp(26px, calc((100cqw - 2 * var(--seat-edge) - var(--seat-width) - 20px) / 5), 40px);
-  height: auto !important;
-  flex: 1 1 auto;
+  height: 100% !important;
+  flex: none;
   min-height: 0;
 }
 .rp-table .rp-opponent-position {
@@ -78,7 +78,7 @@
 .rp-table .rp-opponent-position:has(.rp-seat-reaction-anchor),
 .rp-table .rp-local-position:has(.rp-seat-reaction-anchor) { z-index: 45; }
 
-.resistance-poker .rp-table--many-pots { height: auto !important; }
+.resistance-poker .rp-table--many-pots { height: 100% !important; }
 .rp-table--many-pots .rp-pot-position { top: 18%; }
 .rp-table--many-pots .rp-board-position, .rp-table--many-pots .rp-board-zone { top: 53%; }
 
@@ -101,8 +101,8 @@
   .rp-table [data-seat-slot="3"] .rp-seat-reaction-anchor,
   .rp-table [data-seat-slot="4"] .rp-seat-reaction-anchor,
   .rp-table [data-seat-slot="5"] .rp-seat-reaction-anchor { top: -6px; }
-  .resistance-poker .rp-table { --seat-width: 72px; --seat-edge: 48px; height: auto !important; }
-  .resistance-poker .rp-table--many-pots { height: auto !important; }
+  .resistance-poker .rp-table { --seat-width: 72px; --seat-edge: 48px; height: 100% !important; }
+  .resistance-poker .rp-table--many-pots { height: 100% !important; }
   .rp-table .rp-player-seat--compact { min-height: 62px; }
   .rp-table .rp-player-seat--compact .rp-player-seat__meta > strong { font-size: 8px; }
   .rp-table .rp-player-seat--compact .rp-player-seat__meta > .rp-chip-value { font-size: 8px; }
@@ -154,10 +154,20 @@
 .rp-reaction-trigger--avatar:focus-visible { background: rgba(255,255,255,.08) !important; outline: 2px solid rgba(255,255,255,.72); outline-offset: -7px; }
 .rp-hand-history { width: min(92vw, 420px); max-height: min(72svh, 620px); padding: 0; overflow: hidden; border: 2px solid #46505c; background: #090d12; color: #eef2f5; font-family: monospace; }
 .rp-hand-history > header { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: 8px 10px; border-bottom: 1px solid #38414a; background: #121820; }
+.rp-hand-history > header > div { display: flex; align-items: center; gap: 6px; }
 .rp-hand-history h2 { margin: 0; font-size: 11px; letter-spacing: .12em; }
 .rp-hand-history header button { min-width: 44px; min-height: 44px; border: 1px solid #4a535d; background: #090d12; color: #fff; font-size: 20px; }
+.rp-hand-history header .rp-hand-history__previous { width: auto; padding: 0 9px; color: #b9c8d4; font-size: 8px; }
+.rp-hand-history header .rp-hand-history__previous:disabled { opacity: .38; }
 .rp-hand-history ol { list-style: none; margin: 0; padding: 8px 10px calc(10px + var(--tg-safe-bottom, 0px)); max-height: calc(min(72svh, 620px) - 50px); overflow-y: auto; }
 .rp-hand-history li { display: grid; grid-template-columns: 64px 1fr; gap: 8px; padding: 8px 2px; border-bottom: 1px solid #202832; font-size: 9px; line-height: 1.45; }
 .rp-hand-history time { color: #788694; }
 .rp-hand-history li[data-kind="win"] span { color: #ffd44a; }
 .rp-hand-history li[data-kind="fold"] span { color: #9ca6af; }
+.rp-hand-history li strong { margin-right: 3px; font-weight: 800; }
+.rp-hand-history li strong[data-player-color="0"] { color: #69c7ff; }
+.rp-hand-history li strong[data-player-color="1"] { color: #ff7a70; }
+.rp-hand-history li strong[data-player-color="2"] { color: #82e6a4; }
+.rp-hand-history li strong[data-player-color="3"] { color: #f0ca62; }
+.rp-hand-history li strong[data-player-color="4"] { color: #c99bff; }
+.rp-hand-history li strong[data-player-color="5"] { color: #ff94c6; }

@@ -45,7 +45,7 @@ export function PokerCardView({
     return (
       <PixelCardDeal className={cardSizeClass} fromX={(2 - dealIndex) * 28} delay={dealIndex * 45}>
         <div className={`rp-card w-full h-full border-2 border-black shadow-md overflow-hidden bg-slate-950 select-none ${className}`}>
-          <img src="/card-thumbs/back.jpeg" alt={tr("faceDownCard")} className="w-full h-full object-cover" />
+          <img src="/cards/poker-back-redo.png" alt={tr("faceDownCard")} className="w-full h-full object-cover" />
         </div>
       </PixelCardDeal>
     );

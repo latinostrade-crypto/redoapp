@@ -1,8 +1,8 @@
 import { useLanguage } from '../../i18n/LanguageProvider';
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AvatarId } from '../../types';
 import { Avatar } from '../Avatars';
-import hoodAsset from '../../assets/resistance/resistance-hood.png';
+import hoodAsset from '../../assets/resistance/resistance-hood-wide.png';
 import './resistance-avatar.css';
 import { pixelMaskStyle } from './motion/pixelMasks';
 
@@ -34,9 +34,8 @@ export function ResistanceAvatar({
   const stateKey = { online: "avatarOnline", folded: "avatarFolded", disconnected: "avatarDisconnected", eliminated: "avatarEliminated", winner: "avatarWinner" } as const;
   const [photoFailed, setPhotoFailed] = useState(false);
   const photoCanvasRef = useRef<HTMLCanvasElement>(null);
-  const hoodMaskId = `resistance-hood-${useId().replace(/:/g, '')}`;
   const showPhoto = Boolean(photoUrl && !photoFailed);
-  const logicalWidth = Math.max(12, Math.min(48, Math.round(size * .38)));
+  const logicalWidth = Math.max(48, Math.min(96, Math.round(size * 1.5)));
   const emotion = state === 'winner' ? 'celebrating' : state === 'folded' ? 'worried' : active ? 'thinking' : 'happy';
 
   useEffect(() => setPhotoFailed(false), [photoUrl]);
@@ -56,7 +55,9 @@ export function ResistanceAvatar({
       const sourceWidth = canvas.width / scale;
       const sourceHeight = canvas.height / scale;
       const sourceX = (image.naturalWidth - sourceWidth) / 2;
-      const sourceY = (image.naturalHeight - sourceHeight) / 2;
+      // Telegram profile images usually place the face above the exact centre.
+      // Bias the crop upward so the hood opening shows the person, not clothing.
+      const sourceY = Math.max(0, (image.naturalHeight - sourceHeight) * .36);
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.imageSmoothingEnabled = false;
       context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
@@ -73,13 +74,12 @@ export function ResistanceAvatar({
       role="img"
       aria-label={`${name}, ${tr(stateKey[state])}${active ? `, ${tr('avatarActiveTurn')}` : ''}`}
     >
-      <img className="resistance-avatar__hood resistance-avatar__hood--base" src={hoodAsset} alt="" aria-hidden="true" draggable={false} />
       <div className="resistance-avatar__face" aria-hidden="true">
         {showPhoto ? (
           <canvas
             ref={photoCanvasRef}
             width={logicalWidth}
-            height={Math.round(logicalWidth * 1.33)}
+            height={logicalWidth}
             className="resistance-avatar__photo"
             aria-hidden="true"
           />
@@ -89,20 +89,7 @@ export function ResistanceAvatar({
           </div>
         )}
       </div>
-      <svg
-        className="resistance-avatar__hood resistance-avatar__hood--foreground"
-        viewBox="0 0 100 91.4"
-        preserveAspectRatio="xMidYMid meet"
-        aria-hidden="true"
-      >
-        <defs>
-          <mask id={hoodMaskId} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="91.4">
-            <rect width="100" height="91.4" fill="white" />
-            <path d="M50 21 L61.5 25.5 L66.7 38.5 L66 58.5 L58.4 71.5 L50 77 L41.6 71.5 L34 58.5 L33.3 38.5 L38.5 25.5 Z" fill="black" />
-          </mask>
-        </defs>
-        <image href={hoodAsset} width="100" height="91.4" mask={`url(#${hoodMaskId})`} preserveAspectRatio="xMidYMid meet" />
-      </svg>
+      <img className="resistance-avatar__hood resistance-avatar__hood--base" src={hoodAsset} alt="" aria-hidden="true" draggable={false} />
       <span className="resistance-avatar__signal" aria-hidden="true" />
     </div>
   );

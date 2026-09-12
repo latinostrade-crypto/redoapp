@@ -131,7 +131,7 @@ export function CommunityCards({
             <div key={slotIndex} className="rp-card-slot w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 border-2 border-dashed flex items-center justify-center shrink-0 shadow-inner" aria-label={visible ? undefined : tr('emptyCommunitySlot', { slot: slotIndex + 1 })}>
               {visible
                 ? <PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} />
-                : <img src="/card-thumbs/back.jpeg" alt="" aria-hidden="true" className="rp-community-card-back" />}
+                : <img src="/cards/poker-back-redo.png" alt="" aria-hidden="true" className="rp-community-card-back" />}
             </div>
           );
         })}

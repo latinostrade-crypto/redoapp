@@ -2,7 +2,7 @@
 
 .resistance-avatar {
   width: var(--resistance-avatar-size);
-  height: calc(var(--resistance-avatar-size) * .914);
+  height: var(--resistance-avatar-size);
   position: relative;
   flex: none;
   isolation: isolate;
@@ -21,19 +21,18 @@
   pointer-events: none;
 }
 
-.resistance-avatar__hood--base { z-index: 1; }
-.resistance-avatar__hood--foreground { z-index: 3; }
+.resistance-avatar__hood--base { z-index: 3; }
 
 .resistance-avatar__face {
   position: absolute;
   z-index: 2;
-  left: 31%;
-  top: 24%;
-  width: 38%;
-  height: 54%;
+  left: 27%;
+  top: 38%;
+  width: 46%;
+  height: 43%;
   overflow: hidden;
   background: #020203;
-  clip-path: polygon(50% 0, 78% 10%, 94% 34%, 92% 70%, 72% 94%, 50% 100%, 28% 94%, 8% 70%, 6% 34%, 22% 10%);
+  clip-path: polygon(50% 0, 78% 8%, 96% 31%, 94% 72%, 73% 96%, 50% 100%, 27% 96%, 6% 72%, 4% 31%, 22% 8%);
   box-shadow: inset 0 0 0 2px rgba(88,103,119,.6);
 }
 
@@ -43,7 +42,7 @@
   object-fit: cover;
   filter: contrast(1.12) saturate(.78) brightness(.86);
   image-rendering: pixelated;
-  transform: scale(1.08);
+  transform: scale(1.04);
 }
 
 .resistance-avatar__fallback {
@@ -51,7 +50,7 @@
   height: 100%;
   display: grid;
   place-items: center;
-  transform: scale(1.2);
+  transform: scale(1.35);
 }
 
 .resistance-avatar__fallback > div { border: 0 !important; box-shadow: none !important; }

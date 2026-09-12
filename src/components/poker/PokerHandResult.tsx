@@ -10,12 +10,13 @@ import { ResistanceAvatar } from './ResistanceAvatar';
 import { playPokerFeedback } from '../../utils/pokerFeedback';
 import './poker-result.css';
 
-export function PokerHandResult({ state, countdown, onNextHand, onRebuy, onLobby }: {
+export function PokerHandResult({ state, countdown, onNextHand, onRebuy, onLobby, reviewOnly = false }: {
   state: PokerGameState;
   countdown: number;
   onNextHand?: () => void;
   onRebuy?: () => void;
   onLobby: () => void;
+  reviewOnly?: boolean;
 }) {
   const { tr } = useLanguage();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -51,7 +52,7 @@ export function PokerHandResult({ state, countdown, onNextHand, onRebuy, onLobby
   return <>
     {!open && <button type="button" className="rp-result-reopen" onClick={() => setOpen(true)}>
       {winners.length === 1 ? tr('playerWinsName', { name: winners[0].player.name }) : tr("handResults")}{' '}{tr("viewSuffix")}</button>}
-    <dialog ref={dialogRef} className="rp-hand-result" aria-labelledby="poker-result-title" onCancel={() => setOpen(false)} onClose={() => { if (!dialogRef.current?.open) setOpen(false); }}>
+    <dialog ref={dialogRef} className="rp-hand-result" aria-labelledby="poker-result-title" onCancel={() => reviewOnly ? leave() : setOpen(false)} onClose={() => { if (!dialogRef.current?.open) setOpen(false); }}>
       <header className="rp-hand-result__header">
         <span>{sessionEnded ? tr("sessionEnded") : tr("handComplete")}</span>
         <h2 id="poker-result-title">{winners.length > 1 ? tr("potWinners") : winners.length ? tr(winners[0].player.id === 'player' ? 'resultYouWin' : 'resultWinner') : tr("handResults")}</h2>
@@ -68,7 +69,7 @@ export function PokerHandResult({ state, countdown, onNextHand, onRebuy, onLobby
         </div>
         {winners.length === 0 && <p>{tr("resultUnavailable")}</p>}
         {sessionEnded && state.matchWinnerName && <p className="rp-hand-result__session">{tr("matchWinner")}{' '}{state.matchWinnerName}</p>}
-        <details className="rp-hand-result__details">
+        <details className="rp-hand-result__details" open>
           <summary>{tr("allHands")}{' '}{state.players.length}{' '}{tr("players")}</summary>
           <div>{[...winners.map(w => w.player), ...otherPlayers].map(player => <div className="rp-hand-result__row" key={player.id}>
             <strong>{player.name}</strong><ResultCards state={state} player={player} /><span>{description(player)}</span>
@@ -76,13 +77,13 @@ export function PokerHandResult({ state, countdown, onNextHand, onRebuy, onLobby
         </details>
       </div>
       <footer className="rp-hand-result__actions">
-        {!sessionEnded && <p>{tr("nextHandIn")}{' '}{Math.max(0, countdown)}S</p>}
+        {!reviewOnly && !sessionEnded && <p>{tr("nextHandIn")}{' '}{Math.max(0, countdown)}S</p>}
         <div>
-          <button type="button" autoFocus onClick={() => setOpen(false)}>{tr("viewTable")}</button>
-          {onRebuy && <button type="button" className="rp-hand-result__primary" onClick={rebuy}>{tr("pokerRebuy")}</button>}
-          {state.mode === 'offline' && !sessionEnded && onNextHand
+          <button type="button" autoFocus onClick={reviewOnly ? leave : () => setOpen(false)}>{reviewOnly ? tr("close") : tr("viewTable")}</button>
+          {!reviewOnly && onRebuy && <button type="button" className="rp-hand-result__primary" onClick={rebuy}>{tr("pokerRebuy")}</button>}
+          {!reviewOnly && (state.mode === 'offline' && !sessionEnded && onNextHand
             ? <button type="button" className="rp-hand-result__primary" onClick={onNextHand}>{tr("nextHand")}</button>
-            : <button type="button" onClick={leave}>{tr("lobby")}</button>}
+            : <button type="button" onClick={leave}>{tr("lobby")}</button>)}
         </div>
       </footer>
     </dialog>

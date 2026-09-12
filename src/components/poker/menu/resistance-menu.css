@@ -13,8 +13,8 @@
 .rp-menu-shell .rp-network-nav button + button { border-left: 1px solid #283240; }
 .rp-menu-shell .rp-network-nav button[aria-pressed=true] { color: #ff6269; background: linear-gradient(0deg, #521a24, #10101a 80%); box-shadow: inset 0 -3px #f84c59, inset 0 -6px #5e222b; }
 .rp-menu-shell .rp-network-nav .rp-menu-icon { width: 22px; height: 22px; }
-.rp-menu-profile { display: grid; grid-template-columns: 60px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 10px; margin: 0; background: linear-gradient(135deg,#121924,#070a10 60%); border: 1px solid #394556; box-shadow: inset 0 0 0 3px #080b10, inset 0 0 0 4px #1b2431; }
-.rp-menu-profile__avatar { width: 60px; height: 64px; display: grid; place-items: center; background: #150e15; border: 2px solid #7d303c; box-shadow: 2px 2px #020405; }
+.rp-menu-profile { display: grid; grid-template-columns: 68px minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 10px; margin: 0; background: linear-gradient(135deg,#121924,#070a10 60%); border: 1px solid #394556; box-shadow: inset 0 0 0 3px #080b10, inset 0 0 0 4px #1b2431; }
+.rp-menu-profile__avatar { width: 68px; height: 68px; display: grid; place-items: center; overflow: hidden; background: #150e15; border: 2px solid #7d303c; box-shadow: 2px 2px #020405; }
 .rp-menu-profile__identity { min-width: 0; }
 .rp-menu-profile__identity > strong { display: block; font: 16px/1.3 var(--rp-font-terminal); color: #f2f1f0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-bottom: 8px; border-bottom: 1px solid #38414f; }
 .rp-menu-profile__level { display: grid; grid-template-columns: auto minmax(28px,1fr); align-items: center; gap: 5px; padding-top: 6px; color: #a3b2ce; font: 10px/1.2 var(--rp-font-body); font-variant-numeric: tabular-nums; }

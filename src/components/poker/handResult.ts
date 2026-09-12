@@ -2,8 +2,9 @@ import type { PokerGameState } from '../../types/poker';
 
 export function getResultHoleCards(state: PokerGameState, player: PokerGameState['players'][number]) {
   const finished = state.stage === 'ended' || state.stage === 'match_ended';
-  const revealed = finished && (state.mode === 'offline' || player.id === 'player' || player.hasShownCards || (!player.folded && !player.mucked));
-  // Remote folded/mucked hands remain private even if an old snapshot had cards.
+  const revealed = finished && !player.folded && !player.mucked
+    && (state.mode === 'offline' || player.id === 'player' || player.hasShownCards);
+  // Folded and mucked hands remain private in every mode, including practice.
   return [0, 1].map(index => {
     const card = player.holeCards[index];
     return revealed && card && !card.hidden ? card : undefined;

@@ -48,7 +48,7 @@ export function MenuProfile({bannerTarget, name, photoUrl, avatar, level, xp, xp
   return <>
     {toolsTarget ? createPortal(tools, toolsTarget) : tools}
     <section className="rp-menu-profile" aria-label={t('Player account')}>
-      <div className="rp-menu-profile__avatar"><ResistanceAvatar name={name} photoUrl={photoUrl} fallbackAvatar={avatar} size={60} /></div>
+      <div className="rp-menu-profile__avatar"><ResistanceAvatar name={name} photoUrl={photoUrl} fallbackAvatar={avatar} size={68} /></div>
       <div className="rp-menu-profile__identity">
         <strong title={name}>{name}</strong>
         <div className="rp-menu-profile__level"><span>{t('LVL')} {level}</span><progress aria-label={t('Level XP')} max={xpNeeded} value={xp} /><span>{xp} / {xpNeeded} XP</span></div>

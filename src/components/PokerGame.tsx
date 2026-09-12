@@ -93,6 +93,8 @@ export function PokerGame({
   const [audioMode, setAudioMode] = useState(() => sound.getPokerAudioMode());
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [showHandHistory, setShowHandHistory] = useState(false);
+  const [showPreviousHand, setShowPreviousHand] = useState(false);
+  const [previousHand, setPreviousHand] = useState<PokerGameState | null>(null);
   const [customRaiseAmount, setCustomRaiseAmount] = useState(gameState.currentBet + gameState.bigBlindAmount);
   const [nextHandCountdown, setNextHandCountdown] = useState(6);
   const [sceneClosing, setSceneClosing] = useState(false);
@@ -109,6 +111,8 @@ export function PokerGame({
   const previousPotRef = useRef(gameState.pot);
   const previousPlayerStatesRef = useRef<Map<string, { connected: boolean; eliminated: boolean }> | null>(null);
   const autoNextTriggeredRef = useRef(false);
+  const completedHandSignatureRef = useRef('');
+  const lastSoundEventSequenceRef = useRef<number | null>(null);
   const handleMatchEmoji = useCallback((event: { emojiId: string; senderUserId: string; sentAt: number }) => {
     showReaction(event.senderUserId, event.emojiId);
   }, [showReaction]);
@@ -170,6 +174,36 @@ export function PokerGame({
     sequenceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     if (preActionNoticeTimerRef.current !== null) window.clearTimeout(preActionNoticeTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!['ended', 'match_ended'].includes(gameState.stage)) return;
+    const signature = `${gameState.visualEpoch || 0}:${gameState.roundEndTimestamp || 0}:${gameState.winnerIds.join(',')}`;
+    if (completedHandSignatureRef.current === signature) return;
+    completedHandSignatureRef.current = signature;
+    setPreviousHand(gameState);
+  }, [gameState]);
+
+  useEffect(() => {
+    const events = gameState.visualEvents || [];
+    const newestSequence = events.reduce((max, event) => Math.max(max, event.sequence), -1);
+    if (lastSoundEventSequenceRef.current === null) {
+      lastSoundEventSequenceRef.current = newestSequence;
+      return;
+    }
+    const fresh = events.filter(event => event.sequence > (lastSoundEventSequenceRef.current ?? -1)).sort((a, b) => a.sequence - b.sequence);
+    for (const event of fresh) {
+      const source = event.playerId === humanPlayer.id || event.playerId === humanPlayer.userId ? 'self' : event.playerId ? 'opponent' : 'system';
+      const message = event.message.toLowerCase();
+      if (source === 'self' && (event.type === 'action' || event.type === 'fold')) continue;
+      if (event.type === 'fold') playPokerFeedback('fold', source);
+      else if (event.type === 'deal' || event.type === 'community_card') playPokerFeedback('card_deal', source);
+      else if (event.type === 'showdown') playPokerFeedback('showdown', source);
+      else if (event.type === 'action' && message.includes('all-in')) playPokerFeedback('all_in', source);
+      else if (event.type === 'action' && /(raise|raised|call|called|bet)/.test(message)) playPokerFeedback('bet_move', source);
+      else if (event.type === 'action') playPokerFeedback('ui_confirm', source);
+    }
+    lastSoundEventSequenceRef.current = newestSequence;
+  }, [gameState.visualEvents, humanPlayer.id, humanPlayer.userId]);
 
   useEffect(() => {
     if (!resultRevealReady || chipView.busy || !['ended', 'match_ended'].includes(gameState.stage)) return;
@@ -1008,11 +1042,26 @@ export function PokerGame({
       <AnimatePresence>
         {showHandHistory && <PokerDialog label={t("Hand history")} onClose={() => setShowHandHistory(false)} safeBottom={telegramSafeArea.bottom}>
           <section className="rp-modal rp-hand-history" aria-labelledby="poker-history-title">
-            <header><h2 id="poker-history-title">{t("HAND HISTORY")}</h2><button type="button" onClick={() => setShowHandHistory(false)} aria-label={t("Close hand history")}>×</button></header>
-            <ol>{gameState.logs.length ? gameState.logs.map(log => <li key={log.id} data-kind={log.type}><time>{new Date(log.timestamp).toString() === 'Invalid Date' ? log.timestamp : new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span>{translateGameLabel(log.message, tr)}</span></li>) : <li><span>{t("No hand events yet.")}</span></li>}</ol>
+            <header>
+              <h2 id="poker-history-title">{t("HAND HISTORY")}</h2>
+              <div>
+                <button type="button" className="rp-hand-history__previous" disabled={!previousHand} onClick={() => { setShowHandHistory(false); setShowPreviousHand(true); }}>{t("PREVIOUS HAND")}</button>
+                <button type="button" onClick={() => setShowHandHistory(false)} aria-label={t("Close hand history")}>×</button>
+              </div>
+            </header>
+            <ol>{gameState.logs.length ? gameState.logs.map(log => {
+              const message = translateGameLabel(log.message, tr);
+              const playerIndex = gameState.players.findIndex(player => message.toLocaleLowerCase().startsWith(player.name.toLocaleLowerCase()));
+              const player = playerIndex >= 0 ? gameState.players[playerIndex] : null;
+              return <li key={log.id} data-kind={log.type}>
+                <time>{new Date(log.timestamp).toString() === 'Invalid Date' ? log.timestamp : new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time>
+                <span>{player ? <><strong data-player-color={playerIndex % 6}>{player.name}</strong>{message.slice(player.name.length)}</> : message}</span>
+              </li>;
+            }) : <li><span>{t("No hand events yet.")}</span></li>}</ol>
           </section>
         </PokerDialog>}
       </AnimatePresence>
+      {showPreviousHand && previousHand && <PokerHandResult state={previousHand} countdown={0} reviewOnly onLobby={() => setShowPreviousHand(false)} />}
 
       {/* BUY IN MODAL */}
       <AnimatePresence>

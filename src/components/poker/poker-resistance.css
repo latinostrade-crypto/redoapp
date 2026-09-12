@@ -25,7 +25,14 @@ body:has(.resistance-poker) {
   height: calc(100svh - 16px);
   min-height: 0;
   max-height: calc(100svh - 16px);
+  display: grid !important;
+  grid-template-rows: 52px minmax(0, 1fr) 112px;
+  gap: 4px;
 }
+
+.resistance-poker > .rp-header { grid-row: 1; }
+.resistance-poker > .rp-table { grid-row: 2; }
+.resistance-poker > :is(.rp-action-panel, .rp-result-panel, .rp-system-module) { grid-row: 3; align-self: end; width: 100%; }
 
 .resistance-poker > .rp-action-panel,
 .resistance-poker > .rp-result-panel,
@@ -426,7 +433,7 @@ body:has(.resistance-poker) {
   width: 12px;
   height: 18px;
   border: 1px solid #69737d;
-  background: #080b10 url('/card-thumbs/back.jpeg') center/cover no-repeat;
+  background: #080b10 url('/cards/poker-back-redo.png') center/cover no-repeat;
   box-shadow: 1px 1px 0 #000;
   font-style: normal;
 }
@@ -909,7 +916,7 @@ body:has(.resistance-poker) {
   inset: 0;
   z-index: 2;
   border: 2px solid #050607;
-  background: #080b10 url('/card-thumbs/back.jpeg') center/cover no-repeat;
+  background: #080b10 url('/cards/poker-back-redo.png') center/cover no-repeat;
   content: '';
   backface-visibility: hidden;
   animation: rp-card-back-hide 360ms steps(1, end) calc(var(--rp-card-delay, 0ms) + 80ms) both;
@@ -1199,7 +1206,7 @@ body:has(.resistance-poker) {
 @keyframes rp-black-wipe { 0% { opacity: 0; transform: scale(1.6); } 35% { opacity: .45; } 100% { opacity: 1; transform: scale(1); background-color: #000; } }
 
 @media (max-width: 359px) {
-  .rp-table { height: 420px !important; }
+  .rp-table { height: 100% !important; }
   .rp-announcement strong { font-size: 14px; }
   .rp-header { gap: 3px; padding: 3px; }
   .rp-header-nav, .rp-header-tools { gap: 2px; }
@@ -1224,7 +1231,7 @@ body:has(.resistance-poker) {
   .rp-header-action, .rp-header-action--icon, .rp-header-sound,
   .rp-header .language-switch--compact { min-height: 44px !important; height: 44px; min-width: 44px !important; width: 44px; }
   .rp-header .rp-mode-label { min-width: 0; padding-inline: 5px; }
-  .rp-table { height: auto !important; flex: 1 1 auto; min-height: 0; }
+  .rp-table { height: 100% !important; flex: none; min-height: 0; }
   .rp-board-zone { top: 46%; width: min(230px, 62%); }
   .rp-community-board > div:last-child { gap: 3px; }
   .rp-opponent-position { transform: scale(.94); }
