@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 
-// Export the previously generated atlas, retaining enclosed light facial pixels.
+// Remove the baked checkerboard AND its grey antialias fringe. The dark
+// silhouette stops the exterior flood, preserving enclosed eyes and faces.
 const { data, info } = await sharp('output/imagegen/crew-poses-source.png').ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 const { width, height } = info;
 const visited = new Uint8Array(width * height);
@@ -10,7 +11,7 @@ function visit(p) {
   if (visited[p]) return;
   visited[p] = 1;
   const i = p * 4, r = data[i], g = data[i + 1], b = data[i + 2];
-  if (Math.min(r, g, b) < 145 || Math.max(r, g, b) - Math.min(r, g, b) > 30) return;
+  if (Math.min(r, g, b) < 60 || Math.max(r, g, b) - Math.min(r, g, b) > 45) return;
   data[i + 3] = 0; queue[tail++] = p;
 }
 for (let x = 0; x < width; x++) { visit(x); visit((height - 1) * width + x); }
@@ -21,6 +22,11 @@ while (head < tail) {
   if (x < width - 1) visit(p + 1);
   if (p >= width) visit(p - width);
   if (p < width * (height - 1)) visit(p + width);
+  // Diagonal contact also belongs to the exterior in a pixel-art silhouette.
+  if (x && p >= width) visit(p - width - 1);
+  if (x < width - 1 && p >= width) visit(p - width + 1);
+  if (x && p < width * (height - 1)) visit(p + width - 1);
+  if (x < width - 1 && p < width * (height - 1)) visit(p + width + 1);
 }
 const clean = await sharp(data, { raw: info }).png().toBuffer();
 for (const [name, center] of [['beast', 212], ['girl', 811], ['dog-v2', 1105], ['durov', 1411]]) {

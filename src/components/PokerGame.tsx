@@ -605,10 +605,7 @@ export function PokerGame({
       </header>
 
       {/* 2. RESISTANCE SIGNAL TABLE */}
-      <PokerTable bankCount={chipView.pots.length}>
-        <div className="rp-event-stage" aria-live="polite" aria-atomic="true">
-          {presentation.cue && <TableAnnouncement key={presentation.cue.id} cue={presentation.cue} />}
-        </div>
+      <PokerTable bankCount={chipView.pots.length} announcement={presentation.cue ? <TableAnnouncement key={presentation.cue.id} cue={presentation.cue} /> : null}>
 
         {/* POT & STAGE DISPLAY (Top-center) */}
         <div className="rp-pot-position absolute flex flex-col items-center z-20">

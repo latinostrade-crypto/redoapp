@@ -20,9 +20,8 @@ function Preview() {
       isAllIn: i < action.allIns, lastAction: i === 2 ? action.label : '', totalMatchInvested: i === 2 ? action.count : 0 })) } as unknown as PokerGameState;
   const view = usePokerPresentation(state, false);
   return <main className="plush-preview"><header><h1>Действия за столом</h1><p>Олл-ин — 2,2 секунды. Обычное действие — 1,4 секунды.</p></header>
-    <div className="resistance-poker plush-preview-table" style={{ height: 430 }}><PokerTable>
+    <div className="resistance-poker plush-preview-table" style={{ height: 430 }}><PokerTable announcement={view.cue ? <TableAnnouncement key={view.cue.id} cue={view.cue} /> : null}>
       <div className="rp-board-position absolute"><CommunityCards cards={[]} /></div>
-      <div className="rp-event-stage" aria-live="polite">{view.cue && <TableAnnouncement key={view.cue.id} cue={view.cue} />}</div>
     </PokerTable></div>
     <nav><button onClick={() => setAction(a => ({ ...a, allIns: Math.min(2, a.allIns + 1) }))}>Олл-ин</button>
       <button onClick={() => setAction(a => ({ ...a, label: 'RAISE 20', count: a.count + 20 }))}>Повысить</button>

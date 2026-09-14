@@ -1,4 +1,7 @@
 /* A single symmetric seat rail. Chips use these same measured seat anchors. */
+.rp-table-playfield { position: absolute; inset: var(--announcement-height, 0px) 0 0; }
+/* Reserve this space even between cues: seats and chip anchors never jump. */
+.rp-table--announcements { --announcement-height: 48px; }
 .resistance-poker .rp-table {
   --seat-width: 64px;
   --seat-edge: 38px;

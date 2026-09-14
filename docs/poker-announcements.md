@@ -1,6 +1,8 @@
 # Readable table announcements
 
-`TableAnnouncement` renders the existing presentation cue with a larger high-contrast title, player/detail line and a thin lifetime bar. ALL IN uses a red border, dark red background and a 21 px title. The entrance lasts 140 ms; there is no looping shake or flash.
+`TableAnnouncement` renders the existing presentation cue with a high-contrast title, player/detail and a thin lifetime bar. ALL IN uses a red border, dark red background and a 21 px title. The entrance slides down from above over 240 ms; there is no looping shake or flash.
+
+`PokerTable` reserves a constant 48 px strip above its playfield. The 38 px announcement sits in that strip, in a single horizontal row. Seats, bank, community cards, turn text and chip coordinates all belong to the playfield below it; neither cue arrival nor departure changes their positions. Reduced motion removes the slide and lifetime animation.
 
 ALL IN stays for 2200 ms, ordinary player actions for 1400 ms, street/showdown and presence messages for 1600 ms, and pot capture for 1800 ms. READY/GAME START keep their original introductory durations. Cue scheduling never changes board delivery, payout, server state or turn deadlines.
 

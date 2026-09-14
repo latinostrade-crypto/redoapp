@@ -78,13 +78,14 @@ export function PokerChipStack({
   );
 }
 
-export function PokerTable({ children, bankCount = 1 }: { children: React.ReactNode; bankCount?: number }) {
+export function PokerTable({ children, bankCount = 1, announcement }: { children: React.ReactNode; bankCount?: number; announcement?: React.ReactNode }) {
   return (
     <div
-      className={`rp-table${bankCount > 3 ? ' rp-table--many-pots' : ''} w-full relative overflow-hidden flex flex-col items-center justify-center z-10`}
+      className={`rp-table${bankCount > 3 ? ' rp-table--many-pots' : ''}${announcement !== undefined ? ' rp-table--announcements' : ''} w-full relative overflow-hidden flex flex-col items-center justify-center z-10`}
       style={{ '--rp-table-art': `url(${cleanTableAsset})` } as React.CSSProperties}
     >
-      {children}
+      {announcement !== undefined && <div className="rp-event-stage" aria-live="polite" aria-atomic="true">{announcement}</div>}
+      <div className="rp-table-playfield">{children}</div>
     </div>
   );
 }
