@@ -19,6 +19,7 @@ class SoundSynth {
   private isMuted: boolean = false;
   private idleTimer: number | null = null;
   private userActivated = false;
+  private pokerVoices = new Set<OscillatorNode>();
 
   constructor() {
     // Only initialized on first user interaction to comply with browser autoplay policies
@@ -87,13 +88,16 @@ class SoundSynth {
   }
 
   setPokerAudioMode(mode: PokerAudioMode) {
+    // Silence even the tail of an ALL cue when changing to a quieter mode.
+    for (const voice of this.pokerVoices) { try { voice.stop(); } catch {} }
+    this.pokerVoices.clear();
     if (typeof window !== 'undefined') window.localStorage.setItem('redoapp:poker-audio-mode', mode);
     this.setMute(mode === 'muted');
   }
 
   playPokerCue(id: PokerSoundId, source: PokerSoundSource = 'system') {
     const mode = this.getPokerAudioMode();
-    if (mode === 'muted' || (mode === 'self' && source === 'opponent')) return;
+    if (mode === 'muted' || (mode === 'self' && (id !== 'player_turn' || source !== 'self'))) return;
     this.init();
     if (!this.ctx) return;
 
@@ -123,6 +127,8 @@ class SoundSynth {
     patterns[id].forEach(([frequency, offset, duration, volume, type]) => {
       if (!this.ctx) return;
       const oscillator = this.ctx.createOscillator();
+      this.pokerVoices.add(oscillator);
+      oscillator.onended = () => this.pokerVoices.delete(oscillator);
       const gain = this.ctx.createGain();
       oscillator.type = type;
       oscillator.frequency.setValueAtTime(frequency, now + offset);

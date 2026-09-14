@@ -8,8 +8,8 @@ type TelegramHaptics = {
   selectionChanged?: () => void;
 };
 
-function haptics(): TelegramHaptics | undefined {
-  if (!getPokerHapticsEnabled()) return undefined;
+function haptics(turnAlert = false): TelegramHaptics | undefined {
+  if (typeof window === 'undefined' || (!turnAlert && !getPokerHapticsEnabled())) return undefined;
   const webApp = (window as typeof window & {
     Telegram?: { WebApp?: { version?: string; HapticFeedback?: TelegramHaptics } };
   }).Telegram?.WebApp;
@@ -33,6 +33,23 @@ export function setPokerHapticsEnabled(enabled: boolean) {
  * autoplays audio: the existing synthesizer still unlocks only after a user
  * interaction, and Telegram decides whether haptics are supported. */
 export function playPokerFeedback(event: PokerFeedbackEvent, source: PokerSoundSource = 'system') {
+  const mode = sound.getPokerAudioMode();
+  const myTurn = event === 'player_turn' && source === 'self';
+  if (mode === 'muted') {
+    if (!myTurn) return;
+    // OFF still alerts the player once at the start of their turn. Prefer
+    // Telegram's native haptics (including iOS) over the browser fallback.
+    try {
+      const native = haptics(true);
+      if (native?.impactOccurred) { native.impactOccurred('medium'); return; }
+    } catch { /* A client without native haptics may still support vibration. */ }
+    try { if (typeof navigator !== 'undefined') navigator.vibrate?.([80, 40, 80]); } catch {}
+    return;
+  }
+  if (mode === 'self') {
+    if (myTurn) sound.playPokerCue(event, source);
+    return;
+  }
   const telegramHaptics = haptics();
   sound.playPokerCue(event, source);
 

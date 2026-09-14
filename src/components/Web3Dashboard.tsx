@@ -6063,7 +6063,7 @@ export function Web3Dashboard({
           )}
 
           {pvpGameTab === 'poker' && (
-            <PokerLobbyMenu mode={pvpSubMode} onMode={mode => {sound.playPop(); setPvpSubMode(mode);}}
+            <PokerLobbyMenu mode={pvpSubMode} onMode={mode => {playPokerFeedback('ui_click', 'ui'); setPvpSubMode(mode);}}
               tables={casinoTables} status={casinoTableStatus} balance={Math.round(goldenTickets * 100)}
               onRefresh={() => {setCasinoTableStatus('refreshing'); setCasinoRefreshRevision(value => value + 1);}}
               onOpen={table => {
@@ -6077,7 +6077,7 @@ export function Web3Dashboard({
                 if (tg?.openTelegramLink) tg.openTelegramLink(shareUrl); else window.open(shareUrl, '_blank');
               }}
               onPractice={(botCount) => {
-                sound.playShuffle();
+                sound.playPokerCue('card_deal');
                 if (onStartPokerGame) transitionResistanceScene(() => onStartPokerGame('offline', 0, undefined, undefined, botCount), Boolean(prefersReducedMotion));
                 else onStartGame('offline', 0);
               }}

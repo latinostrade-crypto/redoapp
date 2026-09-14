@@ -112,7 +112,7 @@ export default function App() {
   } = usePokerGame({
     onSettlement: (payout, won) => {
       if (won && payout > 0) {
-        sound.playVictory();
+        sound.playPokerCue('winner', 'self');
       }
       // Settlement is performed by the server. Never apply a client-side
       // payout on top of the next server snapshot.

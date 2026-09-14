@@ -195,7 +195,7 @@ export function usePokerGame(options?: {
       matchId?: string,
       practiceBotCount = 3,
     ) => {
-      sound.playShuffle();
+      sound.playPokerCue('card_deal');
       clearDealingTimeouts();
       isAdvancingRef.current = false;
       settledRef.current = false;
@@ -340,7 +340,7 @@ export function usePokerGame(options?: {
 
       // Deal card 1 to all (delay 250ms)
       const t1 = window.setTimeout(() => {
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
         setGameState((prev) => ({
           ...prev,
           players: prev.players.map((p, idx) => ({
@@ -352,7 +352,7 @@ export function usePokerGame(options?: {
 
       // Deal card 2 to all (delay 600ms)
       const t2 = window.setTimeout(() => {
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
         setGameState((prev) => ({
           ...prev,
           isDealing: false,
@@ -383,7 +383,7 @@ export function usePokerGame(options?: {
       if (activePlayers.length === 1) {
         // Everyone else folded!
         const winner = activePlayers[0];
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
         isAdvancingRef.current = false;
 
         return {
@@ -419,17 +419,17 @@ export function usePokerGame(options?: {
         nextStage = 'flop';
         const flopCards = [nextDeck.pop()!, nextDeck.pop()!, nextDeck.pop()!];
         nextCommunity = flopCards;
-        sound.playShuffle();
+        sound.playPokerCue('card_deal');
       } else if (prev.stage === 'flop') {
         nextStage = 'turn';
         const turnCard = nextDeck.pop()!;
         nextCommunity = [...prev.communityCards.slice(0, 3), turnCard];
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
       } else if (prev.stage === 'turn') {
         nextStage = 'river';
         const riverCard = nextDeck.pop()!;
         nextCommunity = [...prev.communityCards.slice(0, 4), riverCard];
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
       } else if (prev.stage === 'river') {
         nextStage = 'showdown';
         nextCommunity = [...prev.communityCards];
@@ -462,7 +462,7 @@ export function usePokerGame(options?: {
 
         const settlement = settlePracticeChips(resetPlayers, scores, prev.dealerIndex);
 
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
 
         return {
           ...prev,
@@ -498,7 +498,7 @@ export function usePokerGame(options?: {
    * Action: FOLD
    */
   const playerFold = useCallback(async () => {
-    sound.playPop();
+    sound.playPokerCue('ui_click', 'self');
 
     if (remoteMatchId) {
       await sendRemotePokerAction('fold');
@@ -519,7 +519,7 @@ export function usePokerGame(options?: {
    * Action: CHECK / CALL
    */
   const playerCallOrCheck = useCallback(async () => {
-    sound.playPop();
+    sound.playPokerCue('ui_click', 'self');
 
     if (remoteMatchId) {
       const human = gameState.players.find((p) => p.id === 'player');
@@ -572,7 +572,7 @@ export function usePokerGame(options?: {
    */
   const playerRaise = useCallback(
     async (raiseToAmount: number) => {
-      sound.playPop();
+      sound.playPokerCue('ui_click', 'self');
 
       if (remoteMatchId) {
         await sendRemotePokerAction('raise', raiseToAmount);
@@ -654,7 +654,7 @@ export function usePokerGame(options?: {
    * Action: NEXT HAND
    */
   const nextHand = useCallback(async () => {
-    sound.playShuffle();
+    sound.playPokerCue('card_deal');
     clearDealingTimeouts();
     isAdvancingRef.current = false;
 
@@ -751,7 +751,7 @@ export function usePokerGame(options?: {
       nextPlayers[bbIdx].lastAction = `BB (${bbPost})`;
 
       const t1 = window.setTimeout(() => {
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
         setGameState((current) => ({
           ...current,
           players: current.players.map((p, idx) => ({
@@ -762,7 +762,7 @@ export function usePokerGame(options?: {
       }, 250);
 
       const t2 = window.setTimeout(() => {
-        sound.playPop();
+        sound.playPokerCue('ui_click', 'self');
         setGameState((current) => ({
           ...current,
           isDealing: false,
@@ -841,7 +841,7 @@ export function usePokerGame(options?: {
                 )
               );
               if (isHumanWinner) {
-                sound.playVictory();
+                sound.playPokerCue('winner', 'self');
                 optionsRef.current?.onSettlement?.(pkState.winningPayout || 0, true);
               } else {
                 optionsRef.current?.onSettlement?.(0, false);

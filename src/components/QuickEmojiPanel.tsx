@@ -38,13 +38,15 @@ interface QuickEmojiPanelProps {
   className?: string;
   resistance?: boolean;
   iconOnly?: boolean;
+  pokerAudio?: boolean;
 }
 
-export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, className = '', resistance = false, iconOnly = false }) => {
+export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, className = '', resistance = false, iconOnly = false, pokerAudio = false }) => {
   const { tr } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const reduceMotion = useReducedMotion();
   const rootRef = useRef<HTMLDivElement>(null);
+  const clickSound = () => pokerAudio ? sound.playPokerCue('ui_click', 'ui') : sound.playPop();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -63,7 +65,7 @@ export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, c
   }, [isOpen]);
 
   const handleSelect = (emoji: EmojiItem) => {
-    sound.playPop();
+    clickSound();
     onSendEmoji(emoji);
     setIsOpen(false);
   };
@@ -106,7 +108,7 @@ export const QuickEmojiPanel: React.FC<QuickEmojiPanelProps> = ({ onSendEmoji, c
         aria-label={tr(isOpen ? 'close' : 'emoji')}
         aria-expanded={isOpen}
         onClick={() => {
-          sound.playPop();
+          clickSound();
           setIsOpen((prev) => !prev);
         }}
         className={`flex items-center justify-center gap-1.5 font-black text-[10px] uppercase pixel-btn-interactive cursor-pointer ${iconOnly ? 'min-w-[44px] min-h-[44px] p-0 border-0 shadow-none' : 'px-3 py-1.5 border-2 border-black shadow-[2px_2px_0_#000]'} ${resistance ? `rp-reaction-trigger${iconOnly ? ' rp-reaction-trigger--avatar' : ''}${isOpen ? ' rp-reaction-trigger--open' : ''}` : `${isOpen ? 'bg-[#ffcc00] text-black ring-2 ring-[#ffcc00]/50' : 'bg-[#08131f] text-slate-200 hover:bg-[#00d2ff] hover:text-black'} rounded-full transition-all`}`}

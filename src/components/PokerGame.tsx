@@ -382,7 +382,7 @@ export function PokerGame({
   const humanTurnProgress = isHumanTurn ? Math.max(0, Math.min(1, turnTimeLeft / (gameState.turnTimeoutSec || 15))) : 1;
 
   useEffect(() => {
-    if (isHumanTurn && !previousHumanTurnRef.current) playPokerFeedback('player_turn');
+    if (isHumanTurn && !previousHumanTurnRef.current) playPokerFeedback('player_turn', 'self');
     previousHumanTurnRef.current = isHumanTurn;
 
     const warningSignature = `${gameState.turnStartedAt || 0}:${gameState.currentPlayerIndex}`;
@@ -589,10 +589,10 @@ export function PokerGame({
           <button
             type="button"
             onClick={cycleAudioMode}
-            aria-label={audioMode === 'all' ? t('All poker sounds. Switch to my sounds only.') : audioMode === 'self' ? t('My sounds only. Switch to mute.') : t('Poker muted. Switch to all sounds.')}
+            aria-label={tr(audioMode === 'all' ? 'pokerAudioAllSwitch' : audioMode === 'self' ? 'pokerAudioTurnSwitch' : 'pokerAudioOffSwitch')}
             aria-pressed={audioMode === 'muted'}
             data-audio-mode={audioMode}
-            title={audioMode === 'all' ? t('All sounds') : audioMode === 'self' ? t('My sounds only') : t('Muted')}
+            title={tr(audioMode === 'all' ? 'pokerAudioAll' : audioMode === 'self' ? 'pokerAudioTurn' : 'pokerAudioOff')}
             className={`rp-header-sound pixel-btn-interactive cursor-pointer ${
               audioMode === 'muted' ? 'bg-red-950/40 text-red-400' : audioMode === 'self' ? 'bg-amber-950/40 text-amber-300' : 'bg-slate-900 text-slate-200'
             }`}
@@ -713,7 +713,7 @@ export function PokerGame({
         {/* HUMAN PLAYER (BOTTOM CENTER) */}
         {!isSpectator && humanPlayer && (
           <div className="rp-local-position absolute z-30" data-seat-slot={9}>
-            <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="rp-avatar-reaction-control" resistance iconOnly />
+            <QuickEmojiPanel onSendEmoji={handleSendEmoji} className="rp-avatar-reaction-control" resistance iconOnly pokerAudio />
             {humanHandEval && (
               <div className="rp-hand-rank px-2 py-0.5 text-[7.5px] font-black uppercase tracking-wider">
                 <span>{describePokerHand(humanHandEval, tr)}</span>
@@ -777,7 +777,7 @@ export function PokerGame({
                   key={pIdx}
                   type="button"
                   onClick={() => {
-                    sound.playPop();
+                    playPokerFeedback('ui_click', 'ui');
                     setCustomRaiseAmount(Math.max(minRaiseTotal, Math.min(maxRaiseTotal, preset.amt)));
                   }}
                   className="rp-raise-preset py-1.5 text-[8px] font-black uppercase cursor-pointer"
@@ -792,7 +792,7 @@ export function PokerGame({
               <button
                 type="button"
                 onClick={() => {
-                  sound.playPop();
+                  playPokerFeedback('ui_click', 'ui');
                   setCustomRaiseAmount((prev) =>
                     Math.max(minRaiseTotal, prev - 1)
                   );
@@ -817,7 +817,7 @@ export function PokerGame({
               <button
                 type="button"
                 onClick={() => {
-                  sound.playPop();
+                  playPokerFeedback('ui_click', 'ui');
                   setCustomRaiseAmount((prev) =>
                     Math.min(humanPlayer.chips + humanPlayer.currentBet, prev + 1)
                   );

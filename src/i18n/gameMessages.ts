@@ -3,6 +3,12 @@ import { dashboardMessages } from './dashboardMessages';
 /** Stable message IDs; game commands and player data are deliberately separate. */
 export const gameMessages = {
   ...dashboardMessages,
+  pokerAudioAll: ['All sounds', 'Все звуки'],
+  pokerAudioTurn: ['My turn alert only', 'Только сигнал моего хода'],
+  pokerAudioOff: ['Silent · vibrate on my turn', 'Без звука · вибрация в мой ход'],
+  pokerAudioAllSwitch: ['All sounds. Switch to my turn alert only.', 'Все звуки. Переключить на сигнал только моего хода.'],
+  pokerAudioTurnSwitch: ['My turn alert only. Switch to vibration only.', 'Только сигнал моего хода. Переключить на вибрацию.'],
+  pokerAudioOffSwitch: ['Silent, with vibration on my turn. Switch to all sounds.', 'Без звука, с вибрацией в мой ход. Включить все звуки.'],
   pokerRebuy: ['Rebuy chips', 'Докупить фишки'],
   pokerStackEmpty: ['You have no chips left.', 'Фишки закончились.'],
   pokerRebuyQueued: ['The chips will be in play from the next hand.', 'Фишки вступят в игру со следующей раздачи.'],
