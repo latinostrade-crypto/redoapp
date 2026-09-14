@@ -17,8 +17,18 @@
 .rp-chip-field .rp-chip-stack { min-height: 0; min-width: 0; }
 .rp-chip-bankroll .rp-chip-stack { animation: rp-pile-build 160ms steps(4, end) both; }
 .rp-chip-bankroll { --pile-max: 30px; --pile-size: 12px; }
-.rp-chip-bankroll::before { content: ''; position: absolute; width: 1px; height: 5px; background: #57626b; left: 50%; bottom: calc(100% + 1px); }
-.rp-chip-bankroll--local::before { bottom: auto; top: calc(100% + 1px); }
+.rp-chip-bankroll::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 1px;
+  background: #77838d;
+  box-shadow: 0 1px #050709;
+  transform: rotate(var(--chip-owner-angle)) translateX(18px);
+  transform-origin: left center;
+}
 .rp-chip-bank { display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .rp-chip-bank .rp-chip-stack { animation: rp-pile-merge 200ms steps(4, end) both; }
 .rp-chip-bank .rp-chip-value { font: 6px/1 'Silkscreen', monospace; color: #e1d3b6; }

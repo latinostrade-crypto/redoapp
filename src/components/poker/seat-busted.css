@@ -1,0 +1,20 @@
+.rp-seat-avatar-content { position: relative; }
+.rp-player-seat--busted { border-color: #47272b !important; }
+.rp-player-seat--busted::after { content: ''; position: absolute; inset: 0; background: #0009; pointer-events: none; z-index: 3; animation: rp-bust-dim 360ms ease-out both; }
+.rp-player-seat--busted .rp-player-seat__portrait { z-index: 4; }
+.rp-player-seat--busted .rp-seat-avatar-content { filter: brightness(.4) saturate(.35); transition: filter 300ms ease-out; }
+.rp-player-seat--busted .rp-player-seat__meta { filter: brightness(.45); }
+.rp-player-seat--busted .rp-seat-hole-cards { opacity: .4; }
+.rp-player-seat--busted .rp-dealer-chip, .rp-player-seat--busted .rp-blind-chip { opacity: .4; }
+.rp-seat-bust-marker { position: absolute; inset: -2px; width: calc(100% + 4px); height: calc(100% + 4px); overflow: visible; z-index: 6; pointer-events: none; }
+.rp-seat-bust-marker path { fill: none; stroke: #ff263e; stroke-width: 8; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; animation: rp-bust-marker 220ms cubic-bezier(.3,.1,.4,1) 80ms both; }
+.rp-seat-bust-marker path + path { stroke-width: 7; animation-delay: 280ms; }
+@keyframes rp-bust-marker { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes rp-bust-dim { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .rp-seat-bust-marker path, .rp-player-seat--busted::after { animation: none; }
+  .rp-player-seat--busted .rp-seat-avatar-content { transition: none; }
+}
+.resistance-poker--reduced-motion .rp-seat-bust-marker path,
+.resistance-poker--reduced-motion .rp-player-seat--busted::after { animation: none; }
+.resistance-poker--reduced-motion .rp-player-seat--busted .rp-seat-avatar-content { transition: none; }

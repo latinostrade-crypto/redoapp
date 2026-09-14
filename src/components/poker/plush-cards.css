@@ -1,33 +1,64 @@
-.rp-community-board .rp-card-slot { position: relative; overflow: visible; }
-.rp-plush-scene { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
-.rp-plush-actor { position: absolute; width: 112%; max-width: none; height: 112%; object-fit: contain; bottom: 0; left: -6%; image-rendering: pixelated; transform-origin: 50% 90%; }
-.rp-plush-parcel { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; image-rendering: pixelated; z-index: 4; }
-.rp-plush-dust { position: absolute; width: calc(112% + 32px); height: calc(112% + 32px); max-width: none; bottom: -16px; left: calc(-6% - 16px); image-rendering: pixelated; z-index: 5; pointer-events: none; }
-.rp-plush-scene--delivery .rp-plush-actor { animation: plush-catch 1350ms linear both; animation-delay: var(--plush-elapsed, 0ms); }
-.rp-plush-scene--delivery .rp-plush-parcel { animation: plush-parcel 1350ms linear both; animation-delay: var(--plush-elapsed, 0ms); }
-.rp-plush-deck { position: absolute; width: 24px; height: 33px; left: calc(50% - 12px); top: -43px; border: 1px solid #9ca5b4; box-shadow: 2px 2px #151923, 3px 3px #89909c, 4px 4px #151923; background: #13151e; pointer-events: none; }
-.rp-plush-deck img { width: 100%; height: 100%; image-rendering: pixelated; }
-/* Board delivery already provides movement; don't stack the generic deal/flip. */
+/* Fixed body and a single moving pair of hands; never blend whole armed poses. */
+.rp-community-board { padding-bottom: calc(var(--board-card, 40px) * 1.4 + 8px); }
+.rp-community-board .rp-card-slot { position: relative; overflow: visible; border: 0; box-shadow: none !important; background: transparent !important; }
+.rp-community-back { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; image-rendering: pixelated; z-index: 4; border: 1px solid #9ca5b4; box-shadow: 2px 2px #050609; }
+.rp-card-slot--delivery .rp-community-back { animation: crew-card-pull 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-scene { position: absolute; top: calc(100% + 8px); left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+.rp-plush-pose { position: absolute; inset: 0; overflow: hidden; }
+.rp-plush-sprites, .rp-plush-hand-sheet, .rp-plush-chest-sheet { position: absolute; top: 0; left: 0; width: 300%; height: 100%; max-width: none; image-rendering: pixelated; }
+.rp-plush-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+.rp-plush-scene--revealed { opacity: 0; }
+.rp-plush-scene--delivery { animation: crew-cover 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
+/* Exclude the idle hands from the body layer before drawing the animated pair. */
+.rp-plush-body { position: absolute; inset: 0; --body-left: 32%; --body-right: 68%; }
+.rp-plush-scene--pepe .rp-plush-body { --body-left: 48%; --body-right: 52%; }
+.rp-plush-scene--delivery .rp-plush-body { animation: crew-body-mask 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-empty-chest { position: absolute; inset: 0; clip-path: inset(58% 30% 14% 30%); animation: crew-heart-release 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-chest-sheet { transform: translateX(-33.333333%); }
+/* Shoulder and elbow stay connected to the same moving wrist as the hand crop. */
+.rp-plush-arms { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; shape-rendering: crispEdges; animation: crew-hands-fade 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-arm { fill: none; stroke-linejoin: round; stroke-linecap: square; animation: crew-arm-bend 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-arm--outline { stroke: #080b0c; stroke-width: 17; }
+.rp-plush-arm--sleeve { stroke: #242929; stroke-width: 11; }
+.rp-plush-hands { position: absolute; top: calc(100% + 8px); left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; animation: crew-hands-fade 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-grip { position: absolute; inset: 0; overflow: hidden; clip-path: inset(6% var(--grip-right) 72% var(--grip-left)); animation: crew-hand-travel 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-grip--left { --grip-left: 4%; --grip-right: 67%; }
+.rp-plush-grip--right { --grip-left: 67%; --grip-right: 4%; }
+.rp-plush-hand-sheet { transform: translateX(-66.666667%); }
 .rp-community-board .rp-pixel-card-deal, .rp-community-board .rp-pixel-card-flip { animation: none !important; transform: none; opacity: 1; }
-@keyframes plush-catch {
-  0%,32.999% { opacity: 1; }
-  33%,100% { opacity: 0; }
-}
-@keyframes plush-parcel {
-  0% { transform: translate(var(--plush-from-x, 0px),var(--plush-from-y, -45px)) scale(.55); opacity: 0; }
-  5% { opacity: 1; }
-  33%,50% { transform: translate(0,5px) scale(.78); opacity: 1; }
-  57% { transform: translate(0,0) scale(1); opacity: 1; }
-  66.65% { transform: scaleX(.04); opacity: 1; }
-  66.667%,100% { transform: scaleX(.04); opacity: 0; }
-}
-.rp-plush-face { position: relative; width: 100%; height: 100%; z-index: 4; }
+.rp-community-board .rp-pixel-card-flip::before { display: none; animation: none !important; }
+.rp-community-board .rp-pixel-card-flip > * { animation: none !important; opacity: 1; }
+.rp-plush-face { position: absolute; top: calc(100% + 8px); left: 0; width: 100%; height: 100%; z-index: 4; }
 .rp-plush-face > .rp-pixel-card-deal { width: 100%; height: 100%; }
 .rp-plush-face--turn { animation: plush-face-turn 240ms cubic-bezier(.2,.65,.3,1) both; }
+@keyframes crew-cover { 0% { opacity: 1; } 59%, 100% { opacity: 0; } }
+@keyframes crew-heart-release { 0% { opacity: 0; } 6%, 100% { opacity: 1; } }
+@keyframes crew-body-mask {
+  0% { clip-path: inset(0); }
+  6%, 100% { clip-path: polygon(0 0,100% 0,100% 61%,var(--body-right) 61%,var(--body-right) 85%,100% 85%,100% 100%,0 100%,0 85%,var(--body-left) 85%,var(--body-left) 61%,0 61%); }
+}
+@keyframes crew-hand-travel {
+  0%, 6% { transform: translateY(56%); }
+  30%, 33.333% { transform: translateY(0); }
+  58%, 100% { transform: translateY(84%); }
+}
+@keyframes crew-arm-bend {
+  0%, 6% { d: path('M 32 65 L 21 72 L 18 73'); }
+  30%, 33.333% { d: path('M 32 65 L 12 46 L 18 17'); }
+  58%, 100% { d: path('M 32 65 L 20 85 L 18 101'); }
+}
+@keyframes crew-hands-fade { 0%, 5.999% { opacity: 0; } 6%, 53% { opacity: 1; } 58%, 100% { opacity: 0; } }
+@keyframes crew-card-pull {
+  0%, 30% { transform: translateY(0); }
+  33.333% { transform: translateY(calc(16% + 8px)); }
+  44% { transform: translateY(calc(55% + 8px)); }
+  53% { transform: translateY(calc(78% + 8px)); }
+  58%, 59% { transform: translateY(calc(100% + 8px)); }
+  66.666%, 100% { transform: translateY(calc(100% + 8px)) scaleX(.04); }
+}
 @keyframes plush-face-turn { from { transform: scaleX(.04); } to { transform: scaleX(1); } }
 @media (prefers-reduced-motion: reduce) {
-  .rp-plush-scene--delivery .rp-plush-actor { animation: none; }
-  .rp-plush-parcel, .rp-plush-dust { display: none; }
-  .rp-plush-face--turn { animation: none; }
+  .rp-plush-hands, .rp-plush-empty-chest, .rp-plush-arms { display: none; }
+  .rp-plush-scene--delivery .rp-plush-body { animation: none; clip-path: none; }
+  .rp-card-slot--delivery .rp-community-back, .rp-plush-scene--delivery, .rp-plush-face--turn { animation: none; }
 }
-

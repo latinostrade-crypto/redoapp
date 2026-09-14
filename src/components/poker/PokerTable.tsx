@@ -4,6 +4,7 @@ import type { PokerCard } from '../../types/poker';
 import { PixelCounter } from './PixelPrimitives';
 import { PokerCardView } from './PokerCard';
 import { PlushCard } from './PlushCard';
+import { PepeHeart } from './PepeCard';
 import type { BoardDelivery } from './motion/presentation';
 import { decomposeChips } from './chips/chipModel';
 import cleanTableAsset from '../../assets/resistance/poker-table-clean.png';
@@ -130,15 +131,19 @@ export function CommunityCards({
   const { tr } = useLanguage();
   return (
     <div className="rp-community-board relative flex items-center">
-      <span className="rp-plush-deck" aria-hidden="true"><img src="/cards/poker-back-redo.png" width={24} height={33} alt="" /></span>
       <div className="flex gap-1" role="group" aria-label={tr("communityCards")}>
         {[0, 1, 2, 3, 4].map((slotIndex) => {
           const card = cards[slotIndex];
           const visible = card && (!revealedCardIds || revealedCardIds.has(card.id) || revealAll);
+          const delivery = deliveries.find(d => d.id === card?.id);
+          const active = !reduced && Boolean(delivery);
           return (
-            <div key={slotIndex} className="rp-card-slot w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 border-2 border-dashed flex items-center justify-center shrink-0 shadow-inner" aria-label={visible ? undefined : tr('emptyCommunitySlot', { slot: slotIndex + 1 })}>
-              {visible && <div className={`rp-plush-face${!reduced && deliveries.some(d => d.id === card.id) ? ' rp-plush-face--turn' : ''}`}><PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} /></div>}
-              <PlushCard slot={slotIndex} visible={Boolean(visible)} delivery={deliveries.find(d => d.id === card?.id)} reduced={reduced} />
+            <div key={slotIndex} className={`rp-card-slot${active ? ' rp-card-slot--delivery' : ''} w-9 h-13 min-[380px]:w-10 min-[380px]:h-14 flex items-center justify-center shrink-0`} aria-label={visible ? undefined : `${tr('faceDownCard')} ${slotIndex + 1}`}>
+              {visible
+                ? <div className={`rp-plush-face${active ? ' rp-plush-face--turn' : ''}`}><PokerCardView card={card} isWinning={winningCardIds.includes(card.id)} dealIndex={slotIndex} /></div>
+                : <img src="/cards/poker-back-redo.png" width={40} height={56} alt="" aria-hidden="true" className="rp-community-back" />}
+              <PlushCard slot={slotIndex} visible={Boolean(visible)} delivery={delivery} reduced={reduced} />
+              {slotIndex === 1 && <PepeHeart delivery={delivery} reduced={reduced} />}
             </div>
           );
         })}

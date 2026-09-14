@@ -24,7 +24,7 @@ function Preview() {
   const view = usePokerPresentation(state, reduced);
   const reset = () => { setEpoch(n => n + 1); setCount(0); };
   return <main className="plush-preview">
-    <header><p>REDO / CARD CREW</p><h1>Плюшевая раздача</h1><p>Поймал. Открыл. Спрыгнул.</p></header>
+    <header><p>REDO / CARD CREW</p><h1>Плюшевая раздача</h1><p>Герои стягивают карты сверху на себя. Карта закрывает героя и переворачивается на его месте.</p></header>
     <div className={`resistance-poker plush-preview-table${reduced ? ' resistance-poker--reduced-motion' : ''}`}>
       <PokerTable><div className="rp-board-position absolute"><CommunityCards key={epoch} cards={state.communityCards} revealedCardIds={view.boardIds} deliveries={view.boardDeliveries} reduced={reduced} /></div></PokerTable>
     </div>

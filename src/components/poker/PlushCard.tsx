@@ -1,70 +1,42 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import type { BoardDelivery } from './motion/presentation';
 import './plush-cards.css';
 
 export const PLUSH_CAST = ['beast', 'frog', 'girl', 'dog-v2', 'durov'] as const;
 
-/** Decorative delivery only. The presentation model owns reveal deadlines. */
+/** Permanent actor; only the local board clock starts its short pose sequence. */
 export function PlushCard({ slot, visible, delivery, reduced }: {
   slot: number; visible: boolean; delivery?: BoardDelivery; reduced: boolean;
 }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  const dustRef = useRef<HTMLCanvasElement>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const active = Boolean(delivery && !reduced && loaded && !failed);
+  const scene = useRef<HTMLSpanElement>(null);
+  const [ready, setReady] = useState(false);
+  const active = Boolean(delivery && !reduced);
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el || !delivery || !active) return;
-    const target = el.parentElement!.getBoundingClientRect();
-    const deck = el.closest('.rp-community-board')?.querySelector('.rp-plush-deck')?.getBoundingClientRect();
-    if (!deck) return;
-    el.style.setProperty('--plush-from-x', `${Math.round(deck.left + deck.width / 2 - target.left - target.width / 2)}px`);
-    el.style.setProperty('--plush-from-y', `${Math.round(deck.top + deck.height / 2 - target.top - target.height / 2)}px`);
-    el.style.setProperty('--plush-elapsed', `${-Math.max(0, performance.now() - delivery.start)}ms`);
+    if (!scene.current || !delivery || !active) return;
+    scene.current.parentElement!.style.setProperty('--crew-elapsed', `${-Math.max(0, performance.now() - delivery.start)}ms`);
   }, [delivery?.start, active]);
-  useLayoutEffect(() => {
-    const canvas = dustRef.current;
-    const actor = ref.current?.querySelector<HTMLImageElement>('.rp-plush-actor');
-    if (!active || !delivery || !canvas || !actor) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const width = canvas.clientWidth, height = canvas.clientHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
-    ctx.scale(dpr, dpr); ctx.imageSmoothingEnabled = false;
-    const scale = Math.min((width - 32) / 80, (height - 32) / 104);
-    const left = (width - 80 * scale) / 2, top = (height - 104 * scale) / 2;
-    let frame = 0;
-    const draw = () => {
-      const elapsed = performance.now() - delivery.start;
-      ctx.clearRect(0, 0, width, height);
-      if (document.hidden || elapsed >= 745) return;
-      if (elapsed >= 445.5) {
-        const progress = Math.min(1, (elapsed - 445.5) / 300);
-        // Real sprite pixels, deterministic block erosion; one small canvas, no particle DOM.
-        for (let y = 0; y < 104; y += 4) for (let x = 0; x < 80; x += 4) {
-          const seed = ((x * 73 + y * 151 + x * y * 7) % 997) / 997;
-          if (progress > .15 + seed * .85) continue;
-          const drift = Math.floor(progress * (3 + seed * 9));
-          ctx.globalAlpha = 1 - progress * .65;
-          ctx.drawImage(actor, x, y, 4, 4,
-            Math.round(left + x * scale + (x < 40 ? -drift : drift)),
-            Math.round(top + y * scale - drift), Math.ceil(4 * scale), Math.ceil(4 * scale));
-        }
-      }
-      frame = requestAnimationFrame(draw);
-    };
-    frame = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(frame); ctx.clearRect(0, 0, width, height); };
-  }, [delivery?.start, active]);
-  if (visible && !active) return null;
-  return <span ref={ref} aria-hidden="true" className={`rp-plush-scene${active ? ' rp-plush-scene--delivery' : ''}`}>
-    {!visible && !loaded && <img src="/cards/poker-back-redo.png" className="rp-community-card-back" alt="" />}
-    {!failed && <img src={`/poker-plush/${PLUSH_CAST[slot]}.webp`} width={80} height={104} alt="" draggable={false}
-      onLoad={() => setLoaded(true)} onError={() => { setFailed(true); setLoaded(false); }}
-      className="rp-plush-actor" style={{ visibility: loaded ? 'visible' : 'hidden' }} />}
-    {active && <img src="/cards/poker-back-redo.png" width={40} height={56} alt="" className="rp-plush-parcel" />}
-    {active && <canvas ref={dustRef} className="rp-plush-dust" aria-hidden="true" />}
-  </span>;
+  const sprite = slot === 1 ? 'pepe-heart-poses' : `${PLUSH_CAST[slot]}-poses`;
+  return <><span ref={scene} aria-hidden="true" className={`rp-plush-scene${visible ? ' rp-plush-scene--revealed' : ''}${active ? ' rp-plush-scene--delivery' : ''}${slot === 1 ? ' rp-plush-scene--pepe' : ''}`}>
+    {!ready && <img src={`/poker-plush/${PLUSH_CAST[slot]}.webp`} width={80} height={104} alt="" className="rp-plush-fallback" />}
+    <span className="rp-plush-pose" style={{ visibility: ready ? 'visible' : 'hidden' }}>
+      <span className="rp-plush-body"><img src={`/poker-plush/${sprite}.webp`} width={240} height={104} alt="" draggable={false}
+        onLoad={() => setReady(true)} onError={() => setReady(false)} className="rp-plush-sprites" />
+      </span>
+      {active && slot === 1 && <span className="rp-plush-empty-chest">
+        <img src={`/poker-plush/${sprite}.webp`} width={240} height={104} alt="" draggable={false} className="rp-plush-chest-sheet" />
+      </span>}
+    </span>
+    {active && ready && <svg className="rp-plush-arms" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      {[false, true].map(mirror => <g key={String(mirror)} transform={mirror ? 'translate(100 0) scale(-1 1)' : undefined}>
+        <path className="rp-plush-arm rp-plush-arm--outline" d="M 32 65 L 21 72 L 18 73" />
+        <path className="rp-plush-arm rp-plush-arm--sleeve" d="M 32 65 L 21 72 L 18 73" />
+      </g>)}
+    </svg>}
+  </span>
+    {active && ready && <span className="rp-plush-hands" aria-hidden="true">
+      {(['left', 'right'] as const).map(side => <span key={side} className={`rp-plush-grip rp-plush-grip--${side}`}>
+        <img src={`/poker-plush/${sprite}.webp`} width={240} height={104} alt="" draggable={false} className="rp-plush-hand-sheet" />
+      </span>)}
+    </span>}
+  </>;
 }

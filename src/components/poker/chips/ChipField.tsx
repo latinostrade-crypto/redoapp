@@ -4,10 +4,26 @@ import { ChipValue, PokerChipStack } from '../PokerTable';
 import type { ChipFlight, ChipTimeline } from './chipModel';
 import './chip-field.css';
 
-type Point = { x: number; y: number };
+type Point = { x: number; y: number; ownerAngle?: number };
 type BoardBounds = { left: number; right: number; top: number; bottom: number };
 type Layout = { seats: Record<string, Point>; pots: Point[]; board?: BoardBounds };
 type View = ReturnType<ChipTimeline['view']>;
+
+// Dedicated betting lanes inside the felt. They intentionally do not follow
+// the outside edge of the player card: every stack remains on the table and
+// keeps the same visual ownership for 2–10 player layouts.
+const SEAT_CHIP_LANES: Record<number, Point> = {
+  0: { x: .22, y: .34 },
+  1: { x: .22, y: .50 },
+  2: { x: .22, y: .66 },
+  3: { x: .30, y: .32 },
+  4: { x: .50, y: .32 },
+  5: { x: .70, y: .32 },
+  6: { x: .78, y: .34 },
+  7: { x: .78, y: .50 },
+  8: { x: .78, y: .66 },
+  9: { x: .50, y: .76 },
+};
 
 /** One table-owned coordinate system, never a child of a clipped avatar. */
 export function ChipField({ state, view }: { state: PokerGameState; view: View }) {
@@ -35,10 +51,17 @@ export function ChipField({ state, view }: { state: PokerGameState; view: View }
       }));
       table.querySelectorAll<HTMLElement>('[data-chip-seat]').forEach(el => {
         const r = localBox(el.getBoundingClientRect());
-        const isLocalSlot = el.closest('[data-seat-slot]')?.getAttribute('data-seat-slot') === '9';
-        // Every pile stays on its owner's vertical axis, with a fixed gap.
-        // No greedy collision solver may send a pile towards another player.
-        seats[el.dataset.chipSeat!] = { x: Math.round((r.left + r.right) / 2), y: Math.round(isLocalSlot ? r.top - 17 : r.bottom + 15) };
+        const slot = Number(el.closest('[data-seat-slot]')?.getAttribute('data-seat-slot'));
+        const lane = SEAT_CHIP_LANES[slot] || SEAT_CHIP_LANES[9];
+        const x = Math.round(width * lane.x);
+        const y = Math.round(height * lane.y);
+        const ownerX = (r.left + r.right) / 2;
+        const ownerY = (r.top + r.bottom) / 2;
+        seats[el.dataset.chipSeat!] = {
+          x,
+          y,
+          ownerAngle: Math.atan2(ownerY - y, ownerX - x) * 180 / Math.PI,
+        };
       });
       const community = table.querySelector('.rp-community-board');
       setLayout({ seats, pots, board: community ? localBox(community.getBoundingClientRect()) : undefined });
@@ -54,7 +77,11 @@ export function ChipField({ state, view }: { state: PokerGameState; view: View }
     return () => { observer.disconnect(); clearTimeout(timer); };
   }, [playerKey, potCount]);
 
-  const position = (p: Point): React.CSSProperties => ({ left: p.x, top: p.y });
+  const position = (p: Point): React.CSSProperties => ({
+    left: p.x,
+    top: p.y,
+    '--chip-owner-angle': `${p.ownerAngle || 0}deg`,
+  } as React.CSSProperties);
   return <div ref={root} className="rp-chip-field" data-chip-busy={view.busy}>
     {state.players.map(p => {
       const point = layout.seats[p.id];

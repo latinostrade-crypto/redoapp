@@ -3,8 +3,9 @@ import { useLanguage } from '../../i18n/LanguageProvider';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { PokerPlayer } from '../../types/poker';
 import { ResistanceAvatar, ResistanceAvatarState } from './ResistanceAvatar';
-import { PixelBorderProgress, PixelBuild, PixelDissolve, PlayerElimination, PlayerSignalState, SignalGlitch } from './PixelPrimitives';
+import { PixelBorderProgress, PixelBuild, PixelDissolve, PlayerSignalState, SignalGlitch } from './PixelPrimitives';
 import { ChipValue } from './PokerTable';
+import './seat-busted.css';
 
 interface ResistancePlayerSeatProps {
   player: PokerPlayer;
@@ -22,6 +23,7 @@ interface ResistancePlayerSeatProps {
   displayBalance?: number;
   dealAt?: number;
   dealIndex?: number;
+  busted?: boolean;
 }
 
 const MINI_SUIT: Record<string, { symbol: string; red: boolean }> = {
@@ -52,6 +54,7 @@ export function ResistancePlayerSeat({
   displayBalance = player.chips,
   dealAt = 0,
   dealIndex = 0,
+  busted = state === 'eliminated' && player.chips <= 0,
 }: ResistancePlayerSeatProps) {
   const { tr } = useLanguage();
   const previousConnectedRef = useRef(player.isConnected !== false);
@@ -86,7 +89,7 @@ export function ResistancePlayerSeat({
   }, [player.isConnected]);
 
   const criticalAction = /ALL[- ]?IN|FOLD/i.test(player.lastAction || '') ? player.lastAction : '';
-  const status = state === 'disconnected'
+  const status = busted ? tr('avatarEliminated') : state === 'disconnected'
     ? 'SIGNAL LOST'
     : state === 'eliminated'
     ? 'OFFLINE'
@@ -98,7 +101,8 @@ export function ResistancePlayerSeat({
     <div className="rp-seat-identity">
     <PixelBuild className="rp-seat-build-shell">
     <div
-      className={`rp-player-seat${compact ? ' rp-player-seat--compact' : ''} rp-player-seat--${state}${active ? ' rp-player-seat--active' : ''}`}
+      className={`rp-player-seat${compact ? ' rp-player-seat--compact' : ''} rp-player-seat--${state === 'eliminated' ? 'online' : state}${busted ? ' rp-player-seat--busted' : ''}${active && !busted ? ' rp-player-seat--active' : ''}`}
+      data-busted={busted || undefined}
       data-chip-seat={player.id}
       ref={seatRef}
       style={{
@@ -134,7 +138,7 @@ export function ResistancePlayerSeat({
         </span>
       ))}
       <div className="rp-player-seat__portrait">
-        <PlayerElimination eliminated={state === 'eliminated'}>
+        <div className="rp-seat-avatar-content">
           <PlayerSignalState state={signalState}>
             <SignalGlitch active={state === 'disconnected'}>
               <ResistanceAvatar
@@ -142,12 +146,16 @@ export function ResistancePlayerSeat({
                 fallbackAvatar={player.avatar || 'rabbit'}
                 photoUrl={photoUrl}
                 active={active}
-                state={state}
+                state={state === 'eliminated' || busted ? 'online' : state}
                 size={compact ? 34 : 50}
               />
             </SignalGlitch>
           </PlayerSignalState>
-        </PlayerElimination>
+        </div>
+        {busted && <svg className="rp-seat-bust-marker" viewBox="0 0 64 64" aria-hidden="true">
+          <path pathLength="1" d="M 9 10 C 20 19, 34 36, 55 53" />
+          <path pathLength="1" d="M 54 9 C 40 25, 26 41, 10 55" />
+        </svg>}
         {dealer && <span className="rp-dealer-chip" aria-label={tr("dealerSentence")}>D</span>}
         {blind && <span className={`rp-blind-chip rp-blind-chip--${blind.toLowerCase()}`} aria-label={translateGameLabel(blind === 'SB' ? 'Small blind' : 'Big blind', tr)}>{blind}</span>}
       </div>

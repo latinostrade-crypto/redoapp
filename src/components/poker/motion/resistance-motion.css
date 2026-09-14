@@ -20,11 +20,17 @@
   100% { mask-image: var(--rp-mask-0); opacity: 0; }
 }
 .rp-event-stage { position: absolute; top: 59%; left: 50%; transform: translateX(-50%); width: min(210px, calc(100% - 2 * var(--seat-edge) - var(--seat-width) - 8px)); min-height: 34px; z-index: 42; pointer-events: none; text-align: center; }
-.rp-event-cue { display: grid; gap: 4px; padding: 5px 3px; color: #edf1f2; border-left: 2px solid #697780; background: #090e11; box-shadow: 2px 2px #020303; }
-.rp-event-cue span { font: 600 9px/1.2 var(--rp-font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-event-cue strong { font: 11px/1.4 var(--rp-font-terminal); overflow-wrap: anywhere; }
-.rp-event-cue--impact { border-color: var(--rp-signal); color: #fff; }
-.rp-event-cue--impact strong { font-size: 14px; text-shadow: 2px 0 #86211c; animation: rp-cue-impact 160ms steps(3, end); }
+.rp-event-cue { position: relative; display: grid; gap: 5px; padding: 9px 7px 12px; color: #fff; border: 1px solid #83949e; border-left: 4px solid #e5edf2; background: #090e11f5; box-shadow: 0 4px 0 #020303, 0 0 0 2px #0008; animation: rp-cue-enter 140ms ease-out both; }
+.rp-event-cue span { font: 700 11px/1.3 var(--rp-font-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6edf2; }
+.rp-event-cue strong { font: 16px/1.3 var(--rp-font-terminal); overflow-wrap: anywhere; }
+.rp-event-cue--impact { border-color: #ff394c; background: #290d13f7; box-shadow: 0 4px 0 #020303, 0 0 14px #ff263e35; }
+.rp-event-cue--impact strong { font-size: 21px; color: #fff1f2; text-shadow: 2px 2px #86211c; }
+.rp-event-cue__lifetime { position: absolute; left: 0; bottom: 0; width: 100%; height: 3px; background: #b6cbd7; transform-origin: left; animation: rp-cue-lifetime var(--cue-duration, 1400ms) linear var(--cue-elapsed, 0ms) both; }
+.rp-event-cue--impact .rp-event-cue__lifetime { background: #ff394c; }
+@keyframes rp-cue-enter { from { opacity: 0; transform: translateY(5px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes rp-cue-lifetime { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .rp-event-cue__lifetime { animation: none; } }
+.resistance-poker--reduced-motion .rp-event-cue__lifetime { animation: none; }
 @keyframes rp-cue-impact { 0% { transform: translateX(-2px); } 40% { transform: translateX(2px); } 100% { transform: none; } }
 .rp-table .rp-pixel-border-progress { inset: -1px; border: none; transform: none; transition: none; color: var(--rp-signal); z-index: 5; }
 .rp-pixel-border-progress svg { width: 100%; height: 100%; overflow: visible; }

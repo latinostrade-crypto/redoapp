@@ -1,0 +1,5 @@
+.rp-pepe-heart-scene { position: absolute; inset: 0; z-index: 7; pointer-events: none; }
+.rp-pepe-heart-source { position: absolute; width: 32px; height: 28px; visibility: hidden; pointer-events: none; }
+.rp-pepe-heart-flight { position: absolute; left: -100%; top: calc(-100% + 8px); width: 300%; height: 300%; max-width: none; pointer-events: none; image-rendering: pixelated; }
+@media (prefers-reduced-motion: reduce) { .rp-pepe-heart-flight { display: none; } }
+.resistance-poker--reduced-motion .rp-pepe-heart-flight { display: none; }

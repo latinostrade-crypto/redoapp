@@ -24,6 +24,8 @@ import { playPokerFeedback } from '../utils/pokerFeedback';
 import { ResistanceAvatar, ResistanceAvatarState } from './poker/ResistanceAvatar';
 import { TapPixelDust } from './poker/TapPixelDust';
 import { ResistancePlayerSeat } from './poker/ResistancePlayerSeat';
+import { isPokerSeatBusted } from './poker/motion/seatBusted';
+import { TableAnnouncement } from './poker/motion/TableAnnouncement';
 import {
   PixelCounter,
   PixelLoader,
@@ -605,9 +607,7 @@ export function PokerGame({
       {/* 2. RESISTANCE SIGNAL TABLE */}
       <PokerTable bankCount={chipView.pots.length}>
         <div className="rp-event-stage" aria-live="polite" aria-atomic="true">
-          {presentation.cue && <div key={presentation.cue.id} className={`rp-event-cue rp-pixel-build${presentation.cue.impact ? ' rp-event-cue--impact' : ''}`}>
-            <span>{['READY?', 'GAME START!', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN', 'POT CAPTURED'].includes(presentation.cue.label) ? translateTableEvent(translateGameLabel(presentation.cue.detail, tr), tr) : presentation.cue.detail}</span><strong>{translateGameLabel(presentation.cue.label, tr)}</strong>
-          </div>}
+          {presentation.cue && <TableAnnouncement key={presentation.cue.id} cue={presentation.cue} />}
         </div>
 
         {/* POT & STAGE DISPLAY (Top-center) */}
@@ -644,6 +644,7 @@ export function PokerGame({
                 <ResistancePlayerSeat
                   player={opp}
                   state={avatarState}
+                  busted={isPokerSeatBusted(opp, gameState.stage, presentation.resultReady && !chipView.busy)}
                   active={isTurn}
                   dealer={isDealer}
                   blind={gameState.players[gameState.smallBlindIndex]?.id === opp.id ? 'SB' : gameState.players[gameState.bigBlindIndex]?.id === opp.id ? 'BB' : undefined}
@@ -730,6 +731,7 @@ export function PokerGame({
               <ResistancePlayerSeat
                 player={humanPlayer}
                 state={humanAvatarState}
+                busted={isPokerSeatBusted(humanPlayer, gameState.stage, presentation.resultReady && !chipView.busy)}
                 active={isHumanTurn}
                 dealer={gameState.players[gameState.dealerIndex]?.id === humanPlayer.id}
                 blind={gameState.players[gameState.smallBlindIndex]?.id === humanPlayer.id ? 'SB' : gameState.players[gameState.bigBlindIndex]?.id === humanPlayer.id ? 'BB' : undefined}

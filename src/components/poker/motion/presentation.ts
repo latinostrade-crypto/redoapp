@@ -20,8 +20,17 @@ export class PokerPresentation {
   private allIns = new Set<string>();
   private finalized = false;
 
-  private cue(label: string, detail: string, at: number, duration = 600, impact = false) {
-    this.cues.push({ id: ++this.serial, label, detail, impact, start: at, end: at + duration });
+  private cue(label: string, detail: string, at: number, duration = 1600, impact = false) {
+    // Keep the currently readable message. Bound the pending queue so rapid bot
+    // actions cannot leave announcements playing long after the action.
+    const upcoming = this.cues.filter(c => c.end > at);
+    if (upcoming.length >= 3) {
+      const last = upcoming.at(-1)!;
+      if (last.impact && !impact) return;
+      this.cues = this.cues.filter(c => c.id !== last.id);
+    }
+    const start = Math.max(at, ...this.cues.map(c => c.end));
+    this.cues.push({ id: ++this.serial, label, detail, impact, start, end: start + duration });
   }
 
   sync(s: PokerGameState, now: number, reduced = false, recover = false) {
@@ -54,9 +63,9 @@ export class PokerPresentation {
       const before = fresh ? undefined : prev?.players.find(x => x.id === p.id);
       if (p.isAllIn && !this.allIns.has(p.id)) {
         this.allIns.add(p.id);
-        if (prev && !fresh) { this.cue('ALL IN', p.name, actionAt, 360, true); actionAt += 380; }
+        if (prev && !fresh) { this.cue('ALL IN', p.name, actionAt, 2200, true); actionAt += 380; }
       } else if (before && p.lastAction && (p.lastAction !== before.lastAction || p.totalMatchInvested !== before.totalMatchInvested)) {
-        if (!/ALL[- ]?IN/i.test(p.lastAction)) this.cue(p.lastAction, p.name, now, 540);
+        if (!/ALL[- ]?IN/i.test(p.lastAction)) this.cue(p.lastAction, p.name, now, 1400);
       }
       if (prev && !fresh && !before) this.cue('OPERATIVE JOINED', p.name, now);
       if (before?.isConnected !== false && p.isConnected === false) this.cue('SIGNAL LOST', p.name, now);
@@ -68,20 +77,20 @@ export class PokerPresentation {
       const start = !prev || fresh ? 0 : actionAt + i * 140;
       this.board.push({ id: c.id, start, at: start ? start + BOARD_CATCH_MS : 0, end: start ? start + BOARD_CATCH_MS + BOARD_EXIT_MS : 0 });
     });
-    if (prev && !fresh && added.length && !isFinished(s)) this.cue(s.communityCards.length === 5 ? 'RIVER' : s.communityCards.length === 4 ? 'TURN' : 'FLOP', 'BOARD UPDATED', now, 440);
+    if (prev && !fresh && added.length && !isFinished(s)) this.cue(s.communityCards.length === 5 ? 'RIVER' : s.communityCards.length === 4 ? 'TURN' : 'FLOP', 'BOARD UPDATED', now, 1600);
     if (isFinished(s) && !this.finalized) {
       this.finalized = true;
-      this.cues = this.cues.filter(c => c.label === 'ALL IN' && c.end > now);
+      this.cues = this.cues.filter(c => c.end > now && (c.label === 'ALL IN' || c.start <= now));
       const eligible = s.players.filter(p => !p.folded && !p.mucked && p.holeCards.length === 2 && p.holeCards.every(c => !c.hidden));
       const contested = s.players.filter(p => !p.folded && !p.eliminated).length > 1 && s.communityCards.length === 5;
       const boardReady = Math.max(actionAt, ...this.board.map(c => c.end));
       if (contested) {
-        this.cue('SHOWDOWN', 'IDENTITIES REVEALED', boardReady, 540);
+        this.cue('SHOWDOWN', 'IDENTITIES REVEALED', boardReady, 1600);
         const step = Math.min(170, Math.floor(850 / Math.max(1, eligible.length)));
         this.reveals = eligible.map((p, i) => ({ id: p.id, at: boardReady + 200 + i * step }));
         this.payoutAt = boardReady + 380 + eligible.length * step;
       } else { this.reveals = eligible.map(p => ({ id: p.id, at: now })); this.payoutAt = now + 280; }
-      this.cue('POT CAPTURED', s.winningHandDesc || (contested ? 'WINNING HAND LOCKED' : 'UNCONTESTED POT'), this.payoutAt, 650);
+      this.cue('POT CAPTURED', s.winningHandDesc || (contested ? 'WINNING HAND LOCKED' : 'UNCONTESTED POT'), this.payoutAt, 1800);
       this.resultAt = this.payoutAt + 360;
     }
     this.cues = this.cues.filter(c => c.end > now).slice(-12);

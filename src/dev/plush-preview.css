@@ -5,6 +5,8 @@ html:has(.plush-preview),body:has(.plush-preview) { height: auto; overflow: auto
 .plush-preview h1 { font-size: 28px; margin: 10px 0; font-weight: 800; }
 .plush-preview header p:last-child,.plush-preview-note { color: #98a5b6; font-size: 13px; }
 .plush-preview .plush-preview-table { height: 310px; margin: 28px 0; border: 2px solid #333d4b; border-radius: 28px; overflow: hidden; }
+.plush-preview .plush-preview-table { grid-template-rows: minmax(0, 1fr); }
+.plush-preview-table > .rp-table { grid-row: 1; }
 .plush-preview nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
 .plush-preview button { min-height: 46px; padding: 10px 16px; background: #ef475d; color: white; border: 1px solid #ff7a8a; font-weight: 700; cursor: pointer; }
 .plush-preview button:disabled { opacity: .4; }
