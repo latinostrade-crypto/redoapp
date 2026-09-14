@@ -14,6 +14,7 @@ import { PokerGameState, PokerPlayer } from '../types/poker';
 import { apiRequest } from '../utils/api';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { sound } from '../utils/sound';
+import { PokerTurnAlerts } from '../utils/pokerTurnAlerts';
 import { RotateCcw, Volume2, VolumeX, ArrowUpRight, Play, Plus, Minus, History, UserPlus } from 'lucide-react';
 import { evaluate7CardHand } from '../utils/pokerEvaluator';
 import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel';
@@ -106,7 +107,7 @@ export function PokerGame({
   const { reactions, show: showReaction, optimistic: showOptimisticReaction } = usePokerReactions(gameState.matchId || 'practice');
   const announcedResultRef = useRef('');
   const sequenceTimersRef = useRef<number[]>([]);
-  const previousHumanTurnRef = useRef(false);
+  const turnAlertsRef = useRef(new PokerTurnAlerts());
   const timerWarningRef = useRef('');
   const preActionExecutionRef = useRef('');
   const preActionNoticeTimerRef = useRef<number | null>(null);
@@ -382,15 +383,18 @@ export function PokerGame({
   const humanTurnProgress = isHumanTurn ? Math.max(0, Math.min(1, turnTimeLeft / (gameState.turnTimeoutSec || 15))) : 1;
 
   useEffect(() => {
-    if (isHumanTurn && !previousHumanTurnRef.current) playPokerFeedback('player_turn', 'self');
-    previousHumanTurnRef.current = isHumanTurn;
+    // Reuse the existing one-second countdown; no additional polling timer.
+    if (turnAlertsRef.current.update(isHumanTurn, audioMode,
+      `${gameState.turnStartedAt || 0}:${gameState.currentPlayerIndex}`, turnTimeLeft)) {
+      playPokerFeedback('player_turn', 'self');
+    }
 
     const warningSignature = `${gameState.turnStartedAt || 0}:${gameState.currentPlayerIndex}`;
     if (isHumanTurn && turnTimeLeft === 5 && timerWarningRef.current !== warningSignature) {
       timerWarningRef.current = warningSignature;
       playPokerFeedback('timer_warning');
     }
-  }, [gameState.currentPlayerIndex, gameState.turnStartedAt, isHumanTurn, turnTimeLeft]);
+  }, [audioMode, gameState.currentPlayerIndex, gameState.turnStartedAt, isHumanTurn, turnTimeLeft]);
 
   const showPreActionNotice = useCallback((message: UiMessage, tone: 'signal' | 'danger' | 'neutral' = 'neutral') => {
     if (preActionNoticeTimerRef.current !== null) window.clearTimeout(preActionNoticeTimerRef.current);
@@ -879,6 +883,7 @@ export function PokerGame({
         )}
       </AnimatePresence>
 
+      <div className="rp-footer">
       {canOfferRebuy && (
         <BetControls>
           <p className="text-[10px] text-center">{tr('pokerStackEmpty')}</p>
@@ -1041,6 +1046,7 @@ export function PokerGame({
           )}
         </div>
       )}
+      </div>
       <AnimatePresence>
         {showHandHistory && <PokerDialog label={t("Hand history")} onClose={() => setShowHandHistory(false)} safeBottom={telegramSafeArea.bottom}>
           <section className="rp-modal rp-hand-history" aria-labelledby="poker-history-title">

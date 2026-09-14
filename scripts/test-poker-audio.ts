@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { PokerSoundId, PokerSoundSource } from '../src/utils/sound';
+import { PokerTurnAlerts } from '../src/utils/pokerTurnAlerts';
 
 const store = new Map<string, string>();
 const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value) };
@@ -71,3 +72,22 @@ for (const file of ['src/hooks/usePokerGame.ts', 'src/components/PokerGame.tsx']
   assert.doesNotMatch(readFileSync(file, 'utf8'), /sound\.play(?:Pop|Shuffle|Victory|Defeat|Error|Warning)\(/, `${file} must not bypass poker audio mode`);
 }
 console.log('PASS poker audio: ME turn only, OFF vibration only, native/fallback, ALL, mute and pending voice cancellation');
+
+for (const mode of ['self', 'all', 'muted'] as const) {
+  const alerts = new PokerTurnAlerts();
+  let count = 0;
+  for (const seconds of [15, 14, 13, 12, 11]) {
+    if (alerts.update(true, mode, 'turn-1', seconds)) count++;
+    assert.equal(alerts.update(true, mode, 'turn-1', seconds), false, 'Duplicate render is silent');
+  }
+  assert.equal(count, mode === 'self' ? 5 : 1, `${mode} cadence`);
+  assert.equal(alerts.update(false, mode, 'turn-2', 15), false, 'Stop immediately after our turn');
+  assert.equal(alerts.update(false, mode, 'turn-2', 14), false, 'Opponent countdown stays silent');
+  assert.equal(alerts.update(true, mode, 'turn-3', 15), true, 'Next local turn alerts again');
+}
+const switching = new PokerTurnAlerts();
+switching.update(true, 'self', 'turn', 15);
+assert.equal(switching.update(true, 'muted', 'turn', 14), false, 'OFF stops repeated turn alerts');
+assert.equal(switching.update(true, 'self', 'turn', 13), true, 'ME resumes on the next countdown tick');
+assert.equal(switching.update(true, 'self', 'turn', 0), false, 'No repeats after the deadline');
+console.log('PASS turn reminders: every ME second, duplicate renders, turn end, next turn and mode changes');

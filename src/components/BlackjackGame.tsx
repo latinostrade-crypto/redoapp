@@ -35,6 +35,7 @@ import { QuickEmojiPanel, EmojiDisplayBadge, EmojiItem } from './QuickEmojiPanel
 import { useMatchEmoji } from '../hooks/useMatchEmoji';
 import { useTableVisualEvents } from '../hooks/useTableVisualEvents';
 import { ChipStackIcon as ResistanceChipIcon } from './poker/PokerTable';
+import './game-table-surfaces.css';
 
 interface BlackjackGameProps {
   gameState: BlackjackGameState;
@@ -355,10 +356,7 @@ export function BlackjackGame({
       {isSpectator && <div className="bg-[#ffcc00] text-black text-center text-[8px] font-black py-1 border border-black">{tr("spectatingHidden")}</div>}
 
       {/* 2. CASINO FELT TABLE WITH MULTI-SEAT PLAYERS */}
-      <div className="w-full h-[410px] min-[380px]:h-[440px] bg-gradient-to-b from-[#0a3822] to-[#041a0f] border-4 border-[#1c130c] rounded-[40px] relative overflow-hidden shadow-[inset_0_0_40px_rgba(0,0,0,0.9)] flex flex-col items-center justify-between p-2 z-10 shrink-0">
-        
-        {/* Felt Pattern */}
-        <div className="absolute inset-0 opacity-10 pointer-events-none rounded-[35px] bg-[radial-gradient(#00ff66_1px,transparent_1px)] [background-size:10px_10px]" />
+      <div className="redo-table-surface redo-table-surface--blackjack w-full h-[410px] min-[380px]:h-[440px] relative overflow-hidden flex flex-col items-center justify-between px-2 z-10 shrink-0">
 
         {/* TOP: DEALER AREA */}
         <div className="w-full flex flex-col items-center z-30 pt-1">

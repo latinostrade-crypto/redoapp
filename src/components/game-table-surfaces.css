@@ -1,0 +1,31 @@
+/* Reuse the poker artwork; crop its empty head/foot space for shorter tables. */
+.redo-table-surface {
+  background-color: #130000;
+  background-image: url('../assets/resistance/poker-table-clean.png');
+  background-repeat: no-repeat;
+  background-position: center 44%;
+  background-size: 100% 160%;
+}
+
+.redo-table-surface--uno {
+  flex: 1 1 auto;
+  min-height: 260px;
+  min-width: 0;
+  padding: 18px 4px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+}
+
+.redo-table-surface--blackjack {
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+
+@media (min-width: 640px) {
+  .redo-table-surface--uno {
+    min-height: 320px;
+    padding: 26px 12px 30px;
+  }
+}

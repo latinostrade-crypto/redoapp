@@ -33,6 +33,7 @@ import {
 import { sound } from './utils/sound';
 import { AvatarId, CardColor } from './types';
 import lobbyBanner from './assets/resistance/lobby-banner.lossless.webp';
+import './components/game-table-surfaces.css';
 import { initializeRequiredGameImages } from './utils/cardAssets';
 import { ChipStackIcon } from './components/ChipStackIcon';
 
@@ -1128,6 +1129,7 @@ export default function App() {
             </div>
           )}
           
+          <div className="redo-table-surface redo-table-surface--uno">
           {/* TOP ZONE: AI PLAYER 2 */}
           <section className="w-full flex justify-center items-center py-1">
             {(() => {
@@ -1198,9 +1200,6 @@ export default function App() {
             {/* CENTRAL PLAY MAT FELT TABLE BOARD */}
             <div className="col-span-6 h-full flex items-center justify-center relative min-h-[110px] min-[370px]:min-h-[135px] sm:min-h-[170px]">
               
-              {/* Play Mat Felt Grid Background */}
-              <div className="absolute inset-0 border border-dashed border-[#2e3846] opacity-60"></div>
-
               {/* DYNAMIC TURN TIMER BADGE */}
               {gameState.phase === 'playing' && !isWaitingForPlayers && (
                 <div className="absolute top-0.5 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center pointer-events-none">
@@ -1347,6 +1346,8 @@ export default function App() {
               >{tr("passTurn")}</button>
             )}
           </section>
+
+          </div>
 
           {/* BOTTOM ZONE: HUMAN PLAYER ZONE */}
           <section className="w-full bg-[#18181c] border-2 border-black p-2.5 space-y-2 relative">
