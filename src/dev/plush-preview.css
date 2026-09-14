@@ -13,3 +13,7 @@ html:has(.plush-preview),body:has(.plush-preview) { height: auto; overflow: auto
 .plush-preview button:focus-visible,.plush-preview a:focus-visible { outline: 3px solid white; outline-offset: 3px; }
 .plush-preview label { display: flex; gap: 10px; align-items: center; min-height: 44px; }
 .plush-preview a { display: inline-block; color: #a7c7ff; padding: 12px 0; }
+/* Development-only scrubber: production keeps its finite CSS timelines. */
+.plush-preview--frame .rp-table { --board-card: min(80px, calc((100cqw - 20px) / 5)); }
+.plush-preview--frame .rp-card-slot,
+.plush-preview--frame .rp-card-slot * { animation-play-state: paused !important; animation-delay: var(--preview-frame) !important; }

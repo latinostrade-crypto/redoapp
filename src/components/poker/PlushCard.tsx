@@ -33,7 +33,7 @@ export function PlushCard({ slot, visible, delivery, reduced }: {
       </g>)}
     </svg>}
   </span>
-    {active && ready && <span className="rp-plush-hands" aria-hidden="true">
+    {active && ready && <span className={`rp-plush-hands${slot === 1 ? ' rp-plush-hands--pepe' : ''}`} aria-hidden="true">
       {(['left', 'right'] as const).map(side => <span key={side} className={`rp-plush-grip rp-plush-grip--${side}`}>
         <img src={`/poker-plush/${sprite}.webp`} width={240} height={104} alt="" draggable={false} className="rp-plush-hand-sheet" />
       </span>)}

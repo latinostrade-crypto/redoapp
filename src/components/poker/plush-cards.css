@@ -21,9 +21,14 @@
 .rp-plush-arm--outline { stroke: #080b0c; stroke-width: 17; }
 .rp-plush-arm--sleeve { stroke: #242929; stroke-width: 11; }
 .rp-plush-hands { position: absolute; top: calc(100% + 8px); left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; animation: crew-hands-fade 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-grip { position: absolute; inset: 0; overflow: hidden; clip-path: inset(6% var(--grip-right) 72% var(--grip-left)); animation: crew-hand-travel 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-grip--left { --grip-left: 4%; --grip-right: 67%; }
-.rp-plush-grip--right { --grip-left: 67%; --grip-right: 4%; }
+/* The raised-pose atlas also contains a hood between/below the fists. A
+   rectangular crop carries those hood corners along with the moving hands. */
+.rp-plush-grip { position: absolute; inset: 0; overflow: hidden; clip-path: var(--grip-outline); animation: crew-hand-travel 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-grip--left { --grip-outline: polygon(10% 7%, 33% 7%, 33% 20%, 27% 25%, 10% 25%); }
+.rp-plush-grip--right { --grip-outline: polygon(90% 7%, 67% 7%, 67% 20%, 73% 25%, 90% 25%); }
+/* Pepe's green fists sit lower and farther out than the gloved cast. */
+.rp-plush-hands--pepe .rp-plush-grip--left { --grip-outline: polygon(1% 16%, 15% 15%, 22% 18%, 24% 24%, 21% 29%, 15% 33%, 4% 30%, 0% 24%); }
+.rp-plush-hands--pepe .rp-plush-grip--right { --grip-outline: polygon(99% 16%, 85% 15%, 78% 18%, 76% 24%, 79% 29%, 85% 33%, 96% 30%, 100% 24%); }
 .rp-plush-hand-sheet { transform: translateX(-66.666667%); }
 .rp-community-board .rp-pixel-card-deal, .rp-community-board .rp-pixel-card-flip { animation: none !important; transform: none; opacity: 1; }
 .rp-community-board .rp-pixel-card-flip::before { display: none; animation: none !important; }
