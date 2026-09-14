@@ -1,35 +1,19 @@
-/* Fixed body and a single moving pair of hands; never blend whole armed poses. */
+/* One complete generated pose at a time, with its original body and arms. */
 .rp-community-board { padding-bottom: calc(var(--board-card, 40px) * 1.4 + 8px); }
 .rp-community-board .rp-card-slot { position: relative; overflow: visible; border: 0; box-shadow: none !important; background: transparent !important; }
 .rp-community-back { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; image-rendering: pixelated; z-index: 4; border: 1px solid #9ca5b4; box-shadow: 2px 2px #050609; }
 .rp-card-slot--delivery .rp-community-back { animation: crew-card-pull 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
 .rp-plush-scene { position: absolute; top: calc(100% + 8px); left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
 .rp-plush-pose { position: absolute; inset: 0; overflow: hidden; }
-.rp-plush-sprites, .rp-plush-hand-sheet, .rp-plush-chest-sheet { position: absolute; top: 0; left: 0; width: 300%; height: 100%; max-width: none; image-rendering: pixelated; }
+.rp-plush-sprites { position: absolute; top: 0; left: 0; width: 300%; height: 100%; max-width: none; image-rendering: pixelated; }
 .rp-plush-fallback { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
 .rp-plush-scene--revealed { opacity: 0; }
 .rp-plush-scene--delivery { animation: crew-cover 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
-/* Exclude the idle hands from the body layer before drawing the animated pair. */
-.rp-plush-body { position: absolute; inset: 0; --body-left: 32%; --body-right: 68%; }
-.rp-plush-scene--pepe .rp-plush-body { --body-left: 48%; --body-right: 52%; }
-.rp-plush-scene--delivery .rp-plush-body { animation: crew-body-mask 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-empty-chest { position: absolute; inset: 0; clip-path: inset(58% 30% 14% 30%); animation: crew-heart-release 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-chest-sheet { transform: translateX(-33.333333%); }
-/* Shoulder and elbow stay connected to the same moving wrist as the hand crop. */
-.rp-plush-arms { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; shape-rendering: crispEdges; animation: crew-hands-fade 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-arm { fill: none; stroke-linejoin: round; stroke-linecap: square; animation: crew-arm-bend 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-arm--outline { stroke: #080b0c; stroke-width: 17; }
-.rp-plush-arm--sleeve { stroke: #242929; stroke-width: 11; }
-.rp-plush-hands { position: absolute; top: calc(100% + 8px); left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; animation: crew-hands-fade 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
-/* The raised-pose atlas also contains a hood between/below the fists. A
-   rectangular crop carries those hood corners along with the moving hands. */
-.rp-plush-grip { position: absolute; inset: 0; overflow: hidden; clip-path: var(--grip-outline); animation: crew-hand-travel 1350ms linear both; animation-delay: var(--crew-elapsed, 0ms); }
-.rp-plush-grip--left { --grip-outline: polygon(10% 7%, 33% 7%, 33% 20%, 27% 25%, 10% 25%); }
-.rp-plush-grip--right { --grip-outline: polygon(90% 7%, 67% 7%, 67% 20%, 73% 25%, 90% 25%); }
-/* Pepe's green fists sit lower and farther out than the gloved cast. */
-.rp-plush-hands--pepe .rp-plush-grip--left { --grip-outline: polygon(1% 16%, 15% 15%, 22% 18%, 24% 24%, 21% 29%, 15% 33%, 4% 30%, 0% 24%); }
-.rp-plush-hands--pepe .rp-plush-grip--right { --grip-outline: polygon(99% 16%, 85% 15%, 78% 18%, 76% 24%, 79% 29%, 85% 33%, 96% 30%, 100% 24%); }
-.rp-plush-hand-sheet { transform: translateX(-66.666667%); }
+/* Discrete atlas frames cannot blend into doubled limbs or reveal partial crops.
+   A small continuous lift on the whole actor joins the quick pose changes. */
+.rp-plush-scene--delivery .rp-plush-sprites { animation: crew-full-poses 1350ms steps(1, end) both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-scene--delivery .rp-plush-pose { animation: crew-reach 1350ms ease-in-out both; animation-delay: var(--crew-elapsed, 0ms); }
+.rp-plush-scene--pepe.rp-plush-scene--delivery .rp-plush-sprites { animation-name: crew-pepe-poses; }
 .rp-community-board .rp-pixel-card-deal, .rp-community-board .rp-pixel-card-flip { animation: none !important; transform: none; opacity: 1; }
 .rp-community-board .rp-pixel-card-flip::before { display: none; animation: none !important; }
 .rp-community-board .rp-pixel-card-flip > * { animation: none !important; opacity: 1; }
@@ -37,22 +21,25 @@
 .rp-plush-face > .rp-pixel-card-deal { width: 100%; height: 100%; }
 .rp-plush-face--turn { animation: plush-face-turn 240ms cubic-bezier(.2,.65,.3,1) both; }
 @keyframes crew-cover { 0% { opacity: 1; } 59%, 100% { opacity: 0; } }
-@keyframes crew-heart-release { 0% { opacity: 0; } 6%, 100% { opacity: 1; } }
-@keyframes crew-body-mask {
-  0% { clip-path: inset(0); }
-  6%, 100% { clip-path: polygon(0 0,100% 0,100% 61%,var(--body-right) 61%,var(--body-right) 85%,100% 85%,100% 100%,0 100%,0 85%,var(--body-left) 85%,var(--body-left) 61%,0 61%); }
+@keyframes crew-full-poses {
+  0% { transform: translateX(0); }
+  6% { transform: translateX(-33.333333%); }
+  18% { transform: translateX(-66.666667%); }
+  42% { transform: translateX(-33.333333%); }
+  53%, 100% { transform: translateX(0); }
 }
-@keyframes crew-hand-travel {
-  0%, 6% { transform: translateY(56%); }
-  30%, 33.333% { transform: translateY(0); }
-  58%, 100% { transform: translateY(84%); }
+/* The middle Pepe pose is empty-handed: never bring the released heart back. */
+@keyframes crew-pepe-poses {
+  0% { transform: translateX(0); }
+  6% { transform: translateX(-33.333333%); }
+  18% { transform: translateX(-66.666667%); }
+  42%, 100% { transform: translateX(-33.333333%); }
 }
-@keyframes crew-arm-bend {
-  0%, 6% { d: path('M 32 65 L 21 72 L 18 73'); }
-  30%, 33.333% { d: path('M 32 65 L 12 46 L 18 17'); }
-  58%, 100% { d: path('M 32 65 L 20 85 L 18 101'); }
+@keyframes crew-reach {
+  0%, 6% { transform: translateY(0); }
+  24%, 33.333% { transform: translateY(-8%); }
+  58%, 100% { transform: translateY(0); }
 }
-@keyframes crew-hands-fade { 0%, 5.999% { opacity: 0; } 6%, 53% { opacity: 1; } 58%, 100% { opacity: 0; } }
 @keyframes crew-card-pull {
   0%, 30% { transform: translateY(0); }
   33.333% { transform: translateY(calc(16% + 8px)); }
@@ -63,7 +50,6 @@
 }
 @keyframes plush-face-turn { from { transform: scaleX(.04); } to { transform: scaleX(1); } }
 @media (prefers-reduced-motion: reduce) {
-  .rp-plush-hands, .rp-plush-empty-chest, .rp-plush-arms { display: none; }
-  .rp-plush-scene--delivery .rp-plush-body { animation: none; clip-path: none; }
+  .rp-plush-scene--delivery .rp-plush-sprites, .rp-plush-scene--delivery .rp-plush-pose { animation: none; transform: none; }
   .rp-card-slot--delivery .rp-community-back, .rp-plush-scene--delivery, .rp-plush-face--turn { animation: none; }
 }
